@@ -73,6 +73,18 @@ impl Packages {
 }
 
 impl Packages {
+    /// Every other package that shares a uid with one of `packages`.
+    pub fn sharing_uid_with(&self, packages: &[&str]) -> Vec<String> {
+        packages
+            .iter()
+            .filter_map(|package| self.app_id_by_name.get(*package))
+            .filter_map(|app_id| self.by_app_id.get(app_id))
+            .flatten()
+            .filter(|name| !packages.contains(&name.as_str()))
+            .cloned()
+            .collect()
+    }
+
     /// The uid of the app an isolated process belongs to, given the process's
     /// name. Isolated processes (WebView renderers and the like) run under a
     /// throwaway uid, but are named `<package>:<suffix>` after their owner.
@@ -119,6 +131,30 @@ mod tests {
     }
 
     #[test]
+    fn packages_sharing_a_uid() {
+        let dir = std::env::temp_dir().join(format!("bbd-test-shared-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let list = dir.join("packages.list");
+        std::fs::write(
+            &list,
+            "com.android.providers.contacts 10095 0 /d x\n\
+             com.android.providers.blockednumber 10095 0 /d x\n\
+             com.android.providers.userdictionary 10095 0 /d x\n\
+             com.other 10096 0 /d x\n",
+        )
+        .unwrap();
+        let packages = Packages::new(list.to_str().unwrap());
+        assert_eq!(
+            packages.sharing_uid_with(&["com.android.providers.contacts", "com.absent"]),
+            [
+                "com.android.providers.blockednumber",
+                "com.android.providers.userdictionary"
+            ]
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn isolated_processes_map_to_their_owner() {
         let dir = std::env::temp_dir().join(format!("bbd-test-pkgs-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -139,6 +175,11 @@ mod tests {
         );
         assert_eq!(packages.owner_of_isolated(99_012, "com.unknown:x"), None);
         assert_eq!(packages.owner_of_isolated(99_012, ""), None);
+        assert!(
+            packages
+                .sharing_uid_with(&["com.android.chrome"])
+                .is_empty()
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

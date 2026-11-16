@@ -9,6 +9,9 @@
     <string name="action_read_provider">经系统读取</string>
     <string name="action_write_provider">经系统修改</string>
     <string name="action_query">列出条目</string>
+    <string name="action_connect">连接</string>
+    <string name="action_exec">运行</string>
+    <string name="action_call">请求</string>
     <string name="search_paths">搜索路径</string>
     <plurals name="access_query">
         <item quantity="other">列出 %1$d 次，单次最多 %2$d 条</item>
@@ -35,6 +38,18 @@
     <plurals name="total_allowed">
         <item quantity="other">读取 %d 次</item>
     </plurals>
+    <plurals name="total_requested">
+        <item quantity="other">请求 %d 次</item>
+    </plurals>
+    <plurals name="total_contacted">
+        <item quantity="other">连接 %d 次</item>
+    </plurals>
+    <plurals name="total_ran">
+        <item quantity="other">运行 %d 次</item>
+    </plurals>
+    <plurals name="total_not_run">
+        <item quantity="other">尝试 %d 次，未能运行</item>
+    </plurals>
     <plurals name="total_blocked">
         <item quantity="other">尝试 %d 次，被系统拦截</item>
     </plurals>
@@ -48,7 +63,8 @@
     <string name="group_media">媒体库</string>
 
     <string name="tab_files">文件</string>
-    <string name="tab_device">设备信息</string>
+    <string name="tab_activity">其他行为</string>
+    <string name="tab_permissions">权限</string>
     <string name="read_count">%d 次</string>
 
     <string name="open_file_missing">文件已不存在。</string>

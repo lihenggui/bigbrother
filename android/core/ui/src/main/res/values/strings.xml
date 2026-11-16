@@ -35,6 +35,33 @@
     <string name="topic_emulator_probe_title">Emulator check</string>
     <string name="topic_input_devices_title">Input devices</string>
     <string name="topic_battery_title">Battery status</string>
+    <string name="topic_root_check_title">Root check</string>
+    <string name="topic_system_properties_title">System properties</string>
+    <string name="topic_installed_apps_title">Installed apps</string>
+    <string name="topic_system_settings_title">System settings</string>
+    <string name="topic_shell_command_title">System commands</string>
+    <string name="topic_local_ports_title">Ports on this device</string>
+    <string name="topic_local_network_title">Devices contacted on your network</string>
+    <string name="topic_device_discovery_title">Device discovery on your network</string>
+    <string name="topic_process_memory_title">Other apps\' memory</string>
+    <string name="topic_contacts_title">Contacts</string>
+    <string name="topic_call_log_title">Call log</string>
+    <string name="topic_messages_title">Text messages</string>
+    <string name="topic_calendar_title">Calendar</string>
+    <string name="topic_sim_info_title">SIM and carrier details</string>
+    <string name="topic_clipboard_title">Clipboard</string>
+    <string name="topic_location_title">Location</string>
+    <string name="topic_wifi_info_title">Wi-Fi networks</string>
+    <string name="topic_phone_identity_title">Phone and SIM identifiers</string>
+    <string name="topic_accounts_title">Accounts on this device</string>
+    <string name="topic_running_apps_title">Running apps</string>
+    <string name="topic_usage_stats_title">App usage history</string>
+    <string name="topic_enabled_services_title">Keyboards and accessibility services</string>
+    <string name="topic_sensors_title">Sensors</string>
+    <string name="topic_android_id_title">Android ID</string>
+    <string name="topic_device_name_title">Device name</string>
+    <string name="topic_camera_title">Camera</string>
+    <string name="topic_microphone_title">Microphone</string>
 
     <!-- Compact "how long ago": now, minutes, hours, days. -->
     <string name="time_now">now</string>

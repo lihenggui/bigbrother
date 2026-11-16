@@ -145,6 +145,7 @@ internal fun AppListScreen(
                         {
                             StatusLine(
                                 recording = recording,
+                                unavailable = state.unavailable,
                                 appsWithFiles = visibleApps.orEmpty().count { it.readUserFiles() },
                                 range = state.range,
                             )
@@ -210,7 +211,12 @@ internal fun AppListScreen(
  * warning if nothing is being recorded.
  */
 @Composable
-private fun StatusLine(recording: Boolean, appsWithFiles: Int, range: TimeRange) {
+private fun StatusLine(
+    recording: Boolean,
+    unavailable: List<String>,
+    appsWithFiles: Int,
+    range: TimeRange,
+) {
     if (!recording) {
         Text(stringResource(R.string.status_stopped), color = MaterialTheme.colorScheme.error)
         return
@@ -220,14 +226,39 @@ private fun StatusLine(recording: Boolean, appsWithFiles: Int, range: TimeRange)
     } else {
         pluralStringResource(R.plurals.status_summary, appsWithFiles, appsWithFiles)
     }
-    // The range is chosen in the menu, so the title says which one applies.
-    Text(
-        if (range == TimeRange.ALL) {
-            summary
-        } else {
-            stringResource(R.string.status_in_range, summary, stringResource(range.label))
-        },
-    )
+    Column {
+        // The range is chosen in the menu, so the title says which one applies.
+        Text(
+            if (range == TimeRange.ALL) {
+                summary
+            } else {
+                stringResource(R.string.status_in_range, summary, stringResource(range.label))
+            },
+        )
+        // Without this, an empty list would read as "nothing happened" for
+        // kinds of activity that were never looked for.
+        if (unavailable.isNotEmpty()) {
+            val names = unavailable.map { id -> featureLabel(id)?.let { stringResource(it) } ?: id }
+            Text(
+                stringResource(
+                    R.string.status_unavailable,
+                    names.joinToString(stringResource(R.string.summary_separator)),
+                ),
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+    }
+}
+
+/** Name of a kind of activity the daemon reports as `coverage_<id>`. */
+private fun featureLabel(id: String): Int? = when (id) {
+    "exec" -> R.string.feature_exec
+    "network" -> R.string.feature_network
+    "process" -> R.string.feature_process
+    "netlink" -> R.string.feature_netlink
+    "binder" -> R.string.feature_binder
+    "appops" -> R.string.feature_appops
+    else -> null
 }
 
 private val TimeRange.label: Int

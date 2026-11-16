@@ -18,14 +18,17 @@ import java.util.concurrent.atomic.AtomicBoolean
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 
 /**
- * LSPosed entry point, loaded into the system's content provider processes
- * (the media provider, the external storage documents provider and the
- * download provider; see `META-INF/xposed/scope.list`).
+ * LSPosed entry point, loaded into the system's content provider processes:
+ * those that serve user files (the media provider, the external storage
+ * documents provider, the download provider) and those that hold personal
+ * data (contacts and the call log, messages, the calendar). See
+ * `META-INF/xposed/scope.list`.
  *
- * An app that reads user files through one of these providers never touches
- * the file system itself: it asks the provider over binder, and the provider
- * queries its database or opens the file on the app's behalf. This hook sits
- * where those requests arrive and records which app asked for what.
+ * An app that reads user files or personal data through one of these
+ * providers never touches the file system itself: it asks the provider over
+ * binder, and the provider queries its database or opens the file on the
+ * app's behalf. This hook sits where those requests arrive and records which
+ * app asked for what. The daemon decides what to keep of it.
  *
  * Hooking the providers, rather than the apps being observed, keeps the hook
  * out of those apps' processes entirely, and the caller identity comes from

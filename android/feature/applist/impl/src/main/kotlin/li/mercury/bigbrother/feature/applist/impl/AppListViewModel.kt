@@ -38,6 +38,8 @@ data class AppListUiState(
     val appInfo: Map<String, AppInfo> = emptyMap(),
     /** Whether the daemon is recording; null until known. */
     val recording: Boolean? = null,
+    /** Kinds of activity the daemon can't record on this device, as ids. */
+    val unavailable: List<String> = emptyList(),
     val refreshing: Boolean = false,
     val failure: LoadFailure? = null,
     val moduleSetup: ModuleSetup = ModuleSetup.Idle,
@@ -71,7 +73,7 @@ class AppListViewModel @Inject constructor(
             _uiState.update { it.copy(refreshing = true) }
             try {
                 val apps = accessRepository.getApps(_uiState.value.range)
-                val recording = accessRepository.isRecording()
+                val status = accessRepository.getRecorderStatus()
                 val pending = moduleRepository.isUpdatePending()
                 // An update that is already staged makes the installed copy
                 // look current; it isn't running until the restart.
@@ -83,7 +85,8 @@ class AppListViewModel @Inject constructor(
                     it.copy(
                         apps = apps,
                         appInfo = appInfo,
-                        recording = recording,
+                        recording = status.recording,
+                        unavailable = status.unavailable,
                         refreshing = false,
                         failure = null,
                         moduleSetup = ModuleSetup.Idle,

@@ -11,12 +11,14 @@ use std::{
 use anyhow::Context as _;
 use aya::{
     EbpfLoader,
-    maps::{MapData, PerCpuArray, RingBuf},
-    programs::KProbe,
+    maps::{HashMap as BpfHashMap, MapData, PerCpuArray, RingBuf},
+    programs::{KProbe, RawTracePoint},
 };
 use bb_common::{
-    EV_FILE, EV_PATH, EV_RESULT, EventHeader, FUSE_SUPER_MAGIC, FileEvent, OP_PROBE, OP_WATCH,
-    PROC_SUPER_MAGIC, PathEvent, ResultEvent, SELINUX_MAGIC, SYSFS_MAGIC,
+    BinderEvent, BinderKey, BinderValue, ConnectEvent, EV_BINDER, EV_CONNECT, EV_EXEC, EV_FILE,
+    EV_NETLINK, EV_PATH, EV_PROCESS, EV_RESULT, EXEC_ARGS, EventHeader, ExecEvent,
+    FUSE_SUPER_MAGIC, FileEvent, NetlinkEvent, OFF_MISSING, OP_PROBE, OP_WATCH, PROC_SUPER_MAGIC,
+    PROCESS_READ, PROCESS_WRITE, PathEvent, ProcessEvent, ResultEvent, SELINUX_MAGIC, SYSFS_MAGIC,
 };
 use tokio::{
     io::{Interest, unix::AsyncFd},
@@ -25,14 +27,18 @@ use tokio::{
 };
 
 use crate::{
+    appops,
+    binder::{self, Catalog},
     btf::Btf,
+    commands, helper,
     mounts::Mounts,
+    net::{self, Destination, Listeners},
     packages::{FIRST_ISOLATED_APP_ID, PER_USER_RANGE, Packages},
-    paths, rules,
+    paths, personal, rules,
     spool::{self, Spool},
     store::{
-        Category, Counters, MODE_DIR, MODE_PROBE, MODE_QUERY, MODE_READ, MODE_VIA_PROVIDER,
-        MODE_WATCH, MODE_WRITE, Writer,
+        Category, Counters, MODE_CALL, MODE_CONNECT, MODE_DIR, MODE_EXEC, MODE_PROBE, MODE_QUERY,
+        MODE_READ, MODE_VIA_PROVIDER, MODE_WATCH, MODE_WRITE, Mode, Writer,
     },
     syscalls,
 };
@@ -123,24 +129,48 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         "{} not in /proc/kallsyms (unsupported kernel, or kallsyms restricted)",
         syscalls::REQUIRED
     );
-    for name in syscalls::ENTRY_PROGRAMS.into_iter().chain(["sys_ret"]) {
-        let program: &mut KProbe = ebpf
-            .program_mut(name)
-            .with_context(|| format!("program {name} missing from object"))?
-            .try_into()?;
-        program
-            .load()
-            .with_context(|| format!("verifier rejected {name}"))?;
-    }
-    let plan = syscalls::attach_plan(&symbols);
-    for (entry, function) in &plan {
-        for name in [*entry, "sys_ret"] {
-            let program: &mut KProbe = ebpf.program_mut(name).unwrap().try_into()?;
-            program
-                .attach(function, 0)
-                .with_context(|| format!("attaching {name} to {function}"))?;
+    // The return program is shared by every feature that reports outcomes.
+    let returns: &mut KProbe = ebpf
+        .program_mut("sys_ret")
+        .context("program sys_ret missing from object")?
+        .try_into()?;
+    returns.load().context("verifier rejected sys_ret")?;
+    let mut functions = attach_feature(&mut ebpf, &syscalls::FILES, &symbols, &offsets)
+        .context("setting up the file probes")?;
+
+    // Everything else is recorded where the kernel allows it. A probe that
+    // can't be set up costs its own records, not the daemon: what is and
+    // isn't covered is stored for `bbd stats` to report.
+    for feature in syscalls::FEATURES {
+        let attached = attach_feature(&mut ebpf, feature, &symbols, &offsets);
+        match &attached {
+            Ok(count) => functions += count,
+            Err(e) => eprintln!("bbd: warning: not recording {}: {e:#}", feature.name),
         }
+        writer.set_meta(
+            &format!("coverage_{}", feature.name),
+            i64::from(attached.is_ok()),
+        )?;
     }
+
+    // The system's own permission usage records, read periodically.
+    writer.set_meta("coverage_appops", COVERAGE_PENDING)?;
+    let permission_uses = spawn_appops_reader();
+    let mut appops = appops::Tracker::new(now());
+
+    // Calls to system services. The tracepoint is attached now and reports
+    // nothing until the device's transaction codes are known, which takes a
+    // running app_process and so a system that has come up; `coverage_binder`
+    // turns 1 at that point.
+    writer.set_meta("coverage_binder", COVERAGE_PENDING)?;
+    let mut binder_watch = match attach_binder(&mut ebpf) {
+        Ok(map) => Some((map, spawn_catalog_loader())),
+        Err(e) => {
+            eprintln!("bbd: warning: not recording service calls: {e:#}");
+            writer.set_meta("coverage_binder", 0)?;
+            None
+        }
+    };
 
     let dropped: PerCpuArray<MapData, u64> =
         PerCpuArray::try_from(ebpf.take_map("DROPPED").context("DROPPED map missing")?)?;
@@ -156,8 +186,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     let mut ring = unsafe { AsyncFd::register_with_interest(ring, Interest::READABLE) }?;
 
     eprintln!(
-        "bbd: tracing {} syscall functions; db={} retention={}d pruned={pruned}",
-        plan.len(),
+        "bbd: tracing {functions} syscall functions; db={} retention={}d pruned={pruned}",
         opts.db.display(),
         opts.retention_days
     );
@@ -166,6 +195,10 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         packages: Packages::new(opts.packages_list),
         mounts: Mounts::new(),
         spool: Spool::new(),
+        listeners: Listeners::new(),
+        scans: net::Scans::default(),
+        searches: commands::Searches::default(),
+        catalog: None,
         writer,
         counters: Counters::default(),
         awaiting_result: HashMap::new(),
@@ -190,6 +223,31 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
                 tracer.counters.dropped = dropped_events();
                 tracer.expire(now() - RESULT_TIMEOUT_SECS);
                 tracer.ingest_provider_events();
+                while let Ok(reading) = permission_uses.try_recv() {
+                    // A reading at all shows the records can be read here.
+                    let covered = i64::from(reading.is_some());
+                    tracer.writer.set_meta("coverage_appops", covered).ok();
+                    if let Some(entries) = reading {
+                        tracer.record_permission_uses(appops.update(&entries));
+                    }
+                }
+                if let Some((map, loaded)) = &mut binder_watch
+                    && let Ok(loaded) = loaded.try_recv()
+                {
+                    let watching = loaded.and_then(|catalog| match watch(map, &catalog) {
+                        Ok(()) => Some(catalog),
+                        Err(e) => {
+                            eprintln!("bbd: warning: not recording service calls: {e:#}");
+                            None
+                        }
+                    });
+                    if let Some(catalog) = &watching {
+                        eprintln!("bbd: watching {} service methods", catalog.len());
+                    }
+                    let covered = i64::from(watching.is_some());
+                    tracer.writer.set_meta("coverage_binder", covered).ok();
+                    tracer.catalog = watching;
+                }
                 // A failed write (disk full, database busy) keeps the batch
                 // for the next attempt; it is not a reason to stop recording.
                 if let Err(e) = tracer.writer.flush(&tracer.counters, now()) {
@@ -237,6 +295,220 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Load and attach the probes of one optional feature. Returns how many
+/// kernel functions they were attached to.
+fn attach_feature(
+    ebpf: &mut aya::Ebpf,
+    feature: &syscalls::Feature,
+    symbols: &std::collections::HashSet<String>,
+    offsets: &[u32],
+) -> anyhow::Result<usize> {
+    anyhow::ensure!(
+        feature
+            .offsets
+            .iter()
+            .all(|&slot| offsets[slot] != OFF_MISSING),
+        "this kernel's type information lacks a field it reads"
+    );
+    let plan = syscalls::attach_plan(feature.table, symbols);
+    anyhow::ensure!(
+        !plan.is_empty(),
+        "this kernel has none of the functions it attaches to"
+    );
+    for (name, _) in feature.table {
+        let program: &mut KProbe = ebpf
+            .program_mut(name)
+            .with_context(|| format!("program {name} missing from object"))?
+            .try_into()?;
+        program
+            .load()
+            .with_context(|| format!("verifier rejected {name}"))?;
+    }
+    // All or nothing: a feature left half attached would go on producing
+    // records, some of them wrong (a call whose return is not seen counts
+    // as successful), while being reported as not recorded.
+    let mut links = Vec::new();
+    let attached = (|| -> anyhow::Result<()> {
+        for (entry, function) in &plan {
+            let returns = feature.with_return.then_some("sys_ret");
+            for name in std::iter::once(*entry).chain(returns) {
+                let program: &mut KProbe = ebpf
+                    .program_mut(name)
+                    .with_context(|| format!("program {name} missing from object"))?
+                    .try_into()?;
+                let link = program
+                    .attach(function, 0)
+                    .with_context(|| format!("attaching {name} to {function}"))?;
+                links.push((name, link));
+            }
+        }
+        Ok(())
+    })();
+    if let Err(e) = attached {
+        for (name, link) in links {
+            if let Some(Ok(program)) = ebpf.program_mut(name).map(<&mut KProbe>::try_from) {
+                let _ = program.detach(link);
+            }
+        }
+        return Err(e);
+    }
+    Ok(plan.len())
+}
+
+/// Load and attach the binder tracepoint program, and return the map that
+/// tells it which calls to report.
+fn attach_binder(ebpf: &mut aya::Ebpf) -> anyhow::Result<BinderWatch> {
+    let program: &mut RawTracePoint = ebpf
+        .program_mut("binder_ioctl")
+        .context("program binder_ioctl missing from object")?
+        .try_into()?;
+    program.load().context("verifier rejected binder_ioctl")?;
+    program
+        .attach("binder_ioctl")
+        .context("attaching to the binder_ioctl tracepoint")?;
+    Ok(BpfHashMap::try_from(
+        ebpf.take_map("BINDER_WATCH")
+            .context("BINDER_WATCH map missing")?,
+    )?)
+}
+
+type BinderWatch = BpfHashMap<MapData, BinderKey, BinderValue>;
+
+/// Tell the kernel side which calls to report.
+fn watch(map: &mut BinderWatch, catalog: &Catalog) -> anyhow::Result<()> {
+    for (key, value) in catalog.map_entries() {
+        map.insert(key, value, 0)?;
+    }
+    Ok(())
+}
+
+/// Value of a `coverage_*` entry while it is not yet known whether the
+/// feature works on this device: neither 1 (recording) nor 0 (can't).
+const COVERAGE_PENDING: i64 = -1;
+
+/// How soon the program that reads the permission usage records is started
+/// again after it ends, and after how many times without a single reading
+/// the records are reported as unavailable (the attempts go on regardless).
+/// At boot the first attempts fail only because the system is not up yet.
+const APPOPS_RETRY: Duration = Duration::from_secs(30);
+const APPOPS_GIVE_UP: u32 = 10;
+
+/// How often the system's permission usage records are read. The records
+/// carry their own times, so the interval costs precision only when an app
+/// uses the same permission more than once in between.
+const APPOPS_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Read the permission usage records on a thread of its own, for as long as
+/// the daemon runs: one helper process is kept running and prints a reading
+/// per interval, rather than a Java runtime being started for each. Sends
+/// each reading, or `None` once to say that there seems to be none to be
+/// had.
+fn spawn_appops_reader() -> std::sync::mpsc::Receiver<Option<Vec<appops::Entry>>> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut failures = 0;
+        let mut read_once = false;
+        loop {
+            // Returns when the helper has ended, which it is not meant to.
+            let ended = stream_appops(&sender, &mut read_once);
+            if matches!(ended, Err(StreamEnd::DaemonGone)) {
+                return;
+            }
+            failures += 1;
+            // Reported once, when it stops looking like a system that is
+            // still starting.
+            if failures == APPOPS_GIVE_UP && !read_once {
+                if let Err(StreamEnd::Helper(e)) = &ended {
+                    eprintln!("bbd: warning: not recording permission use: {e:#}");
+                }
+                if sender.send(None).is_err() {
+                    return;
+                }
+            }
+            std::thread::sleep(APPOPS_RETRY);
+        }
+    });
+    receiver
+}
+
+/// Why [`stream_appops`] returned.
+enum StreamEnd {
+    /// The helper could not be started or stopped printing.
+    Helper(anyhow::Error),
+    /// Nobody is listening any more.
+    DaemonGone,
+}
+
+/// Run the helper and pass on each reading it prints, until it ends.
+fn stream_appops(
+    sender: &std::sync::mpsc::Sender<Option<Vec<appops::Entry>>>,
+    read_once: &mut bool,
+) -> Result<(), StreamEnd> {
+    use std::io::BufRead as _;
+
+    let interval = APPOPS_INTERVAL.as_secs().to_string();
+    let mut args: Vec<&str> = vec!["--every", &interval];
+    for op in appops::ops() {
+        args.push(op);
+    }
+    // Its stdin is held open for as long as `helper` lives; the helper
+    // leaves when it closes, so it does not outlive the daemon.
+    let mut helper =
+        helper::spawn(appops::HELPER_CLASS, args.into_iter()).map_err(StreamEnd::Helper)?;
+    let output = helper.stdout.take().expect("spawned with a piped stdout");
+    let mut reading = String::new();
+    for line in std::io::BufReader::new(output).lines() {
+        let Ok(line) = line else { break };
+        if line != appops::END_OF_READING {
+            reading.push_str(&line);
+            reading.push('\n');
+            continue;
+        }
+        *read_once = true;
+        if sender.send(Some(appops::parse(&reading))).is_err() {
+            let _ = helper.kill();
+            let _ = helper.wait();
+            return Err(StreamEnd::DaemonGone);
+        }
+        reading.clear();
+    }
+    let status = helper.wait();
+    Err(StreamEnd::Helper(anyhow::anyhow!(
+        "the helper program ended ({status:?})"
+    )))
+}
+
+/// How often, and how many times, the transaction codes are asked for
+/// before giving up. The first attempts fail while the system is starting.
+const CATALOG_RETRY: Duration = Duration::from_secs(30);
+const CATALOG_ATTEMPTS: u32 = 20;
+
+/// Look up the device's transaction codes on a thread of its own: starting
+/// the Java runtime that prints them takes about a second, and must not hold
+/// up recording. The catalog arrives on the returned channel, once; `None`
+/// if it could not be had.
+fn spawn_catalog_loader() -> std::sync::mpsc::Receiver<Option<Catalog>> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut last_error = None;
+        for _ in 0..CATALOG_ATTEMPTS {
+            match binder::load() {
+                Ok(catalog) => {
+                    let _ = sender.send(Some(catalog));
+                    return;
+                }
+                Err(e) => last_error = Some(e),
+            }
+            std::thread::sleep(CATALOG_RETRY);
+        }
+        if let Some(e) = last_error {
+            eprintln!("bbd: warning: not recording service calls: {e:#}");
+        }
+        let _ = sender.send(None);
+    });
+    receiver
+}
+
 /// Per-program run counts and time, as measured by the kernel. This is the
 /// CPU time the tracing itself adds to the processes being traced.
 fn print_profile(ebpf: &aya::Ebpf) {
@@ -282,18 +554,55 @@ struct Opened {
     uid: u32,
     pid: u32,
     path: String,
-    mode: u8,
+    mode: Mode,
     ts: i64,
+}
+
+/// Something an app did, held until its syscall's return value arrives.
+enum Held {
+    File(Opened),
+    /// A program it started; `subject` is what to store (see `commands`).
+    Command {
+        uid: u32,
+        pid: u32,
+        subject: String,
+        ts: i64,
+    },
+    /// Anything else: what to store is already decided, only the outcome is
+    /// missing.
+    Record {
+        uid: u32,
+        cat: Category,
+        subject: String,
+        mode: Mode,
+        ts: i64,
+    },
+}
+
+impl Held {
+    fn ts(&self) -> i64 {
+        match self {
+            Self::File(opened) => opened.ts,
+            Self::Command { ts, .. } | Self::Record { ts, .. } => *ts,
+        }
+    }
 }
 
 struct Tracer {
     packages: Packages,
     mounts: Mounts,
     spool: Spool,
+    listeners: Listeners,
+    /// Ports each app has contacted, to recognise a scan.
+    scans: net::Scans,
+    /// Commands being looked for along `PATH`.
+    searches: commands::Searches,
+    /// The service methods being watched; `None` until they are known.
+    catalog: Option<Catalog>,
     writer: Writer,
     counters: Counters,
     /// Keyed by thread id.
-    awaiting_result: HashMap<u32, Vec<Opened>>,
+    awaiting_result: HashMap<u32, Vec<Held>>,
     verbose: bool,
     explain_discards: bool,
     ingest_provider_events: bool,
@@ -334,7 +643,7 @@ impl Tracer {
                     self.awaiting_result
                         .entry(hdr.tid)
                         .or_default()
-                        .push(opened);
+                        .push(Held::File(opened));
                 } else {
                     self.record(&opened, true);
                 }
@@ -343,8 +652,8 @@ impl Tracer {
                 let Some(ev) = cast::<ResultEvent>(bytes) else {
                     return;
                 };
-                for opened in self.awaiting_result.remove(&hdr.tid).unwrap_or_default() {
-                    self.record(&opened, ev.ret >= 0);
+                for held in self.awaiting_result.remove(&hdr.tid).unwrap_or_default() {
+                    self.release(held, Some(ev.ret));
                 }
             }
             EV_PATH => {
@@ -383,7 +692,170 @@ impl Tracer {
                 };
                 self.record(&opened, ev.ret >= 0);
             }
+            EV_EXEC => {
+                let Some(ev) = cast::<ExecEvent>(bytes) else {
+                    return;
+                };
+                self.counters.seen += 1;
+                if ev.path_len == 0 {
+                    return;
+                }
+                let path = lossy(&ev.path[..(ev.path_len as usize - 1).min(ev.path.len())]);
+                let args: Vec<String> = ev.args[..(ev.argc as usize).min(EXEC_ARGS)]
+                    .iter()
+                    .map(|slot| lossy(slot.split(|&b| b == 0).next().unwrap_or_default()))
+                    .collect();
+                let Some(subject) = commands::subject(&path, &args) else {
+                    self.explain("exec", &path);
+                    return;
+                };
+                let uid = self.owner_uid(hdr.uid, hdr.pid);
+                self.awaiting_result
+                    .entry(hdr.tid)
+                    .or_default()
+                    .push(Held::Command {
+                        uid,
+                        pid: hdr.pid,
+                        subject,
+                        ts,
+                    });
+            }
+            EV_PROCESS => {
+                let Some(ev) = cast::<ProcessEvent>(bytes) else {
+                    return;
+                };
+                self.counters.seen += 1;
+                let Some(subject) = rules::process_subject(ev.how) else {
+                    return;
+                };
+                // An app's own processes (a child it debugs, a helper) are
+                // the app looking at itself. A process that is already gone
+                // can't be attributed and is skipped.
+                if uid_of_pid(ev.target).is_none_or(|owner| owner == hdr.uid) {
+                    self.explain("process", "<own or gone>");
+                    return;
+                }
+                let mode = match ev.how {
+                    PROCESS_READ => MODE_READ,
+                    PROCESS_WRITE => MODE_WRITE,
+                    _ => MODE_WATCH,
+                };
+                let uid = self.owner_uid(hdr.uid, hdr.pid);
+                self.awaiting_result
+                    .entry(hdr.tid)
+                    .or_default()
+                    .push(Held::Record {
+                        uid,
+                        cat: Category::Process,
+                        subject: subject.to_string(),
+                        mode,
+                        ts,
+                    });
+            }
+            EV_BINDER => {
+                let Some(ev) = cast::<BinderEvent>(bytes) else {
+                    return;
+                };
+                self.counters.seen += 1;
+                let uid = self.owner_uid(hdr.uid, hdr.pid);
+                let args = &ev.args[..(ev.args_len as usize).min(ev.args.len())];
+                let subject = self.catalog.as_ref().and_then(|catalog| {
+                    catalog.subject(ev.interface, ev.code, args, uid, self.packages.for_uid(uid))
+                });
+                let Some(subject) = subject else {
+                    self.explain("binder", "<about itself, or not watched>");
+                    return;
+                };
+                // Only the request is seen, not what came back.
+                self.store(uid, Category::Service, subject, MODE_CALL, true, ts, 0);
+            }
+            EV_NETLINK => {
+                let Some(ev) = cast::<NetlinkEvent>(bytes) else {
+                    return;
+                };
+                self.counters.seen += 1;
+                let Some(subject) = net::netlink_subject(ev.protocol, ev.msg_type) else {
+                    return;
+                };
+                let uid = self.owner_uid(hdr.uid, hdr.pid);
+                self.awaiting_result
+                    .entry(hdr.tid)
+                    .or_default()
+                    .push(Held::Record {
+                        uid,
+                        cat: Category::Network,
+                        subject: subject.to_string(),
+                        mode: MODE_READ,
+                        ts,
+                    });
+            }
+            EV_CONNECT => {
+                let Some(ev) = cast::<ConnectEvent>(bytes) else {
+                    return;
+                };
+                self.counters.seen += 1;
+                let Some(destination) = Destination::new(ev.family, ev.port, &ev.addr) else {
+                    return;
+                };
+                // A port of the app's own is the app talking to itself. The
+                // socket tables are compared by the uid the kernel sees.
+                if destination.is_loopback() && self.listeners.owned_by(destination.port(), hdr.uid)
+                {
+                    self.explain("connect", "<own port>");
+                    return;
+                }
+                let uid = self.owner_uid(hdr.uid, hdr.pid);
+                // The outcome is not known (see the kernel side); what is
+                // recorded is that the app tried.
+                let subject = self.scans.subject(uid, &destination, ts);
+                self.store(uid, Category::Network, subject, MODE_CONNECT, true, ts, 0);
+            }
             _ => {}
+        }
+    }
+
+    /// Store what the system recorded about permissions being used.
+    fn record_permission_uses(&mut self, uses: Vec<appops::Use>) {
+        for used in uses {
+            self.counters.seen += 1;
+            if used.uid % PER_USER_RANGE < FIRST_APPLICATION_UID {
+                continue;
+            }
+            self.store(
+                used.uid,
+                Category::Permission,
+                used.subject,
+                MODE_READ,
+                used.allowed,
+                used.ts,
+                0,
+            );
+        }
+    }
+
+    /// Record something whose syscall has returned (`ret`), or whose result
+    /// is no longer expected (`None`), which is taken for success.
+    fn release(&mut self, held: Held, ret: Option<i32>) {
+        let ok = ret.is_none_or(|ret| ret >= 0);
+        match held {
+            Held::File(opened) => self.record(&opened, ok),
+            Held::Command {
+                uid,
+                pid,
+                subject,
+                ts,
+            } => {
+                if let Some(ok) = self.searches.outcome(pid, uid, &subject, ts, ret) {
+                    self.store(uid, Category::Command, subject, MODE_EXEC, ok, ts, 0);
+                }
+            }
+            Held::Record {
+                uid,
+                cat,
+                subject,
+                mode,
+                ts,
+            } => self.store(uid, cat, subject, mode, ok, ts, 0),
         }
     }
 
@@ -463,10 +935,34 @@ impl Tracer {
         if !self.ingest_provider_events {
             return;
         }
-        for ev in self.spool.collect() {
+        let hosts = spool::hosts(|listed| self.packages.sharing_uid_with(listed));
+        for ev in self.spool.collect(&hosts) {
             self.counters.seen += 1;
             // Calls between system components are not app behaviour.
             if ev.uid % PER_USER_RANGE < FIRST_APPLICATION_UID {
+                continue;
+            }
+            if let Some(collection) = personal::collection(&ev.uri) {
+                let mode = match ev.op {
+                    spool::Op::Query => MODE_QUERY,
+                    spool::Op::Open if ev.write => MODE_WRITE | MODE_VIA_PROVIDER,
+                    spool::Op::Open => MODE_READ | MODE_VIA_PROVIDER,
+                };
+                self.store(
+                    ev.uid,
+                    Category::Personal,
+                    collection,
+                    mode,
+                    true,
+                    ev.ts,
+                    ev.items,
+                );
+                continue;
+            }
+            // The processes that hold personal data serve other things too
+            // (dictionaries, blocked numbers, carrier settings); only the
+            // storage providers are recorded in full.
+            if !ev.storage_provider {
                 continue;
             }
             let (cat, path, mode) = match ev.op {
@@ -504,7 +1000,7 @@ impl Tracer {
         uid: u32,
         cat: Category,
         path: String,
-        mode: u8,
+        mode: Mode,
         ok: bool,
         ts: i64,
         items: u32,
@@ -533,20 +1029,31 @@ impl Tracer {
         self.writer.record(uid, pkg, cat, path, mode, ok, ts, items);
     }
 
-    /// Record opens whose result never arrived (seen before `cutoff`).
+    /// Record what was held for a result that never arrived (seen before
+    /// `cutoff`), as successful. For a program started from a thread other
+    /// than the main one this is the normal case: the exec moves the thread
+    /// to the main thread's id, so its return is not matched to the call.
     fn expire(&mut self, cutoff: i64) {
         let stale: Vec<u32> = self
             .awaiting_result
             .iter()
-            .filter(|(_, held)| held.iter().all(|o| o.ts <= cutoff))
+            .filter(|(_, held)| held.iter().all(|h| h.ts() <= cutoff))
             .map(|(tid, _)| *tid)
             .collect();
         for tid in stale {
-            for opened in self.awaiting_result.remove(&tid).unwrap_or_default() {
-                self.record(&opened, true);
+            for held in self.awaiting_result.remove(&tid).unwrap_or_default() {
+                self.release(held, None);
             }
         }
+        // Commands looked for and, the search being over, not found.
+        for (uid, subject, ts) in self.searches.finished(cutoff) {
+            self.store(uid, Category::Command, subject, MODE_EXEC, false, ts, 0);
+        }
     }
+}
+
+fn lossy(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
 }
 
 fn is_number(s: &str) -> bool {
@@ -595,7 +1102,7 @@ fn parse_status_uid(status: &str) -> Option<u32> {
 
 /// Access mode bits from open flags and, where known, the inode's mode
 /// (0 if not): a directory can be opened without O_DIRECTORY.
-fn access_mode(flags: u32, inode_mode: u32) -> u8 {
+fn access_mode(flags: u32, inode_mode: u32) -> Mode {
     let flags = flags as i32;
     let mut mode = match flags & libc::O_ACCMODE {
         libc::O_RDONLY => MODE_READ,
@@ -609,7 +1116,16 @@ fn access_mode(flags: u32, inode_mode: u32) -> u8 {
     mode
 }
 
-pub fn mode_label(mode: u8) -> &'static str {
+pub fn mode_label(mode: Mode) -> &'static str {
+    if mode & MODE_EXEC != 0 {
+        return "exec";
+    }
+    if mode & MODE_CONNECT != 0 {
+        return "connect";
+    }
+    if mode & MODE_CALL != 0 {
+        return "call";
+    }
     if mode & MODE_QUERY != 0 {
         return "query";
     }
@@ -664,6 +1180,8 @@ mod tests {
         assert_eq!(mode_label(MODE_PROBE), "probe");
         assert_eq!(mode_label(MODE_WATCH), "watch");
         assert_eq!(mode_label(MODE_QUERY), "query");
+        assert_eq!(mode_label(MODE_CONNECT), "connect");
+        assert_eq!(mode_label(MODE_EXEC), "exec");
         assert_eq!(
             mode_label(MODE_READ | MODE_VIA_PROVIDER),
             "read-via-provider"

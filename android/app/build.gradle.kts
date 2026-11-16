@@ -35,7 +35,10 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
             // Without a release key the build is signed with the debug key,
             // which is enough to install it but differs between machines.
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")

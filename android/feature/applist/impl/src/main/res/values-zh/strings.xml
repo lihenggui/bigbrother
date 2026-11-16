@@ -1,6 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="status_stopped">未在记录：守护进程没有运行</string>
+    <string name="status_unavailable">本设备上无法记录：%s</string>
+    <string name="feature_exec">系统命令</string>
+    <string name="feature_network">本机和局域网连接</string>
+    <string name="feature_process">访问其他应用的内存</string>
+    <string name="feature_netlink">网络配置查询</string>
+    <string name="feature_binder">对系统服务的请求</string>
+    <string name="feature_appops">权限使用情况</string>
     <string name="range_hour">最近 1 小时</string>
     <string name="range_day">最近 24 小时</string>
     <string name="range_week">最近 7 天</string>

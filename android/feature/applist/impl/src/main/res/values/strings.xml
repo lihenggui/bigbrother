@@ -4,6 +4,14 @@
     <string name="app_list_title" translatable="false">Big Brother</string>
     <!-- Daemon status, shown under the title. -->
     <string name="status_stopped">Not recording: the daemon is not running</string>
+    <!-- %s: a list of the feature_* names below. -->
+    <string name="status_unavailable">Not recorded on this device: %s</string>
+    <string name="feature_exec">commands</string>
+    <string name="feature_network">local network connections</string>
+    <string name="feature_process">access to other apps\' memory</string>
+    <string name="feature_netlink">network configuration queries</string>
+    <string name="feature_binder">requests to system services</string>
+    <string name="feature_appops">permission use</string>
     <!-- Time ranges. Lower case because they end the sentence under the title;
          the menu capitalizes them. -->
     <string name="range_hour">last hour</string>

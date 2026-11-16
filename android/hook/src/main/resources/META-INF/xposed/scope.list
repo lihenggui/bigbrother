@@ -2,3 +2,7 @@ com.android.providers.media.module
 com.google.android.providers.media.module
 com.android.externalstorage
 com.android.providers.downloads
+com.android.providers.contacts
+com.samsung.android.providers.contacts
+com.android.providers.telephony
+com.android.providers.calendar

@@ -10,6 +10,9 @@
     <string name="action_read_provider">Read via the system</string>
     <string name="action_write_provider">Changed via the system</string>
     <string name="action_query">Listed entries</string>
+    <string name="action_connect">Contacted</string>
+    <string name="action_exec">Ran</string>
+    <string name="action_call">Requested</string>
     <string name="search_paths">Search paths</string>
     <!-- A media library query: how many times the app listed a collection
          (the quantity) and the most entries one listing returned. -->
@@ -45,6 +48,23 @@
         <item quantity="one">Read %d time</item>
         <item quantity="other">Read %d times</item>
     </plurals>
+    <!-- A request to a system service: what it answered is not known. -->
+    <plurals name="total_requested">
+        <item quantity="one">Requested %d time</item>
+        <item quantity="other">Requested %d times</item>
+    </plurals>
+    <plurals name="total_contacted">
+        <item quantity="one">Contacted %d time</item>
+        <item quantity="other">Contacted %d times</item>
+    </plurals>
+    <plurals name="total_ran">
+        <item quantity="one">Ran %d time</item>
+        <item quantity="other">Ran %d times</item>
+    </plurals>
+    <plurals name="total_not_run">
+        <item quantity="one">Tried %d time, could not run it</item>
+        <item quantity="other">Tried %d times, could not run it</item>
+    </plurals>
     <plurals name="total_blocked">
         <item quantity="one">Tried %d time, blocked by the system</item>
         <item quantity="other">Tried %d times, blocked by the system</item>
@@ -62,7 +82,8 @@
     <string name="group_media">Media library</string>
 
     <string name="tab_files">Files</string>
-    <string name="tab_device">Device info</string>
+    <string name="tab_activity">Other activity</string>
+    <string name="tab_permissions">Permissions</string>
     <!-- How many times a file was read. -->
     <string name="read_count">%d×</string>
 
