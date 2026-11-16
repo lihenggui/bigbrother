@@ -1,0 +1,55 @@
+name: Set up the build environment
+description: >
+  Installs what scripts/build.sh needs and the runner image does not already
+  provide: the Rust toolchains, bpf-linker, a JDK and Gradle. The Android SDK
+  and NDK come with the image.
+
+runs:
+  using: composite
+  steps:
+    # No rust-toolchain file pins these: stable builds the daemon, and nightly
+    # builds the eBPF programs (aya-build asks for it by name).
+    - name: Install the Rust toolchains
+      shell: bash
+      run: |
+        rustup toolchain install stable --profile minimal \
+          --component rustfmt,clippy --target aarch64-linux-android
+        rustup default stable
+        rustup toolchain install nightly --profile minimal --component rust-src
+
+    # The release binary links LLVM statically, so it does not depend on the
+    # LLVM version of the image.
+    - name: Install bpf-linker
+      shell: bash
+      env:
+        BPF_LINKER_VERSION: v0.13.0
+        BPF_LINKER_SHA256: 0e9b2b30f68898177f1cb6f0ecbfa909a82479473a49a0ef66529fd088e3e410
+      run: |
+        archive="$RUNNER_TEMP/bpf-linker.tar.zst"
+        curl --fail --silent --show-error --location --output "$archive" \
+          "https://github.com/aya-rs/bpf-linker/releases/download/$BPF_LINKER_VERSION/bpf-linker-x86_64-unknown-linux-musl.tar.zst"
+        echo "$BPF_LINKER_SHA256  $archive" | sha256sum --check --quiet
+        mkdir "$RUNNER_TEMP/bpf-linker"
+        tar --zstd --extract --file "$archive" --directory "$RUNNER_TEMP/bpf-linker"
+        binary="$(find "$RUNNER_TEMP/bpf-linker" -type f -name bpf-linker | head -n 1)"
+        [ -n "$binary" ] || { echo "::error::no bpf-linker binary in the archive"; exit 1; }
+        install -m 755 "$binary" "$HOME/.cargo/bin/bpf-linker"
+        bpf-linker --version
+
+    - name: Cache Rust build output
+      uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+    - name: Set up the JDK
+      uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+      with:
+        distribution: temurin
+        java-version: 21
+
+    - name: Set up Gradle
+      uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
+    # scripts/build.sh uses $ANDROID_NDK_HOME as it is; the image points it at
+    # an older NDK than the newest one it carries.
+    - name: Select the newest NDK
+      shell: bash
+      run: echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >>"$GITHUB_ENV"
