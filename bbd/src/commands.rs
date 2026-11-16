@@ -10,6 +10,7 @@
 //! without its directory: an app looking for `su` tries a dozen directories,
 //! and that is one finding, not twelve.
 
+use crate::store::Mode;
 use std::collections::HashMap;
 
 use crate::rules::topic;
@@ -143,12 +144,14 @@ pub fn topic_of(subject: &str) -> Option<&'static str> {
 /// not be run, once.
 #[derive(Default)]
 pub struct Searches {
-    /// (pid, command) -> (uid to record under, time of the first failure).
-    not_found: HashMap<(u32, String), (u32, i64)>,
+    /// (pid, command) -> (uid to record under, origin bits, time of the
+    /// first failure).
+    not_found: HashMap<(u32, String), (u32, Mode, i64)>,
 }
 
-/// A command that was looked for and could not be run: (uid, command, time).
-pub type NotFound = (u32, String, i64);
+/// A command that was looked for and could not be run: (uid, origin bits
+/// such as [`crate::store::MODE_ISOLATED`], command, time).
+pub type NotFound = (u32, Mode, String, i64);
 
 impl Searches {
     /// Take in the result of one exec: the syscall's return value, or `None`
@@ -159,6 +162,7 @@ impl Searches {
         &mut self,
         pid: u32,
         uid: u32,
+        origin: Mode,
         command: &str,
         ts: i64,
         ret: Option<i32>,
@@ -166,7 +170,7 @@ impl Searches {
         let key = (pid, command.to_string());
         match ret {
             Some(ret) if ret < 0 => {
-                self.not_found.entry(key).or_insert((uid, ts));
+                self.not_found.entry(key).or_insert((uid, origin, ts));
                 None
             }
             _ => {
@@ -179,11 +183,11 @@ impl Searches {
     /// The searches that started at or before `cutoff` and ran nothing.
     pub fn finished(&mut self, cutoff: i64) -> Vec<NotFound> {
         let mut done = Vec::new();
-        self.not_found.retain(|(_, command), (uid, ts)| {
+        self.not_found.retain(|(_, command), (uid, origin, ts)| {
             if *ts > cutoff {
                 return true;
             }
-            done.push((*uid, command.clone(), *ts));
+            done.push((*uid, *origin, command.clone(), *ts));
             false
         });
         done
@@ -200,40 +204,43 @@ mod tests {
         let missing = Some(-libc::ENOENT);
         // getprop: not in the first two directories, then started.
         assert_eq!(
-            searches.outcome(7, 10100, "exec:getprop", 100, missing),
+            searches.outcome(7, 10100, 0, "exec:getprop", 100, missing),
             None
         );
         assert_eq!(
-            searches.outcome(7, 10100, "exec:getprop", 100, missing),
+            searches.outcome(7, 10100, 0, "exec:getprop", 100, missing),
             None
         );
         assert_eq!(
-            searches.outcome(7, 10100, "exec:getprop", 100, Some(0)),
+            searches.outcome(7, 10100, 0, "exec:getprop", 100, Some(0)),
             Some(true)
         );
         assert!(searches.finished(i64::MAX).is_empty());
 
         // su: nowhere. One finding, once the search is over.
         for _ in 0..10 {
-            assert_eq!(searches.outcome(8, 10100, "exec:su", 200, missing), None);
+            assert_eq!(searches.outcome(8, 10100, 0, "exec:su", 200, missing), None);
         }
         assert!(searches.finished(199).is_empty());
         assert_eq!(
             searches.finished(200),
-            [(10100, "exec:su".to_string(), 200)]
+            [(10100, 0, "exec:su".to_string(), 200)]
         );
         assert!(searches.finished(i64::MAX).is_empty());
 
         // A directory that may not be searched, or a program that may not
         // be run, is part of the same search.
-        assert_eq!(searches.outcome(9, 10100, "exec:su", 300, missing), None);
+        assert_eq!(searches.outcome(9, 10100, 0, "exec:su", 300, missing), None);
         assert_eq!(
-            searches.outcome(9, 10100, "exec:su", 300, Some(-libc::EACCES)),
+            searches.outcome(9, 10100, 0, "exec:su", 300, Some(-libc::EACCES)),
             None
         );
         assert_eq!(searches.finished(i64::MAX).len(), 1);
         // No result at all is taken for a success.
-        assert_eq!(searches.outcome(9, 10100, "exec:sh", 300, None), Some(true));
+        assert_eq!(
+            searches.outcome(9, 10100, 0, "exec:sh", 300, None),
+            Some(true)
+        );
     }
 
     fn s(path: &str, args: &[&str]) -> Option<String> {

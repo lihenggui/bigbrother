@@ -41,9 +41,9 @@
     <string name="sort_sensitivity">Sensitivity</string>
     <string name="sort_recent">Last access</string>
     <string name="sort_name">Name</string>
-    <string name="show_system_apps_summary">Hidden by default: reading data is part of how system components work.</string>
+    <string name="show_system_apps_summary">Hidden by default, along with isolated processes not traced to an app: reading data is part of how system components work.</string>
     <string name="show_system_apps">Show system apps</string>
-    <string name="only_system_apps">Records exist for system apps only</string>
+    <string name="only_system_apps">Records exist only for apps hidden by default</string>
     <!-- An app's name followed by the Android user it runs as, for cloned apps
          and work profiles: "WeChat (user 999)". -->
     <string name="app_name_with_user">%1$s (user %2$d)</string>

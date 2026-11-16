@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <string name="isolated_process">隔离进程</string>
+    <string name="isolated_process_uid">隔离进程（UID %d）</string>
     <string name="back">返回</string>
     <string name="retry">重试</string>
     <string name="search">搜索</string>

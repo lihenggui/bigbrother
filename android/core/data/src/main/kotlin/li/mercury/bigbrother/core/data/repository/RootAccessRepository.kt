@@ -80,6 +80,7 @@ internal class RootAccessRepository @Inject constructor(
                 denied = row.getInt("fail"),
                 lastSeen = row.getLong("last_ts"),
                 topic = row.optString("topic").ifEmpty { null },
+                fromIsolated = Action.isFromIsolated(mode),
             )
         }
     }

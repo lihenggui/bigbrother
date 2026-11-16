@@ -5,7 +5,7 @@ use std::{
     fs,
     path::Path,
     ptr,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::Context as _;
@@ -37,8 +37,8 @@ use crate::{
     paths, personal, rules,
     spool::{self, Spool},
     store::{
-        Category, Counters, MODE_CALL, MODE_CONNECT, MODE_DIR, MODE_EXEC, MODE_PROBE, MODE_QUERY,
-        MODE_READ, MODE_VIA_PROVIDER, MODE_WATCH, MODE_WRITE, Mode, Writer,
+        Category, Counters, MODE_CALL, MODE_CONNECT, MODE_DIR, MODE_EXEC, MODE_ISOLATED,
+        MODE_PROBE, MODE_QUERY, MODE_READ, MODE_VIA_PROVIDER, MODE_WATCH, MODE_WRITE, Mode, Writer,
     },
     syscalls,
 };
@@ -49,6 +49,12 @@ const S_IFMT: u32 = 0o170000;
 const S_IFDIR: u32 = 0o040000;
 /// Uids from this app id up belong to installed apps (and isolated processes).
 const FIRST_APPLICATION_UID: u32 = 10_000;
+
+/// How long the owner found for an isolated process is remembered after it
+/// was last seen, for events handled after it has exited. Short, because an
+/// isolated uid is handed to another process, possibly another app's, once
+/// it is free.
+const ISOLATED_OWNER_TTL: Duration = Duration::from_secs(60);
 const FLUSH_INTERVAL: Duration = Duration::from_secs(5);
 const PRUNE_INTERVAL: Duration = Duration::from_secs(6 * 3600);
 /// The kernel side only wakes us when the ring buffer is filling up; this
@@ -202,6 +208,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         writer,
         counters: Counters::default(),
         awaiting_result: HashMap::new(),
+        isolated_owners: HashMap::new(),
         verbose: opts.verbose,
         explain_discards: opts.explain_discards,
         ingest_provider_events: opts.ingest_provider_events,
@@ -222,6 +229,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
             _ = flush_tick.tick() => {
                 tracer.counters.dropped = dropped_events();
                 tracer.expire(now() - RESULT_TIMEOUT_SECS);
+                tracer.prune_isolated_owners();
                 tracer.ingest_provider_events();
                 while let Ok(reading) = permission_uses.try_recv() {
                     // A reading at all shows the records can be read here.
@@ -566,6 +574,8 @@ enum Held {
         uid: u32,
         pid: u32,
         subject: String,
+        /// [`MODE_ISOLATED`] if an isolated process started it.
+        origin: Mode,
         ts: i64,
     },
     /// Anything else: what to store is already decided, only the outcome is
@@ -603,6 +613,8 @@ struct Tracer {
     counters: Counters,
     /// Keyed by thread id.
     awaiting_result: HashMap<u32, Vec<Held>>,
+    /// (pid, isolated uid) -> the app it was attributed to, and when last seen.
+    isolated_owners: HashMap<(u32, u32), (u32, Instant)>,
     verbose: bool,
     explain_discards: bool,
     ingest_provider_events: bool,
@@ -709,7 +721,7 @@ impl Tracer {
                     self.explain("exec", &path);
                     return;
                 };
-                let uid = self.owner_uid(hdr.uid, hdr.pid);
+                let (uid, origin) = self.owner_uid(hdr.uid, hdr.pid);
                 self.awaiting_result
                     .entry(hdr.tid)
                     .or_default()
@@ -717,6 +729,7 @@ impl Tracer {
                         uid,
                         pid: hdr.pid,
                         subject,
+                        origin,
                         ts,
                     });
             }
@@ -740,7 +753,7 @@ impl Tracer {
                     PROCESS_WRITE => MODE_WRITE,
                     _ => MODE_WATCH,
                 };
-                let uid = self.owner_uid(hdr.uid, hdr.pid);
+                let (uid, origin) = self.owner_uid(hdr.uid, hdr.pid);
                 self.awaiting_result
                     .entry(hdr.tid)
                     .or_default()
@@ -748,7 +761,7 @@ impl Tracer {
                         uid,
                         cat: Category::Process,
                         subject: subject.to_string(),
-                        mode,
+                        mode: mode | origin,
                         ts,
                     });
             }
@@ -757,17 +770,31 @@ impl Tracer {
                     return;
                 };
                 self.counters.seen += 1;
-                let uid = self.owner_uid(hdr.uid, hdr.pid);
+                let (uid, origin) = self.owner_uid(hdr.uid, hdr.pid);
                 let args = &ev.args[..(ev.args_len as usize).min(ev.args.len())];
                 let subject = self.catalog.as_ref().and_then(|catalog| {
-                    catalog.subject(ev.interface, ev.code, args, uid, self.packages.for_uid(uid))
+                    catalog.subject(
+                        ev.interface,
+                        ev.code,
+                        args,
+                        &[hdr.uid, uid],
+                        self.packages.for_uid(uid),
+                    )
                 });
                 let Some(subject) = subject else {
                     self.explain("binder", "<about itself, or not watched>");
                     return;
                 };
                 // Only the request is seen, not what came back.
-                self.store(uid, Category::Service, subject, MODE_CALL, true, ts, 0);
+                self.store(
+                    uid,
+                    Category::Service,
+                    subject,
+                    MODE_CALL | origin,
+                    true,
+                    ts,
+                    0,
+                );
             }
             EV_NETLINK => {
                 let Some(ev) = cast::<NetlinkEvent>(bytes) else {
@@ -777,7 +804,7 @@ impl Tracer {
                 let Some(subject) = net::netlink_subject(ev.protocol, ev.msg_type) else {
                     return;
                 };
-                let uid = self.owner_uid(hdr.uid, hdr.pid);
+                let (uid, origin) = self.owner_uid(hdr.uid, hdr.pid);
                 self.awaiting_result
                     .entry(hdr.tid)
                     .or_default()
@@ -785,7 +812,7 @@ impl Tracer {
                         uid,
                         cat: Category::Network,
                         subject: subject.to_string(),
-                        mode: MODE_READ,
+                        mode: MODE_READ | origin,
                         ts,
                     });
             }
@@ -804,11 +831,19 @@ impl Tracer {
                     self.explain("connect", "<own port>");
                     return;
                 }
-                let uid = self.owner_uid(hdr.uid, hdr.pid);
+                let (uid, origin) = self.owner_uid(hdr.uid, hdr.pid);
                 // The outcome is not known (see the kernel side); what is
                 // recorded is that the app tried.
                 let subject = self.scans.subject(uid, &destination, ts);
-                self.store(uid, Category::Network, subject, MODE_CONNECT, true, ts, 0);
+                self.store(
+                    uid,
+                    Category::Network,
+                    subject,
+                    MODE_CONNECT | origin,
+                    true,
+                    ts,
+                    0,
+                );
             }
             _ => {}
         }
@@ -843,10 +878,19 @@ impl Tracer {
                 uid,
                 pid,
                 subject,
+                origin,
                 ts,
             } => {
-                if let Some(ok) = self.searches.outcome(pid, uid, &subject, ts, ret) {
-                    self.store(uid, Category::Command, subject, MODE_EXEC, ok, ts, 0);
+                if let Some(ok) = self.searches.outcome(pid, uid, origin, &subject, ts, ret) {
+                    self.store(
+                        uid,
+                        Category::Command,
+                        subject,
+                        MODE_EXEC | origin,
+                        ok,
+                        ts,
+                        0,
+                    );
                 }
             }
             Held::Record {
@@ -893,7 +937,7 @@ impl Tracer {
         } else {
             "open"
         };
-        let uid = self.owner_uid(opened.uid, opened.pid);
+        let (uid, origin) = self.owner_uid(opened.uid, opened.pid);
         let pkgs = self.packages.for_uid(uid);
         let (cat, path) = match paths::canonicalize(&opened.path, uid / PER_USER_RANGE) {
             Some(path) if paths::is_own_dir(&path, pkgs) => {
@@ -901,7 +945,10 @@ impl Tracer {
                 return;
             }
             Some(path) => (Category::Storage, path),
-            None => match rules::classify(&opened.path, uid, uid_of_pid) {
+            // A process reading its own /proc entries is the one that
+            // opened them, so the comparison is with its own uid, which for
+            // an isolated process is not its app's.
+            None => match rules::classify(&opened.path, opened.uid, uid_of_pid) {
                 Some(hit) => hit,
                 None => {
                     self.explain(source, &opened.path);
@@ -909,25 +956,44 @@ impl Tracer {
                 }
             },
         };
-        self.store(uid, cat, path, opened.mode, ok, opened.ts, 0);
+        self.store(uid, cat, path, opened.mode | origin, ok, opened.ts, 0);
     }
 
-    /// The app a process should be attributed to. Isolated processes run
-    /// under a uid of their own; they are attributed to the app that owns
-    /// them, found through the process name. Best effort: if the process is
-    /// gone, the record stays under the isolated uid.
-    fn owner_uid(&self, uid: u32, pid: u32) -> u32 {
+    /// The app a process should be attributed to, and [`MODE_ISOLATED`] if
+    /// it was traced from one of the app's isolated processes (0 otherwise).
+    /// Isolated processes run under a uid of their own. Best effort: when
+    /// the process is gone and its uid was not seen recently, the record
+    /// stays under the isolated uid, without the flag.
+    fn owner_uid(&mut self, uid: u32, pid: u32) -> (u32, Mode) {
         if uid % PER_USER_RANGE < FIRST_ISOLATED_APP_ID {
-            return uid;
+            return (uid, 0);
         }
-        fs::read(format!("/proc/{pid}/cmdline"))
-            .ok()
-            .and_then(|cmdline| {
-                let name = cmdline.split(|&b| b == 0).next()?;
-                self.packages
-                    .owner_of_isolated(uid, std::str::from_utf8(name).ok()?)
-            })
-            .unwrap_or(uid)
+        let now = Instant::now();
+        // A process keeps its owner for life, so one already traced is not
+        // looked up again: a renderer sends many events.
+        if let Some((owner, seen)) = self.isolated_owners.get_mut(&(pid, uid)) {
+            *seen = now;
+            return (*owner, MODE_ISOLATED);
+        }
+        if let Some(owner) = isolated_owner(&self.packages, uid, pid) {
+            self.isolated_owners.insert((pid, uid), (owner, now));
+            return (owner, MODE_ISOLATED);
+        }
+        // The process has exited: fall back on the owner found for another
+        // process of the same uid a moment ago.
+        self.isolated_owners
+            .iter()
+            .filter(|((_, isolated), _)| *isolated == uid)
+            .max_by_key(|(_, (_, seen))| *seen)
+            .map_or((uid, 0), |(_, (owner, _))| (*owner, MODE_ISOLATED))
+    }
+
+    /// Forget isolated processes not seen for a while: their pids and uids
+    /// are handed out again.
+    fn prune_isolated_owners(&mut self) {
+        let now = Instant::now();
+        self.isolated_owners
+            .retain(|_, (_, seen)| now.duration_since(*seen) < ISOLATED_OWNER_TTL);
     }
 
     /// Take in what the LSPosed hook recorded in the provider processes.
@@ -1046,8 +1112,16 @@ impl Tracer {
             }
         }
         // Commands looked for and, the search being over, not found.
-        for (uid, subject, ts) in self.searches.finished(cutoff) {
-            self.store(uid, Category::Command, subject, MODE_EXEC, false, ts, 0);
+        for (uid, origin, subject, ts) in self.searches.finished(cutoff) {
+            self.store(
+                uid,
+                Category::Command,
+                subject,
+                MODE_EXEC | origin,
+                false,
+                ts,
+                0,
+            );
         }
     }
 }
@@ -1082,6 +1156,28 @@ fn resolve_relative(pid: u32, dfd: i32, relative: &str) -> Option<String> {
     base.starts_with('/').then(|| format!("{base}/{relative}"))
 }
 
+/// The owner of a live isolated process. One forked from an app zygote has
+/// that zygote, which runs as the app itself, for a parent: the answer from
+/// the first moment. Otherwise the process's name says which app it belongs
+/// to. A pid may already belong to another process, so it must still run as
+/// `uid`.
+fn isolated_owner(packages: &Packages, uid: u32, pid: u32) -> Option<u32> {
+    let status = fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+    if parse_status_uid(&status) != Some(uid) {
+        return None;
+    }
+    let parent = parse_status_field(&status, "PPid:").and_then(uid_of_pid);
+    if let Some(parent) = parent
+        && parent / PER_USER_RANGE == uid / PER_USER_RANGE
+        && (FIRST_APPLICATION_UID..FIRST_ISOLATED_APP_ID).contains(&(parent % PER_USER_RANGE))
+    {
+        return Some(parent);
+    }
+    let cmdline = fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    let name = cmdline.split(|&b| b == 0).next()?;
+    packages.owner_of_isolated(uid, std::str::from_utf8(name).ok()?)
+}
+
 /// The real uid that owns `pid`, or None if the process is gone. Read from
 /// `status` rather than from the directory's owner: /proc/<pid> is owned by
 /// root for non-dumpable processes, which most Android apps are.
@@ -1091,9 +1187,14 @@ fn uid_of_pid(pid: u32) -> Option<u32> {
 }
 
 fn parse_status_uid(status: &str) -> Option<u32> {
+    parse_status_field(status, "Uid:")
+}
+
+/// The first number of a `/proc/<pid>/status` line such as `PPid:\t123`.
+fn parse_status_field(status: &str, field: &str) -> Option<u32> {
     status
         .lines()
-        .find_map(|line| line.strip_prefix("Uid:"))?
+        .find_map(|line| line.strip_prefix(field))?
         .split_ascii_whitespace()
         .next()?
         .parse()
@@ -1206,8 +1307,10 @@ mod tests {
 
     #[test]
     fn status_uid_is_the_real_uid() {
-        let status = "Name:\tcom.x\nPid:\t500\nUid:\t10100\t10101\t10102\t10103\nGid:\t10100\n";
+        let status =
+            "Name:\tcom.x\nPid:\t500\nPPid:\t7870\nUid:\t10100\t10101\t10102\t10103\nGid:\t10100\n";
         assert_eq!(parse_status_uid(status), Some(10100));
         assert_eq!(parse_status_uid("Name:\tx\n"), None);
+        assert_eq!(parse_status_field(status, "PPid:"), Some(7870));
     }
 }

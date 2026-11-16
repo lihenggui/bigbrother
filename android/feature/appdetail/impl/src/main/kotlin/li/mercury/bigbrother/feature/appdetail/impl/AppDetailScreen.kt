@@ -202,12 +202,14 @@ internal fun AppDetailScreen(
                     // The records cover the range chosen on the list; it is
                     // stated here so the numbers below read correctly.
                     subtitle = {
+                        // An isolated process's name already gives its uid.
+                        val range = stringResource(state.range.label)
                         Text(
-                            text = stringResource(
-                                R.string.header_subtitle,
-                                app.packageName.ifEmpty { stringResource(R.string.uid_label, app.uid) },
-                                stringResource(state.range.label),
-                            ),
+                            text = if (app.packageName.isEmpty()) {
+                                range
+                            } else {
+                                stringResource(R.string.header_subtitle, app.packageName, range)
+                            },
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )

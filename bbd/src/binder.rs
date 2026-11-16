@@ -363,15 +363,16 @@ impl Catalog {
     }
 
     /// What to store for a call reported by the kernel side. `args` is the
-    /// start of the call's arguments; `uid` and `own_packages` are the
-    /// caller's. `None` for a call that isn't watched or that is about the
+    /// start of the call's arguments; `own_uids` and `own_packages` are the
+    /// caller's: its process's uid and, for an isolated process, also its
+    /// app's. `None` for a call that isn't watched or that is about the
     /// caller.
     pub fn subject(
         &self,
         interface: u32,
         code: u32,
         args: &[u8],
-        uid: u32,
+        own_uids: &[u32],
         own_packages: &[String],
     ) -> Option<String> {
         let method = self.methods.get(&(interface, code))?;
@@ -382,7 +383,7 @@ impl Catalog {
         let mut subject = format!("{SCHEME}{name}/{method}");
         if ABOUT_A_UID.contains(method)
             && let Some(asked) = args.first_chunk::<4>()
-            && u32::from_le_bytes(*asked) == uid
+            && own_uids.contains(&u32::from_le_bytes(*asked))
         {
             return None;
         }
@@ -489,17 +490,17 @@ mod tests {
         assert_eq!((catalog.reflected, catalog.len()), (4, 4 + FIXED.len()));
         let own = ["com.me".to_string()];
         assert_eq!(
-            catalog.subject(0, 70, &[], 10100, &own).as_deref(),
+            catalog.subject(0, 70, &[], &[10100], &own).as_deref(),
             Some("binder:android.content.pm.IPackageManager/getInstalledPackages")
         );
         assert_eq!(
-            catalog.subject(1, 4, &[], 10100, &own).as_deref(),
+            catalog.subject(1, 4, &[], &[10100], &own).as_deref(),
             Some("binder:android.content.IClipboard/getPrimaryClip")
         );
         // Not watched, unknown code, unknown interface.
-        assert_eq!(catalog.subject(0, 9, &[], 10100, &own), None);
-        assert_eq!(catalog.subject(0, 71, &[], 10100, &own), None);
-        assert_eq!(catalog.subject(99, 1, &[], 10100, &own), None);
+        assert_eq!(catalog.subject(0, 9, &[], &[10100], &own), None);
+        assert_eq!(catalog.subject(0, 71, &[], &[10100], &own), None);
+        assert_eq!(catalog.subject(99, 1, &[], &[10100], &own), None);
     }
 
     #[test]
@@ -508,21 +509,21 @@ mod tests {
         let own = ["com.me".to_string()];
         assert_eq!(
             catalog
-                .subject(0, 3, &string16("com.tencent.mm"), 10100, &own)
+                .subject(0, 3, &string16("com.tencent.mm"), &[10100], &own)
                 .as_deref(),
             Some("binder:android.content.pm.IPackageManager/getPackageInfo#com.tencent.mm")
         );
         assert_eq!(
-            catalog.subject(0, 3, &string16("com.me"), 10100, &own),
+            catalog.subject(0, 3, &string16("com.me"), &[10100], &own),
             None
         );
         // Nor what the framework looks up on every app's behalf.
         let webview = string16("com.google.android.webview");
-        assert_eq!(catalog.subject(0, 3, &webview, 10100, &own), None);
+        assert_eq!(catalog.subject(0, 3, &webview, &[10100], &own), None);
         // Arguments that can't be read leave the call, without a name.
         for args in [&[][..], &[5, 0, 0, 0, b'a', 0], &string16("not a package!")] {
             assert_eq!(
-                catalog.subject(0, 3, args, 10100, &own).as_deref(),
+                catalog.subject(0, 3, args, &[10100], &own).as_deref(),
                 Some("binder:android.content.pm.IPackageManager/getPackageInfo")
             );
         }
@@ -531,12 +532,18 @@ mod tests {
     #[test]
     fn calls_about_the_callers_own_uid_are_skipped() {
         let catalog = Catalog::parse("android.content.pm.IPackageManager\t40\tgetPackagesForUid\n");
-        let about = |uid: u32| catalog.subject(0, 40, &uid.to_le_bytes(), 10100, &[]);
+        let about = |uid: u32| catalog.subject(0, 40, &uid.to_le_bytes(), &[10100], &[]);
         assert_eq!(about(10100), None);
         assert_eq!(
             about(10200).as_deref(),
             Some("binder:android.content.pm.IPackageManager/getPackagesForUid")
         );
+        // An isolated process asking about its own uid is about itself too,
+        // although it is recorded under its app's.
+        let isolated = |uid: u32| catalog.subject(0, 40, &uid.to_le_bytes(), &[99012, 10100], &[]);
+        assert_eq!(isolated(99012), None);
+        assert_eq!(isolated(10100), None);
+        assert!(isolated(10200).is_some());
     }
 
     #[test]
@@ -566,7 +573,7 @@ mod tests {
             for text in [authority, method, arg] {
                 args.extend(string16(text));
             }
-            catalog.subject(provider, 21, &args, 10100, &[])
+            catalog.subject(provider, 21, &args, &[10100], &[])
         };
         assert_eq!(
             call("settings", "GET_secure", "android_id").as_deref(),
@@ -597,7 +604,7 @@ mod tests {
             .position(|(name, _)| *name == "android.gui.SensorServer")
             .unwrap() as u32;
         assert_eq!(
-            catalog.subject(sensors, 2, &[], 10100, &[]).as_deref(),
+            catalog.subject(sensors, 2, &[], &[10100], &[]).as_deref(),
             Some("binder:android.gui.SensorServer/createSensorEventConnection")
         );
     }

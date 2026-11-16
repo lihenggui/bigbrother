@@ -34,6 +34,9 @@ pub const MODE_CONNECT: Mode = 128;
 pub const MODE_EXEC: Mode = 256;
 /// A request to a system service.
 pub const MODE_CALL: Mode = 512;
+/// Done by one of the app's isolated processes (a sandboxed renderer or the
+/// like), attributed to the app. Combined with the other bits.
+pub const MODE_ISOLATED: Mode = 1024;
 
 /// What kind of information a recorded path exposes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, clap::ValueEnum)]

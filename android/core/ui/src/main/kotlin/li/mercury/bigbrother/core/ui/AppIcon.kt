@@ -1,5 +1,6 @@
 package li.mercury.bigbrother.core.ui
 
+import android.content.res.Resources
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -12,17 +13,24 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.unit.Dp
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
 
-/** The name to show for an app: its label, else its package, else a generic name. */
+/**
+ * The name to show for an app: its label, else its package, else, for an
+ * isolated process that could not be traced to its app, one naming its uid.
+ */
 @Composable
-fun appDisplayName(app: AppSummary, info: AppInfo?): String = when {
+fun appDisplayName(app: AppSummary, info: AppInfo?): String =
+    appDisplayName(app, info, LocalResources.current)
+
+/** [appDisplayName] outside composition, for sorting and searching by name. */
+fun appDisplayName(app: AppSummary, info: AppInfo?, resources: Resources): String = when {
     info != null -> info.label
     app.packageName.isNotEmpty() -> app.packageName
-    else -> stringResource(R.string.isolated_process)
+    else -> resources.getString(R.string.isolated_process_uid, app.uid)
 }
 
 /** App icon, or a tonal tile with the name's first letter when there is none. */
