@@ -751,10 +751,7 @@ private fun actionLabel(action: Action, viaProvider: Boolean): String = stringRe
     },
 )
 
-/**
- * When one file was accessed: a line per hour and kind of access, with the
- * exact first and last time in that hour.
- */
+/** When one file was accessed: a line per access, most recent first. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun FileDetailsSheet(details: FileDetails, onOpen: () -> Unit, onDismiss: () -> Unit) {
@@ -810,7 +807,7 @@ private fun PeriodRow(period: AccessPeriod) {
     val blocked = period.allowed == 0
     Column {
         Text(
-            // One access, or several between a first and a last time.
+            // A single time, or the span of an hour recorded only in aggregate.
             text = if (period.firstSeen == period.lastSeen) {
                 exactDateTime(period.firstSeen)
             } else {

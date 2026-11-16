@@ -57,10 +57,10 @@ impl Category {
 
 /// Schema version stored in SQLite's `user_version`. Bump it and add a step
 /// to `MIGRATIONS` whenever the schema changes.
-const SCHEMA_VERSION: i32 = 2;
+const SCHEMA_VERSION: i32 = 3;
 
-/// Most rows returned for one path's history: a month of hours.
-const HISTORY_LIMIT: u32 = 24 * 31;
+/// Most entries returned for one path's history.
+const HISTORY_LIMIT: u32 = 2000;
 
 /// How many of an app's folders the per-app summary names.
 const TOP_FOLDERS: usize = 3;
@@ -69,7 +69,31 @@ const TOP_FOLDERS: usize = 3;
 const MIGRATIONS: &[&str] = &[
     // 1 -> 2: number of entries a provider query returned.
     "ALTER TABLE access ADD COLUMN items INTEGER NOT NULL DEFAULT 0;",
+    // 2 -> 3: individual accesses, next to the hourly aggregates.
+    EVENT_SCHEMA,
 ];
+
+/// Individual accesses. `access` answers "what did this app touch" cheaply;
+/// `event` answers "when exactly". A row is one second in which an app
+/// touched a path in one way; several accesses within the same second share
+/// it and are counted. Paths are stored once, in `path`, and referenced by
+/// id, since the same path recurs in many rows.
+const EVENT_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS path (
+    id   INTEGER PRIMARY KEY,
+    path TEXT NOT NULL UNIQUE
+);
+CREATE TABLE IF NOT EXISTS event (
+    uid     INTEGER NOT NULL,
+    path_id INTEGER NOT NULL REFERENCES path (id),
+    mode    INTEGER NOT NULL,   -- MODE_* bits
+    ts      INTEGER NOT NULL,   -- unix time
+    ok      INTEGER NOT NULL,
+    fail    INTEGER NOT NULL,
+    PRIMARY KEY (uid, path_id, mode, ts)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS event_ts ON event (ts);
+";
 
 /// The schema at `SCHEMA_VERSION`, for new databases.
 const SCHEMA: &str = "
@@ -123,9 +147,20 @@ pub struct Counters {
     pub dropped: u64,
 }
 
+/// Identifies an `event` row.
+#[derive(Hash, PartialEq, Eq)]
+struct EventKey {
+    uid: u32,
+    path: String,
+    mode: u8,
+    ts: i64,
+}
+
 pub struct Writer {
     conn: Connection,
     pending: HashMap<Key, Agg>,
+    /// Individual accesses not yet written: (allowed, refused) per key.
+    events: HashMap<EventKey, (u32, u32)>,
 }
 
 impl Writer {
@@ -142,6 +177,7 @@ impl Writer {
         Ok(Self {
             conn,
             pending: HashMap::new(),
+            events: HashMap::new(),
         })
     }
 
@@ -157,6 +193,21 @@ impl Writer {
         ts: i64,
         items: u32,
     ) {
+        let counts = self
+            .events
+            .entry(EventKey {
+                uid,
+                path: path.clone(),
+                mode,
+                ts,
+            })
+            .or_default();
+        if ok {
+            counts.0 += 1;
+        } else {
+            counts.1 += 1;
+        }
+
         let key = Key {
             hour: ts / 3600,
             uid,
@@ -213,6 +264,30 @@ impl Writer {
                     a.items
                 ])?;
             }
+            let mut intern = tx.prepare_cached("INSERT OR IGNORE INTO path (path) VALUES (?1)")?;
+            let mut path_id = tx.prepare_cached("SELECT id FROM path WHERE path = ?1")?;
+            let mut insert_event = tx.prepare_cached(
+                "INSERT INTO event (uid, path_id, mode, ts, ok, fail)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT (uid, path_id, mode, ts) DO UPDATE SET
+                     ok = ok + excluded.ok,
+                     fail = fail + excluded.fail",
+            )?;
+            // Most events of a batch share a handful of paths.
+            let mut ids: HashMap<&str, i64> = HashMap::new();
+            for (k, (ok, fail)) in &self.events {
+                let id = match ids.get(k.path.as_str()) {
+                    Some(id) => *id,
+                    None => {
+                        intern.execute(params![k.path])?;
+                        let id: i64 = path_id.query_row(params![k.path], |r| r.get(0))?;
+                        ids.insert(&k.path, id);
+                        id
+                    }
+                };
+                insert_event.execute(params![k.uid, id, k.mode, k.ts, ok, fail])?;
+            }
+
             let mut meta = tx.prepare_cached(
                 "INSERT INTO meta (key, value) VALUES (?1, ?2)
                  ON CONFLICT (key) DO UPDATE SET value = excluded.value",
@@ -231,6 +306,7 @@ impl Writer {
         // Only now: if anything above failed, the rows stay buffered and
         // are written by the next flush.
         self.pending.clear();
+        self.events.clear();
         Ok(())
     }
 
@@ -249,6 +325,10 @@ impl Writer {
     pub fn delete_packages(&self, packages: &[&str]) -> anyhow::Result<usize> {
         let mut removed = 0;
         for package in packages {
+            self.conn.execute(
+                "DELETE FROM event WHERE uid IN (SELECT uid FROM access WHERE pkg = ?1)",
+                params![package],
+            )?;
             removed += self
                 .conn
                 .execute("DELETE FROM access WHERE pkg = ?1", params![package])?;
@@ -275,15 +355,34 @@ impl Writer {
                 params![path],
             )?;
         }
+        for path in &stale {
+            self.conn.execute(
+                "DELETE FROM event WHERE path_id IN (SELECT id FROM path WHERE path = ?1)",
+                params![path],
+            )?;
+        }
+        self.delete_unused_paths()?;
         Ok(removed)
     }
 
     /// Delete rows older than `days`. Returns the number removed.
     pub fn prune(&self, days: u32, now: i64) -> anyhow::Result<usize> {
         let cutoff = now - i64::from(days) * 86_400;
+        self.conn
+            .execute("DELETE FROM event WHERE ts < ?1", params![cutoff])?;
+        self.delete_unused_paths()?;
         Ok(self
             .conn
             .execute("DELETE FROM access WHERE last_ts < ?1", params![cutoff])?)
+    }
+
+    /// Drop paths that no event refers to any more.
+    fn delete_unused_paths(&self) -> anyhow::Result<()> {
+        self.conn.execute(
+            "DELETE FROM path WHERE id NOT IN (SELECT DISTINCT path_id FROM event)",
+            [],
+        )?;
+        Ok(())
     }
 }
 
@@ -303,6 +402,7 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
     let mut version: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     if !has_tables {
         conn.execute_batch(SCHEMA)?;
+        conn.execute_batch(EVENT_SCHEMA)?;
         version = SCHEMA_VERSION;
     } else if version == 0 {
         // Databases created before versioning existed have the first layout.
@@ -368,18 +468,17 @@ pub struct FileRow {
     pub topic: Option<&'static str>,
 }
 
-/// One hour in which an app touched a path in a particular way.
+/// One entry in a path's history: an access (or several in the same second),
+/// or, for records made before individual accesses were kept, an hour's worth
+/// of them with only the first and last time known.
 #[derive(Serialize)]
 pub struct HistoryRow {
-    /// Start of the hour, as a Unix timestamp.
-    pub hour_ts: i64,
+    pub first_ts: i64,
+    /// Equal to `first_ts` for an individual access.
+    pub last_ts: i64,
     pub mode: u8,
     pub ok: i64,
     pub fail: i64,
-    /// First and last access within the hour.
-    pub first_ts: i64,
-    pub last_ts: i64,
-    pub items: i64,
 }
 
 #[derive(Serialize)]
@@ -551,30 +650,50 @@ impl Reader {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
-    /// When one app touched one path: a row per hour and access mode, most
-    /// recent first. Accesses are aggregated by the hour, so this is as fine
-    /// as the record gets; within an hour only the first and last time are
-    /// known.
+    /// When one app touched one path, most recent first.
+    ///
+    /// Individual accesses come first. Hours recorded before those were kept
+    /// only have aggregates, which follow as one entry per hour and mode.
     pub fn history(&self, uid: u32, path: &str, since: i64) -> anyhow::Result<Vec<HistoryRow>> {
         let mut stmt = self.conn.prepare(
-            "SELECT hour * 3600, mode, ok, fail, first_ts, last_ts, items
-             FROM access
-             WHERE uid = ?1 AND path = ?2 AND last_ts >= ?3
-             ORDER BY hour DESC, mode
+            "SELECT e.ts, e.ts, e.mode, e.ok, e.fail
+             FROM event e JOIN path p ON p.id = e.path_id
+             WHERE e.uid = ?1 AND p.path = ?2 AND e.ts >= ?3
+             ORDER BY e.ts DESC, e.mode
              LIMIT ?4",
         )?;
-        let rows = stmt.query_map(params![uid, path, since, HISTORY_LIMIT], |r| {
+        let to_row = |r: &rusqlite::Row<'_>| {
             Ok(HistoryRow {
-                hour_ts: r.get(0)?,
-                mode: r.get(1)?,
-                ok: r.get(2)?,
-                fail: r.get(3)?,
-                first_ts: r.get(4)?,
-                last_ts: r.get(5)?,
-                items: r.get(6)?,
+                first_ts: r.get(0)?,
+                last_ts: r.get(1)?,
+                mode: r.get(2)?,
+                ok: r.get(3)?,
+                fail: r.get(4)?,
             })
-        })?;
-        Ok(rows.collect::<Result<_, _>>()?)
+        };
+        let mut rows: Vec<HistoryRow> = stmt
+            .query_map(params![uid, path, since, HISTORY_LIMIT], to_row)?
+            .collect::<Result<_, _>>()?;
+
+        // Aggregates for the hours before the first individual access. The
+        // hour that access falls in is covered by the events.
+        let first_event_hour = rows.last().map_or(i64::MAX, |row| row.first_ts / 3600);
+        let mut stmt = self.conn.prepare(
+            "SELECT first_ts, last_ts, mode, ok, fail
+             FROM access
+             WHERE uid = ?1 AND path = ?2 AND last_ts >= ?3 AND hour < ?4
+             ORDER BY hour DESC, mode
+             LIMIT ?5",
+        )?;
+        let remaining = HISTORY_LIMIT.saturating_sub(rows.len() as u32);
+        let older = stmt.query_map(
+            params![uid, path, since, first_event_hour, remaining],
+            to_row,
+        )?;
+        for row in older {
+            rows.push(row?);
+        }
+        Ok(rows)
     }
 
     pub fn stats(&self) -> anyhow::Result<Stats> {
@@ -729,18 +848,15 @@ mod tests {
         );
         assert_eq!(r.files(None, None, None, t + 3600, 50, 0).unwrap().len(), 1);
 
-        // The photo was opened in two different hours.
+        // Every access to the photo, most recent first.
         let history = r.history(10100, &photo, 0).unwrap();
-        assert_eq!(history.len(), 2);
-        assert_eq!(
-            (history[0].hour_ts, history[0].ok, history[0].fail),
-            (t + 3600, 1, 0)
-        );
-        assert_eq!(
-            (history[1].hour_ts, history[1].ok, history[1].fail),
-            (t, 3, 1)
-        );
-        assert_eq!((history[1].first_ts, history[1].last_ts), (t, t + 20));
+        assert_eq!(history[0].first_ts, t + 3600);
+        assert_eq!(history.last().unwrap().first_ts, t);
+        assert!(history.iter().all(|h| h.first_ts == h.last_ts));
+        assert!(history.windows(2).all(|w| w[0].first_ts >= w[1].first_ts));
+        let total = |f: fn(&HistoryRow) -> i64| history.iter().map(f).sum::<i64>();
+        assert_eq!((total(|h| h.ok), total(|h| h.fail)), (4, 1));
+        assert_eq!(r.history(10100, &photo, t + 3600).unwrap().len(), 1);
         assert!(r.history(10200, &photo, 0).unwrap().is_empty());
 
         let stats = r.stats().unwrap();
@@ -806,6 +922,73 @@ mod tests {
             .files(None, None, None, 0, 10, 0)
             .unwrap();
         assert_eq!(files[0].ok, 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn accesses_in_the_same_second_share_an_event() {
+        let dir = std::env::temp_dir().join(format!("bbd-test-events-{}", std::process::id()));
+        let db = dir.join("bb.db");
+        let mut w = Writer::open(&db).unwrap();
+        let t = 4_000_000 * 3600;
+        let file = "/storage/emulated/0/Download/a.pdf".to_string();
+        for _ in 0..500 {
+            w.record(
+                10100,
+                "com.a",
+                Category::Storage,
+                file.clone(),
+                MODE_READ,
+                true,
+                t,
+                0,
+            );
+        }
+        w.record(
+            10100,
+            "com.a",
+            Category::Storage,
+            file.clone(),
+            MODE_READ,
+            false,
+            t,
+            0,
+        );
+        w.record(
+            10100,
+            "com.a",
+            Category::Storage,
+            file.clone(),
+            MODE_PROBE,
+            true,
+            t,
+            0,
+        );
+        w.flush(&Counters::default(), t).unwrap();
+        // The same second again, in a later flush: counted, not duplicated.
+        w.record(
+            10100,
+            "com.a",
+            Category::Storage,
+            file.clone(),
+            MODE_READ,
+            true,
+            t,
+            0,
+        );
+        w.flush(&Counters::default(), t + 1).unwrap();
+
+        let history = Reader::open(&db).unwrap().history(10100, &file, 0).unwrap();
+        let rows: Vec<(u8, i64, i64)> = history.iter().map(|h| (h.mode, h.ok, h.fail)).collect();
+        assert_eq!(rows, [(MODE_READ, 501, 1), (MODE_PROBE, 1, 0)]);
+
+        // Pruning removes old events and the paths nothing refers to any more.
+        w.prune(1, t + 3 * 86_400).unwrap();
+        let paths: i64 = w
+            .conn
+            .query_row("SELECT count(*) FROM path", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(paths, 0);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -883,6 +1066,14 @@ mod tests {
         let r = Reader::open(&db).unwrap();
         let files = r.files(None, None, None, 0, 10, 0).unwrap();
         assert_eq!((files.len(), files[0].ok, files[0].items), (1, 2, 0));
+        // Records from before individual accesses were kept show up in the
+        // history as the hour they were aggregated into.
+        let history = r.history(10100, "/proc/cpuinfo", 0).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(
+            (history[0].first_ts, history[0].last_ts, history[0].ok),
+            (3600, 3700, 2)
+        );
         drop(r);
         // Opening again is a no-op.
         drop(Writer::open(&db).unwrap());

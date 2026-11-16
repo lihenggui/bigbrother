@@ -119,8 +119,10 @@ data class Access(
 )
 
 /**
- * One hour in which an app touched a path in a particular way. Accesses are
- * aggregated by the hour, so within it only the first and last time are known.
+ * One entry in a path's history. Normally a single access, with [firstSeen]
+ * equal to [lastSeen]; accesses within the same second are counted together.
+ * Records made before individual accesses were kept cover an hour, of which
+ * only the first and last time are known.
  */
 data class AccessPeriod(
     val action: Action,

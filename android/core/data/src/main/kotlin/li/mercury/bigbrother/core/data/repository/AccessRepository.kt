@@ -24,7 +24,7 @@ interface AccessRepository {
         offset: Int,
     ): List<Access>
 
-    /** When [uid] touched [path], hour by hour, most recent first. */
+    /** Each time [uid] touched [path], most recent first. */
     suspend fun getHistory(uid: Int, path: String, range: TimeRange): List<AccessPeriod>
 
     /** Whether the daemon is currently recording. */

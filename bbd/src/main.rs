@@ -82,7 +82,7 @@ enum Command {
         #[arg(long, default_value_t = 0)]
         offset: u32,
     },
-    /// When one app touched one path, hour by hour, most recent first.
+    /// Each time one app touched one path, most recent first.
     History {
         #[arg(long)]
         uid: u32,

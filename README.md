@@ -19,7 +19,7 @@ through the media library.
 - Reads of privacy-relevant `/proc`, `/sys` and `/dev` entries: network
   hardware address, ARP table, serial numbers, other processes, root and
   emulator checks, and so on.
-- Records are kept on the device, aggregated per hour, for 30 days.
+- Records are kept on the device for 30 days, with the time of each access.
 
 ## Requirements
 
