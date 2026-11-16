@@ -4,6 +4,7 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -28,11 +29,14 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LargeFlexibleTopAppBar
@@ -59,6 +63,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.IntOffset
@@ -81,7 +86,9 @@ import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.OpenFileResult
 import li.mercury.bigbrother.core.ui.SearchTopBar
+import li.mercury.bigbrother.core.ui.DataCategory
 import li.mercury.bigbrother.core.ui.appDisplayName
+import li.mercury.bigbrother.core.ui.dataCategoryOf
 import li.mercury.bigbrother.core.ui.exactDateTime
 import li.mercury.bigbrother.core.ui.exactTime
 import li.mercury.bigbrother.core.ui.openFile
@@ -146,13 +153,18 @@ private class DetailContent(
     val topics: List<TopicGroup>,
     /** Permissions the system recorded it using, grouped the same way. */
     val permissions: List<TopicGroup>,
+    /** Whether it touched any files at all, read or not. */
+    hasFiles: Boolean,
 ) {
-    /** The tabs that have something in them; files always do. */
+    /**
+     * The tabs that have something in them. Files is kept when nothing at
+     * all was recorded, as the place for the empty state.
+     */
     val tabs: List<DetailTab> = buildList {
-        add(DetailTab.FILES)
+        if (hasFiles) add(DetailTab.FILES)
         if (topics.isNotEmpty()) add(DetailTab.ACTIVITY)
         if (permissions.isNotEmpty()) add(DetailTab.PERMISSIONS)
-    }
+    }.ifEmpty { listOf(DetailTab.FILES) }
 
     /** Folder path -> the folder, and -> the path of the folder containing it. */
     private val nodes = HashMap<String, FileNode>()
@@ -190,13 +202,22 @@ private class DetailContent(
     }
 }
 
-private class TopicGroup(val topic: String, val accesses: List<Access>)
+/**
+ * Records of one kind: grouped by topic, or by path for records without one.
+ * [category] is where it is listed, from the topic or else the kind of record.
+ */
+private class TopicGroup(val topic: String, val accesses: List<Access>, val category: DataCategory)
 
 /** A file counts as read when the system let the app open it. */
 private fun Access.isSuccessfulOpen(): Boolean =
     allowed > 0 && (action == Action.READ || action == Action.WRITE || action == Action.READ_WRITE)
 
-private fun arrange(accesses: List<Access>, readOnly: Boolean): DetailContent {
+/**
+ * Arranges [accesses] for display. [hasFiles] says whether the app touched
+ * any files at all, judged before a search narrows [accesses], so that the
+ * files tab stays put while the user types.
+ */
+private fun arrange(accesses: List<Access>, readOnly: Boolean, hasFiles: Boolean): DetailContent {
     val storage = accesses.filter {
         it.category == Category.STORAGE && (!readOnly || it.isSuccessfulOpen())
     }
@@ -207,6 +228,7 @@ private fun arrange(accesses: List<Access>, readOnly: Boolean): DetailContent {
             .filter { it.category !in WITH_OWN_PLACE }
             .byTopic(),
         permissions = accesses.filter { it.category == Category.PERMISSION }.byTopic(),
+        hasFiles = hasFiles,
     )
 }
 
@@ -215,7 +237,10 @@ private val WITH_OWN_PLACE = setOf(Category.STORAGE, Category.PROVIDER, Category
 
 /** Records made before a path had a topic are grouped under the path itself. */
 private fun List<Access>.byTopic(): List<TopicGroup> =
-    groupBy { it.topic ?: it.path }.map { (topic, group) -> TopicGroup(topic, group) }
+    groupBy { it.topic ?: it.path }.map { (topic, group) ->
+        val first = group.first()
+        TopicGroup(topic, group, dataCategoryOf(first.topic, first.category))
+    }
 
 /** A storage volume's root: `/storage/emulated/<user>` or `/storage/<volume id>`. */
 private val VOLUME_ROOT = Regex("^/storage/(?:emulated/\\d+|[^/]+)")
@@ -286,7 +311,7 @@ internal fun AppDetailScreen(
     // checks and blocked attempts are one tap away.
     var readOnly by rememberSaveable { mutableStateOf(true) }
     var location by rememberSaveable { mutableStateOf(Location.ROOT) }
-    var tab by rememberSaveable { mutableStateOf(DetailTab.FILES) }
+    var tab by rememberSaveable { mutableStateOf<DetailTab?>(null) }
 
     val accesses = state.accesses
     val filtering = searching && query.isNotBlank()
@@ -294,7 +319,12 @@ internal fun AppDetailScreen(
         val needle = query.trim()
         accesses
             ?.filter { !filtering || it.path.contains(needle, ignoreCase = true) }
-            ?.let { arrange(it, readOnly) }
+            ?.let { filtered ->
+                val hasFiles = accesses.any {
+                    it.category == Category.STORAGE || it.category == Category.PROVIDER
+                }
+                arrange(filtered, readOnly, hasFiles)
+            }
     }
     // A folder can vanish when the filter changes; fall back to the top.
     val here = when {
@@ -303,8 +333,12 @@ internal fun AppDetailScreen(
         content.folder(location) != null -> location
         else -> Location.ROOT
     }
-    // A tab only exists while there is something to show in it.
-    val shownTab = tab.takeIf { content != null && it in content.tabs } ?: DetailTab.FILES
+    // A tab only exists while there is something to show in it; the
+    // screen opens on the first one that does.
+    val shownTab = when (content) {
+        null -> DetailTab.FILES
+        else -> tab?.takeIf { it in content.tabs } ?: content.tabs.first()
+    }
     val showDevice = shownTab != DetailTab.FILES
 
     val closeSearch = {
@@ -332,7 +366,15 @@ internal fun AppDetailScreen(
                 )
             } else {
                 LargeFlexibleTopAppBar(
-                    title = { Text(name, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+                    title = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            AppIcon(state.appInfo, name, size = 40.dp)
+                            Text(name, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        }
+                    },
                     subtitle = {
                         Text(
                             text = app.packageName.ifEmpty { "uid ${app.uid}" },
@@ -355,12 +397,6 @@ internal fun AppDetailScreen(
                                 contentDescription = stringResource(UiR.string.search),
                             )
                         }
-                        AppIcon(
-                            state.appInfo,
-                            name,
-                            size = 40.dp,
-                            modifier = Modifier.padding(end = 12.dp),
-                        )
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = background,
@@ -384,7 +420,7 @@ internal fun AppDetailScreen(
                 // each gets its own tab, shown only when there is something
                 // in it.
                 showDevice -> {
-                    DetailTabs(content.tabs, shownTab, onTab = { tab = it })
+                    if (content.tabs.size > 1) DetailTabs(content.tabs, shownTab, onTab = { tab = it })
                     TopicList(
                         if (shownTab == DetailTab.PERMISSIONS) content.permissions else content.topics,
                     )
@@ -451,37 +487,54 @@ private fun DetailTabs(tabs: List<DetailTab>, selected: DetailTab, onTab: (Detai
     }
 }
 
-/** What the app went after, or which permissions it used, one row per kind. */
+/**
+ * What the app went after, or which permissions it used: one row per kind,
+ * under the category of private data it belongs to, most sensitive first.
+ */
 @Composable
 private fun TopicList(topics: List<TopicGroup>) {
+    val sections = remember(topics) {
+        topics.groupBy { it.category }.toSortedMap().toList()
+    }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
     ) {
-        itemsIndexed(topics, key = { _, group -> group.topic }) { index, group ->
-            TopicRow(group, index, topics.size)
+        for ((category, groups) in sections) {
+            item(key = "header-${category.name}") {
+                Text(
+                    text = stringResource(category.title),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(start = 4.dp, top = 16.dp, bottom = 6.dp),
+                )
+            }
+            itemsIndexed(groups, key = { _, group -> group.topic }) { index, group ->
+                TopicRow(group, index, groups.size)
+            }
         }
     }
 }
 
-/** Chooses between files that were read and everything the app did. */
+/** Chooses between files that were read and every access to files. */
 @Composable
 private fun ActivityFilter(readOnly: Boolean, onReadOnly: (Boolean) -> Unit) {
-    Row(
-        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    val options = listOf(true to R.string.filter_read, false to R.string.filter_all)
+    SingleChoiceSegmentedButtonRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
     ) {
-        FilterChip(
-            selected = readOnly,
-            onClick = { onReadOnly(true) },
-            label = { Text(stringResource(R.string.filter_read)) },
-        )
-        FilterChip(
-            selected = !readOnly,
-            onClick = { onReadOnly(false) },
-            label = { Text(stringResource(R.string.filter_all)) },
-        )
+        options.forEachIndexed { index, (value, label) ->
+            SegmentedButton(
+                selected = readOnly == value,
+                onClick = { onReadOnly(value) },
+                shape = SegmentedButtonDefaults.itemShape(index, options.size),
+            ) {
+                Text(stringResource(label))
+            }
+        }
     }
 }
 
@@ -619,7 +672,7 @@ private fun LazyItemScope.GroupRow(group: Group, index: Int, count: Int, onOpen:
         shapes = ListItemDefaults.segmentedShapes(index, count),
         colors = ListItemDefaults.segmentedColors(),
         leadingContent = { Icon(group.icon, contentDescription = null) },
-        trailingContent = { Text(group.size.toString()) },
+        trailingContent = { CountWithChevron(group.size) },
     ) {
         Text(stringResource(group.title))
     }
@@ -670,7 +723,7 @@ private fun LazyItemScope.EntryRow(
                 )
             },
             supportingContent = detail,
-            trailingContent = { Text(node.touchedCount.toString()) },
+            trailingContent = { CountWithChevron(node.touchedCount) },
             content = name,
         )
     } else {
@@ -697,6 +750,19 @@ private fun LazyItemScope.EntryRow(
                 null
             },
             content = name,
+        )
+    }
+}
+
+/** The number of entries inside, and a chevron saying the row opens. */
+@Composable
+private fun CountWithChevron(count: Int) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (count > 0) Text(count.toString())
+        Icon(
+            Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
@@ -910,8 +976,23 @@ private fun LazyItemScope.TopicRow(group: TopicGroup, index: Int, count: Int) {
     var expanded by rememberSaveable(group.topic) { mutableStateOf(false) }
     val title = topicTitle(group.topic)
     val motion = MaterialTheme.motionScheme
+    val rotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = motion.fastSpatialSpec(),
+        label = "expand",
+    )
     ListItem(
         onClick = { expanded = !expanded },
+        trailingContent = {
+            Icon(
+                Icons.Filled.ExpandMore,
+                contentDescription = stringResource(
+                    if (expanded) R.string.hide_details else R.string.show_details,
+                ),
+                modifier = Modifier.rotate(rotation),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        },
         modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
         shapes = ListItemDefaults.segmentedShapes(index, count),
         colors = ListItemDefaults.segmentedColors(),
@@ -935,7 +1016,7 @@ private fun LazyItemScope.TopicRow(group: TopicGroup, index: Int, count: Int) {
                             else -> R.plurals.total_allowed
                         }
                         pluralStringResource(done, allowed, allowed)
-                    } + stringResource(R.string.access_separator) +
+                    } + stringResource(R.string.time_separator) +
                         remember(lastSeen) { relativeTime(lastSeen) },
                     color = if (allowed == 0) {
                         MaterialTheme.colorScheme.error

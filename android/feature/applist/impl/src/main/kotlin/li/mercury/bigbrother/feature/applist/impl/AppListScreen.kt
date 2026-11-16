@@ -6,13 +6,22 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Card
@@ -21,8 +30,10 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LargeFlexibleTopAppBar
@@ -45,6 +56,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -58,18 +71,21 @@ import li.mercury.bigbrother.core.model.Category
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.ui.AppIcon
+import li.mercury.bigbrother.core.ui.DataCategory
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.SearchTopBar
 import li.mercury.bigbrother.core.ui.appDisplayName
 import li.mercury.bigbrother.core.ui.compactTime
+import li.mercury.bigbrother.core.ui.dataCategories
+import li.mercury.bigbrother.core.ui.topicCategory
 import li.mercury.bigbrother.core.ui.topicTitle
 import li.mercury.bigbrother.core.ui.R as UiR
 
 /** How the app list is ordered. */
 private enum class SortOrder(val label: Int) {
-    /** Apps that touched the user's files first, most files first. */
-    FILES(R.string.sort_files),
+    /** By the most sensitive category accessed, then most recent first. */
+    SENSITIVITY(R.string.sort_sensitivity),
     RECENT(R.string.sort_recent),
     NAME(R.string.sort_name),
 }
@@ -93,9 +109,13 @@ fun AppListScreen(
         onRefresh = viewModel::refresh,
         onOpen = { app -> navigateToAppDetail(app.uid, app.packageName, uiState.range) },
         onInstallModule = viewModel::installModule,
+        onStartDaemon = viewModel::startDaemon,
         onShowSystemApps = viewModel::setShowSystemApps,
     )
 }
+
+/** An app with the categories of private data it accessed, computed once per load. */
+private class Entry(val app: AppSummary, val categories: List<DataCategory>)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -105,18 +125,25 @@ internal fun AppListScreen(
     onRefresh: () -> Unit,
     onOpen: (AppSummary) -> Unit,
     onInstallModule: () -> Unit,
+    onStartDaemon: () -> Unit,
     onShowSystemApps: (Boolean) -> Unit,
 ) {
+    // This app's own probes are not what the user is looking for.
+    val ownPackage = LocalContext.current.packageName
     // System apps are hidden unless asked for. An app whose details are
     // unknown (uninstalled, isolated process) is not assumed to be one.
-    val visibleApps = remember(state.apps, state.appInfo, state.showSystemApps) {
-        state.apps?.filter {
-            state.showSystemApps || state.appInfo[it.packageName]?.isSystem != true
-        }
+    val entries = remember(state.apps, state.appInfo, state.showSystemApps, ownPackage) {
+        state.apps
+            ?.filter { it.packageName != ownPackage }
+            ?.filter { state.showSystemApps || state.appInfo[it.packageName]?.isSystem != true }
+            ?.map { Entry(it, it.dataCategories()) }
     }
+    val hiddenSystemApps = state.apps.orEmpty().count { it.packageName != ownPackage } -
+        entries.orEmpty().size
     var searching by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
-    var sort by rememberSaveable { mutableStateOf(SortOrder.FILES) }
+    var sort by rememberSaveable { mutableStateOf(SortOrder.SENSITIVITY) }
+    var category by rememberSaveable { mutableStateOf<DataCategory?>(null) }
     val closeSearch = {
         searching = false
         query = ""
@@ -142,14 +169,7 @@ internal fun AppListScreen(
                 LargeFlexibleTopAppBar(
                     title = { Text(stringResource(R.string.app_list_title)) },
                     subtitle = state.recording?.let { recording ->
-                        {
-                            StatusLine(
-                                recording = recording,
-                                unavailable = state.unavailable,
-                                appsWithFiles = visibleApps.orEmpty().count { it.readUserFiles() },
-                                range = state.range,
-                            )
-                        }
+                        { StatusLine(recording, state.unavailable, entries?.size ?: 0) }
                     },
                     actions = {
                         IconButton(onClick = { searching = true }) {
@@ -159,8 +179,6 @@ internal fun AppListScreen(
                             )
                         }
                         OptionsMenu(
-                            range = state.range,
-                            onRange = onRange,
                             sort = sort,
                             onSort = { sort = it },
                             showSystemApps = state.showSystemApps,
@@ -176,63 +194,74 @@ internal fun AppListScreen(
             }
         },
     ) { padding ->
-        PullToRefreshBox(
-            isRefreshing = state.refreshing && state.apps != null,
-            onRefresh = onRefresh,
-            modifier = Modifier
+        // Only the top bar's space is reserved; the list scrolls on behind
+        // the navigation bar and pads its end instead.
+        val layoutDirection = LocalLayoutDirection.current
+        Column(
+            Modifier
                 .fillMaxSize()
-                .padding(padding),
+                .padding(
+                    top = padding.calculateTopPadding(),
+                    start = padding.calculateStartPadding(layoutDirection),
+                    end = padding.calculateEndPadding(layoutDirection),
+                ),
         ) {
-            val apps = visibleApps
-            when {
-                state.failure == LoadFailure.ModuleMissing ->
-                    ModuleSetupMessage(state.moduleSetup, onInstallModule, onRefresh)
-                state.failure != null -> LoadFailureMessage(state.failure, onRetry = onRefresh)
-                apps == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
-                else -> AppList(
-                    apps = apps,
-                    appInfo = state.appInfo,
-                    query = query,
-                    sort = sort,
-                    moduleOutdated = state.moduleOutdated,
-                    modulePendingReboot = state.modulePendingReboot,
-                    hiddenSystemApps = state.apps.orEmpty().size - apps.size,
-                    onOpen = onOpen,
-                    onInstallModule = onInstallModule,
-                    onShowSystemApps = { onShowSystemApps(true) },
+            if (state.failure == null && entries != null) {
+                FilterBar(
+                    range = state.range,
+                    onRange = onRange,
+                    entries = entries,
+                    selected = category,
+                    onSelect = { category = it },
                 )
+            }
+            PullToRefreshBox(
+                isRefreshing = state.refreshing && state.apps != null,
+                onRefresh = onRefresh,
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                when {
+                    state.failure == LoadFailure.ModuleMissing ->
+                        ModuleSetupMessage(state.moduleSetup, onInstallModule, onRefresh)
+                    state.failure != null -> LoadFailureMessage(state.failure, onRetry = onRefresh)
+                    entries == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
+                    else -> AppList(
+                        entries = entries,
+                        appInfo = state.appInfo,
+                        query = query,
+                        sort = sort,
+                        category = category,
+                        stopped = state.recording == false,
+                        starting = state.daemonStarting,
+                        startError = state.daemonStartError,
+                        moduleOutdated = state.moduleOutdated,
+                        modulePendingReboot = state.modulePendingReboot,
+                        hiddenSystemApps = hiddenSystemApps,
+                        showSystemApps = state.showSystemApps,
+                        onOpen = onOpen,
+                        onInstallModule = onInstallModule,
+                        onStartDaemon = onStartDaemon,
+                        onShowSystemApps = { onShowSystemApps(true) },
+                    )
+                }
             }
         }
     }
 }
 
-/**
- * Under the title: the headline answer for the selected time range, or a
- * warning if nothing is being recorded.
- */
+/** Under the title: how many apps have records, or that nothing is being recorded. */
 @Composable
-private fun StatusLine(
-    recording: Boolean,
-    unavailable: List<String>,
-    appsWithFiles: Int,
-    range: TimeRange,
-) {
+private fun StatusLine(recording: Boolean, unavailable: List<String>, apps: Int) {
     if (!recording) {
         Text(stringResource(R.string.status_stopped), color = MaterialTheme.colorScheme.error)
         return
     }
-    val summary = if (appsWithFiles == 0) {
-        stringResource(R.string.status_none)
-    } else {
-        pluralStringResource(R.plurals.status_summary, appsWithFiles, appsWithFiles)
-    }
     Column {
-        // The range is chosen in the menu, so the title says which one applies.
         Text(
-            if (range == TimeRange.ALL) {
-                summary
+            if (apps == 0) {
+                stringResource(R.string.status_none)
             } else {
-                stringResource(R.string.status_in_range, summary, stringResource(range.label))
+                pluralStringResource(R.plurals.status_summary, apps, apps)
             },
         )
         // Without this, an empty list would read as "nothing happened" for
@@ -269,11 +298,85 @@ private val TimeRange.label: Int
         TimeRange.ALL -> R.string.range_all
     }
 
-/** Time range, sort order and the system apps switch. */
+/**
+ * The time range, then one chip per category of private data with the
+ * number of apps that accessed it. Selecting a category narrows the list to
+ * those apps; selecting it again clears the filter.
+ */
 @Composable
-private fun OptionsMenu(
+private fun FilterBar(
     range: TimeRange,
     onRange: (TimeRange) -> Unit,
+    entries: List<Entry>,
+    selected: DataCategory?,
+    onSelect: (DataCategory?) -> Unit,
+) {
+    // The selected chip stays even when nothing is left in it, so that the
+    // filter can always be cleared where it was set.
+    val counts = remember(entries, selected) {
+        DataCategory.entries
+            .map { category -> category to entries.count { category in it.categories } }
+            .filter { (category, count) -> count > 0 || category == selected }
+    }
+    LazyRow(
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        item(key = "range") { RangeChip(range, onRange) }
+        items(counts, key = { (category, _) -> category.name }) { (category, count) ->
+            val isSelected = category == selected
+            FilterChip(
+                selected = isSelected,
+                onClick = { onSelect(if (isSelected) null else category) },
+                label = { Text(stringResource(R.string.category_chip, stringResource(category.title), count)) },
+                leadingIcon = {
+                    Icon(
+                        category.icon,
+                        contentDescription = null,
+                        modifier = Modifier.size(FilterChipDefaults.IconSize),
+                    )
+                },
+            )
+        }
+    }
+}
+
+/** A chip naming the time range; opens a menu to change it. */
+@Composable
+private fun RangeChip(range: TimeRange, onRange: (TimeRange) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        FilterChip(
+            selected = true,
+            onClick = { expanded = true },
+            label = { Text(stringResource(range.label)) },
+            trailingIcon = {
+                Icon(
+                    Icons.Filled.ArrowDropDown,
+                    contentDescription = stringResource(R.string.menu_time_range),
+                    modifier = Modifier.size(FilterChipDefaults.IconSize),
+                )
+            },
+        )
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            for (option in TimeRange.entries) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(option.label)) },
+                    leadingIcon = { RadioButton(selected = option == range, onClick = null) },
+                    onClick = {
+                        onRange(option)
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** Sort order and the system apps switch. */
+@Composable
+private fun OptionsMenu(
     sort: SortOrder,
     onSort: (SortOrder) -> Unit,
     showSystemApps: Boolean,
@@ -285,19 +388,6 @@ private fun OptionsMenu(
             Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more_options))
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            MenuHeading(R.string.menu_time_range)
-            for (option in TimeRange.entries) {
-                DropdownMenuItem(
-                    // The names are written to follow a sentence; here they stand alone.
-                    text = { Text(stringResource(option.label).replaceFirstChar { it.uppercase() }) },
-                    leadingIcon = { RadioButton(selected = option == range, onClick = null) },
-                    onClick = {
-                        onRange(option)
-                        expanded = false
-                    },
-                )
-            }
-            HorizontalDivider()
             MenuHeading(R.string.sort)
             for (order in SortOrder.entries) {
                 DropdownMenuItem(
@@ -373,42 +463,84 @@ private fun ModuleSetupMessage(
 
 @Composable
 private fun AppList(
-    apps: List<AppSummary>,
+    entries: List<Entry>,
     appInfo: Map<String, AppInfo>,
     query: String,
     sort: SortOrder,
+    category: DataCategory?,
+    stopped: Boolean,
+    starting: Boolean,
+    startError: StartFailure?,
     moduleOutdated: Boolean,
     modulePendingReboot: Boolean,
     hiddenSystemApps: Int,
+    showSystemApps: Boolean,
     onOpen: (AppSummary) -> Unit,
     onInstallModule: () -> Unit,
+    onStartDaemon: () -> Unit,
     onShowSystemApps: () -> Unit,
 ) {
     val isolated = stringResource(UiR.string.isolated_process)
     val nameOf = { app: AppSummary ->
         appInfo[app.packageName]?.label ?: app.packageName.ifEmpty { isolated }
     }
-    val matching = remember(apps, appInfo, query) {
+    val shown = remember(entries, appInfo, query, sort, category) {
         val needle = query.trim()
-        if (needle.isEmpty()) {
-            apps
-        } else {
-            apps.filter {
-                nameOf(it).contains(needle, ignoreCase = true) ||
-                    it.packageName.contains(needle, ignoreCase = true)
+        entries
+            .filter { category == null || category in it.categories }
+            .filter {
+                needle.isEmpty() ||
+                    nameOf(it.app).contains(needle, ignoreCase = true) ||
+                    it.app.packageName.contains(needle, ignoreCase = true)
             }
-        }
+            .let { matching ->
+                when (sort) {
+                    SortOrder.SENSITIVITY -> matching.sortedWith(
+                        compareBy<Entry> { it.categories.firstOrNull()?.ordinal ?: Int.MAX_VALUE }
+                            .thenByDescending { it.app.lastSeen },
+                    )
+                    // The daemon already lists the most recent first.
+                    SortOrder.RECENT -> matching
+                    SortOrder.NAME -> matching.sortedBy { nameOf(it.app).lowercase() }
+                }
+            }
     }
 
+    // A different filter or order is a different list: start it at the top
+    // instead of keeping whichever row happened to be first.
+    val listState = rememberSaveable(sort, category, showSystemApps, saver = LazyListState.Saver) {
+        LazyListState()
+    }
+    val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
+        state = listState,
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp + bottomInset),
         verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
     ) {
-        if (modulePendingReboot) {
-            item(key = "restart") { ModuleNotice(stringResource(R.string.module_pending_reboot)) }
-        } else if (moduleOutdated) {
-            item(key = "update") {
+        // A staged update comes first: starting now would run the old module.
+        when {
+            modulePendingReboot -> item(key = "restart") {
+                ModuleNotice(stringResource(R.string.module_pending_reboot))
+            }
+            stopped -> item(key = "stopped") {
+                ModuleNotice(
+                    text = if (starting) {
+                        stringResource(R.string.daemon_starting)
+                    } else when (startError) {
+                        null -> stringResource(R.string.daemon_stopped)
+                        StartFailure.ModuleDisabled -> stringResource(R.string.module_disabled)
+                        StartFailure.NotReporting -> stringResource(R.string.daemon_not_reporting)
+                        is StartFailure.Failed ->
+                            stringResource(R.string.daemon_start_failed, startError.output)
+                    },
+                    // A disabled module is turned back on in the root manager, not here.
+                    actionLabel = stringResource(R.string.start_daemon)
+                        .takeUnless { starting || startError == StartFailure.ModuleDisabled },
+                    onAction = onStartDaemon,
+                )
+            }
+            moduleOutdated -> item(key = "update") {
                 ModuleNotice(
                     text = stringResource(R.string.module_outdated),
                     actionLabel = stringResource(R.string.update_module),
@@ -416,80 +548,37 @@ private fun AppList(
                 )
             }
         }
-        if (matching.isEmpty()) {
+        if (shown.isEmpty()) {
             item(key = "empty") {
                 val modifier = Modifier.fillParentMaxHeight(0.7f)
                 when {
                     query.isNotBlank() -> Message(stringResource(UiR.string.no_matches), "", modifier)
                     // There are records, but only for apps that are hidden.
-                    hiddenSystemApps > 0 -> Message(
+                    hiddenSystemApps > 0 && category == null -> Message(
                         title = stringResource(R.string.only_system_apps),
                         body = "",
                         modifier = modifier,
                         actionLabel = stringResource(R.string.show_system_apps),
                         onAction = onShowSystemApps,
                     )
-                    else -> Message(
-                        title = stringResource(UiR.string.empty_title),
-                        body = stringResource(R.string.empty_body),
-                        modifier = modifier,
-                    )
+                    else -> Message(stringResource(UiR.string.empty_title), "", modifier)
                 }
             }
         }
-        when (sort) {
-            SortOrder.FILES -> {
-                // Apps that read the user's files, directly or through the
-                // media library, form the first group. The rest (files only
-                // checked for or refused, device information) keep the
-                // daemon's order: most recent first.
-                val (readFiles, others) = matching.partition { it.readUserFiles() }
-                appSection(
-                    R.string.section_files,
-                    readFiles.sortedByDescending { it.filesRead + it.count(Category.PROVIDER) },
-                    appInfo,
-                    onOpen,
-                )
-                appSection(R.string.section_other, others, appInfo, onOpen)
-            }
-            SortOrder.RECENT -> appSection(null, matching, appInfo, onOpen)
-            SortOrder.NAME -> appSection(
-                null,
-                matching.sortedBy { nameOf(it).lowercase() },
-                appInfo,
-                onOpen,
+        itemsIndexed(shown, key = { _, entry -> entry.app.uid }) { index, entry ->
+            AppRow(
+                entry = entry,
+                info = appInfo[entry.app.packageName],
+                category = category,
+                index = index,
+                count = shown.size,
+                onClick = { onOpen(entry.app) },
             )
         }
     }
 }
 
-/** Whether the app got at the user's own files: opened some, or went through the media library. */
-private fun AppSummary.readUserFiles(): Boolean = filesRead > 0 || count(Category.PROVIDER) > 0
-
-/** A group of apps drawn as one segmented list, with an optional title. */
-private fun LazyListScope.appSection(
-    title: Int?,
-    apps: List<AppSummary>,
-    appInfo: Map<String, AppInfo>,
-    onOpen: (AppSummary) -> Unit,
-) {
-    if (apps.isEmpty()) return
-    if (title != null) {
-        item(key = "header-$title") {
-            Text(
-                text = stringResource(title),
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(start = 4.dp, top = 16.dp, bottom = 6.dp),
-            )
-        }
-    }
-    itemsIndexed(apps, key = { _, app -> app.uid }) { index, app ->
-        AppRow(app, appInfo[app.packageName], index, apps.size, onClick = { onOpen(app) })
-    }
-}
-
-/** A notice about the module at the top of the list, with an optional action. */
+/** A notice at the top of the list, with an optional action. */
 @Composable
 private fun ModuleNotice(text: String, actionLabel: String? = null, onAction: () -> Unit = {}) {
     Card(
@@ -521,12 +610,14 @@ private fun ModuleNotice(text: String, actionLabel: String? = null, onAction: ()
 
 @Composable
 private fun AppRow(
-    app: AppSummary,
+    entry: Entry,
     info: AppInfo?,
+    category: DataCategory?,
     index: Int,
     count: Int,
     onClick: () -> Unit,
 ) {
+    val app = entry.app
     val baseName = appDisplayName(app, info)
     // The same app can run as several Android users (clones, work profile);
     // without the user, their rows would be indistinguishable.
@@ -535,33 +626,20 @@ private fun AppRow(
     } else {
         stringResource(R.string.app_name_with_user, baseName, app.userId)
     }
+    // With a category selected, the row says what within it was accessed;
+    // otherwise, which categories.
+    val summary = if (category != null) {
+        categoryDetail(app, category)
+    } else {
+        namedList(entry.categories.map { stringResource(it.title) })
+    }
     ListItem(
         onClick = onClick,
         shapes = ListItemDefaults.segmentedShapes(index, count),
         colors = ListItemDefaults.segmentedColors(),
         leadingContent = { AppIcon(info, baseName, size = 48.dp) },
-        supportingContent = {
-            // Which of the user's folders it touched. Device information is
-            // only summarised here for apps that touched no files; the rest
-            // is on the app's own page.
-            val files = filesSummary(app)
-            if (files != null) {
-                Text(
-                    text = files,
-                    // Emphasis is reserved for files that were actually read.
-                    color = if (app.readUserFiles()) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            } else {
-                deviceSummary(app)?.let {
-                    Text(text = it, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-            }
+        supportingContent = summary?.let {
+            { Text(text = it, maxLines = 1, overflow = TextOverflow.Ellipsis) }
         },
         trailingContent = { Text(compactTime(app.lastSeen)) },
     ) {
@@ -569,46 +647,38 @@ private fun AppRow(
     }
 }
 
-/** How many folder names or topics a row spells out before saying "and N more". */
+/** How many names a row spells out before counting the rest. */
 private const val NAMED_IN_SUMMARY = 2
 
-/** Which of the user's folders the app touched: "DCIM, Download and 3 more folders". */
+/** "A, B and 3 more", or null for an empty list. */
 @Composable
-private fun filesSummary(app: AppSummary): String? {
-    val separator = stringResource(R.string.summary_separator)
-    val parts = buildList {
-        if (app.folders.isNotEmpty()) {
-            val named = app.folders.take(NAMED_IN_SUMMARY).joinToString(separator)
-            val more = app.folderCount - minOf(app.folders.size, NAMED_IN_SUMMARY)
-            add(
-                if (more > 0) {
-                    pluralStringResource(R.plurals.summary_folders_more, more, named, more)
-                } else {
-                    named
-                },
-            )
-        } else {
-            val files = app.count(Category.STORAGE)
-            if (files > 0) add(pluralStringResource(R.plurals.summary_storage, files, files))
-        }
-        if (app.count(Category.PROVIDER) > 0) add(stringResource(R.string.summary_media_library))
-    }
-    if (parts.isEmpty()) return null
-    val summary = parts.joinToString(separator)
-    // Folders an app only looked into, or was refused, are marked as such.
-    return if (app.readUserFiles()) summary else stringResource(R.string.summary_not_read, summary)
+private fun namedList(names: List<String>, total: Int = names.size): String? {
+    if (names.isEmpty()) return null
+    val named = names.take(NAMED_IN_SUMMARY).joinToString(stringResource(R.string.summary_separator))
+    val more = total - minOf(names.size, NAMED_IN_SUMMARY)
+    return if (more > 0) pluralStringResource(R.plurals.summary_more, more, named, more) else named
 }
 
-/** What device information the app read, in plain words: "Network hardware address, Battery status". */
+/** What the app accessed within [category]: folders for files, item names for the rest. */
 @Composable
-private fun deviceSummary(app: AppSummary): String? {
-    val titles = app.topics.mapNotNull { topicTitle(it) }.map { stringResource(it) }
-    if (titles.isEmpty()) return null
-    val named = titles.take(NAMED_IN_SUMMARY).joinToString(stringResource(R.string.summary_separator))
-    val more = titles.size - minOf(titles.size, NAMED_IN_SUMMARY)
-    return if (more > 0) {
-        pluralStringResource(R.plurals.summary_topics_more, more, named, more)
-    } else {
-        named
+private fun categoryDetail(app: AppSummary, category: DataCategory): String? {
+    if (category == DataCategory.FILES) {
+        val parts = buildList {
+            if (app.folders.isNotEmpty()) {
+                namedList(app.folders, total = app.folderCount)?.let(::add)
+            } else if (app.count(Category.STORAGE) > 0) {
+                add(pluralStringResource(R.plurals.summary_storage, app.count(Category.STORAGE), app.count(Category.STORAGE)))
+            }
+            if (app.count(Category.PROVIDER) > 0) add(stringResource(R.string.summary_media_library))
+        }
+        val summary = parts.takeIf { it.isNotEmpty() }?.joinToString(stringResource(R.string.summary_separator))
+            ?: return null
+        // Folders an app only listed, or was refused, are marked as such.
+        val read = app.filesRead > 0 || app.count(Category.PROVIDER) > 0
+        return if (read) summary else stringResource(R.string.summary_not_read, summary)
     }
+    val titles = app.topics
+        .filter { (topicCategory(it) ?: DataCategory.DEVICE_PROFILE) == category }
+        .map { topic -> topicTitle(topic)?.let { stringResource(it) } ?: topic }
+    return namedList(titles)
 }

@@ -3,78 +3,68 @@
     <!-- Title of the app list, which is the app's home screen. -->
     <string name="app_list_title" translatable="false">Big Brother</string>
     <!-- Daemon status, shown under the title. -->
-    <string name="status_stopped">Not recording: the daemon is not running</string>
+    <string name="status_stopped">Recording stopped</string>
     <!-- %s: a list of the feature_* names below. -->
-    <string name="status_unavailable">Not recorded on this device: %s</string>
-    <string name="feature_exec">commands</string>
+    <string name="status_unavailable">Not supported on this device: %s</string>
+    <string name="feature_exec">command execution</string>
     <string name="feature_network">local network connections</string>
-    <string name="feature_process">access to other apps\' memory</string>
-    <string name="feature_netlink">network configuration queries</string>
-    <string name="feature_binder">requests to system services</string>
-    <string name="feature_appops">permission use</string>
-    <!-- Time ranges. Lower case because they end the sentence under the title;
-         the menu capitalizes them. -->
-    <string name="range_hour">last hour</string>
-    <string name="range_day">last 24 hours</string>
-    <string name="range_week">last 7 days</string>
-    <string name="range_all">all time</string>
-    <!-- App list sections. -->
-    <string name="section_files">Read your files</string>
-    <string name="section_other">Other activity</string>
-    <!-- Per-app summary, e.g. "12 files, 19 device items, 4 system items". -->
+    <string name="feature_process">process memory access</string>
+    <string name="feature_netlink">netlink queries</string>
+    <string name="feature_binder">system service calls</string>
+    <string name="feature_appops">permission usage</string>
+    <!-- Time ranges, shown in the time range chip and its menu. -->
+    <string name="range_hour">Last hour</string>
+    <string name="range_day">Last 24 hours</string>
+    <string name="range_week">Last 7 days</string>
+    <string name="range_all">All time</string>
+    <!-- Under the title: how many apps have records in the selected time range. -->
+    <plurals name="status_summary">
+        <item quantity="one">%d app accessed private data</item>
+        <item quantity="other">%d apps accessed private data</item>
+    </plurals>
+    <string name="status_none">No access recorded</string>
+    <!-- Category filter chip: a category name and how many apps accessed it. -->
+    <string name="category_chip">%1$s · %2$d</string>
+
     <plurals name="summary_storage">
         <item quantity="one">%d file</item>
         <item quantity="other">%d files</item>
     </plurals>
     <string name="summary_separator">", "</string>
-    <string name="search_apps">Search apps</string>
-    <string name="sort">Sort</string>
-    <string name="sort_files">Files read</string>
-    <string name="sort_recent">Most recent</string>
-    <string name="sort_name">Name</string>
-    <!-- An app's name followed by the Android user it runs as, for cloned apps
-         and work profiles: "WeChat (user 999)". -->
-    <string name="app_name_with_user">%1$s (user %2$d)</string>
-    <string name="empty_body">Try a longer time range.</string>
-    <string name="install_module">Install module</string>
-    <string name="module_outdated">The installed module is older than this app.</string>
-    <string name="update_module">Update</string>
-    <string name="installing_module">Installing the module…</string>
-    <string name="reboot_title">Restart to finish</string>
-    <string name="reboot_body">Restart the device to start recording.</string>
-    <string name="install_failed_title">Could not install the module</string>
-
-    <!-- Under the title: the headline answer for the selected time range. -->
-    <plurals name="status_summary">
-        <item quantity="one">%d app read your files</item>
-        <item quantity="other">%d apps read your files</item>
-    </plurals>
-    <string name="status_none">No app read your files</string>
-
-    <!-- Row summary: folders named, then how many more. %1$s is a list of folder names. -->
-    <plurals name="summary_folders_more">
-        <item quantity="one">%1$s and %2$d more folder</item>
-        <item quantity="other">%1$s and %2$d more folders</item>
-    </plurals>
-    <string name="summary_media_library">Media library</string>
-    <!-- %1$s is a list of kinds of device information. -->
-    <plurals name="summary_topics_more">
+    <!-- A shortened list: the first names, then how many are not named. -->
+    <plurals name="summary_more">
         <item quantity="one">%1$s and %2$d more</item>
         <item quantity="other">%1$s and %2$d more</item>
     </plurals>
+    <string name="summary_media_library">Media library</string>
+    <!-- Folders an app listed or was denied, without reading any file. %s is a list of folder names. -->
+    <string name="summary_not_read">%s (not read)</string>
 
-    <string name="show_system_apps">Show system apps</string>
-
-    <string name="module_pending_reboot">Restart to finish updating the module.</string>
-
-    <!-- Folders an app looked into or was refused, without reading anything. %s is a list of folder names. -->
-    <string name="summary_not_read">%s, nothing read</string>
-
+    <string name="search_apps">Search apps</string>
     <string name="more_options">More options</string>
     <string name="menu_time_range">Time range</string>
-    <!-- Headline under the title with the time range it covers:
-         "23 apps read your files, last 24 hours". %2$s is a time range. -->
-    <string name="status_in_range">%1$s, %2$s</string>
+    <string name="sort">Sort by</string>
+    <string name="sort_sensitivity">Sensitivity</string>
+    <string name="sort_recent">Last access</string>
+    <string name="sort_name">Name</string>
+    <string name="show_system_apps">Show system apps</string>
+    <string name="only_system_apps">Records exist for system apps only</string>
+    <!-- An app's name followed by the Android user it runs as, for cloned apps
+         and work profiles: "WeChat (user 999)". -->
+    <string name="app_name_with_user">%1$s (user %2$d)</string>
 
-    <string name="only_system_apps">Only system apps have records</string>
+    <string name="daemon_stopped">The recording daemon is not running.</string>
+    <string name="daemon_starting">Starting the recording daemon…</string>
+    <string name="daemon_not_reporting">The daemon was started but is not recording. See /data/adb/big_brother/bbd.log.</string>
+    <string name="daemon_start_failed">Could not start the daemon: %s</string>
+    <string name="module_disabled">The module is disabled. Enable it in the root manager.</string>
+    <string name="start_daemon">Start</string>
+    <string name="install_module">Install module</string>
+    <string name="module_outdated">The installed module is older than this app.</string>
+    <string name="update_module">Update</string>
+    <string name="module_pending_reboot">Module update takes effect after restart.</string>
+    <string name="installing_module">Installing module…</string>
+    <string name="reboot_title">Restart required</string>
+    <string name="reboot_body">Recording starts after the device restarts.</string>
+    <string name="install_failed_title">Module installation failed</string>
 </resources>

@@ -1,60 +1,56 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="status_stopped">未在记录：守护进程没有运行</string>
-    <string name="status_unavailable">本设备上无法记录：%s</string>
-    <string name="feature_exec">系统命令</string>
-    <string name="feature_network">本机和局域网连接</string>
-    <string name="feature_process">访问其他应用的内存</string>
-    <string name="feature_netlink">网络配置查询</string>
-    <string name="feature_binder">对系统服务的请求</string>
-    <string name="feature_appops">权限使用情况</string>
+    <string name="status_stopped">记录已停止</string>
+    <string name="status_unavailable">本设备不支持：%s</string>
+    <string name="feature_exec">命令执行</string>
+    <string name="feature_network">本地网络连接</string>
+    <string name="feature_process">进程内存访问</string>
+    <string name="feature_netlink">Netlink 查询</string>
+    <string name="feature_binder">系统服务调用</string>
+    <string name="feature_appops">权限使用记录</string>
     <string name="range_hour">最近 1 小时</string>
     <string name="range_day">最近 24 小时</string>
     <string name="range_week">最近 7 天</string>
     <string name="range_all">全部时间</string>
-    <string name="section_files">读取了你的文件</string>
-    <string name="section_other">其他行为</string>
+    <plurals name="status_summary">
+        <item quantity="other">%d 个应用访问了隐私数据</item>
+    </plurals>
+    <string name="status_none">无访问记录</string>
+    <string name="category_chip">%1$s · %2$d</string>
+
     <plurals name="summary_storage">
         <item quantity="other">%d 个文件</item>
     </plurals>
-    <string name="summary_separator">，</string>
-    <string name="search_apps">搜索应用</string>
-    <string name="sort">排序</string>
-    <string name="sort_files">读取的文件数</string>
-    <string name="sort_recent">最近活动</string>
-    <string name="sort_name">名称</string>
-    <string name="app_name_with_user">%1$s（用户 %2$d）</string>
-    <string name="empty_body">可以换一个更长的时间范围。</string>
-    <string name="install_module">安装模块</string>
-    <string name="module_outdated">已安装的模块比本应用旧。</string>
-    <string name="update_module">更新</string>
-    <string name="installing_module">正在安装模块…</string>
-    <string name="reboot_title">重启以完成安装</string>
-    <string name="reboot_body">重启设备后开始记录。</string>
-    <string name="install_failed_title">模块安装失败</string>
-
-    <plurals name="status_summary">
-        <item quantity="other">%d 个应用读取了你的文件</item>
-    </plurals>
-    <string name="status_none">没有应用读取你的文件</string>
-
-    <plurals name="summary_folders_more">
-        <item quantity="other">%1$s 等 %2$d 个文件夹</item>
+    <string name="summary_separator">、</string>
+    <plurals name="summary_more">
+        <item quantity="other">%1$s及其他 %2$d 项</item>
     </plurals>
     <string name="summary_media_library">媒体库</string>
-    <plurals name="summary_topics_more">
-        <item quantity="other">%1$s 等 %2$d 项</item>
-    </plurals>
+    <string name="summary_not_read">%s（未读取）</string>
 
-    <string name="show_system_apps">显示系统应用</string>
-
-    <string name="module_pending_reboot">重启后完成模块更新。</string>
-
-    <string name="summary_not_read">%s，未读取</string>
-
+    <string name="search_apps">搜索应用</string>
     <string name="more_options">更多选项</string>
     <string name="menu_time_range">时间范围</string>
-    <string name="status_in_range">%1$s，%2$s</string>
+    <string name="sort">排序方式</string>
+    <string name="sort_sensitivity">敏感程度</string>
+    <string name="sort_recent">最近访问</string>
+    <string name="sort_name">名称</string>
+    <string name="show_system_apps">显示系统应用</string>
+    <string name="only_system_apps">仅系统应用有记录</string>
+    <string name="app_name_with_user">%1$s（用户 %2$d）</string>
 
-    <string name="only_system_apps">只有系统应用有记录</string>
+    <string name="daemon_stopped">记录守护进程未运行。</string>
+    <string name="daemon_starting">正在启动记录守护进程…</string>
+    <string name="daemon_not_reporting">守护进程已启动但未开始记录，详见 /data/adb/big_brother/bbd.log。</string>
+    <string name="daemon_start_failed">守护进程启动失败：%s</string>
+    <string name="module_disabled">模块已停用，请在 root 管理器中启用。</string>
+    <string name="start_daemon">启动</string>
+    <string name="install_module">安装模块</string>
+    <string name="module_outdated">已安装的模块版本低于本应用。</string>
+    <string name="update_module">更新</string>
+    <string name="module_pending_reboot">模块更新将在重启后生效。</string>
+    <string name="installing_module">正在安装模块…</string>
+    <string name="reboot_title">需要重启</string>
+    <string name="reboot_body">设备重启后开始记录。</string>
+    <string name="install_failed_title">模块安装失败</string>
 </resources>
