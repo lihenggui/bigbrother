@@ -5,12 +5,12 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.root.ModulePaths.BBD
-import li.mercury.bigbrother.core.data.root.ModulePaths.KSUD
 import li.mercury.bigbrother.core.data.root.ModulePaths.MODULE_PROP
 import li.mercury.bigbrother.core.data.root.ModulePaths.PENDING_UPDATE_DIR
 import li.mercury.bigbrother.core.data.root.RootShell
+import li.mercury.bigbrother.core.data.root.shellQuoted
 
-/** The KernelSU module that does the recording. */
+/** The root module (KernelSU, Magisk or APatch) that does the recording. */
 interface ModuleRepository {
     /** Whether the module's files are in place, i.e. it is installed and active. */
     suspend fun isActive(): Boolean
@@ -60,11 +60,33 @@ internal class RootModuleRepository @Inject constructor(
     }
 
     override suspend fun installBundled(): String {
-        val apkPath = context.applicationInfo.sourceDir
-        // Single quotes keep the shell from interpreting the path; install
-        // paths never contain a single quote themselves.
-        val result = rootShell.run("$KSUD module install '$apkPath' 2>&1")
+        val result = rootShell.run(installCommand(context.applicationInfo.sourceDir))
         if (!result.isSuccess) throw RecordsException.CommandFailed(result.output)
         return result.output
     }
+}
+
+/**
+ * A shell command that flashes the module in [apkPath] with the installer of
+ * whichever root manager is present.
+ *
+ * Magisk is tested first because `magisk -V` asks the running daemon, so it
+ * only succeeds while Magisk is the active root. The daemons of KernelSU and
+ * APatch are found by their files, which can outlive a switch to another
+ * manager; KernelSU wins if both exist.
+ */
+internal fun installCommand(apkPath: String): String {
+    val apk = apkPath.shellQuoted()
+    return """
+        if magisk -V >/dev/null 2>&1; then
+            magisk --install-module $apk 2>&1
+        elif [ -x /data/adb/ksud ]; then
+            /data/adb/ksud module install $apk 2>&1
+        elif [ -x /data/adb/apd ]; then
+            /data/adb/apd module install $apk 2>&1
+        else
+            echo "No module installer found (KernelSU, Magisk or APatch)."
+            exit 1
+        fi
+    """.trimIndent()
 }

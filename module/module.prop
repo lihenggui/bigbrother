@@ -1,6 +1,6 @@
 id=big_brother
 name=Big Brother
-version=v0.1.5
-versionCode=6
+version=v0.1.6
+versionCode=7
 author=Mercury Li
 description=Records which apps read your files on shared storage and which device/system information they collect. Browse the records in the Big Brother app.

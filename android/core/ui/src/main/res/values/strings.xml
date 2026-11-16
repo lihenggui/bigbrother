@@ -11,7 +11,7 @@
     <!-- Empty and error states. -->
     <string name="empty_title">Nothing recorded in this time range</string>
     <string name="no_root_title">Root access needed</string>
-    <string name="no_root_body">Grant root in the KernelSU manager, then try again.</string>
+    <string name="no_root_body">Grant root in your root manager (KernelSU, Magisk or APatch), then try again.</string>
     <string name="no_module_title">Module not installed</string>
     <string name="no_module_body">The module that does the recording is bundled with this app.</string>
     <string name="error_title">Could not load records</string>

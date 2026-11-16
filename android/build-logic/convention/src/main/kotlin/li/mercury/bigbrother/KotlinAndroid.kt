@@ -8,7 +8,7 @@ internal fun configureKotlinAndroid(commonExtension: CommonExtension) {
     commonExtension.apply {
         compileSdk = 37
         defaultConfig.apply {
-            // Official KernelSU requires a GKI 2.0 kernel, which ships with Android 12.
+            // The module requires a GKI 2.0 kernel, which ships with Android 12.
             minSdk = 31
         }
         compileOptions.apply {

@@ -61,13 +61,15 @@ class RootShell @Inject constructor(
  */
 internal fun String.shellQuoted(): String = "'" + replace("'", "'\\''") + "'"
 
-/** Where the KernelSU module's files live once it is installed. */
+/**
+ * Where the module's files live once it is installed. KernelSU, Magisk and
+ * APatch use the same layout under /data/adb.
+ */
 internal object ModulePaths {
     const val MODULE_DIR = "/data/adb/modules/big_brother"
     const val BBD = "$MODULE_DIR/bin/bbd"
     const val MODULE_PROP = "$MODULE_DIR/module.prop"
-    const val KSUD = "/data/adb/ksud"
 
-    /** Where KernelSU stages a module update until the next boot. */
+    /** Where a module update is staged until the next boot. */
     const val PENDING_UPDATE_DIR = "/data/adb/modules_update/big_brother"
 }
