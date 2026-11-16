@@ -61,8 +61,6 @@
     <string name="group_media">媒体库</string>
 
     <string name="tab_files">文件</string>
-    <string name="tab_activity">系统数据</string>
-    <string name="tab_permissions">权限使用</string>
     <string name="read_count">%d 次</string>
 
     <string name="open_file_missing">文件不存在。</string>
@@ -74,4 +72,24 @@
     <string name="time_span">%1$s – %2$s</string>
     <string name="show_details">显示详情</string>
     <string name="hide_details">隐藏详情</string>
+    <string name="tab_info">应用信息</string>
+    <string name="tab_with_count">%1$s (%2$d)</string>
+    <string name="header_subtitle">%1$s · %2$s</string>
+    <string name="source_permissions">权限记录</string>
+    <plurals name="total_used">
+        <item quantity="other">使用 %d 次</item>
+    </plurals>
+    <string name="info_package">包名</string>
+    <string name="info_uid">UID</string>
+    <string name="info_version">版本</string>
+    <string name="info_version_value">%1$s (%2$d)</string>
+    <string name="info_target_sdk">目标 SDK</string>
+    <string name="info_min_sdk">最低 SDK</string>
+    <string name="info_first_install">安装时间</string>
+    <string name="info_last_update">更新时间</string>
+    <string name="info_records">记录范围</string>
+    <string name="info_open_settings">系统应用设置</string>
+    <string name="info_launch">打开应用</string>
+    <string name="info_copied">已复制</string>
+    <string name="uid_label">UID %d</string>
 </resources>

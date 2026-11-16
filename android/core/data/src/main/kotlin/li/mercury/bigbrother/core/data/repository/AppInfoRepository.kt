@@ -13,17 +13,27 @@ import kotlinx.coroutines.withContext
 import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.IO
 import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.model.AppInfo
+import li.mercury.bigbrother.core.model.PackageDetails
 
-/** Names and icons of installed apps. */
+/** Names, icons and package facts of installed apps, for the calling user. */
 interface AppInfoRepository {
     /** Returns null for packages that are not installed. */
     suspend fun getAppInfo(packageName: String): AppInfo?
 
     /** [getAppInfo] for several packages; those not installed are omitted. */
     suspend fun getAppInfo(packageNames: Collection<String>): Map<String, AppInfo>
+
+    /**
+     * Version and install times; null for packages that are not installed.
+     * Not cached, since they change whenever the app is updated.
+     */
+    suspend fun getPackageDetails(packageName: String): PackageDetails?
 }
 
-/** Backed by the package manager, with results cached for the process lifetime. */
+/**
+ * Backed by the package manager. Names and icons are cached for the process
+ * lifetime; package details are looked up each time.
+ */
 @Singleton
 internal class PackageManagerAppInfoRepository @Inject constructor(
     @ApplicationContext context: Context,
@@ -51,6 +61,23 @@ internal class PackageManagerAppInfoRepository @Inject constructor(
 
     override suspend fun getAppInfo(packageNames: Collection<String>): Map<String, AppInfo> =
         packageNames.mapNotNull { name -> getAppInfo(name)?.let { name to it } }.toMap()
+
+    override suspend fun getPackageDetails(packageName: String): PackageDetails? =
+        withContext(ioDispatcher) {
+            try {
+                val info = packageManager.getPackageInfo(packageName, 0)
+                PackageDetails(
+                    versionName = info.versionName,
+                    versionCode = info.longVersionCode,
+                    targetSdk = info.applicationInfo?.targetSdkVersion ?: 0,
+                    minSdk = info.applicationInfo?.minSdkVersion ?: 0,
+                    firstInstallTime = info.firstInstallTime,
+                    lastUpdateTime = info.lastUpdateTime,
+                )
+            } catch (_: PackageManager.NameNotFoundException) {
+                null
+            }
+        }
 
     private companion object {
         /** Large enough for the detail screen header; list rows scale it down. */

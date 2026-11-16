@@ -8,10 +8,6 @@
     <string name="feature_netlink">Netlink 查询</string>
     <string name="feature_binder">系统服务调用</string>
     <string name="feature_appops">权限使用记录</string>
-    <string name="range_hour">最近 1 小时</string>
-    <string name="range_day">最近 24 小时</string>
-    <string name="range_week">最近 7 天</string>
-    <string name="range_all">全部时间</string>
     <plurals name="status_summary">
         <item quantity="other">%d 个应用访问了隐私数据</item>
     </plurals>
@@ -29,12 +25,12 @@
     <string name="summary_not_read">%s（未读取）</string>
 
     <string name="search_apps">搜索应用</string>
-    <string name="more_options">更多选项</string>
     <string name="menu_time_range">时间范围</string>
     <string name="sort">排序方式</string>
     <string name="sort_sensitivity">敏感程度</string>
     <string name="sort_recent">最近访问</string>
     <string name="sort_name">名称</string>
+    <string name="show_system_apps_summary">默认隐藏：读取数据属于系统组件的正常行为。</string>
     <string name="show_system_apps">显示系统应用</string>
     <string name="only_system_apps">仅系统应用有记录</string>
     <string name="app_name_with_user">%1$s（用户 %2$d）</string>

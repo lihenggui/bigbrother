@@ -20,10 +20,10 @@ fun EntryProviderScope<NavKey>.appDetailEntry(navigator: Navigator) {
         AppDetailScreen(
             onBackClick = navigator::goBack,
             viewModel = hiltViewModel<AppDetailViewModel, AppDetailViewModel.Factory>(
-                // One view model per app and time range.
-                key = "${key.uid}:${key.rangeHours}",
+                // One view model per app, time range and starting tab.
+                key = "${key.uid}:${key.rangeHours}:${key.tab}",
             ) { factory ->
-                factory.create(key.uid, key.packageName, TimeRange.fromHours(key.rangeHours))
+                factory.create(key.uid, key.packageName, TimeRange.fromHours(key.rangeHours), key.tab)
             },
         )
     }
