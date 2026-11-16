@@ -22,11 +22,16 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material.icons.automirrored.filled.Sort
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Switch
+import androidx.compose.ui.semantics.Role
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -55,6 +60,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -78,6 +84,7 @@ import li.mercury.bigbrother.core.ui.SearchTopBar
 import li.mercury.bigbrother.core.ui.appDisplayName
 import li.mercury.bigbrother.core.ui.compactTime
 import li.mercury.bigbrother.core.ui.dataCategories
+import li.mercury.bigbrother.core.ui.label
 import li.mercury.bigbrother.core.ui.topicCategory
 import li.mercury.bigbrother.core.ui.topicTitle
 import li.mercury.bigbrother.core.ui.R as UiR
@@ -92,7 +99,7 @@ private enum class SortOrder(val label: Int) {
 
 @Composable
 fun AppListScreen(
-    navigateToAppDetail: (uid: Int, packageName: String, range: TimeRange) -> Unit,
+    navigateToAppDetail: (uid: Int, packageName: String, range: TimeRange, tab: String?) -> Unit,
     viewModel: AppListViewModel,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -107,7 +114,8 @@ fun AppListScreen(
         state = uiState,
         onRange = viewModel::setRange,
         onRefresh = viewModel::refresh,
-        onOpen = { app -> navigateToAppDetail(app.uid, app.packageName, uiState.range) },
+        // With a category selected, the app opens on that category's tab.
+        onOpen = { app, category -> navigateToAppDetail(app.uid, app.packageName, uiState.range, category?.name) },
         onInstallModule = viewModel::installModule,
         onStartDaemon = viewModel::startDaemon,
         onShowSystemApps = viewModel::setShowSystemApps,
@@ -115,7 +123,17 @@ fun AppListScreen(
 }
 
 /** An app with the categories of private data it accessed, computed once per load. */
-private class Entry(val app: AppSummary, val categories: List<DataCategory>)
+private class Entry(val app: AppSummary, val categories: List<DataCategory>) {
+    /**
+     * Position in the sensitivity order: apps that read the user's files
+     * lead; the rest follow their most sensitive other category. Merely
+     * looking for files, which nearly every app does, does not count.
+     */
+    val rank: Int = when {
+        app.filesRead > 0 || app.count(Category.PROVIDER) > 0 -> DataCategory.FILES.ordinal
+        else -> categories.firstOrNull { it != DataCategory.FILES }?.ordinal ?: DataCategory.FILES.ordinal
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -123,7 +141,7 @@ internal fun AppListScreen(
     state: AppListUiState,
     onRange: (TimeRange) -> Unit,
     onRefresh: () -> Unit,
-    onOpen: (AppSummary) -> Unit,
+    onOpen: (AppSummary, DataCategory?) -> Unit,
     onInstallModule: () -> Unit,
     onStartDaemon: () -> Unit,
     onShowSystemApps: (Boolean) -> Unit,
@@ -144,6 +162,16 @@ internal fun AppListScreen(
     var query by rememberSaveable { mutableStateOf("") }
     var sort by rememberSaveable { mutableStateOf(SortOrder.SENSITIVITY) }
     var category by rememberSaveable { mutableStateOf<DataCategory?>(null) }
+    var showSortSheet by rememberSaveable { mutableStateOf(false) }
+    if (showSortSheet) {
+        SortSheet(
+            sort = sort,
+            onSort = { sort = it },
+            showSystemApps = state.showSystemApps,
+            onShowSystemApps = onShowSystemApps,
+            onDismiss = { showSortSheet = false },
+        )
+    }
     val closeSearch = {
         searching = false
         query = ""
@@ -178,12 +206,12 @@ internal fun AppListScreen(
                                 contentDescription = stringResource(UiR.string.search),
                             )
                         }
-                        OptionsMenu(
-                            sort = sort,
-                            onSort = { sort = it },
-                            showSystemApps = state.showSystemApps,
-                            onShowSystemApps = onShowSystemApps,
-                        )
+                        IconButton(onClick = { showSortSheet = true }) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.Sort,
+                                contentDescription = stringResource(R.string.sort),
+                            )
+                        }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = background,
@@ -290,14 +318,6 @@ private fun featureLabel(id: String): Int? = when (id) {
     else -> null
 }
 
-private val TimeRange.label: Int
-    get() = when (this) {
-        TimeRange.HOUR -> R.string.range_hour
-        TimeRange.DAY -> R.string.range_day
-        TimeRange.WEEK -> R.string.range_week
-        TimeRange.ALL -> R.string.range_all
-    }
-
 /**
  * The time range, then one chip per category of private data with the
  * number of apps that accessed it. Selecting a category narrows the list to
@@ -374,52 +394,58 @@ private fun RangeChip(range: TimeRange, onRange: (TimeRange) -> Unit) {
     }
 }
 
-/** Sort order and the system apps switch. */
+/** Sort order and the system apps switch, in a bottom sheet as in Blocker's app list. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun OptionsMenu(
+private fun SortSheet(
     sort: SortOrder,
     onSort: (SortOrder) -> Unit,
     showSystemApps: Boolean,
     onShowSystemApps: (Boolean) -> Unit,
+    onDismiss: () -> Unit,
 ) {
-    var expanded by remember { mutableStateOf(false) }
-    Box {
-        IconButton(onClick = { expanded = true }) {
-            Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more_options))
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            MenuHeading(R.string.sort)
-            for (order in SortOrder.entries) {
-                DropdownMenuItem(
-                    text = { Text(stringResource(order.label)) },
-                    leadingIcon = { RadioButton(selected = order == sort, onClick = null) },
-                    onClick = {
-                        onSort(order)
-                        expanded = false
-                    },
-                )
+    // Rows take the sheet's colour instead of drawing their own surface.
+    val sheetItemColors = ListItemDefaults.colors(containerColor = Color.Transparent)
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.padding(bottom = 24.dp)) {
+            SheetHeading(R.string.sort)
+            Column(Modifier.selectableGroup()) {
+                for (order in SortOrder.entries) {
+                    ListItem(
+                        headlineContent = { Text(stringResource(order.label)) },
+                        leadingContent = { RadioButton(selected = order == sort, onClick = null) },
+                        colors = sheetItemColors,
+                        modifier = Modifier.selectable(
+                            selected = order == sort,
+                            role = Role.RadioButton,
+                            onClick = { onSort(order) },
+                        ),
+                    )
+                }
             }
-            HorizontalDivider()
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.show_system_apps)) },
-                leadingIcon = { Checkbox(checked = showSystemApps, onCheckedChange = null) },
-                onClick = {
-                    onShowSystemApps(!showSystemApps)
-                    expanded = false
-                },
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            ListItem(
+                headlineContent = { Text(stringResource(R.string.show_system_apps)) },
+                supportingContent = { Text(stringResource(R.string.show_system_apps_summary)) },
+                trailingContent = { Switch(checked = showSystemApps, onCheckedChange = null) },
+                colors = sheetItemColors,
+                modifier = Modifier.toggleable(
+                    value = showSystemApps,
+                    role = Role.Switch,
+                    onValueChange = onShowSystemApps,
+                ),
             )
         }
     }
 }
 
-/** Names a group of options inside the menu. */
+/** Names a group of options inside the sheet. */
 @Composable
-private fun MenuHeading(title: Int) {
+private fun SheetHeading(title: Int) {
     Text(
         text = stringResource(title),
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        style = MaterialTheme.typography.titleMedium,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
     )
 }
 
@@ -475,7 +501,7 @@ private fun AppList(
     modulePendingReboot: Boolean,
     hiddenSystemApps: Int,
     showSystemApps: Boolean,
-    onOpen: (AppSummary) -> Unit,
+    onOpen: (AppSummary, DataCategory?) -> Unit,
     onInstallModule: () -> Unit,
     onStartDaemon: () -> Unit,
     onShowSystemApps: () -> Unit,
@@ -496,8 +522,7 @@ private fun AppList(
             .let { matching ->
                 when (sort) {
                     SortOrder.SENSITIVITY -> matching.sortedWith(
-                        compareBy<Entry> { it.categories.firstOrNull()?.ordinal ?: Int.MAX_VALUE }
-                            .thenByDescending { it.app.lastSeen },
+                        compareBy<Entry> { it.rank }.thenByDescending { it.app.lastSeen },
                     )
                     // The daemon already lists the most recent first.
                     SortOrder.RECENT -> matching
@@ -572,7 +597,7 @@ private fun AppList(
                 category = category,
                 index = index,
                 count = shown.size,
-                onClick = { onOpen(entry.app) },
+                onClick = { onOpen(entry.app, category) },
             )
         }
     }

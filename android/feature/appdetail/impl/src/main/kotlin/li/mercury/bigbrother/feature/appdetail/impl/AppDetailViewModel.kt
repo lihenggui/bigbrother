@@ -1,5 +1,7 @@
 package li.mercury.bigbrother.feature.appdetail.impl
 
+import android.os.Process
+import android.os.UserHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.assisted.Assisted
@@ -22,6 +24,7 @@ import li.mercury.bigbrother.core.model.AccessPeriod
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.LoadFailure
+import li.mercury.bigbrother.core.model.PackageDetails
 import li.mercury.bigbrother.core.model.TimeRange
 
 /** The file whose access history is shown. */
@@ -43,6 +46,16 @@ data class AppDetailUiState(
     val failure: LoadFailure? = null,
     /** Set while the details of one file are open. */
     val fileDetails: FileDetails? = null,
+    /** The time range the records cover. */
+    val range: TimeRange = TimeRange.DAY,
+    /** Version and install facts; null until loaded or when not installed. */
+    val packageDetails: PackageDetails? = null,
+    /**
+     * Id of the selected tab, or null for the first tab with content. Kept
+     * here rather than in the screen so that it survives the tabs being
+     * rebuilt when records reload.
+     */
+    val selectedTab: String? = null,
 )
 
 @HiltViewModel(assistedFactory = AppDetailViewModel.Factory::class)
@@ -51,11 +64,16 @@ class AppDetailViewModel @AssistedInject constructor(
     private val appInfoRepository: AppInfoRepository,
     private val fileAccessRepository: FileAccessRepository,
     @Assisted private val uid: Int,
-    @Assisted packageName: String,
+    @Assisted("packageName") packageName: String,
     @Assisted private val range: TimeRange,
+    @Assisted("tab") initialTab: String?,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(
-        AppDetailUiState(AppSummary(uid, packageName, counts = emptyMap(), lastSeen = 0)),
+        AppDetailUiState(
+            app = AppSummary(uid, packageName, counts = emptyMap(), lastSeen = 0),
+            range = range,
+            selectedTab = initialTab,
+        ),
     )
     val uiState: StateFlow<AppDetailUiState> = _uiState.asStateFlow()
 
@@ -66,6 +84,10 @@ class AppDetailViewModel @AssistedInject constructor(
     }
 
     fun retry() = load()
+
+    fun selectTab(id: String) {
+        _uiState.update { it.copy(selectedTab = id) }
+    }
 
     /** Open the details of the file at [path] and load when it was accessed. */
     fun showFileDetails(path: String) {
@@ -93,14 +115,30 @@ class AppDetailViewModel @AssistedInject constructor(
         loadAccesses()
     }
 
-    /** The app's name and icon, for the header. */
+    /** The app's totals, name, icon and package facts, for the header and the info tab. */
     private fun loadSummary() {
+        // Name and package facts come from the package manager, so they show
+        // even if the records fail to load; the two are fetched side by side.
+        val packageName = _uiState.value.app.packageName.takeIf { it.isNotEmpty() }
+        if (packageName != null) {
+            viewModelScope.launch {
+                val info = appInfoRepository.getAppInfo(packageName)
+                // The package manager answers for this app's own Android user.
+                // For a clone or a work profile app it would describe, and
+                // its actions would open, another user's copy, so it gives no
+                // package facts there.
+                val details = if (UserHandle.getUserHandleForUid(uid) == Process.myUserHandle()) {
+                    appInfoRepository.getPackageDetails(packageName)
+                } else {
+                    null
+                }
+                _uiState.update { it.copy(appInfo = info, packageDetails = details) }
+            }
+        }
         viewModelScope.launch {
             try {
                 val app = accessRepository.getApps(range).firstOrNull { it.uid == uid } ?: return@launch
-                val info = app.packageName.takeIf { it.isNotEmpty() }
-                    ?.let { appInfoRepository.getAppInfo(it) }
-                _uiState.update { it.copy(app = app, appInfo = info) }
+                _uiState.update { it.copy(app = app) }
             } catch (_: RecordsException) {
                 // The access list reports the failure; the header keeps its placeholder.
             }
@@ -135,7 +173,12 @@ class AppDetailViewModel @AssistedInject constructor(
 
     @AssistedFactory
     interface Factory {
-        fun create(uid: Int, packageName: String, range: TimeRange): AppDetailViewModel
+        fun create(
+            uid: Int,
+            @Assisted("packageName") packageName: String,
+            range: TimeRange,
+            @Assisted("tab") initialTab: String?,
+        ): AppDetailViewModel
     }
 
     private companion object {

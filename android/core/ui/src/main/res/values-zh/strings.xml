@@ -77,4 +77,9 @@
     <string name="category_network">网络与附近设备</string>
     <string name="category_device_profile">设备指纹</string>
     <string name="category_environment">运行环境检测</string>
+
+    <string name="range_hour">最近 1 小时</string>
+    <string name="range_day">最近 24 小时</string>
+    <string name="range_week">最近 7 天</string>
+    <string name="range_all">全部时间</string>
 </resources>

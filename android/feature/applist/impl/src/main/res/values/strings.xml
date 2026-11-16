@@ -12,11 +12,6 @@
     <string name="feature_netlink">netlink queries</string>
     <string name="feature_binder">system service calls</string>
     <string name="feature_appops">permission usage</string>
-    <!-- Time ranges, shown in the time range chip and its menu. -->
-    <string name="range_hour">Last hour</string>
-    <string name="range_day">Last 24 hours</string>
-    <string name="range_week">Last 7 days</string>
-    <string name="range_all">All time</string>
     <!-- Under the title: how many apps have records in the selected time range. -->
     <plurals name="status_summary">
         <item quantity="one">%d app accessed private data</item>
@@ -41,12 +36,12 @@
     <string name="summary_not_read">%s (not read)</string>
 
     <string name="search_apps">Search apps</string>
-    <string name="more_options">More options</string>
     <string name="menu_time_range">Time range</string>
     <string name="sort">Sort by</string>
     <string name="sort_sensitivity">Sensitivity</string>
     <string name="sort_recent">Last access</string>
     <string name="sort_name">Name</string>
+    <string name="show_system_apps_summary">Hidden by default: reading data is part of how system components work.</string>
     <string name="show_system_apps">Show system apps</string>
     <string name="only_system_apps">Records exist for system apps only</string>
     <!-- An app's name followed by the Android user it runs as, for cloned apps
