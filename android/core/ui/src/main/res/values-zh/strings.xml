@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <string name="isolated_process">隔离进程</string>
+    <string name="back">返回</string>
+    <string name="retry">重试</string>
+    <string name="search">搜索</string>
+    <string name="close_search">关闭搜索</string>
+    <string name="no_matches">没有匹配项</string>
+
+    <string name="empty_title">这段时间没有记录</string>
+    <string name="no_root_title">需要 root 权限</string>
+    <string name="no_root_body">请在 KernelSU 管理器里授予 root，然后重试。</string>
+    <string name="no_module_title">模块未安装</string>
+    <string name="no_module_body">负责记录的模块已随本应用提供。</string>
+    <string name="error_title">读取记录失败</string>
+
+    <string name="topic_mac_address_title">网卡硬件地址</string>
+    <string name="topic_network_interfaces_title">网络接口</string>
+    <string name="topic_arp_table_title">局域网内的设备</string>
+    <string name="topic_network_state_title">网络连接状态</string>
+    <string name="topic_device_serial_title">硬件序列号</string>
+    <string name="topic_soc_info_title">芯片信息</string>
+    <string name="topic_boot_id_title">开机会话标识</string>
+    <string name="topic_cpu_model_title">处理器型号</string>
+    <string name="topic_kernel_version_title">系统内核版本</string>
+    <string name="topic_other_processes_title">其他正在运行的应用</string>
+    <string name="topic_mounts_title">已挂载的文件系统</string>
+    <string name="topic_kernel_modules_title">内核模块</string>
+    <string name="topic_selinux_state_title">安全策略状态</string>
+    <string name="topic_block_devices_title">存储设备</string>
+    <string name="topic_emulator_probe_title">模拟器检测</string>
+    <string name="topic_input_devices_title">输入设备</string>
+    <string name="topic_battery_title">电池状态</string>
+
+    <string name="time_now">刚刚</string>
+    <string name="time_minutes">%d 分钟</string>
+    <string name="time_hours">%d 小时</string>
+    <string name="time_days">%d 天</string>
+</resources>

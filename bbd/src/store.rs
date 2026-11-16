@@ -1,0 +1,898 @@
+//! SQLite storage.
+//!
+//! Opens are aggregated rather than logged one row each: a row is one
+//! (hour, uid, path, access mode) with success/failure counters. An app that
+//! reads the same photo 500 times in an hour costs one row.
+
+use std::{collections::HashMap, path::Path};
+
+use anyhow::Context as _;
+use rusqlite::{Connection, OpenFlags, params};
+use serde::Serialize;
+
+pub const DEFAULT_DB: &str = "/data/adb/big_brother/bb.db";
+
+/// Access mode bits stored in `access.mode`.
+pub const MODE_READ: u8 = 1;
+pub const MODE_WRITE: u8 = 2;
+pub const MODE_DIR: u8 = 4;
+/// stat/access/readlink: the app learned the path exists and its metadata.
+pub const MODE_PROBE: u8 = 8;
+/// inotify: the app asked to be told when the path changes.
+pub const MODE_WATCH: u8 = 16;
+/// The access went through a system content provider (MediaStore, the
+/// Storage Access Framework, downloads) rather than the app opening the file
+/// itself. Combined with the read/write bits for opens.
+pub const MODE_VIA_PROVIDER: u8 = 32;
+/// A content provider query: the app listed entries without opening them.
+pub const MODE_QUERY: u8 = 64;
+
+/// What kind of information a recorded path exposes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, clap::ValueEnum)]
+pub enum Category {
+    /// User files on shared storage.
+    Storage,
+    /// Hardware and device identifiers (/sys, selected /dev nodes).
+    Device,
+    /// System-wide kernel information (/proc/cpuinfo, /proc/net, ...).
+    System,
+    /// Another app's or the system's processes (/proc/<pid>).
+    Process,
+    /// Content provider collections the app queried (the media library,
+    /// document trees, downloads), identified by URI rather than file path.
+    Provider,
+}
+
+impl Category {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Storage => "storage",
+            Self::Device => "device",
+            Self::System => "system",
+            Self::Process => "process",
+            Self::Provider => "provider",
+        }
+    }
+}
+
+/// Schema version stored in SQLite's `user_version`. Bump it and add a step
+/// to `MIGRATIONS` whenever the schema changes.
+const SCHEMA_VERSION: i32 = 2;
+
+/// Most rows returned for one path's history: a month of hours.
+const HISTORY_LIMIT: u32 = 24 * 31;
+
+/// How many of an app's folders the per-app summary names.
+const TOP_FOLDERS: usize = 3;
+
+/// `MIGRATIONS[n]` upgrades a database from version `n + 1` to `n + 2`.
+const MIGRATIONS: &[&str] = &[
+    // 1 -> 2: number of entries a provider query returned.
+    "ALTER TABLE access ADD COLUMN items INTEGER NOT NULL DEFAULT 0;",
+];
+
+/// The schema at `SCHEMA_VERSION`, for new databases.
+const SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS access (
+    hour     INTEGER NOT NULL,   -- unix time / 3600
+    uid      INTEGER NOT NULL,
+    pkg      TEXT    NOT NULL,   -- package name at record time ('' if unknown)
+    cat      TEXT    NOT NULL,   -- Category::as_str()
+    path     TEXT    NOT NULL,   -- canonical path, or content URI for 'provider'
+    mode     INTEGER NOT NULL,   -- MODE_* bits
+    ok       INTEGER NOT NULL,   -- opens that succeeded
+    fail     INTEGER NOT NULL,   -- opens that failed (denied, missing...)
+    first_ts INTEGER NOT NULL,
+    last_ts  INTEGER NOT NULL,
+    items    INTEGER NOT NULL DEFAULT 0,  -- most entries one provider query returned
+    PRIMARY KEY (hour, uid, path, mode)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS access_uid_last ON access (uid, last_ts);
+CREATE INDEX IF NOT EXISTS access_last ON access (last_ts);
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL) WITHOUT ROWID;
+";
+
+#[derive(Hash, PartialEq, Eq)]
+pub struct Key {
+    pub hour: i64,
+    pub uid: u32,
+    pub path: String,
+    pub mode: u8,
+}
+
+pub struct Agg {
+    pub pkg: String,
+    pub cat: Category,
+    pub ok: u32,
+    pub fail: u32,
+    pub first_ts: i64,
+    pub last_ts: i64,
+    pub items: u32,
+}
+
+/// Counters persisted in `meta` so `bbd stats` can report on a running daemon.
+#[derive(Default)]
+pub struct Counters {
+    /// Events received from the kernel.
+    pub seen: u64,
+    /// Events that matched a category and were recorded.
+    pub kept: u64,
+    /// Events whose absolute path could not be determined.
+    pub unresolved: u64,
+    /// Events the kernel side lost because the ring buffer was full.
+    pub dropped: u64,
+}
+
+pub struct Writer {
+    conn: Connection,
+    pending: HashMap<Key, Agg>,
+}
+
+impl Writer {
+    pub fn open(path: &Path) -> anyhow::Result<Self> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+        }
+        let mut conn =
+            Connection::open(path).with_context(|| format!("opening {}", path.display()))?;
+        // WAL lets `bbd` query commands read while the daemon writes.
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        migrate(&mut conn)?;
+        Ok(Self {
+            conn,
+            pending: HashMap::new(),
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn record(
+        &mut self,
+        uid: u32,
+        pkg: &str,
+        cat: Category,
+        path: String,
+        mode: u8,
+        ok: bool,
+        ts: i64,
+        items: u32,
+    ) {
+        let key = Key {
+            hour: ts / 3600,
+            uid,
+            path,
+            mode,
+        };
+        let agg = self.pending.entry(key).or_insert_with(|| Agg {
+            pkg: pkg.to_string(),
+            cat,
+            ok: 0,
+            fail: 0,
+            first_ts: ts,
+            last_ts: ts,
+            items: 0,
+        });
+        agg.items = agg.items.max(items);
+        if ok {
+            agg.ok += 1;
+        } else {
+            agg.fail += 1;
+        }
+        // Events from different sources are not strictly ordered in time.
+        agg.first_ts = agg.first_ts.min(ts);
+        agg.last_ts = agg.last_ts.max(ts);
+    }
+
+    /// Write buffered rows and counters in one transaction.
+    pub fn flush(&mut self, counters: &Counters, now: i64) -> anyhow::Result<()> {
+        let tx = self.conn.transaction()?;
+        {
+            let mut upsert = tx.prepare_cached(
+                "INSERT INTO access
+                     (hour, uid, pkg, cat, path, mode, ok, fail, first_ts, last_ts, items)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                 ON CONFLICT (hour, uid, path, mode) DO UPDATE SET
+                     ok = ok + excluded.ok,
+                     fail = fail + excluded.fail,
+                     first_ts = min(first_ts, excluded.first_ts),
+                     last_ts = max(last_ts, excluded.last_ts),
+                     items = max(items, excluded.items)",
+            )?;
+            for (k, a) in &self.pending {
+                upsert.execute(params![
+                    k.hour,
+                    k.uid,
+                    a.pkg,
+                    a.cat.as_str(),
+                    k.path,
+                    k.mode,
+                    a.ok,
+                    a.fail,
+                    a.first_ts,
+                    a.last_ts,
+                    a.items
+                ])?;
+            }
+            let mut meta = tx.prepare_cached(
+                "INSERT INTO meta (key, value) VALUES (?1, ?2)
+                 ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            )?;
+            for (key, value) in [
+                ("events_seen", counters.seen as i64),
+                ("events_kept", counters.kept as i64),
+                ("events_unresolved", counters.unresolved as i64),
+                ("events_dropped", counters.dropped as i64),
+                ("last_flush", now),
+            ] {
+                meta.execute(params![key, value])?;
+            }
+        }
+        tx.commit()?;
+        // Only now: if anything above failed, the rows stay buffered and
+        // are written by the next flush.
+        self.pending.clear();
+        Ok(())
+    }
+
+    pub fn set_meta(&self, key: &str, value: i64) -> anyhow::Result<()> {
+        self.conn.execute(
+            "INSERT INTO meta (key, value) VALUES (?1, ?2)
+             ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
+    /// Delete every row recorded for the given packages. Returns the number
+    /// removed. Used to drop records that an earlier version kept but the
+    /// current rules exclude.
+    pub fn delete_packages(&self, packages: &[&str]) -> anyhow::Result<usize> {
+        let mut removed = 0;
+        for package in packages {
+            removed += self
+                .conn
+                .execute("DELETE FROM access WHERE pkg = ?1", params![package])?;
+        }
+        Ok(removed)
+    }
+
+    /// Delete device, system and process rows whose path the current rules no
+    /// longer consider worth recording. Returns the number removed.
+    pub fn delete_untopical(&self) -> anyhow::Result<usize> {
+        let stale: Vec<String> = self
+            .conn
+            .prepare(
+                "SELECT DISTINCT path FROM access WHERE cat IN ('device', 'system', 'process')",
+            )?
+            .query_map([], |r| r.get::<_, String>(0))?
+            .filter_map(Result::ok)
+            .filter(|path| crate::rules::topic_of(path).is_none())
+            .collect();
+        let mut removed = 0;
+        for path in &stale {
+            removed += self.conn.execute(
+                "DELETE FROM access WHERE path = ?1 AND cat IN ('device', 'system', 'process')",
+                params![path],
+            )?;
+        }
+        Ok(removed)
+    }
+
+    /// Delete rows older than `days`. Returns the number removed.
+    pub fn prune(&self, days: u32, now: i64) -> anyhow::Result<usize> {
+        let cutoff = now - i64::from(days) * 86_400;
+        Ok(self
+            .conn
+            .execute("DELETE FROM access WHERE last_ts < ?1", params![cutoff])?)
+    }
+}
+
+/// Bring the database to `SCHEMA_VERSION`: create it if new, otherwise apply
+/// the migration steps it is missing. Refuses a database written by a newer
+/// build rather than guess at its layout.
+fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
+    // One transaction for the schema change and the version that records it:
+    // if the process dies half way, neither is applied and the next start
+    // repeats the whole step.
+    let conn = conn.transaction()?;
+    let has_tables: bool = conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE name = 'access')",
+        [],
+        |r| r.get(0),
+    )?;
+    let mut version: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+    if !has_tables {
+        conn.execute_batch(SCHEMA)?;
+        version = SCHEMA_VERSION;
+    } else if version == 0 {
+        // Databases created before versioning existed have the first layout.
+        version = 1;
+    }
+    anyhow::ensure!(
+        version <= SCHEMA_VERSION,
+        "database is version {version}, newer than this build supports ({SCHEMA_VERSION})"
+    );
+    for step in &MIGRATIONS[(version - 1) as usize..] {
+        conn.execute_batch(step)?;
+    }
+    conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    conn.commit()?;
+    Ok(())
+}
+
+// ---- read side -------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct AppRow {
+    pub uid: u32,
+    pub pkg: String,
+    /// Distinct paths touched, per category.
+    pub storage: i64,
+    pub device: i64,
+    pub system: i64,
+    pub process: i64,
+    pub provider: i64,
+    /// Files on shared storage the app opened successfully: what it actually
+    /// read or wrote, as opposed to looked for or was refused.
+    pub files_read: i64,
+    /// Top-level shared-storage folders of the files it read (of everything
+    /// it touched, if it read none), most-touched first, limited to
+    /// `TOP_FOLDERS`.
+    pub folders: Vec<String>,
+    /// How many top-level folders it touched in total.
+    pub folder_count: usize,
+    /// Topics (see `rules::topic`) of the device, system and process
+    /// information it read, sorted.
+    pub topics: Vec<&'static str>,
+    pub ok: i64,
+    pub fail: i64,
+    pub last_ts: i64,
+}
+
+#[derive(Serialize)]
+pub struct FileRow {
+    pub uid: u32,
+    pub pkg: String,
+    pub cat: String,
+    pub path: String,
+    pub mode: u8,
+    pub ok: i64,
+    pub fail: i64,
+    pub first_ts: i64,
+    pub last_ts: i64,
+    /// Most entries a single provider query returned; 0 for everything else.
+    pub items: i64,
+    /// What the path means (see `rules::topic`); absent for user files and
+    /// provider URIs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub topic: Option<&'static str>,
+}
+
+/// One hour in which an app touched a path in a particular way.
+#[derive(Serialize)]
+pub struct HistoryRow {
+    /// Start of the hour, as a Unix timestamp.
+    pub hour_ts: i64,
+    pub mode: u8,
+    pub ok: i64,
+    pub fail: i64,
+    /// First and last access within the hour.
+    pub first_ts: i64,
+    pub last_ts: i64,
+    pub items: i64,
+}
+
+#[derive(Serialize)]
+pub struct Stats {
+    pub rows: i64,
+    pub apps: i64,
+    pub oldest_ts: Option<i64>,
+    pub newest_ts: Option<i64>,
+    pub meta: HashMap<String, i64>,
+}
+
+pub struct Reader {
+    conn: Connection,
+}
+
+impl Reader {
+    pub fn open(path: &Path) -> anyhow::Result<Self> {
+        let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .with_context(|| format!("opening {} (has the daemon run yet?)", path.display()))?;
+        Ok(Self { conn })
+    }
+
+    /// One row per uid, most recently active first.
+    pub fn apps(&self, since: i64) -> anyhow::Result<Vec<AppRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT uid, max(pkg),
+                    count(DISTINCT CASE WHEN cat = 'storage' THEN path END),
+                    count(DISTINCT CASE WHEN cat = 'device' THEN path END),
+                    count(DISTINCT CASE WHEN cat = 'system' THEN path END),
+                    count(DISTINCT CASE WHEN cat = 'process' THEN path END),
+                    count(DISTINCT CASE WHEN cat = 'provider' THEN path END),
+                    count(DISTINCT CASE WHEN cat = 'storage' AND ok > 0 AND (mode & ?2) = 0
+                                             AND (mode & ?3) != 0 THEN path END),
+                    sum(ok), sum(fail), max(last_ts)
+             FROM access WHERE last_ts >= ?1
+             GROUP BY uid ORDER BY max(last_ts) DESC",
+        )?;
+        // A read is a successful open of a file: not a directory listing, a
+        // stat-style probe or a watch.
+        let not_file_open = MODE_DIR | MODE_PROBE | MODE_WATCH;
+        let read_or_write = MODE_READ | MODE_WRITE;
+        let rows = stmt.query_map(params![since, not_file_open, read_or_write], |r| {
+            Ok(AppRow {
+                uid: r.get(0)?,
+                pkg: r.get(1)?,
+                storage: r.get(2)?,
+                device: r.get(3)?,
+                system: r.get(4)?,
+                process: r.get(5)?,
+                provider: r.get(6)?,
+                files_read: r.get(7)?,
+                folders: Vec::new(),
+                folder_count: 0,
+                topics: Vec::new(),
+                ok: r.get(8)?,
+                fail: r.get(9)?,
+                last_ts: r.get(10)?,
+            })
+        })?;
+        let mut apps: Vec<AppRow> = rows.collect::<Result<_, _>>()?;
+
+        // Which folders each app's files are in: distinct paths per top-level
+        // folder, counted separately for files it read and for everything.
+        let mut read: HashMap<u32, HashMap<String, u32>> = HashMap::new();
+        let mut touched: HashMap<u32, HashMap<String, u32>> = HashMap::new();
+        let mut stmt = self.conn.prepare(
+            "SELECT uid, path, max(ok > 0 AND (mode & ?2) = 0 AND (mode & ?3) != 0)
+             FROM access WHERE cat = 'storage' AND last_ts >= ?1
+             GROUP BY uid, path",
+        )?;
+        let mut paths = stmt.query(params![since, not_file_open, read_or_write])?;
+        while let Some(row) = paths.next()? {
+            let (uid, path, was_read): (u32, String, bool) =
+                (row.get(0)?, row.get(1)?, row.get(2)?);
+            let Some(folder) = crate::paths::top_level_folder(&path) else {
+                continue;
+            };
+            *touched
+                .entry(uid)
+                .or_default()
+                .entry(folder.to_string())
+                .or_default() += 1;
+            if was_read {
+                *read
+                    .entry(uid)
+                    .or_default()
+                    .entry(folder.to_string())
+                    .or_default() += 1;
+            }
+        }
+        for app in &mut apps {
+            // Name the folders of what was read; for an app that read nothing,
+            // the folders it tried.
+            let Some(folders) = read.remove(&app.uid).or_else(|| touched.remove(&app.uid)) else {
+                continue;
+            };
+            app.folder_count = folders.len();
+            let mut ranked: Vec<(String, u32)> = folders.into_iter().collect();
+            // Most-touched first; ties alphabetically so the output is stable.
+            ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+            app.folders = ranked
+                .into_iter()
+                .take(TOP_FOLDERS)
+                .map(|(name, _)| name)
+                .collect();
+        }
+
+        // What kinds of device and system information each app read.
+        let mut topics: HashMap<u32, std::collections::BTreeSet<&'static str>> = HashMap::new();
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT uid, path FROM access
+             WHERE cat IN ('device', 'system', 'process') AND last_ts >= ?1",
+        )?;
+        let mut paths = stmt.query(params![since])?;
+        while let Some(row) = paths.next()? {
+            let (uid, path): (u32, String) = (row.get(0)?, row.get(1)?);
+            if let Some(topic) = crate::rules::topic_of(&path) {
+                topics.entry(uid).or_default().insert(topic);
+            }
+        }
+        for app in &mut apps {
+            if let Some(found) = topics.remove(&app.uid) {
+                app.topics = found.into_iter().collect();
+            }
+        }
+        Ok(apps)
+    }
+
+    /// Paths, aggregated across hours, most recent first. `uid`, `cat` and
+    /// `prefix` narrow the result when given.
+    pub fn files(
+        &self,
+        uid: Option<u32>,
+        cat: Option<Category>,
+        prefix: Option<&str>,
+        since: i64,
+        limit: u32,
+        offset: u32,
+    ) -> anyhow::Result<Vec<FileRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT uid, max(pkg), cat, path, mode, sum(ok), sum(fail), min(first_ts), max(last_ts),
+                    max(items)
+             FROM access
+             WHERE last_ts >= ?1
+               AND (?2 IS NULL OR uid = ?2)
+               AND (?3 IS NULL OR substr(path, 1, length(?3)) = ?3)
+               AND (?6 IS NULL OR cat = ?6)
+             GROUP BY uid, path, mode
+             ORDER BY max(last_ts) DESC, path, uid, mode
+             LIMIT ?4 OFFSET ?5",
+        )?;
+        let cat = cat.map(Category::as_str);
+        let rows = stmt.query_map(params![since, uid, prefix, limit, offset, cat], |r| {
+            let path: String = r.get(3)?;
+            Ok(FileRow {
+                uid: r.get(0)?,
+                pkg: r.get(1)?,
+                cat: r.get(2)?,
+                topic: crate::rules::topic_of(&path),
+                path,
+                mode: r.get(4)?,
+                ok: r.get(5)?,
+                fail: r.get(6)?,
+                first_ts: r.get(7)?,
+                last_ts: r.get(8)?,
+                items: r.get(9)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// When one app touched one path: a row per hour and access mode, most
+    /// recent first. Accesses are aggregated by the hour, so this is as fine
+    /// as the record gets; within an hour only the first and last time are
+    /// known.
+    pub fn history(&self, uid: u32, path: &str, since: i64) -> anyhow::Result<Vec<HistoryRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT hour * 3600, mode, ok, fail, first_ts, last_ts, items
+             FROM access
+             WHERE uid = ?1 AND path = ?2 AND last_ts >= ?3
+             ORDER BY hour DESC, mode
+             LIMIT ?4",
+        )?;
+        let rows = stmt.query_map(params![uid, path, since, HISTORY_LIMIT], |r| {
+            Ok(HistoryRow {
+                hour_ts: r.get(0)?,
+                mode: r.get(1)?,
+                ok: r.get(2)?,
+                fail: r.get(3)?,
+                first_ts: r.get(4)?,
+                last_ts: r.get(5)?,
+                items: r.get(6)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn stats(&self) -> anyhow::Result<Stats> {
+        let (rows, apps, oldest_ts, newest_ts) = self.conn.query_row(
+            "SELECT count(*), count(DISTINCT uid), min(first_ts), max(last_ts) FROM access",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )?;
+        let mut stmt = self.conn.prepare("SELECT key, value FROM meta")?;
+        let meta = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<Result<_, _>>()?;
+        Ok(Stats {
+            rows,
+            apps,
+            oldest_ts,
+            newest_ts,
+            meta,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aggregates_and_queries() {
+        let dir = std::env::temp_dir().join(format!("bbd-test-{}", std::process::id()));
+        let db = dir.join("bb.db");
+        let mut w = Writer::open(&db).unwrap();
+
+        let t = 1_000_000 * 3600; // start of an hour bucket
+        let photo = "/storage/emulated/0/DCIM/a.jpg".to_string();
+        let st = Category::Storage;
+        w.record(10100, "com.a", st, photo.clone(), MODE_READ, true, t, 0);
+        w.record(10100, "com.a", st, photo.clone(), MODE_READ, true, t + 5, 0);
+        w.record(
+            10100,
+            "com.a",
+            st,
+            photo.clone(),
+            MODE_READ,
+            false,
+            t + 9,
+            0,
+        );
+        // Same path in the next hour: separate row, merged again at query time.
+        w.record(
+            10100,
+            "com.a",
+            st,
+            photo.clone(),
+            MODE_READ,
+            true,
+            t + 3600,
+            0,
+        );
+        w.record(
+            10100,
+            "com.a",
+            Category::System,
+            "/proc/cpuinfo".into(),
+            MODE_READ,
+            true,
+            t + 2,
+            0,
+        );
+        w.record(
+            10200,
+            "com.b",
+            st,
+            "/storage/emulated/0/Download".into(),
+            MODE_READ | MODE_DIR,
+            true,
+            t + 1,
+            0,
+        );
+        w.flush(
+            &Counters {
+                seen: 9,
+                kept: 5,
+                unresolved: 1,
+                dropped: 0,
+            },
+            t + 10,
+        )
+        .unwrap();
+        // A second flush into an existing row must add, not replace.
+        w.record(
+            10100,
+            "com.a",
+            st,
+            photo.clone(),
+            MODE_READ,
+            true,
+            t + 20,
+            0,
+        );
+        w.flush(
+            &Counters {
+                seen: 10,
+                kept: 6,
+                unresolved: 1,
+                dropped: 2,
+            },
+            t + 30,
+        )
+        .unwrap();
+
+        let r = Reader::open(&db).unwrap();
+        let apps = r.apps(0).unwrap();
+        assert_eq!(apps.len(), 2);
+        assert_eq!(
+            (apps[0].uid, apps[0].storage, apps[0].system),
+            (10100, 1, 1)
+        );
+        assert_eq!((apps[0].device, apps[0].ok, apps[0].fail), (0, 5, 1));
+        assert_eq!(
+            (apps[0].folders.as_slice(), apps[0].folder_count),
+            (&["DCIM".to_string()][..], 1)
+        );
+        // The photo was opened successfully; the Download folder was only listed.
+        assert_eq!((apps[0].files_read, apps[1].files_read), (1, 0));
+        assert_eq!(apps[1].folders, ["Download"]);
+        assert_eq!(apps[0].topics, ["cpu_model"]);
+        assert!(apps[1].topics.is_empty());
+
+        assert_eq!(r.files(Some(10100), None, None, 0, 50, 0).unwrap().len(), 2);
+        let files = r.files(Some(10100), Some(st), None, 0, 50, 0).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].cat, "storage");
+        assert_eq!(files[0].topic, None);
+        let system = r
+            .files(Some(10100), Some(Category::System), None, 0, 50, 0)
+            .unwrap();
+        assert_eq!(system[0].topic, Some("cpu_model"));
+        assert_eq!((files[0].ok, files[0].fail), (4, 1));
+        assert_eq!((files[0].first_ts, files[0].last_ts), (t, t + 3600));
+
+        assert_eq!(
+            r.files(None, None, Some("/storage/emulated/0/Download"), 0, 50, 0)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            r.files(None, Some(Category::System), None, 0, 50, 0)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(r.files(None, None, None, t + 3600, 50, 0).unwrap().len(), 1);
+
+        // The photo was opened in two different hours.
+        let history = r.history(10100, &photo, 0).unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(
+            (history[0].hour_ts, history[0].ok, history[0].fail),
+            (t + 3600, 1, 0)
+        );
+        assert_eq!(
+            (history[1].hour_ts, history[1].ok, history[1].fail),
+            (t, 3, 1)
+        );
+        assert_eq!((history[1].first_ts, history[1].last_ts), (t, t + 20));
+        assert!(r.history(10200, &photo, 0).unwrap().is_empty());
+
+        let stats = r.stats().unwrap();
+        assert_eq!((stats.rows, stats.apps), (4, 2));
+        assert_eq!(stats.meta["events_seen"], 10);
+        assert_eq!(stats.meta["events_dropped"], 2);
+
+        assert_eq!(w.delete_packages(&["com.b", "com.none"]).unwrap(), 1);
+        // A path the rules don't (or no longer) record is dropped; others stay.
+        w.record(
+            10100,
+            "com.a",
+            Category::System,
+            "/proc/meminfo".into(),
+            MODE_READ,
+            true,
+            t,
+            0,
+        );
+        w.flush(&Counters::default(), t).unwrap();
+        assert_eq!(w.delete_untopical().unwrap(), 1);
+        assert_eq!(w.delete_untopical().unwrap(), 0);
+        assert_eq!(w.prune(1, t + 3 * 86_400).unwrap(), 3);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_flush_keeps_the_rows_for_the_next_one() {
+        let dir = std::env::temp_dir().join(format!("bbd-test-flush-{}", std::process::id()));
+        let db = dir.join("bb.db");
+        let mut w = Writer::open(&db).unwrap();
+        let t = 3_000_000 * 3600;
+        w.record(
+            10100,
+            "com.a",
+            Category::System,
+            "/proc/cpuinfo".into(),
+            MODE_READ,
+            true,
+            t,
+            0,
+        );
+
+        // Make the write fail, as a full disk or a locked database would.
+        w.conn
+            .execute_batch("ALTER TABLE access RENAME TO access_gone")
+            .unwrap();
+        assert!(w.flush(&Counters::default(), t).is_err());
+        w.conn
+            .execute_batch("ALTER TABLE access_gone RENAME TO access")
+            .unwrap();
+
+        w.flush(&Counters::default(), t + 1).unwrap();
+        let files = Reader::open(&db)
+            .unwrap()
+            .files(None, None, None, 0, 10, 0)
+            .unwrap();
+        assert_eq!((files.len(), files[0].ok), (1, 1));
+        // And they are not written a second time.
+        w.flush(&Counters::default(), t + 2).unwrap();
+        let files = Reader::open(&db)
+            .unwrap()
+            .files(None, None, None, 0, 10, 0)
+            .unwrap();
+        assert_eq!(files[0].ok, 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn provider_queries_keep_the_largest_result() {
+        let dir = std::env::temp_dir().join(format!("bbd-test-items-{}", std::process::id()));
+        let db = dir.join("bb.db");
+        let mut w = Writer::open(&db).unwrap();
+        let uri = "content://media/external/images/media".to_string();
+        let t = 2_000_000 * 3600;
+        w.record(
+            10100,
+            "com.a",
+            Category::Provider,
+            uri.clone(),
+            MODE_QUERY,
+            true,
+            t,
+            40,
+        );
+        w.record(
+            10100,
+            "com.a",
+            Category::Provider,
+            uri.clone(),
+            MODE_QUERY,
+            true,
+            t + 1,
+            3214,
+        );
+        w.flush(&Counters::default(), t + 2).unwrap();
+        w.record(
+            10100,
+            "com.a",
+            Category::Provider,
+            uri,
+            MODE_QUERY,
+            true,
+            t + 3,
+            12,
+        );
+        w.flush(&Counters::default(), t + 4).unwrap();
+
+        let r = Reader::open(&db).unwrap();
+        let files = r
+            .files(Some(10100), Some(Category::Provider), None, 0, 10, 0)
+            .unwrap();
+        assert_eq!((files.len(), files[0].ok, files[0].items), (1, 3, 3214));
+        assert_eq!(r.apps(0).unwrap()[0].provider, 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn upgrades_a_version_1_database() {
+        let dir = std::env::temp_dir().join(format!("bbd-test-migrate-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("bb.db");
+        {
+            // The layout before versioning: no `items` column, user_version 0.
+            let conn = Connection::open(&db).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE access (
+                     hour INTEGER NOT NULL, uid INTEGER NOT NULL, pkg TEXT NOT NULL,
+                     cat TEXT NOT NULL, path TEXT NOT NULL, mode INTEGER NOT NULL,
+                     ok INTEGER NOT NULL, fail INTEGER NOT NULL,
+                     first_ts INTEGER NOT NULL, last_ts INTEGER NOT NULL,
+                     PRIMARY KEY (hour, uid, path, mode)) WITHOUT ROWID;
+                 CREATE TABLE meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL) WITHOUT ROWID;
+                 INSERT INTO access VALUES (1, 10100, 'com.a', 'system', '/proc/cpuinfo', 1, 2, 0, 3600, 3700);",
+            )
+            .unwrap();
+        }
+        // Opening migrates in place and keeps the existing rows.
+        drop(Writer::open(&db).unwrap());
+        let r = Reader::open(&db).unwrap();
+        let files = r.files(None, None, None, 0, 10, 0).unwrap();
+        assert_eq!((files.len(), files[0].ok, files[0].items), (1, 2, 0));
+        drop(r);
+        // Opening again is a no-op.
+        drop(Writer::open(&db).unwrap());
+
+        // A database from a newer build is refused, not misread.
+        Connection::open(&db)
+            .unwrap()
+            .pragma_update(None, "user_version", 99)
+            .unwrap();
+        assert!(Writer::open(&db).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}

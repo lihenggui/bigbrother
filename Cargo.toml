@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+members = ["bbd", "bb-common", "bb-ebpf"]
+default-members = ["bbd", "bb-common"]
+
+[workspace.package]
+version = "0.1.0"
+authors = ["Mercury Li"]
+license = "GPL-3.0-only"
+edition = "2024"
+
+[workspace.dependencies]
+aya = { version = "0.14.0", default-features = false }
+aya-build = { version = "0.2.0", default-features = false }
+aya-ebpf = { version = "0.2.1", default-features = false }
+
+anyhow = { version = "1", default-features = false }
+cargo_metadata = { version = "0.23.0", default-features = false }
+libc = { version = "0.2.159", default-features = false }
+tokio = { version = "1.53.3", default-features = false }
+which = { version = "6.0.0", default-features = false }
+
+[profile.release]
+lto = true
+strip = true
+
+[profile.release.package.bb-ebpf]
+debug = 2
+codegen-units = 1
+strip = false

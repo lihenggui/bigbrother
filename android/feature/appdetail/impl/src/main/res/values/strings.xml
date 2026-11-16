@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- What an app did with a path. -->
+    <string name="action_read">Read</string>
+    <string name="action_write">Changed</string>
+    <string name="action_read_write">Read and changed</string>
+    <string name="action_list">Listed</string>
+    <string name="action_probe">Checked</string>
+    <string name="action_watch">Watched</string>
+    <string name="action_read_provider">Read via the system</string>
+    <string name="action_write_provider">Changed via the system</string>
+    <string name="action_query">Listed entries</string>
+    <string name="search_paths">Search paths</string>
+    <!-- A media library query: how many times the app listed a collection
+         (the quantity) and the most entries one listing returned. -->
+    <plurals name="access_query">
+        <item quantity="one">Listed once, %2$d entries</item>
+        <item quantity="other">Listed %1$d times, up to %2$d entries</item>
+    </plurals>
+
+
+
+    <string name="internal_storage">Internal storage</string>
+    <string name="internal_storage_user">Internal storage (user %d)</string>
+
+    <!-- Well-known media library collections. -->
+    <string name="collection_images">Photos</string>
+    <string name="collection_videos">Videos</string>
+    <string name="collection_audio">Music and audio</string>
+    <string name="collection_downloads">Downloads</string>
+    <string name="collection_files">All media and files</string>
+    <string name="collection_documents">Folders opened with the file picker</string>
+
+    <string name="results_truncated">Only the most recent entries are shown.</string>
+
+    <!-- What was done to a path and how often, kept short because several of
+         these share a line. %1$s is an action such as "Read"; "blocked" means
+         the system refused. -->
+    <string name="access_allowed">%1$s %2$d×</string>
+    <string name="access_blocked">%1$s %2$d×, blocked</string>
+    <string name="access_partly_blocked">%1$s %2$d× (%3$d× blocked)</string>
+    <string name="access_separator">"; "</string>
+    <!-- Outcome for a whole group of files: how often and whether blocked. -->
+    <plurals name="total_allowed">
+        <item quantity="one">Read %d time</item>
+        <item quantity="other">Read %d times</item>
+    </plurals>
+    <plurals name="total_blocked">
+        <item quantity="one">Tried %d time, blocked by the system</item>
+        <item quantity="other">Tried %d times, blocked by the system</item>
+    </plurals>
+    <string name="removable_storage">Storage %s</string>
+
+    <!-- Filter: files the system let the app open, or everything it did. -->
+    <string name="filter_read">Files read</string>
+    <string name="filter_all">All activity</string>
+    <string name="no_files_read">No files were read</string>
+
+    <!-- First part of the path bar when there are several storage volumes. -->
+    <string name="storage_root">Storage</string>
+    <!-- Groups listed next to the files, opened like folders. -->
+    <string name="group_media">Media library</string>
+
+    <string name="tab_files">Files</string>
+    <string name="tab_device">Device info</string>
+    <!-- How many times a file was read. -->
+    <string name="read_count">%d×</string>
+
+    <string name="open_file_missing">This file is no longer there.</string>
+    <string name="open_file_no_viewer">No app can open this file.</string>
+
+    <string name="open_file_no_access">Could not get access to shared storage. Check that root is granted.</string>
+
+    <!-- File details: opens the file in a viewer app. -->
+    <string name="open_file">Open</string>
+    <!-- Several accesses within an hour: first time, then the last. -->
+    <string name="time_span">%1$s – %2$s</string>
+</resources>

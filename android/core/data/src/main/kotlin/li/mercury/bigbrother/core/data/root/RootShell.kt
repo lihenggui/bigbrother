@@ -1,0 +1,73 @@
+package li.mercury.bigbrother.core.data.root
+
+import com.topjohnwu.superuser.Shell
+import javax.inject.Inject
+import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.withContext
+import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.IO
+import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
+import li.mercury.bigbrother.core.data.RecordsException
+
+/** Result of a root command. */
+class CommandResult(val isSuccess: Boolean, val code: Int, val output: String, val error: String)
+
+/** Runs commands in a root shell. The single place the app touches root. */
+@Singleton
+class RootShell @Inject constructor(
+    @Dispatcher(IO) private val ioDispatcher: CoroutineDispatcher,
+) {
+    /** @throws RecordsException.NoRoot if the app has not been granted root. */
+    suspend fun run(command: String): CommandResult = withContext(ioDispatcher) {
+        // A job only captures output into lists it is given.
+        val output = ArrayList<String>()
+        val error = ArrayList<String>()
+        val result = rootShell().newJob().add(command).to(output, error).exec()
+        CommandResult(
+            isSuccess = result.isSuccess,
+            code = result.code,
+            output = output.joinToString("\n"),
+            error = error.joinToString("\n"),
+        )
+    }
+
+    /**
+     * A shell with root, or [RecordsException.NoRoot].
+     *
+     * libsu caches the shell it opens. If root was denied when that happened,
+     * the cached shell stays unprivileged even after the user grants root, so
+     * an unprivileged shell is closed and a new one requested each time; the
+     * new one picks up a grant made in the meantime.
+     */
+    private fun rootShell(): Shell {
+        val shell = try {
+            val cached = Shell.getShell()
+            if (cached.isRoot) return cached
+            cached.close()
+            Shell.getShell()
+        } catch (_: Exception) {
+            // libsu could not start a shell at all.
+            throw RecordsException.NoRoot()
+        }
+        if (!shell.isRoot) throw RecordsException.NoRoot()
+        return shell
+    }
+}
+
+/**
+ * This string as a single shell word. Inside single quotes the shell
+ * interprets nothing, so the only character needing care is the single quote
+ * itself, which is written by closing the quotes, escaping it, and reopening.
+ */
+internal fun String.shellQuoted(): String = "'" + replace("'", "'\\''") + "'"
+
+/** Where the KernelSU module's files live once it is installed. */
+internal object ModulePaths {
+    const val MODULE_DIR = "/data/adb/modules/big_brother"
+    const val BBD = "$MODULE_DIR/bin/bbd"
+    const val MODULE_PROP = "$MODULE_DIR/module.prop"
+    const val KSUD = "/data/adb/ksud"
+
+    /** Where KernelSU stages a module update until the next boot. */
+    const val PENDING_UPDATE_DIR = "/data/adb/modules_update/big_brother"
+}

@@ -1,0 +1,11 @@
+[package]
+name = "bb-common"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+# Loaded into the kernel, which is GPL-2.0-only, so this crate is offered
+# under version 2 as well as later versions.
+license = "GPL-2.0-or-later"
+
+[lib]
+path = "src/lib.rs"

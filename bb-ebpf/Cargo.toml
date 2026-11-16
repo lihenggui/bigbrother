@@ -1,0 +1,23 @@
+[package]
+name = "bb-ebpf"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+# Loaded into the kernel, which is GPL-2.0-only, so this crate is offered
+# under version 2 as well as later versions.
+license = "GPL-2.0-or-later"
+
+[dependencies]
+bb-common = { path = "../bb-common" }
+aya-ebpf = { workspace = true }
+
+[build-dependencies]
+which = { workspace = true }
+
+[[bin]]
+name = "bb-ebpf"
+path = "src/main.rs"
+
+[lints.rust]
+# Set by aya-build to the architecture the eBPF object is being built for.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bpf_target_arch, values("aarch64", "x86_64"))'] }

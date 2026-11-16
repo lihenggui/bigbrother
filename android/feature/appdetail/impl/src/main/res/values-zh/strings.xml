@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="action_read">读取</string>
+    <string name="action_write">修改</string>
+    <string name="action_read_write">读取并修改</string>
+    <string name="action_list">列出</string>
+    <string name="action_probe">探测</string>
+    <string name="action_watch">监听</string>
+    <string name="action_read_provider">经系统读取</string>
+    <string name="action_write_provider">经系统修改</string>
+    <string name="action_query">列出条目</string>
+    <string name="search_paths">搜索路径</string>
+    <plurals name="access_query">
+        <item quantity="other">列出 %1$d 次，单次最多 %2$d 条</item>
+    </plurals>
+
+
+
+    <string name="internal_storage">内部存储</string>
+    <string name="internal_storage_user">内部存储（用户 %d）</string>
+
+    <string name="collection_images">照片</string>
+    <string name="collection_videos">视频</string>
+    <string name="collection_audio">音乐和音频</string>
+    <string name="collection_downloads">下载</string>
+    <string name="collection_files">全部媒体和文件</string>
+    <string name="collection_documents">通过文件选择器打开的文件夹</string>
+
+    <string name="results_truncated">只显示最近的条目。</string>
+
+    <string name="access_allowed">%1$s %2$d 次</string>
+    <string name="access_blocked">%1$s %2$d 次，被拦截</string>
+    <string name="access_partly_blocked">%1$s %2$d 次（%3$d 次被拦截）</string>
+    <string name="access_separator">；</string>
+    <plurals name="total_allowed">
+        <item quantity="other">读取 %d 次</item>
+    </plurals>
+    <plurals name="total_blocked">
+        <item quantity="other">尝试 %d 次，被系统拦截</item>
+    </plurals>
+    <string name="removable_storage">存储设备 %s</string>
+
+    <string name="filter_read">已读取的文件</string>
+    <string name="filter_all">全部活动</string>
+    <string name="no_files_read">没有文件被读取</string>
+
+    <string name="storage_root">存储</string>
+    <string name="group_media">媒体库</string>
+
+    <string name="tab_files">文件</string>
+    <string name="tab_device">设备信息</string>
+    <string name="read_count">%d 次</string>
+
+    <string name="open_file_missing">文件已不存在。</string>
+    <string name="open_file_no_viewer">没有应用可以打开这个文件。</string>
+
+    <string name="open_file_no_access">无法获得共享存储的访问权限，请确认已授予 root。</string>
+
+    <string name="open_file">打开</string>
+    <string name="time_span">%1$s – %2$s</string>
+</resources>

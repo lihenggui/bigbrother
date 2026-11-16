@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="module_description">记录哪些应用通过媒体库和其他系统文件提供程序访问文件。</string>
+</resources>

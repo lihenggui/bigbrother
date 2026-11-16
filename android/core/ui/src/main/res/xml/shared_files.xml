@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Files this app may hand to other apps for viewing: anything on shared
+     storage. root-path is relative to the file system root, which is the only
+     way to cover removable volumes as well as internal storage. -->
+<paths>
+    <root-path
+        name="storage"
+        path="storage/" />
+</paths>

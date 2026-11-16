@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <string name="isolated_process">Isolated process</string>
+    <string name="back">Back</string>
+    <string name="retry">Try again</string>
+    <string name="search">Search</string>
+    <string name="close_search">Close search</string>
+    <string name="no_matches">No matches</string>
+
+    <!-- Empty and error states. -->
+    <string name="empty_title">Nothing recorded in this time range</string>
+    <string name="no_root_title">Root access needed</string>
+    <string name="no_root_body">Grant root in the KernelSU manager, then try again.</string>
+    <string name="no_module_title">Module not installed</string>
+    <string name="no_module_body">The module that does the recording is bundled with this app.</string>
+    <string name="error_title">Could not load records</string>
+
+    <!-- Kinds of device and system information an app can read. Ids match the
+         daemon's topic ids. -->
+    <string name="topic_mac_address_title">Network hardware address</string>
+    <string name="topic_network_interfaces_title">Network interfaces</string>
+    <string name="topic_arp_table_title">Devices on your network</string>
+    <string name="topic_network_state_title">Network connections</string>
+    <string name="topic_device_serial_title">Serial numbers</string>
+    <string name="topic_soc_info_title">Chip details</string>
+    <string name="topic_boot_id_title">Boot session ID</string>
+    <string name="topic_cpu_model_title">Processor model</string>
+    <string name="topic_kernel_version_title">System build</string>
+    <string name="topic_other_processes_title">Other running apps</string>
+    <string name="topic_mounts_title">Mounted file systems</string>
+    <string name="topic_kernel_modules_title">Kernel modules</string>
+    <string name="topic_selinux_state_title">Security policy state</string>
+    <string name="topic_block_devices_title">Storage devices</string>
+    <string name="topic_emulator_probe_title">Emulator check</string>
+    <string name="topic_input_devices_title">Input devices</string>
+    <string name="topic_battery_title">Battery status</string>
+
+    <!-- Compact "how long ago": now, minutes, hours, days. -->
+    <string name="time_now">now</string>
+    <string name="time_minutes">%dm</string>
+    <string name="time_hours">%dh</string>
+    <string name="time_days">%dd</string>
+</resources>

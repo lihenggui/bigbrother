@@ -1,0 +1,20 @@
+# Rust
+/target/
+
+# Build output of scripts/build.sh
+/out/
+
+# Gradle and Android
+.gradle/
+.kotlin/
+build/
+local.properties
+keystore.properties
+*.jks
+*.keystore
+*.iml
+.idea/
+
+# Editors and OS
+.DS_Store
+*.swp

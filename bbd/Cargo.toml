@@ -1,0 +1,34 @@
+[package]
+name = "bbd"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+bb-common = { path = "../bb-common" }
+
+anyhow = { workspace = true, default-features = true }
+aya = { workspace = true }
+libc = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "net", "signal", "time"] }
+rusqlite = { version = "0.43.0", features = ["bundled"] }
+clap = { version = "4.6.7", features = ["derive", "env"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+
+[build-dependencies]
+anyhow = { workspace = true, default-features = true }
+aya-build = { workspace = true }
+cargo_metadata = { workspace = true }
+# Not a real code dependency: aya-build compiles this crate for the BPF target
+# from build.rs. Listing it here makes cargo rebuild bbd when it changes.
+bb-ebpf = { path = "../bb-ebpf" }
+
+[[bin]]
+name = "bbd"
+path = "src/main.rs"
+
+[lints.cargo]
+# bb-ebpf is listed only so cargo tracks it for rebuilds (see build-dependencies).
+unused_dependencies = "allow"

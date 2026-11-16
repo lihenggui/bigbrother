@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Window theme only; all UI styling is done in Compose. It follows the
+         system's light/dark setting so that the window behind the Compose
+         content has a matching colour while the app starts. -->
+    <style name="Theme.BigBrother" parent="android:Theme.DeviceDefault.DayNight">
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
+</resources>

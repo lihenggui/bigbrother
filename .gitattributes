@@ -1,0 +1,7 @@
+# Module scripts run on Android and must keep LF line endings.
+*.sh text eol=lf
+*.prop text eol=lf
+*.list text eol=lf
+gradlew text eol=lf
+*.bat text eol=crlf
+*.jar binary
