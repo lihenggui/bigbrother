@@ -1,0 +1,80 @@
+name: Release
+
+# Pushing a tag such as v0.1.6 builds the signed APK and publishes it as a
+# GitHub release. The signing key comes from the repository secrets
+# SIGNING_KEYSTORE_BASE64 (the keystore, base64-encoded),
+# SIGNING_STORE_PASSWORD, SIGNING_KEY_ALIAS and SIGNING_KEY_PASSWORD.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: write # to create the release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # module.prop is the single source of the version; a tag that disagrees
+      # with it would publish a file named after another version.
+      - name: Check the tag against module.prop
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="$(sed -n 's/^version=//p' module/module.prop)"
+          if [ "$TAG" != "$version" ]; then
+            echo "::error::tag $TAG does not match module.prop version $version"
+            exit 1
+          fi
+
+      # Without a key the build would fall back to the debug key, and an
+      # update signed with another key cannot be installed over the old one.
+      - name: Configure release signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$STORE_PASSWORD" ] ||
+            [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "::error::the SIGNING_* repository secrets are not set"
+            exit 1
+          fi
+          umask 077
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode >android/release.jks
+          {
+            echo "storeFile=release.jks"
+            echo "storePassword=$STORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } >android/keystore.properties
+
+      - uses: ./.github/actions/setup
+
+      - name: Build the APK
+        run: ./scripts/build.sh
+
+      - name: Remove the signing key
+        if: always()
+        run: rm -f android/release.jks android/keystore.properties
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" out/big_brother-"$TAG".apk out/big_brother-"$TAG".zip \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes --title "$TAG"

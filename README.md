@@ -1,5 +1,7 @@
 # Big Brother
 
+[![CI](https://github.com/lihenggui/bigbrother/actions/workflows/ci.yml/badge.svg)](https://github.com/lihenggui/bigbrother/actions/workflows/ci.yml)
+
 Records which apps read which of your files on a rooted Android device, and
 which device identifiers they collect.
 
@@ -82,6 +84,13 @@ Tests:
 cargo test -p bbd
 (cd android && ./gradlew test)
 ```
+
+Every push and pull request is built and tested by GitHub Actions
+(`.github/workflows/ci.yml`). Pushing a tag that matches the version in
+`module/module.prop`, such as `v0.1.6`, builds the signed APK and publishes
+it as a release (`release.yml`); this needs the repository secrets
+`SIGNING_KEYSTORE_BASE64`, `SIGNING_STORE_PASSWORD`, `SIGNING_KEY_ALIAS` and
+`SIGNING_KEY_PASSWORD`.
 
 ## How it works
 
