@@ -21,6 +21,20 @@ through the media library.
 - Reads of privacy-relevant `/proc`, `/sys` and `/dev` entries: network
   hardware address, ARP table, serial numbers, other processes, root and
   emulator checks, and so on.
+- Requests to system services for the installed apps, the clipboard, the
+  location, Wi-Fi networks, phone identifiers, accounts, running apps,
+  usage history and sensors, and reads of the Android ID.
+- Use of the camera, the microphone, the location and other sensitive
+  permissions, and refusals, as the system itself recorded them.
+- Queries for contacts, the call log, text messages and the calendar,
+  attributed to the calling app (requires LSPosed).
+- Requests for the device's network interfaces, hardware addresses and
+  neighbours over netlink, and whether the system allowed them.
+- Attempts to trace another app's process or read its memory.
+- System programs an app runs to learn about the device: `getprop`,
+  `pm list packages`, `ip neigh`, attempts to run `su`, and so on.
+- Connections to ports on the device itself and to other devices on the
+  local network, and multicast device discovery.
 - Records are kept on the device for 30 days, with the time of each access.
 
 ## Requirements
@@ -48,7 +62,8 @@ Then:
 
 1. Reboot (not needed on KernelSU, which applies the module at once).
 2. Optional: enable Big Brother in the LSPosed manager, confirm its scope
-   (media provider, external storage provider, download provider) and reboot.
+   (the media, external storage and download providers; the contacts,
+   telephony and calendar providers) and reboot.
 
 From a root shell:
 
@@ -85,6 +100,15 @@ cargo test -p bbd
 (cd android && ./gradlew test)
 ```
 
+On a device with the module running, `scripts/check-canary.sh` installs a
+test app (`android/canary`) that does one of everything Big Brother is meant
+to notice, and checks that each left a record:
+
+```sh
+(cd android && ./gradlew :canary:assembleDebug)
+./scripts/check-canary.sh
+```
+
 Every push and pull request is built and tested by GitHub Actions
 (`.github/workflows/ci.yml`). Pushing a tag that matches the version in
 `module/module.prop`, such as `v0.1.6`, builds the signed APK and publishes
@@ -97,6 +121,10 @@ it as a release (`release.yml`); this needs the repository secrets
 ```
 kernel   kprobe on security_file_open            the file actually opened
          kprobes on file-related syscalls        return values, stat/access/inotify
+         kprobes on execve, connect, sendto      programs run, local destinations
+         kprobes on ptrace, process_vm_*         access to other processes
+         kprobe on security_netlink_send         network configuration requests
+         tracepoint binder_ioctl                 requests to system services
            | ring buffer
 daemon   bbd: classify, aggregate, store in SQLite
            ^ spool file
@@ -111,6 +139,23 @@ app      reads the daemon's JSON output as root
   filesystem type (FUSE), not by path prefix.
 - Kernel struct offsets are read from BTF at startup and passed to the eBPF
   programs, so one binary works across kernel versions.
+- Network destinations are classified in the kernel; only loopback, private,
+  link-local and multicast addresses leave it. A connection to a port the
+  app itself listens on is not recorded.
+- Only the file probes are required. The others are attached if the kernel
+  allows it; `bbd stats` reports which are active (`coverage_*`), and the
+  app says which kinds of activity are not recorded on the device.
+- Requests to system services are read from the binder transaction the app
+  hands to the kernel: the interface name and the method's number, both part
+  of binder's userspace format. Which number is which method differs between
+  Android versions and manufacturers, so the daemon asks the device at
+  startup, by running a small program from the app (`BinderCatalog`) that
+  prints them from the framework's own classes.
+- Permission use comes from the system's app-ops records, read by another
+  small program from the app (`AppOpsDump`). It is the one source that says
+  what an app was actually given, and the app shows it in a tab of its own.
+- For personal data, only the collection asked for is kept
+  (`content://sms/inbox`), never which person or message.
 - The LSPosed hook intercepts `ContentProvider.Transport` in the provider
   processes and takes the caller's uid from Binder. The observed apps are not
   hooked.
@@ -127,6 +172,17 @@ app      reads the daemon's JSON output as root
 - `stat`/`access`/inotify records and opens that fail during path lookup are
   matched on the path string the app passed, and can be evaded by an app that
   spells the path unusually. Successful opens cannot.
+- A request to a system service is recorded when it is made. What the
+  service answered, or whether it refused, is not seen. Until the device's
+  method numbers are known, shortly after boot, such requests are not
+  recorded.
+- Permission use is read from the system twice a minute. The system keeps
+  the latest use and the latest refusal per app and permission, so several
+  uses in between count as one.
+- Connections are recorded when attempted; whether they succeeded is not
+  known. On mobile data, the carrier's private addresses count as the local
+  network.
+- A command line is recorded up to six arguments of 63 bytes each.
 - File operations an app delegates to a privileged process (root, Shizuku)
   are not attributed to it.
 - Files already open when the daemon starts are not seen.
@@ -140,7 +196,7 @@ app      reads the daemon's JSON output as root
 | `bb-common/` | Types shared between the eBPF programs and the daemon |
 | `bbd/` | Daemon and query CLI |
 | `module/` | Module scripts, packaged into the APK |
-| `android/` | App and LSPosed hook |
+| `android/` | App, LSPosed hook, and the canary test app |
 | `scripts/` | Build script |
 
 The app follows the module structure of

@@ -1,12 +1,18 @@
 //! big_brother daemon and query tool.
 //!
-//! `bbd run` traces app access to shared storage and stores it; the other
-//! subcommands read the database and print JSON for the WebUI.
+//! `bbd run` records what apps read and probe and stores it; the other
+//! subcommands read the database and print JSON for the app.
 
+mod appops;
+mod binder;
 mod btf;
+mod commands;
+mod helper;
 mod mounts;
+mod net;
 mod packages;
 mod paths;
+mod personal;
 mod rules;
 mod spool;
 mod store;

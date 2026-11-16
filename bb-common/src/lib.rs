@@ -24,7 +24,13 @@ pub const OFF_DENTRY_INODE: usize = 5; // struct dentry -> d_inode
 pub const OFF_INODE_MODE: usize = 6; //   struct inode  -> i_mode
 pub const OFF_SB_MAGIC: usize = 7; //     struct super_block -> s_magic
 pub const OFF_SB_DEV: usize = 8; //       struct super_block -> s_dev
-pub const OFF_COUNT: usize = 9;
+pub const OFF_SOCK_PROTOCOL: usize = 9; // struct sock   -> sk_protocol
+pub const OFF_SKB_DATA: usize = 10; //     struct sk_buff -> data
+pub const OFF_COUNT: usize = 11;
+
+/// Stands in for an offset the running kernel's BTF does not have. Only the
+/// offsets of optional probes may be missing; such a probe is not attached.
+pub const OFF_MISSING: u32 = u32::MAX;
 
 // ---- filesystem identification ---------------------------------------------
 
@@ -46,12 +52,33 @@ pub const EV_RESULT: u32 = 2;
 /// opens that failed before reaching a file.
 pub const EV_PATH: u32 = 3;
 
+/// A program the app started (execve), reported when the call is made. An
+/// `EV_RESULT` on the same thread follows with the outcome.
+pub const EV_EXEC: u32 = 4;
+/// A connection or datagram to an address on this device or the local
+/// network (connect, sendto), reported when the call is made.
+pub const EV_CONNECT: u32 = 5;
+
+/// An attempt to trace another process or reach into its memory (ptrace,
+/// process_vm_readv/writev). An `EV_RESULT` follows.
+pub const EV_PROCESS: u32 = 6;
+/// A netlink request for network configuration, seen at the security hook
+/// that decides whether to allow it. An `EV_RESULT` follows.
+pub const EV_NETLINK: u32 = 7;
+
+/// A call to a watched method of a system service (see `BinderEvent`).
+pub const EV_BINDER: u32 = 8;
+
 /// What the app did with the path (`PathEvent::op`).
 pub const OP_OPEN: u32 = 0;
 /// stat / access / readlink: learns that a file exists and its metadata.
 pub const OP_PROBE: u32 = 1;
 /// inotify_add_watch: gets notified when the file or directory changes.
 pub const OP_WATCH: u32 = 2;
+
+/// A call that was reported when it was made; only its return value is
+/// still wanted.
+pub const OP_PAIRED: u32 = 3;
 
 pub const ABI_NATIVE: u32 = 0;
 pub const ABI_COMPAT32: u32 = 1;
@@ -124,4 +151,113 @@ pub struct PathEvent {
     /// Bytes written to `path`, including the trailing NUL. 0 if unreadable.
     pub path_len: u32,
     pub path: [u8; PATH_CAP],
+}
+
+/// Bytes of the program path captured per `ExecEvent`.
+pub const EXEC_PATH_CAP: usize = 256;
+/// Arguments captured per `ExecEvent`, not counting `argv[0]`.
+pub const EXEC_ARGS: usize = 6;
+/// Bytes captured per argument, including the NUL. Longer ones are cut.
+pub const EXEC_ARG_CAP: usize = 64;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ExecEvent {
+    pub hdr: EventHeader,
+    /// Bytes written to `path`, including the trailing NUL. 0 if unreadable.
+    pub path_len: u32,
+    /// How many slots of `args` are filled.
+    pub argc: u32,
+    pub path: [u8; EXEC_PATH_CAP],
+    /// `argv[1..]`, one NUL-terminated string per fixed-size slot.
+    pub args: [[u8; EXEC_ARG_CAP]; EXEC_ARGS],
+}
+
+pub const AF_INET: u32 = 2;
+pub const AF_INET6: u32 = 10;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ConnectEvent {
+    pub hdr: EventHeader,
+    /// `AF_INET` or `AF_INET6`.
+    pub family: u32,
+    /// Destination port, host byte order.
+    pub port: u32,
+    /// Destination address in network order; IPv4 uses the first 4 bytes.
+    pub addr: [u8; 16],
+}
+
+/// How a process went after another one (`ProcessEvent::how`).
+pub const PROCESS_TRACE: u32 = 0;
+pub const PROCESS_READ: u32 = 1;
+pub const PROCESS_WRITE: u32 = 2;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ProcessEvent {
+    pub hdr: EventHeader,
+    pub how: u32,
+    /// Pid of the process it went after.
+    pub target: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct NetlinkEvent {
+    pub hdr: EventHeader,
+    /// Netlink protocol of the socket (`NETLINK_ROUTE`...).
+    pub protocol: u32,
+    /// `nlmsghdr::nlmsg_type` of the request.
+    pub msg_type: u32,
+}
+
+// ---- binder -----------------------------------------------------------------
+//
+// Apps reach system services through binder. The kernel side reads, from the
+// caller's memory, the transaction it is about to send: the interface name
+// at the start of the parcel and the method's code. Which of them are worth
+// reporting is in a map the daemon fills, keyed by a fingerprint of the
+// interface name.
+
+/// Fingerprint of an interface name: its length in UTF-16 code units (u32,
+/// native endian), its first `BINDER_KEY_HEAD` bytes and its last
+/// `BINDER_KEY_TAIL` bytes as UTF-16LE. Fixed-size pieces from known places,
+/// so the kernel side can build it without loops.
+pub const BINDER_KEY_HEAD: usize = 16;
+pub const BINDER_KEY_TAIL: usize = 32;
+pub const BINDER_KEY_LEN: usize = 4 + BINDER_KEY_HEAD + BINDER_KEY_TAIL;
+pub type BinderKey = [u8; BINDER_KEY_LEN];
+
+/// Shortest interface name that can be watched, in code units: head and tail
+/// must both lie inside the name.
+pub const BINDER_MIN_NAME: u32 = (BINDER_KEY_TAIL / 2) as u32;
+/// Longest interface name the kernel side accepts.
+pub const BINDER_MAX_NAME: u32 = 512;
+
+/// Transaction codes below this can be watched.
+pub const BINDER_CODES: u32 = 512;
+/// Map value: `[0]` is an id the daemon chose for the interface, the rest a
+/// bitmap of the watched transaction codes.
+pub const BINDER_VALUE_WORDS: usize = 1 + (BINDER_CODES / 64) as usize;
+pub type BinderValue = [u64; BINDER_VALUE_WORDS];
+
+/// Bytes of the call's arguments captured per `BinderEvent`: enough to reach
+/// the strings that follow the caller's identity in a provider call.
+pub const BINDER_ARGS_CAP: usize = 512;
+/// What is captured instead when that much can't be read, as happens when a
+/// small parcel sits at the end of mapped memory.
+pub const BINDER_ARGS_SHORT: usize = 96;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct BinderEvent {
+    pub hdr: EventHeader,
+    /// The id from the map value.
+    pub interface: u32,
+    pub code: u32,
+    /// Bytes of `args` that are valid; 0 if they could not be read.
+    pub args_len: u32,
+    /// The parcel from the first argument on.
+    pub args: [u8; BINDER_ARGS_CAP],
 }

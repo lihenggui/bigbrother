@@ -4,6 +4,7 @@ import li.mercury.bigbrother.core.model.Access
 import li.mercury.bigbrother.core.model.AccessPeriod
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.Category
+import li.mercury.bigbrother.core.model.RecorderStatus
 import li.mercury.bigbrother.core.model.TimeRange
 
 /**
@@ -27,6 +28,6 @@ interface AccessRepository {
     /** Each time [uid] touched [path], most recent first. */
     suspend fun getHistory(uid: Int, path: String, range: TimeRange): List<AccessPeriod>
 
-    /** Whether the daemon is currently recording. */
-    suspend fun isRecording(): Boolean
+    /** Whether the daemon is currently recording, and what it can't record. */
+    suspend fun getRecorderStatus(): RecorderStatus
 }

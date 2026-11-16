@@ -142,9 +142,18 @@ private class DetailContent(
     val volumes: List<FileNode>,
     /** Collections reached through the media library and other providers. */
     val collections: List<Access>,
-    /** Device and system information, grouped by what it reveals. */
+    /** Everything else the app went after, grouped by what it reveals. */
     val topics: List<TopicGroup>,
+    /** Permissions the system recorded it using, grouped the same way. */
+    val permissions: List<TopicGroup>,
 ) {
+    /** The tabs that have something in them; files always do. */
+    val tabs: List<DetailTab> = buildList {
+        add(DetailTab.FILES)
+        if (topics.isNotEmpty()) add(DetailTab.ACTIVITY)
+        if (permissions.isNotEmpty()) add(DetailTab.PERMISSIONS)
+    }
+
     /** Folder path -> the folder, and -> the path of the folder containing it. */
     private val nodes = HashMap<String, FileNode>()
     private val parents = HashMap<String, String>()
@@ -195,12 +204,18 @@ private fun arrange(accesses: List<Access>, readOnly: Boolean): DetailContent {
         volumes = buildVolumeTrees(storage),
         collections = accesses.filter { it.category == Category.PROVIDER },
         topics = accesses
-            .filter { it.category != Category.STORAGE && it.category != Category.PROVIDER }
-            // Records made before a path had a topic are grouped under the path itself.
-            .groupBy { it.topic ?: it.path }
-            .map { (topic, group) -> TopicGroup(topic, group) },
+            .filter { it.category !in WITH_OWN_PLACE }
+            .byTopic(),
+        permissions = accesses.filter { it.category == Category.PERMISSION }.byTopic(),
     )
 }
+
+/** Categories shown somewhere other than the activity tab. */
+private val WITH_OWN_PLACE = setOf(Category.STORAGE, Category.PROVIDER, Category.PERMISSION)
+
+/** Records made before a path had a topic are grouped under the path itself. */
+private fun List<Access>.byTopic(): List<TopicGroup> =
+    groupBy { it.topic ?: it.path }.map { (topic, group) -> TopicGroup(topic, group) }
 
 /** A storage volume's root: `/storage/emulated/<user>` or `/storage/<volume id>`. */
 private val VOLUME_ROOT = Regex("^/storage/(?:emulated/\\d+|[^/]+)")
@@ -288,8 +303,9 @@ internal fun AppDetailScreen(
         content.folder(location) != null -> location
         else -> Location.ROOT
     }
-    // The device tab only exists while there is something to show in it.
-    val showDevice = content != null && content.topics.isNotEmpty() && tab == DetailTab.DEVICE
+    // A tab only exists while there is something to show in it.
+    val shownTab = tab.takeIf { content != null && it in content.tabs } ?: DetailTab.FILES
+    val showDevice = shownTab != DetailTab.FILES
 
     val closeSearch = {
         searching = false
@@ -363,15 +379,18 @@ internal fun AppDetailScreen(
             when {
                 state.failure != null -> LoadFailureMessage(state.failure, onRetry)
                 content == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
-                // Device information is a different question from "which of
-                // my files", so it gets its own tab, shown only when there
-                // is something in it.
+                // What else the app went after, and which permissions it
+                // used, are different questions from "which of my files", so
+                // each gets its own tab, shown only when there is something
+                // in it.
                 showDevice -> {
-                    DetailTabs(tab, onTab = { tab = it })
-                    TopicList(content.topics)
+                    DetailTabs(content.tabs, shownTab, onTab = { tab = it })
+                    TopicList(
+                        if (shownTab == DetailTab.PERMISSIONS) content.permissions else content.topics,
+                    )
                 }
                 else -> {
-                    if (content.topics.isNotEmpty()) DetailTabs(DetailTab.FILES, onTab = { tab = it })
+                    if (content.tabs.size > 1) DetailTabs(content.tabs, shownTab, onTab = { tab = it })
                     ActivityFilter(readOnly, onReadOnly = { readOnly = it })
                     Breadcrumb(content, here, onNavigate = { location = it })
                     // Entering a folder slides the new list in from the end,
@@ -408,16 +427,21 @@ internal fun AppDetailScreen(
 
 private enum class DetailTab(val title: Int) {
     FILES(R.string.tab_files),
-    DEVICE(R.string.tab_device),
+
+    /** Everything recorded by watching the app: device, network, services. */
+    ACTIVITY(R.string.tab_activity),
+
+    /** What the system's own permission records say. */
+    PERMISSIONS(R.string.tab_permissions),
 }
 
 @Composable
-private fun DetailTabs(selected: DetailTab, onTab: (DetailTab) -> Unit) {
+private fun DetailTabs(tabs: List<DetailTab>, selected: DetailTab, onTab: (DetailTab) -> Unit) {
     PrimaryTabRow(
-        selectedTabIndex = selected.ordinal,
+        selectedTabIndex = tabs.indexOf(selected).coerceAtLeast(0),
         containerColor = Color.Transparent,
     ) {
-        for (tab in DetailTab.entries) {
+        for (tab in tabs) {
             Tab(
                 selected = tab == selected,
                 onClick = { onTab(tab) },
@@ -427,7 +451,7 @@ private fun DetailTabs(selected: DetailTab, onTab: (DetailTab) -> Unit) {
     }
 }
 
-/** Device and system information the app read, one row per kind. */
+/** What the app went after, or which permissions it used, one row per kind. */
 @Composable
 private fun TopicList(topics: List<TopicGroup>) {
     LazyColumn(
@@ -748,6 +772,9 @@ private fun actionLabel(action: Action, viaProvider: Boolean): String = stringRe
         Action.PROBE -> R.string.action_probe
         Action.WATCH -> R.string.action_watch
         Action.QUERY -> R.string.action_query
+        Action.CONNECT -> R.string.action_connect
+        Action.EXEC -> R.string.action_exec
+        Action.CALL -> R.string.action_call
     },
 )
 
@@ -893,11 +920,21 @@ private fun LazyItemScope.TopicRow(group: TopicGroup, index: Int, count: Int) {
                 val allowed = group.accesses.sumOf { it.allowed }
                 val denied = group.accesses.sumOf { it.denied }
                 val lastSeen = group.accesses.maxOf { it.lastSeen }
+                // What is known differs by how it was observed: a file was
+                // read, a service was only seen being asked.
+                val kind = group.accesses.map { it.action }.distinct().singleOrNull()
                 Text(
                     text = if (allowed == 0) {
-                        pluralStringResource(R.plurals.total_blocked, denied, denied)
+                        val blocked = if (kind == Action.EXEC) R.plurals.total_not_run else R.plurals.total_blocked
+                        pluralStringResource(blocked, denied, denied)
                     } else {
-                        pluralStringResource(R.plurals.total_allowed, allowed, allowed)
+                        val done = when (kind) {
+                            Action.CALL -> R.plurals.total_requested
+                            Action.CONNECT -> R.plurals.total_contacted
+                            Action.EXEC -> R.plurals.total_ran
+                            else -> R.plurals.total_allowed
+                        }
+                        pluralStringResource(done, allowed, allowed)
                     } + stringResource(R.string.access_separator) +
                         remember(lastSeen) { relativeTime(lastSeen) },
                     color = if (allowed == 0) {

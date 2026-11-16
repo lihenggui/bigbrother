@@ -12,20 +12,28 @@ use serde::Serialize;
 
 pub const DEFAULT_DB: &str = "/data/adb/big_brother/bb.db";
 
-/// Access mode bits stored in `access.mode`.
-pub const MODE_READ: u8 = 1;
-pub const MODE_WRITE: u8 = 2;
-pub const MODE_DIR: u8 = 4;
+/// Access mode bits, as stored in `access.mode`.
+pub type Mode = u16;
+
+pub const MODE_READ: Mode = 1;
+pub const MODE_WRITE: Mode = 2;
+pub const MODE_DIR: Mode = 4;
 /// stat/access/readlink: the app learned the path exists and its metadata.
-pub const MODE_PROBE: u8 = 8;
+pub const MODE_PROBE: Mode = 8;
 /// inotify: the app asked to be told when the path changes.
-pub const MODE_WATCH: u8 = 16;
+pub const MODE_WATCH: Mode = 16;
 /// The access went through a system content provider (MediaStore, the
 /// Storage Access Framework, downloads) rather than the app opening the file
 /// itself. Combined with the read/write bits for opens.
-pub const MODE_VIA_PROVIDER: u8 = 32;
+pub const MODE_VIA_PROVIDER: Mode = 32;
 /// A content provider query: the app listed entries without opening them.
-pub const MODE_QUERY: u8 = 64;
+pub const MODE_QUERY: Mode = 64;
+/// A connection or datagram to a network address.
+pub const MODE_CONNECT: Mode = 128;
+/// A program the app started.
+pub const MODE_EXEC: Mode = 256;
+/// A request to a system service.
+pub const MODE_CALL: Mode = 512;
 
 /// What kind of information a recorded path exposes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, clap::ValueEnum)]
@@ -41,6 +49,20 @@ pub enum Category {
     /// Content provider collections the app queried (the media library,
     /// document trees, downloads), identified by URI rather than file path.
     Provider,
+    /// Addresses on this device and the local network the app contacted,
+    /// identified as `net://<address>:<port>`.
+    Network,
+    /// Programs the app started, identified as `exec:<command line>`.
+    Command,
+    /// Personal data kept by system content providers (contacts, messages,
+    /// the call log, the calendar), identified by the collection's URI.
+    Personal,
+    /// What the app asked system services for (installed apps, clipboard,
+    /// location...), identified as `binder:<interface>/<method>`.
+    Service,
+    /// Uses of sensitive permissions as the system recorded them (camera,
+    /// microphone, location...), identified as `appop:<op name>`.
+    Permission,
 }
 
 impl Category {
@@ -51,6 +73,11 @@ impl Category {
             Self::System => "system",
             Self::Process => "process",
             Self::Provider => "provider",
+            Self::Network => "network",
+            Self::Command => "command",
+            Self::Personal => "personal",
+            Self::Service => "service",
+            Self::Permission => "permission",
         }
     }
 }
@@ -102,7 +129,8 @@ CREATE TABLE IF NOT EXISTS access (
     uid      INTEGER NOT NULL,
     pkg      TEXT    NOT NULL,   -- package name at record time ('' if unknown)
     cat      TEXT    NOT NULL,   -- Category::as_str()
-    path     TEXT    NOT NULL,   -- canonical path, or content URI for 'provider'
+    path     TEXT    NOT NULL,   -- what was accessed: a canonical path, a content
+                                 -- URI, 'net://...' or 'exec:...', by category
     mode     INTEGER NOT NULL,   -- MODE_* bits
     ok       INTEGER NOT NULL,   -- opens that succeeded
     fail     INTEGER NOT NULL,   -- opens that failed (denied, missing...)
@@ -121,7 +149,7 @@ pub struct Key {
     pub hour: i64,
     pub uid: u32,
     pub path: String,
-    pub mode: u8,
+    pub mode: Mode,
 }
 
 pub struct Agg {
@@ -152,7 +180,7 @@ pub struct Counters {
 struct EventKey {
     uid: u32,
     path: String,
-    mode: u8,
+    mode: Mode,
     ts: i64,
 }
 
@@ -188,7 +216,7 @@ impl Writer {
         pkg: &str,
         cat: Category,
         path: String,
-        mode: u8,
+        mode: Mode,
         ok: bool,
         ts: i64,
         items: u32,
@@ -432,6 +460,11 @@ pub struct AppRow {
     pub system: i64,
     pub process: i64,
     pub provider: i64,
+    pub network: i64,
+    pub command: i64,
+    pub personal: i64,
+    pub service: i64,
+    pub permission: i64,
     /// Files on shared storage the app opened successfully: what it actually
     /// read or wrote, as opposed to looked for or was refused.
     pub files_read: i64,
@@ -441,8 +474,8 @@ pub struct AppRow {
     pub folders: Vec<String>,
     /// How many top-level folders it touched in total.
     pub folder_count: usize,
-    /// Topics (see `rules::topic`) of the device, system and process
-    /// information it read, sorted.
+    /// Topics (see `rules::topic`) of everything it did other than touch
+    /// user files, sorted.
     pub topics: Vec<&'static str>,
     pub ok: i64,
     pub fail: i64,
@@ -455,14 +488,14 @@ pub struct FileRow {
     pub pkg: String,
     pub cat: String,
     pub path: String,
-    pub mode: u8,
+    pub mode: Mode,
     pub ok: i64,
     pub fail: i64,
     pub first_ts: i64,
     pub last_ts: i64,
     /// Most entries a single provider query returned; 0 for everything else.
     pub items: i64,
-    /// What the path means (see `rules::topic`); absent for user files and
+    /// What the record means (see `rules::topic`); absent for user files and
     /// provider URIs.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub topic: Option<&'static str>,
@@ -476,7 +509,7 @@ pub struct HistoryRow {
     pub first_ts: i64,
     /// Equal to `first_ts` for an individual access.
     pub last_ts: i64,
-    pub mode: u8,
+    pub mode: Mode,
     pub ok: i64,
     pub fail: i64,
 }
@@ -510,6 +543,11 @@ impl Reader {
                     count(DISTINCT CASE WHEN cat = 'system' THEN path END),
                     count(DISTINCT CASE WHEN cat = 'process' THEN path END),
                     count(DISTINCT CASE WHEN cat = 'provider' THEN path END),
+                    count(DISTINCT CASE WHEN cat = 'network' THEN path END),
+                    count(DISTINCT CASE WHEN cat = 'command' THEN path END),
+                    count(DISTINCT CASE WHEN cat = 'personal' THEN path END),
+                    count(DISTINCT CASE WHEN cat = 'service' THEN path END),
+                    count(DISTINCT CASE WHEN cat = 'permission' THEN path END),
                     count(DISTINCT CASE WHEN cat = 'storage' AND ok > 0 AND (mode & ?2) = 0
                                              AND (mode & ?3) != 0 THEN path END),
                     sum(ok), sum(fail), max(last_ts)
@@ -529,13 +567,18 @@ impl Reader {
                 system: r.get(4)?,
                 process: r.get(5)?,
                 provider: r.get(6)?,
-                files_read: r.get(7)?,
+                network: r.get(7)?,
+                command: r.get(8)?,
+                personal: r.get(9)?,
+                service: r.get(10)?,
+                permission: r.get(11)?,
+                files_read: r.get(12)?,
                 folders: Vec::new(),
                 folder_count: 0,
                 topics: Vec::new(),
-                ok: r.get(8)?,
-                fail: r.get(9)?,
-                last_ts: r.get(10)?,
+                ok: r.get(13)?,
+                fail: r.get(14)?,
+                last_ts: r.get(15)?,
             })
         })?;
         let mut apps: Vec<AppRow> = rows.collect::<Result<_, _>>()?;
@@ -586,11 +629,11 @@ impl Reader {
                 .collect();
         }
 
-        // What kinds of device and system information each app read.
+        // What kinds of information each app went after, besides user files.
         let mut topics: HashMap<u32, std::collections::BTreeSet<&'static str>> = HashMap::new();
         let mut stmt = self.conn.prepare(
             "SELECT DISTINCT uid, path FROM access
-             WHERE cat IN ('device', 'system', 'process') AND last_ts >= ?1",
+             WHERE cat NOT IN ('storage', 'provider') AND last_ts >= ?1",
         )?;
         let mut paths = stmt.query(params![since])?;
         while let Some(row) = paths.next()? {
@@ -979,7 +1022,7 @@ mod tests {
         w.flush(&Counters::default(), t + 1).unwrap();
 
         let history = Reader::open(&db).unwrap().history(10100, &file, 0).unwrap();
-        let rows: Vec<(u8, i64, i64)> = history.iter().map(|h| (h.mode, h.ok, h.fail)).collect();
+        let rows: Vec<(Mode, i64, i64)> = history.iter().map(|h| (h.mode, h.ok, h.fail)).collect();
         assert_eq!(rows, [(MODE_READ, 501, 1), (MODE_PROBE, 1, 0)]);
 
         // Pruning removes old events and the paths nothing refers to any more.
@@ -1038,6 +1081,70 @@ mod tests {
             .unwrap();
         assert_eq!((files.len(), files[0].ok, files[0].items), (1, 3, 3214));
         assert_eq!(r.apps(0).unwrap()[0].provider, 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn commands_and_destinations_are_counted_and_explained() {
+        let dir = std::env::temp_dir().join(format!("bbd-test-kinds-{}", std::process::id()));
+        let db = dir.join("bb.db");
+        let mut w = Writer::open(&db).unwrap();
+        let t = 5_000_000 * 3600;
+        for (cat, subject, mode, ok) in [
+            (Category::Command, "exec:su", MODE_EXEC, false),
+            (
+                Category::Command,
+                "exec:getprop ro.serialno",
+                MODE_EXEC,
+                true,
+            ),
+            (
+                Category::Network,
+                "net://127.0.0.1:5555",
+                MODE_CONNECT,
+                true,
+            ),
+            (Category::Personal, "content://sms/inbox", MODE_QUERY, true),
+            (
+                Category::Service,
+                "binder:android.content.IClipboard/getPrimaryClip",
+                MODE_CALL,
+                true,
+            ),
+        ] {
+            w.record(10100, "com.a", cat, subject.into(), mode, ok, t, 0);
+        }
+        w.flush(&Counters::default(), t).unwrap();
+
+        let r = Reader::open(&db).unwrap();
+        let apps = r.apps(0).unwrap();
+        assert_eq!(
+            (
+                apps[0].command,
+                apps[0].network,
+                apps[0].personal,
+                apps[0].service
+            ),
+            (2, 1, 1, 1)
+        );
+        assert_eq!(
+            apps[0].topics,
+            [
+                "clipboard",
+                "local_ports",
+                "messages",
+                "root_check",
+                "system_properties"
+            ]
+        );
+        let commands = r
+            .files(Some(10100), Some(Category::Command), None, 0, 10, 0)
+            .unwrap();
+        let su = commands.iter().find(|c| c.path == "exec:su").unwrap();
+        assert_eq!((su.mode, su.ok, su.fail), (MODE_EXEC, 0, 1));
+        assert_eq!(su.topic, Some("root_check"));
+        // The cleanup of records the rules no longer keep leaves them alone.
+        assert_eq!(w.delete_untopical().unwrap(), 0);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

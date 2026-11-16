@@ -49,6 +49,65 @@ pub mod topic {
     pub const INPUT_DEVICES: &str = "input_devices";
     /// Battery level, health and charging state.
     pub const BATTERY: &str = "battery";
+
+    // Commands (`commands.rs`).
+    /// Looked for the tools that only a rooted device has.
+    pub const ROOT_CHECK: &str = "root_check";
+    /// System properties: model, build, serial number and many more.
+    pub const SYSTEM_PROPERTIES: &str = "system_properties";
+    /// Which apps are installed.
+    pub const INSTALLED_APPS: &str = "installed_apps";
+    /// System settings, among them the device's Android ID.
+    pub const SYSTEM_SETTINGS: &str = "system_settings";
+    /// Any other system program.
+    pub const SHELL_COMMAND: &str = "shell_command";
+
+    /// Tracing another app's process or reading its memory.
+    pub const PROCESS_MEMORY: &str = "process_memory";
+
+    // Personal data behind system content providers (`personal.rs`).
+    pub const CONTACTS: &str = "contacts";
+    pub const CALL_LOG: &str = "call_log";
+    /// SMS and MMS.
+    pub const MESSAGES: &str = "messages";
+    pub const CALENDAR: &str = "calendar";
+    /// SIM cards, subscriptions and carrier settings.
+    pub const SIM_INFO: &str = "sim_info";
+
+    // Calls to system services (`binder.rs`).
+    pub const CLIPBOARD: &str = "clipboard";
+    /// GPS, and the cell towers in range.
+    pub const LOCATION: &str = "location";
+    /// Wi-Fi networks in range, the one connected to, the saved ones.
+    pub const WIFI_INFO: &str = "wifi_info";
+    /// IMEI, subscriber id, SIM serial number, phone number.
+    pub const PHONE_IDENTITY: &str = "phone_identity";
+    /// Accounts signed in on the device.
+    pub const ACCOUNTS: &str = "accounts";
+    /// Apps and tasks currently running.
+    pub const RUNNING_APPS: &str = "running_apps";
+    /// Which apps were used and when.
+    pub const USAGE_STATS: &str = "usage_stats";
+    /// Enabled keyboards and accessibility services.
+    pub const ENABLED_SERVICES: &str = "enabled_services";
+    /// Motion, position and body sensors.
+    pub const SENSORS: &str = "sensors";
+    /// The identifier Android gives each app for this device.
+    pub const ANDROID_ID: &str = "android_id";
+    /// The name the user gave the device.
+    pub const DEVICE_NAME: &str = "device_name";
+
+    // The system's permission usage records (`appops.rs`).
+    pub const CAMERA: &str = "camera";
+    pub const MICROPHONE: &str = "microphone";
+
+    // Network destinations and netlink requests (`net.rs`).
+    /// Ports on the device itself: other apps and services running on it.
+    pub const LOCAL_PORTS: &str = "local_ports";
+    /// Other devices on the local network.
+    pub const LOCAL_NETWORK: &str = "local_network";
+    /// Multicast and broadcast, used to discover devices on the network.
+    pub const DEVICE_DISCOVERY: &str = "device_discovery";
 }
 
 fn under(path: &str, prefix: &str) -> bool {
@@ -166,11 +225,40 @@ fn dev_topic(path: &str) -> Option<&'static str> {
         .then_some(topic::EMULATOR_PROBE)
 }
 
-/// What a stored path means, for paths outside shared storage. `None` for
+/// Prefix of a stored attempt to get at another process directly.
+const PROCESS_SCHEME: &str = "process:";
+
+/// What to store for a `ProcessEvent` of the given kind.
+pub fn process_subject(how: u32) -> Option<&'static str> {
+    match how {
+        bb_common::PROCESS_TRACE => Some("process:ptrace"),
+        bb_common::PROCESS_READ => Some("process:read-memory"),
+        bb_common::PROCESS_WRITE => Some("process:write-memory"),
+        _ => None,
+    }
+}
+
+/// What a stored record means, for everything but user files. `None` for
 /// storage paths, provider URIs and anything recorded before a topic existed
 /// for it.
 pub fn topic_of(path: &str) -> Option<&'static str> {
-    if under(path, "/sys") {
+    if path.starts_with(crate::commands::SCHEME) {
+        crate::commands::topic_of(path)
+    } else if path.starts_with(crate::binder::SCHEME)
+        || path.starts_with(crate::binder::SETTING_SCHEME)
+    {
+        crate::binder::topic_of(path)
+    } else if path.starts_with(crate::appops::SCHEME) {
+        crate::appops::topic_of(path)
+    } else if path.starts_with(crate::net::SCHEME) {
+        crate::net::topic_of(path)
+    } else if path.starts_with(crate::net::NETLINK_SCHEME) {
+        crate::net::netlink_topic_of(path)
+    } else if path.starts_with(PROCESS_SCHEME) {
+        Some(topic::PROCESS_MEMORY)
+    } else if path.starts_with("content://") {
+        crate::personal::topic_of(path)
+    } else if under(path, "/sys") {
         sys_topic(path)
     } else if under(path, "/dev") {
         dev_topic(path)
@@ -523,6 +611,19 @@ mod tests {
             let (top, _) = head_components(path);
             assert!(!proc_entry_matters(&top), "{path} not dropped in kernel");
         }
+    }
+
+    #[test]
+    fn direct_access_to_other_processes() {
+        for how in [
+            bb_common::PROCESS_TRACE,
+            bb_common::PROCESS_READ,
+            bb_common::PROCESS_WRITE,
+        ] {
+            let subject = process_subject(how).unwrap();
+            assert_eq!(topic_of(subject), Some(topic::PROCESS_MEMORY), "{subject}");
+        }
+        assert_eq!(process_subject(9), None);
     }
 
     #[test]

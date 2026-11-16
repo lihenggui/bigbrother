@@ -18,7 +18,34 @@ enum class Category(val id: String) {
      * Collections queried through a system content provider, such as the
      * media library. Identified by content URI rather than file path.
      */
-    PROVIDER("provider");
+    PROVIDER("provider"),
+
+    /**
+     * Addresses on this device and the local network the app contacted.
+     * Identified as `net://<address>:<port>`.
+     */
+    NETWORK("network"),
+
+    /** Programs the app started. Identified as `exec:<command line>`. */
+    COMMAND("command"),
+
+    /**
+     * Personal data kept by the system: contacts, messages, the call log,
+     * the calendar. Identified by the collection's content URI.
+     */
+    PERSONAL("personal"),
+
+    /**
+     * What the app asked system services for: installed apps, the clipboard,
+     * the location and so on. Identified as `binder:<interface>/<method>`.
+     */
+    SERVICE("service"),
+
+    /**
+     * Uses of sensitive permissions as the system itself recorded them:
+     * camera, microphone, location and so on. Identified as `appop:<name>`.
+     */
+    PERMISSION("permission");
 
     companion object {
         fun fromId(id: String): Category? = entries.firstOrNull { it.id == id }
@@ -35,7 +62,16 @@ enum class Action {
     WATCH,
 
     /** Listed entries of a content provider without opening them. */
-    QUERY;
+    QUERY,
+
+    /** Tried to reach a network address. */
+    CONNECT,
+
+    /** Started a program. */
+    EXEC,
+
+    /** Asked a system service for something; what it was given is not known. */
+    CALL;
 
     companion object {
         private const val MODE_READ = 1
@@ -45,11 +81,17 @@ enum class Action {
         private const val MODE_WATCH = 16
         private const val MODE_VIA_PROVIDER = 32
         private const val MODE_QUERY = 64
+        private const val MODE_CONNECT = 128
+        private const val MODE_EXEC = 256
+        private const val MODE_CALL = 512
 
         /** Whether the system opened the file on the app's behalf. */
         fun isViaProvider(mode: Int): Boolean = mode and MODE_VIA_PROVIDER != 0
 
         fun fromMode(mode: Int): Action = when {
+            mode and MODE_EXEC != 0 -> EXEC
+            mode and MODE_CALL != 0 -> CALL
+            mode and MODE_CONNECT != 0 -> CONNECT
             mode and MODE_QUERY != 0 -> QUERY
             mode and MODE_PROBE != 0 -> PROBE
             mode and MODE_WATCH != 0 -> WATCH
@@ -81,7 +123,7 @@ data class AppSummary(
     val folders: List<String> = emptyList(),
     /** How many top-level folders it touched in total. */
     val folderCount: Int = 0,
-    /** Kinds of device and system information it read, as topic ids. */
+    /** Kinds of information it went after besides user files, as topic ids. */
     val topics: List<String> = emptyList(),
 ) {
     /** Android user the app runs as: uid = user * 100000 + app id. */
@@ -112,7 +154,7 @@ data class Access(
     val denied: Int,
     val lastSeen: Long,
     /**
-     * For device and system information: an id naming what the path reveals
+     * For everything but user files: an id naming what the record reveals
      * (e.g. "mac_address"). Null for user files and provider URIs.
      */
     val topic: String? = null,
@@ -131,6 +173,18 @@ data class AccessPeriod(
     val denied: Int,
     val firstSeen: Long,
     val lastSeen: Long,
+)
+
+/** What the daemon is doing. */
+data class RecorderStatus(
+    /** Whether it is running and writing records. */
+    val recording: Boolean,
+    /**
+     * Ids of the kinds of activity it cannot record on this device (e.g.
+     * "network"). Nothing recorded of such a kind means nothing was looked
+     * for, not that nothing happened.
+     */
+    val unavailable: List<String> = emptyList(),
 )
 
 /** Selectable time ranges. */

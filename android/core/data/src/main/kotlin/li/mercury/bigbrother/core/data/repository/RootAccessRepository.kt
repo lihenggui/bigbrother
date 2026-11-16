@@ -10,6 +10,7 @@ import li.mercury.bigbrother.core.model.AccessPeriod
 import li.mercury.bigbrother.core.model.Action
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.Category
+import li.mercury.bigbrother.core.model.RecorderStatus
 import li.mercury.bigbrother.core.model.TimeRange
 import org.json.JSONArray
 import org.json.JSONException
@@ -107,9 +108,20 @@ internal class RootAccessRepository @Inject constructor(
         }
     }
 
-    override suspend fun isRecording(): Boolean = parsing {
-        val lastFlush = JSONObject(query("stats")).optJSONObject("meta")?.optLong("last_flush") ?: 0
-        System.currentTimeMillis() / 1000 - lastFlush < STALE_AFTER_SECONDS
+    override suspend fun getRecorderStatus(): RecorderStatus = parsing {
+        val meta = JSONObject(query("stats")).optJSONObject("meta") ?: JSONObject()
+        val lastFlush = meta.optLong("last_flush")
+        RecorderStatus(
+            recording = System.currentTimeMillis() / 1000 - lastFlush < STALE_AFTER_SECONDS,
+            // Per kind of activity the daemon stores 1 (recording), 0 (can't
+            // on this device) or -1 (not known yet, shortly after it starts).
+            // Only a definite 0 is worth telling the user about.
+            unavailable = meta.keys().asSequence()
+                .filter { it.startsWith(COVERAGE_PREFIX) && meta.optLong(it) == 0L }
+                .map { it.removePrefix(COVERAGE_PREFIX) }
+                .sorted()
+                .toList(),
+        )
     }
 
     /**
@@ -140,6 +152,7 @@ internal class RootAccessRepository @Inject constructor(
 
     private companion object {
         const val MISSING_MARKER = "bbd-not-installed"
+        const val COVERAGE_PREFIX = "coverage_"
 
         /** The daemon flushes every 5 s; allow several missed beats. */
         const val STALE_AFTER_SECONDS = 30

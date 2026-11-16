@@ -13,7 +13,8 @@
 use anyhow::{Context as _, anyhow, bail};
 use bb_common::{
     OFF_COUNT, OFF_DENTRY_INODE, OFF_DENTRY_NAME, OFF_DENTRY_PARENT, OFF_DENTRY_SB,
-    OFF_FILE_DENTRY, OFF_FILE_FLAGS, OFF_INODE_MODE, OFF_SB_DEV, OFF_SB_MAGIC,
+    OFF_FILE_DENTRY, OFF_FILE_FLAGS, OFF_INODE_MODE, OFF_MISSING, OFF_SB_DEV, OFF_SB_MAGIC,
+    OFF_SKB_DATA, OFF_SOCK_PROTOCOL,
 };
 
 pub const VMLINUX_BTF: &str = "/sys/kernel/btf/vmlinux";
@@ -225,7 +226,9 @@ impl Btf {
         Ok(bits / 8)
     }
 
-    /// The offsets the eBPF programs need, in `bb_common::OFF_*` order.
+    /// The offsets the eBPF programs need, in `bb_common::OFF_*` order. Those
+    /// of the file probes must exist; the others are `OFF_MISSING` if this
+    /// kernel lays the struct out in a way the probe can't use.
     pub fn kernel_offsets(&self) -> anyhow::Result<[u32; OFF_COUNT]> {
         let mut offsets = [0; OFF_COUNT];
         for (slot, name, path) in [
@@ -240,6 +243,12 @@ impl Btf {
             (OFF_SB_DEV, "super_block", &["s_dev"]),
         ] {
             offsets[slot] = self.offset_of(name, path)?;
+        }
+        for (slot, name, path) in [
+            (OFF_SOCK_PROTOCOL, "sock", &["sk_protocol"][..]),
+            (OFF_SKB_DATA, "sk_buff", &["data"]),
+        ] {
+            offsets[slot] = self.offset_of(name, path).unwrap_or(OFF_MISSING);
         }
         Ok(offsets)
     }
@@ -285,6 +294,10 @@ mod tests {
         assert_ne!(off[OFF_SB_MAGIC], off[OFF_SB_DEV]);
         // i_mode is the first field of struct inode on every kernel so far.
         assert_eq!(off[OFF_INODE_MODE], 0);
+
+        // The optional ones resolve on a current kernel.
+        assert_ne!(off[OFF_SOCK_PROTOCOL], OFF_MISSING);
+        assert_eq!(off[OFF_SKB_DATA] % 8, 0);
 
         assert!(btf.offset_of("file", &["no_such_field"]).is_err());
         assert!(btf.offset_of("no_such_struct", &["x"]).is_err());

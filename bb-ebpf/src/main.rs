@@ -15,6 +15,23 @@
 //!   `struct file`: stat/access/readlink/inotify, and opens that fail during
 //!   lookup.
 //!
+//! * `enter_execve*` — the programs an app starts, with their arguments.
+//!   Reported at entry, because a successful exec replaces the memory the
+//!   arguments are in; `sys_ret` supplies the outcome.
+//! * `enter_connect` / `enter_sendto` / `enter_sendmsg` — connections and
+//!   datagrams to this device or the local network. Destinations on the internet are dropped
+//!   here.
+//!
+//! * `enter_ptrace` / `enter_vm_read` / `enter_vm_write` — attempts to trace
+//!   another process or reach into its memory.
+//! * `enter_netlink` — kprobe on `security_netlink_send`, where the kernel
+//!   decides whether a netlink request is allowed: requests for the
+//!   interfaces, addresses, routes, neighbours and sockets of the device.
+//!
+//! * `binder_ioctl` — raw tracepoint of the same name, hit when a process
+//!   hands the binder driver its commands. Finds the transaction among them
+//!   and reports calls to the service methods the daemon listed.
+//!
 //! Probing the specific syscall functions, rather than the `sys_enter` /
 //! `sys_exit` tracepoints, matters for overhead: the tracepoints run on every
 //! syscall of every process, while these run only for the dozen file-related
@@ -29,20 +46,28 @@
 use aya_ebpf::{
     Global,
     helpers::{
-        bpf_get_current_pid_tgid, bpf_get_current_uid_gid, bpf_probe_read_kernel,
-        bpf_probe_read_kernel_str_bytes, bpf_probe_read_user, bpf_probe_read_user_str_bytes,
+        bpf_get_current_pid_tgid, bpf_get_current_uid_gid, bpf_ktime_get_ns, bpf_probe_read_kernel,
+        bpf_probe_read_kernel_str_bytes, bpf_probe_read_user, bpf_probe_read_user_buf,
+        bpf_probe_read_user_str_bytes,
     },
-    macros::{kprobe, kretprobe, map},
-    maps::{LruHashMap, PerCpuArray, RingBuf},
-    programs::{ProbeContext, RetProbeContext},
+    macros::{kprobe, kretprobe, map, raw_tracepoint},
+    maps::{HashMap, LruHashMap, PerCpuArray, RingBuf},
+    programs::{ProbeContext, RawTracePointContext, RetProbeContext},
 };
-use bb_common::filter::{own_proc_entry_matters, proc_entry_matters, sysfs_entry_matters};
+use bb_common::filter::{
+    NET_PUBLIC, ipv4_class, ipv6_class, netlink_matters, own_proc_entry_matters,
+    proc_entry_matters, sysfs_entry_matters,
+};
 use bb_common::{
-    ABI_COMPAT32, ABI_NATIVE, DATA_START_LIMIT, EV_FILE, EV_PATH, EV_RESULT, EventHeader,
-    FUSE_SUPER_MAGIC, FileEvent, NAME_CAP, OFF_COUNT, OFF_DENTRY_INODE, OFF_DENTRY_NAME,
-    OFF_DENTRY_PARENT, OFF_DENTRY_SB, OFF_FILE_DENTRY, OFF_FILE_FLAGS, OFF_INODE_MODE, OFF_SB_DEV,
-    OFF_SB_MAGIC, OP_OPEN, OP_PROBE, OP_WATCH, PROC_SUPER_MAGIC, PathEvent, ResultEvent,
-    SELINUX_MAGIC, SYSFS_MAGIC,
+    ABI_COMPAT32, ABI_NATIVE, AF_INET, AF_INET6, BINDER_ARGS_CAP, BINDER_ARGS_SHORT, BINDER_CODES,
+    BINDER_KEY_HEAD, BINDER_KEY_LEN, BINDER_KEY_TAIL, BINDER_MAX_NAME, BINDER_MIN_NAME,
+    BinderEvent, BinderKey, BinderValue, ConnectEvent, DATA_START_LIMIT, EV_BINDER, EV_CONNECT,
+    EV_EXEC, EV_FILE, EV_NETLINK, EV_PATH, EV_PROCESS, EV_RESULT, EXEC_ARG_CAP, EXEC_ARGS,
+    EventHeader, ExecEvent, FUSE_SUPER_MAGIC, FileEvent, NAME_CAP, NetlinkEvent, OFF_COUNT,
+    OFF_DENTRY_INODE, OFF_DENTRY_NAME, OFF_DENTRY_PARENT, OFF_DENTRY_SB, OFF_FILE_DENTRY,
+    OFF_FILE_FLAGS, OFF_INODE_MODE, OFF_SB_DEV, OFF_SB_MAGIC, OFF_SKB_DATA, OFF_SOCK_PROTOCOL,
+    OP_OPEN, OP_PAIRED, OP_PROBE, OP_WATCH, PROC_SUPER_MAGIC, PROCESS_READ, PROCESS_TRACE,
+    PROCESS_WRITE, PathEvent, ProcessEvent, ResultEvent, SELINUX_MAGIC, SYSFS_MAGIC,
 };
 
 const AT_FDCWD: i32 = -100;
@@ -73,6 +98,31 @@ static EVENTS: RingBuf = RingBuf::with_byte_size(8 * 1024 * 1024, 0);
 /// adds the per-CPU values up.
 #[map]
 static DROPPED: PerCpuArray<u64> = PerCpuArray::with_max_entries(1, 0);
+
+/// Destinations reported recently, with the time of the report. An app
+/// streaming to a device on the local network sends thousands of datagrams a
+/// second to the same address; one report a second says as much.
+#[map]
+static RECENT_DESTINATIONS: LruHashMap<Destination, u64> = LruHashMap::with_max_entries(1024, 0);
+
+/// Processes an app went after recently, keyed by caller and target pid,
+/// with the time of the report. A debugger or a sandbox that traces its own
+/// children makes thousands of these calls a second.
+#[map]
+static RECENT_TARGETS: LruHashMap<u64, u64> = LruHashMap::with_max_entries(1024, 0);
+
+/// The service methods to report, by interface (see bb-common). Filled by
+/// the daemon once it knows the device's transaction codes; empty until then.
+#[map]
+static BINDER_WATCH: HashMap<BinderKey, BinderValue> = HashMap::with_max_entries(256, 0);
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Destination {
+    tgid: u32,
+    port: u32,
+    addr: [u8; 16],
+}
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -436,7 +486,7 @@ enum Shape {
 mod arch {
     /// `struct pt_regs` starts with `struct user_pt_regs`:
     /// `u64 regs[31]; u64 sp; u64 pc; u64 pstate;` — a stable UAPI layout.
-    pub const ARG_OFFSETS: [u32; 3] = [0, 8, 16];
+    pub const ARG_OFFSETS: [u32; 6] = [0, 8, 16, 24, 32, 40];
     const PSTATE_OFFSET: u32 = 33 * 8;
     const PSR_MODE32_BIT: u64 = 0x10;
 
@@ -451,8 +501,9 @@ mod arch {
 
 #[cfg(bpf_target_arch = "x86_64")]
 mod arch {
-    /// Offsets of di, si, dx in x86_64 `struct pt_regs` (emulator / host testing).
-    pub const ARG_OFFSETS: [u32; 3] = [14 * 8, 13 * 8, 12 * 8];
+    /// Offsets of di, si, dx, r10, r8, r9 in x86_64 `struct pt_regs`
+    /// (emulator / host testing).
+    pub const ARG_OFFSETS: [u32; 6] = [14 * 8, 13 * 8, 12 * 8, 7 * 8, 9 * 8, 8 * 8];
 
     pub unsafe fn is_compat(_regs: *const u8) -> bool {
         false
@@ -545,7 +596,481 @@ pub fn enter_watch(ctx: ProbeContext) -> u32 {
     0
 }
 
-/// Return of any tracked syscall.
+/// Have `sys_ret` send the return value of the call this thread is in,
+/// which has just been reported.
+#[inline(always)]
+fn expect_result(pid_tgid: u64) -> Result<(), i32> {
+    let pending = Pending {
+        path_ptr: 0,
+        how_ptr: 0,
+        dfd: AT_FDCWD,
+        flags: 0,
+        abi: ABI_NATIVE,
+        op: OP_PAIRED,
+        reported: 1,
+    };
+    PENDING.insert(&pid_tgid, &pending, 0).map_err(|e| e as i32)
+}
+
+// ---- execve -----------------------------------------------------------------
+
+/// Common body of the exec probes. `first` is the index of the path
+/// argument; the argument vector follows it.
+#[inline(always)]
+fn exec_enter(ctx: &ProbeContext, first: usize) -> Result<(), i32> {
+    let uid = bpf_get_current_uid_gid() as u32;
+    if !should_trace(uid) {
+        return Ok(());
+    }
+    let regs: *const u8 = ctx.arg(0).ok_or(-1)?;
+    let path_ptr = unsafe { read_at::<u64>(regs, arch::ARG_OFFSETS[first])? };
+    let argv = unsafe { read_at::<u64>(regs, arch::ARG_OFFSETS[first + 1])? };
+    let compat = unsafe { arch::is_compat(regs) };
+    let pid_tgid = bpf_get_current_pid_tgid();
+
+    let Some(mut entry) = EVENTS.reserve::<ExecEvent>(0) else {
+        count_drop();
+        return Err(-1);
+    };
+    let ev = entry.as_mut_ptr();
+    // Everything is read now, unlike the paths of the other probes: if the
+    // exec succeeds, the caller's memory is gone by the time it returns. The
+    // caller has only just written these strings, so they are present.
+    let mut argc = 0u32;
+    let mut ended = false;
+    unsafe {
+        (*ev).hdr = header(EV_EXEC, uid, pid_tgid);
+        (*ev).path_len = match bpf_probe_read_user_str_bytes(path_ptr as *const u8, &mut (*ev).path)
+        {
+            Ok(s) => s.len() as u32 + 1,
+            Err(_) => 0,
+        };
+        let mut i = 0;
+        while i < EXEC_ARGS {
+            let slot = core::slice::from_raw_parts_mut(
+                (&raw mut (*ev).args).cast::<u8>().add(i * EXEC_ARG_CAP),
+                EXEC_ARG_CAP,
+            );
+            // The buffer is not zeroed; an unused slot must read as empty.
+            slot[0] = 0;
+            if !ended {
+                // argv[i + 1]: a 32-bit process passes 32-bit pointers.
+                let arg = if compat {
+                    bpf_probe_read_user((argv + (i as u64 + 1) * 4) as *const u32).map(|p| p as u64)
+                } else {
+                    bpf_probe_read_user((argv + (i as u64 + 1) * 8) as *const u64)
+                }
+                .unwrap_or(0);
+                if arg == 0 {
+                    ended = true;
+                } else {
+                    if bpf_probe_read_user_str_bytes(arg as *const u8, slot).is_err() {
+                        slot[0] = 0;
+                    }
+                    argc = i as u32 + 1;
+                }
+            }
+            i += 1;
+        }
+        (*ev).argc = argc;
+    }
+    entry.submit(wakeup_flags());
+    expect_result(pid_tgid)
+}
+
+/// execve(path, argv, envp)
+#[kprobe]
+pub fn enter_execve(ctx: ProbeContext) -> u32 {
+    let _ = exec_enter(&ctx, 0);
+    0
+}
+
+/// execveat(dfd, path, argv, envp, flags)
+#[kprobe]
+pub fn enter_execveat(ctx: ProbeContext) -> u32 {
+    let _ = exec_enter(&ctx, 1);
+    0
+}
+
+// ---- connect / sendto -------------------------------------------------------
+
+/// `sizeof(struct sockaddr_in)` and `sizeof(struct sockaddr_in6)`.
+const SOCKADDR_IN_LEN: u64 = 16;
+const SOCKADDR_IN6_LEN: u64 = 28;
+/// Offset of `sin6_addr` in `struct sockaddr_in6`.
+const SIN6_ADDR_OFFSET: u64 = 8;
+const REPORT_INTERVAL_NS: u64 = 1_000_000_000;
+
+/// Common body of the network probes. `addr_arg` and `len_arg` are the
+/// indexes of the `struct sockaddr *` argument and its length.
+///
+/// Reported at entry and without the outcome: most connections are made
+/// non-blocking, for which the return value says nothing, and this way the
+/// (far more numerous) calls to internet addresses cost one probe each
+/// rather than two. If the address is not in memory the call is missed.
+#[inline(always)]
+fn connect_enter(ctx: &ProbeContext, addr_arg: usize, len_arg: usize) -> Result<(), i32> {
+    let uid = bpf_get_current_uid_gid() as u32;
+    if !should_trace(uid) {
+        return Ok(());
+    }
+    let regs: *const u8 = ctx.arg(0).ok_or(-1)?;
+    let sockaddr = unsafe { read_at::<u64>(regs, arch::ARG_OFFSETS[addr_arg])? };
+    let len = unsafe { read_at::<u64>(regs, arch::ARG_OFFSETS[len_arg])? } & 0xffff_ffff;
+    report_destination(uid, sockaddr, len)
+}
+
+/// Body of the sendmsg probes: the destination is in the `struct msghdr`
+/// the second argument points to (for sendmmsg, in the first message's).
+#[inline(always)]
+fn sendmsg_enter(ctx: &ProbeContext) -> Result<(), i32> {
+    let uid = bpf_get_current_uid_gid() as u32;
+    if !should_trace(uid) {
+        return Ok(());
+    }
+    let regs: *const u8 = ctx.arg(0).ok_or(-1)?;
+    let msg = unsafe { read_at::<u64>(regs, arch::ARG_OFFSETS[1])? };
+    // struct msghdr begins with `void *msg_name; int msg_namelen;`, which
+    // a 32-bit process lays out with a 32-bit pointer.
+    let (sockaddr, len) = if unsafe { arch::is_compat(regs) } {
+        let head: [u32; 2] = unsafe { bpf_probe_read_user(msg as *const [u32; 2])? };
+        (head[0] as u64, head[1] as u64)
+    } else {
+        let head: [u64; 2] = unsafe { bpf_probe_read_user(msg as *const [u64; 2])? };
+        (head[0], head[1] & 0xffff_ffff)
+    };
+    report_destination(uid, sockaddr, len)
+}
+
+/// Report a call's destination address, if it is one worth reporting.
+#[inline(always)]
+fn report_destination(uid: u32, sockaddr: u64, len: u64) -> Result<(), i32> {
+    // A send on a connected socket has no address.
+    if sockaddr == 0 {
+        return Ok(());
+    }
+    if len < SOCKADDR_IN_LEN {
+        return Ok(());
+    }
+    // Family, port and, for IPv4, the address.
+    let head: [u8; 8] = unsafe { bpf_probe_read_user(sockaddr as *const [u8; 8])? };
+    let family = u16::from_ne_bytes([head[0], head[1]]) as u32;
+    let port = u16::from_be_bytes([head[2], head[3]]) as u32;
+    let mut addr = [0u8; 16];
+    let class = if family == AF_INET {
+        addr[0] = head[4];
+        addr[1] = head[5];
+        addr[2] = head[6];
+        addr[3] = head[7];
+        ipv4_class([head[4], head[5], head[6], head[7]])
+    } else if family == AF_INET6 && len >= SOCKADDR_IN6_LEN {
+        addr = unsafe { bpf_probe_read_user((sockaddr + SIN6_ADDR_OFFSET) as *const [u8; 16])? };
+        ipv6_class(&addr)
+    } else {
+        return Ok(());
+    };
+    if class == NET_PUBLIC {
+        return Ok(());
+    }
+
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let destination = Destination {
+        tgid: (pid_tgid >> 32) as u32,
+        port,
+        addr,
+    };
+    let now = unsafe { bpf_ktime_get_ns() };
+    if let Some(last) = unsafe { RECENT_DESTINATIONS.get(&destination) } {
+        if now.wrapping_sub(*last) < REPORT_INTERVAL_NS {
+            return Ok(());
+        }
+    }
+    let _ = RECENT_DESTINATIONS.insert(&destination, &now, 0);
+
+    let Some(mut entry) = EVENTS.reserve::<ConnectEvent>(0) else {
+        count_drop();
+        return Err(-1);
+    };
+    entry.write(ConnectEvent {
+        hdr: header(EV_CONNECT, uid, pid_tgid),
+        family,
+        port,
+        addr,
+    });
+    entry.submit(wakeup_flags());
+    Ok(())
+}
+
+/// connect(fd, addr, addrlen)
+#[kprobe]
+pub fn enter_connect(ctx: ProbeContext) -> u32 {
+    let _ = connect_enter(&ctx, 1, 2);
+    0
+}
+
+/// sendto(fd, buf, len, flags, addr, addrlen)
+#[kprobe]
+pub fn enter_sendto(ctx: ProbeContext) -> u32 {
+    let _ = connect_enter(&ctx, 4, 5);
+    0
+}
+
+/// sendmsg(fd, msg, flags) and sendmmsg(fd, msgvec, vlen, flags)
+#[kprobe]
+pub fn enter_sendmsg(ctx: ProbeContext) -> u32 {
+    let _ = sendmsg_enter(&ctx);
+    0
+}
+
+// ---- other processes --------------------------------------------------------
+
+const PTRACE_TRACEME: u64 = 0;
+
+/// Common body of the probes for calls that name another process. `pid_arg`
+/// is the index of the pid argument.
+#[inline(always)]
+fn process_enter(ctx: &ProbeContext, how: u32, pid_arg: usize) -> Result<(), i32> {
+    let uid = bpf_get_current_uid_gid() as u32;
+    if !should_trace(uid) {
+        return Ok(());
+    }
+    let regs: *const u8 = ctx.arg(0).ok_or(-1)?;
+    // ptrace(PTRACE_TRACEME) asks to be traced; it names no one.
+    if how == PROCESS_TRACE
+        && unsafe { read_at::<u64>(regs, arch::ARG_OFFSETS[0])? } == PTRACE_TRACEME
+    {
+        return Ok(());
+    }
+    let target = unsafe { read_at::<u64>(regs, arch::ARG_OFFSETS[pid_arg])? } as u32;
+    let pid_tgid = bpf_get_current_pid_tgid();
+    if target == (pid_tgid >> 32) as u32 {
+        return Ok(());
+    }
+    let pair = (pid_tgid & 0xffff_ffff_0000_0000) | target as u64;
+    let now = unsafe { bpf_ktime_get_ns() };
+    if let Some(last) = unsafe { RECENT_TARGETS.get(&pair) } {
+        if now.wrapping_sub(*last) < REPORT_INTERVAL_NS {
+            return Ok(());
+        }
+    }
+    let _ = RECENT_TARGETS.insert(&pair, &now, 0);
+    let Some(mut entry) = EVENTS.reserve::<ProcessEvent>(0) else {
+        count_drop();
+        return Err(-1);
+    };
+    entry.write(ProcessEvent {
+        hdr: header(EV_PROCESS, uid, pid_tgid),
+        how,
+        target,
+    });
+    entry.submit(wakeup_flags());
+    expect_result(pid_tgid)
+}
+
+/// ptrace(request, pid, addr, data)
+#[kprobe]
+pub fn enter_ptrace(ctx: ProbeContext) -> u32 {
+    let _ = process_enter(&ctx, PROCESS_TRACE, 1);
+    0
+}
+
+/// process_vm_readv(pid, ...)
+#[kprobe]
+pub fn enter_vm_read(ctx: ProbeContext) -> u32 {
+    let _ = process_enter(&ctx, PROCESS_READ, 0);
+    0
+}
+
+/// process_vm_writev(pid, ...)
+#[kprobe]
+pub fn enter_vm_write(ctx: ProbeContext) -> u32 {
+    let _ = process_enter(&ctx, PROCESS_WRITE, 0);
+    0
+}
+
+// ---- netlink ----------------------------------------------------------------
+
+/// Offset of `nlmsg_type` in `struct nlmsghdr` (UAPI): it follows the
+/// 32-bit length.
+const NLMSG_TYPE_OFFSET: u32 = 4;
+
+/// security_netlink_send(struct sock *sk, struct sk_buff *skb)
+///
+/// The hook's return value is the verdict: Android's SELinux policy refuses
+/// most of these requests to apps, and the attempt is recorded either way.
+#[kprobe]
+pub fn enter_netlink(ctx: ProbeContext) -> u32 {
+    let _ = try_enter_netlink(&ctx);
+    0
+}
+
+fn try_enter_netlink(ctx: &ProbeContext) -> Result<(), i32> {
+    let uid = bpf_get_current_uid_gid() as u32;
+    if !should_trace(uid) {
+        return Ok(());
+    }
+    let off = OFFSETS.load();
+    let sk: *const u8 = ctx.arg(0).ok_or(-1)?;
+    let skb: *const u8 = ctx.arg(1).ok_or(-1)?;
+    let protocol = unsafe { read_at::<u16>(sk, off[OFF_SOCK_PROTOCOL])? } as u32;
+    // The message starts at the buffer's data pointer.
+    let data: *const u8 = unsafe { read_at(skb, off[OFF_SKB_DATA])? };
+    let msg_type = unsafe { read_at::<u16>(data, NLMSG_TYPE_OFFSET)? } as u32;
+    if !netlink_matters(protocol, msg_type) {
+        return Ok(());
+    }
+    let pid_tgid = bpf_get_current_pid_tgid();
+    let Some(mut entry) = EVENTS.reserve::<NetlinkEvent>(0) else {
+        count_drop();
+        return Err(-1);
+    };
+    entry.write(NetlinkEvent {
+        hdr: header(EV_NETLINK, uid, pid_tgid),
+        protocol,
+        msg_type,
+    });
+    entry.submit(wakeup_flags());
+    expect_result(pid_tgid)
+}
+
+// ---- binder -----------------------------------------------------------------
+//
+// Everything read here is binder's userspace ABI (uapi/linux/android/binder.h)
+// or the parcel format of the Android framework; nothing depends on how the
+// driver is implemented.
+
+/// `BINDER_WRITE_READ`: _IOWR('b', 1, struct binder_write_read).
+const BINDER_WRITE_READ: u32 = 0xc030_6201;
+/// `BC_TRANSACTION` and `BC_TRANSACTION_SG`. Both are followed by a
+/// `struct binder_transaction_data`.
+const BC_TRANSACTION: u32 = 0x4040_6300;
+const BC_TRANSACTION_SG: u32 = 0x4048_6311;
+/// Commands inspected per ioctl. A transaction is usually the first or comes
+/// after a few buffer releases and reference count changes.
+const MAX_COMMANDS: usize = 6;
+/// Marks a parcel written by the system's own (not vendor) binder: 'SYST'.
+const PARCEL_HEADER_SYSTEM: u32 = 0x5359_5354;
+/// Before the interface name: strict mode policy, work source, header mark,
+/// and the name's length. All 32-bit.
+const PARCEL_NAME_OFFSET: u64 = 16;
+
+/// TP_PROTO(unsigned int cmd, unsigned long arg)
+#[raw_tracepoint(tracepoint = "binder_ioctl")]
+pub fn binder_ioctl(ctx: RawTracePointContext) -> i32 {
+    let _ = try_binder_ioctl(&ctx);
+    0
+}
+
+fn try_binder_ioctl(ctx: &RawTracePointContext) -> Result<(), i32> {
+    let uid = bpf_get_current_uid_gid() as u32;
+    if !should_trace(uid) {
+        return Ok(());
+    }
+    let cmd: u64 = ctx.arg(0);
+    if cmd as u32 != BINDER_WRITE_READ {
+        return Ok(());
+    }
+    let arg: u64 = ctx.arg(1);
+    // struct binder_write_read begins: write_size, write_consumed,
+    // write_buffer, each 64 bits wide (for 32-bit processes too).
+    let bwr: [u64; 3] = unsafe { bpf_probe_read_user(arg as *const [u64; 3])? };
+    let end = bwr[2].wrapping_add(bwr[0]);
+    let mut at = bwr[2].wrapping_add(bwr[1]);
+    let mut i = 0;
+    while i < MAX_COMMANDS {
+        if at.wrapping_add(4) > end {
+            return Ok(());
+        }
+        let command: u32 = unsafe { bpf_probe_read_user(at as *const u32)? };
+        if command == BC_TRANSACTION || command == BC_TRANSACTION_SG {
+            return binder_transaction(at + 4, uid);
+        }
+        // The size of a command's payload is encoded in the command.
+        at = at.wrapping_add(4 + ((command >> 16) & 0x3fff) as u64);
+        i += 1;
+    }
+    Ok(())
+}
+
+#[inline(always)]
+fn binder_transaction(transaction: u64, uid: u32) -> Result<(), i32> {
+    // struct binder_transaction_data: target and cookie (8 bytes each),
+    // code and flags (4 each), sender pid and euid (4 each), data_size,
+    // offsets_size, data buffer, offsets buffer (8 each). Only three fields
+    // are wanted, and the stack is small.
+    let code: u32 = unsafe { bpf_probe_read_user((transaction + 16) as *const u32)? };
+    let size: u64 = unsafe { bpf_probe_read_user((transaction + 32) as *const u64)? };
+    let data: u64 = unsafe { bpf_probe_read_user((transaction + 48) as *const u64)? };
+    if code >= BINDER_CODES || size < PARCEL_NAME_OFFSET {
+        return Ok(());
+    }
+    let prefix: [u32; 4] = unsafe { bpf_probe_read_user(data as *const [u32; 4])? };
+    let len = prefix[3];
+    if prefix[2] != PARCEL_HEADER_SYSTEM || len < BINDER_MIN_NAME || len > BINDER_MAX_NAME {
+        return Ok(());
+    }
+    // The name: `len` UTF-16 code units, a terminator, padding to 4 bytes.
+    let name = data + PARCEL_NAME_OFFSET;
+    let name_bytes = len as u64 * 2;
+    let mut key: BinderKey = [0; BINDER_KEY_LEN];
+    let len_bytes = len.to_ne_bytes();
+    key[0] = len_bytes[0];
+    key[1] = len_bytes[1];
+    key[2] = len_bytes[2];
+    key[3] = len_bytes[3];
+    unsafe {
+        let key_bytes = (&raw mut key).cast::<u8>();
+        bpf_probe_read_user_buf(
+            name as *const u8,
+            core::slice::from_raw_parts_mut(key_bytes.add(4), BINDER_KEY_HEAD),
+        )
+        .map_err(|e| e as i32)?;
+        bpf_probe_read_user_buf(
+            (name + name_bytes - BINDER_KEY_TAIL as u64) as *const u8,
+            core::slice::from_raw_parts_mut(key_bytes.add(4 + BINDER_KEY_HEAD), BINDER_KEY_TAIL),
+        )
+        .map_err(|e| e as i32)?;
+    }
+    let Some(watched) = (unsafe { BINDER_WATCH.get(&key) }) else {
+        return Ok(());
+    };
+    // `code` is below BINDER_CODES, so the word index is in range; the mask
+    // tells the verifier.
+    let word = watched[1 + ((code >> 6) & 7) as usize];
+    if word & (1 << (code & 63)) == 0 {
+        return Ok(());
+    }
+
+    let args = name + ((name_bytes + 2 + 3) & !3);
+    let Some(mut entry) = EVENTS.reserve::<BinderEvent>(0) else {
+        count_drop();
+        return Err(-1);
+    };
+    let ev = entry.as_mut_ptr();
+    unsafe {
+        (*ev).hdr = header(EV_BINDER, uid, bpf_get_current_pid_tgid());
+        (*ev).interface = watched[0] as u32;
+        (*ev).code = code;
+        // The arguments are read at a fixed length, which can run past the
+        // parcel into whatever follows it; the daemon only trusts what the
+        // parcel's size covers.
+        let have = (data + size).saturating_sub(args);
+        let short =
+            core::slice::from_raw_parts_mut((&raw mut (*ev).args).cast::<u8>(), BINDER_ARGS_SHORT);
+        let read = if bpf_probe_read_user_buf(args as *const u8, &mut (*ev).args).is_ok() {
+            BINDER_ARGS_CAP as u64
+        } else if bpf_probe_read_user_buf(args as *const u8, short).is_ok() {
+            BINDER_ARGS_SHORT as u64
+        } else {
+            0
+        };
+        (*ev).args_len = if have < read { have } else { read } as u32;
+    }
+    entry.submit(wakeup_flags());
+    Ok(())
+}
+
+/// Return of any tracked syscall, and of `security_netlink_send`.
 #[kretprobe]
 pub fn sys_ret(ctx: RetProbeContext) -> u32 {
     let _ = try_sys_ret(&ctx);

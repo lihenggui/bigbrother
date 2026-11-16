@@ -31,6 +31,24 @@ pub const PROVIDER_PACKAGES: &[&str] = &[
     "com.android.providers.downloads",
 ];
 
+/// Packages that hold personal data, which the hook is injected into as
+/// well. Only what is asked of their personal collections is recorded (see
+/// `personal`).
+///
+/// A process hosts every package that shares its uid, and the hook writes
+/// its spool to the data directory of whichever of them is loaded first: the
+/// contacts provider's records turn up under the blocked numbers provider.
+/// The spool is therefore looked for under every package sharing a uid with
+/// one of these (see [`Spool::collect`]), and under no others: an app must
+/// not be able to plant records by creating a directory of its own.
+pub const PERSONAL_PACKAGES: &[&str] = &[
+    "com.android.providers.contacts",
+    "com.samsung.android.providers.contacts",
+    "com.android.providers.telephony",
+    "com.android.providers.calendar",
+    "com.android.phone",
+];
+
 /// Device-encrypted app storage: `<root>/<user>/<package>`. Available before
 /// the first unlock, unlike `/data/user`.
 const DATA_ROOT: &str = "/data/user_de";
@@ -59,9 +77,12 @@ pub struct ProviderEvent {
     pub uri: String,
     /// File the open resolved to; empty when unknown.
     pub path: String,
+    /// Whether it was recorded in one of the storage providers
+    /// (`PROVIDER_PACKAGES`), as opposed to a personal-data provider.
+    pub storage_provider: bool,
 }
 
-pub fn parse_line(line: &str) -> Option<ProviderEvent> {
+pub fn parse_line(line: &str, storage_provider: bool) -> Option<ProviderEvent> {
     let mut fields = line.split('\t');
     if fields.next()? != FORMAT_VERSION {
         return None;
@@ -90,6 +111,7 @@ pub fn parse_line(line: &str) -> Option<ProviderEvent> {
         items,
         uri,
         path,
+        storage_provider,
     })
 }
 
@@ -129,18 +151,20 @@ impl Spool {
         }
     }
 
-    fn spool_dirs(&self) -> Vec<PathBuf> {
+    /// Existing spool directories, and whether each is a storage provider's.
+    /// `hosts` lists the packages to look under, with that flag.
+    fn spool_dirs(&self, hosts: &[(String, bool)]) -> Vec<(PathBuf, bool)> {
         let Ok(users) = fs::read_dir(&self.data_root) else {
             return Vec::new();
         };
         users
             .flatten()
             .flat_map(|user| {
-                PROVIDER_PACKAGES
-                    .iter()
-                    .map(move |package| user.path().join(package).join(SPOOL_DIR))
+                hosts.iter().map(move |(package, storage)| {
+                    (user.path().join(package).join(SPOOL_DIR), *storage)
+                })
             })
-            .filter(|dir| dir.is_dir())
+            .filter(|(dir, _)| dir.is_dir())
             .collect()
     }
 
@@ -151,12 +175,18 @@ impl Spool {
     /// the hook start a fresh one; only on the next call is the claimed file
     /// read and deleted. A writer that had the old file open across the
     /// rename finishes its append long before then, so nothing is lost.
-    pub fn collect(&mut self) -> Vec<ProviderEvent> {
+    ///
+    /// `hosts` are the packages whose data directories may hold a spool, and
+    /// whether each belongs to a storage provider (see [`hosts`]).
+    pub fn collect(&mut self, hosts: &[(String, bool)]) -> Vec<ProviderEvent> {
         let mut events = Vec::new();
-        for dir in self.spool_dirs() {
+        for (dir, storage_provider) in self.spool_dirs(hosts) {
             let claimed = dir.join(CLAIMED_FILE);
             if let Ok(text) = fs::read_to_string(&claimed) {
-                events.extend(text.lines().filter_map(parse_line));
+                events.extend(
+                    text.lines()
+                        .filter_map(|line| parse_line(line, storage_provider)),
+                );
             }
             // Delete even if unreadable: a file we can't parse now won't
             // become parseable, and leaving it would block the spool.
@@ -165,6 +195,21 @@ impl Spool {
         }
         events
     }
+}
+
+/// The packages a spool may be found under: the provider packages and those
+/// sharing a uid with them, as `sharing_uid` reports for a list of packages.
+pub fn hosts(sharing_uid: impl Fn(&[&str]) -> Vec<String>) -> Vec<(String, bool)> {
+    let mut hosts: Vec<(String, bool)> = Vec::new();
+    for (packages, storage) in [(PROVIDER_PACKAGES, true), (PERSONAL_PACKAGES, false)] {
+        let listed = packages.iter().map(|p| p.to_string());
+        for package in listed.chain(sharing_uid(packages)) {
+            if !hosts.iter().any(|(known, _)| *known == package) {
+                hosts.push((package, storage));
+            }
+        }
+    }
+    hosts
 }
 
 fn remove_if_exists(path: &Path) {
@@ -182,7 +227,10 @@ mod tests {
     #[test]
     fn parses_queries_and_opens() {
         assert_eq!(
-            parse_line("1\t1700000000\t10123\tq\t\t3214\tcontent://media/external/images/media\t"),
+            parse_line(
+                "1\t1700000000\t10123\tq\t\t3214\tcontent://media/external/images/media\t",
+                true
+            ),
             Some(ProviderEvent {
                 ts: 1_700_000_000,
                 uid: 10123,
@@ -192,10 +240,12 @@ mod tests {
                 items: 3214,
                 uri: "content://media/external/images/media".into(),
                 path: String::new(),
+                storage_provider: true,
             })
         );
         let open = parse_line(
             "1\t1700000001\t10123\to\trw\t0\tcontent://media/external/images/media/7\t/storage/emulated/0/DCIM/a.jpg",
+            true,
         )
         .unwrap();
         assert_eq!((open.op, open.read, open.write), (Op::Open, true, true));
@@ -213,7 +263,7 @@ mod tests {
             "1\t1700000000\t10123\tq\t\t0\t\t",
             "1\t1700000000\t10123\tq",
         ] {
-            assert_eq!(parse_line(line), None, "{line:?}");
+            assert_eq!(parse_line(line, true), None, "{line:?}");
         }
     }
 
@@ -256,17 +306,40 @@ mod tests {
         fs::write(dir.join(SPOOL_FILE), line(10001)).unwrap();
 
         let mut spool = Spool::at(&root);
+        // Nothing shares a uid with a provider here, bar one package.
+        let hosts = hosts(|listed| {
+            if listed.contains(&PERSONAL_PACKAGES[0]) {
+                vec!["com.android.providers.blockednumber".to_string()]
+            } else {
+                Vec::new()
+            }
+        });
+        let mut collect = move || spool.collect(&hosts);
         // First call only claims the file.
-        assert!(spool.collect().is_empty());
+        assert!(collect().is_empty());
         assert!(!dir.join(SPOOL_FILE).exists());
         // The hook keeps writing to a fresh file meanwhile.
         fs::write(dir.join(SPOOL_FILE), line(10002) + "broken line\n").unwrap();
 
         let uids = |events: Vec<ProviderEvent>| events.iter().map(|e| e.uid).collect::<Vec<_>>();
-        assert_eq!(uids(spool.collect()), [10001]);
-        assert_eq!(uids(spool.collect()), [10002]);
-        assert!(spool.collect().is_empty());
+        assert_eq!(uids(collect()), [10001]);
+        assert_eq!(uids(collect()), [10002]);
+        assert!(collect().is_empty());
         assert!(!dir.join(CLAIMED_FILE).exists());
+
+        // A personal-data provider's spool is collected too, and marked,
+        // from under whichever package of its process holds it.
+        let shared = root
+            .join("0/com.android.providers.blockednumber")
+            .join(SPOOL_DIR);
+        fs::create_dir_all(&shared).unwrap();
+        fs::write(shared.join(SPOOL_FILE), line(10003)).unwrap();
+        collect();
+        let marked: Vec<_> = collect()
+            .iter()
+            .map(|e| (e.uid, e.storage_provider))
+            .collect();
+        assert_eq!(marked, [(10003, false)]);
         fs::remove_dir_all(root).unwrap();
     }
 }
