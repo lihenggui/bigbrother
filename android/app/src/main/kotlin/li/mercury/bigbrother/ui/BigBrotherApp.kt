@@ -7,6 +7,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MotionScheme
 import androidx.compose.ui.Modifier
 import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
 import androidx.compose.material3.adaptive.navigation3.rememberListDetailSceneStrategy
@@ -47,11 +48,12 @@ fun BigBrotherApp() {
         appDetailEntry(navigator)
     }
 
-    // Screen transitions use the theme's motion scheme, so they share the
-    // expressive spring physics of the components: spatial specs for
-    // movement, effects specs for opacity. Going forward, the new screen
-    // slides in over the old one; going back reverses it.
-    val motion = MaterialTheme.motionScheme
+    // Screen transitions use the standard motion scheme: expressive springs
+    // overshoot, which suits components but not a whole screen moving.
+    // Going forward, the new screen slides in over the old one; going back
+    // reverses it. Predictive back keeps the navigation library's default,
+    // which follows the system's back preview.
+    val motion = MotionScheme.standard()
     val slide = motion.defaultSpatialSpec<IntOffset>()
     val fade = motion.defaultEffectsSpec<Float>()
     val forward = slideInHorizontally(slide) { it } + fadeIn(fade) togetherWith
@@ -67,6 +69,5 @@ fun BigBrotherApp() {
         onBack = { navigator.goBack() },
         transitionSpec = { forward },
         popTransitionSpec = { backward },
-        predictivePopTransitionSpec = { backward },
     )
 }

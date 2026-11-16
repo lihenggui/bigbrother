@@ -5,6 +5,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.root.ModulePaths.BBD
+import li.mercury.bigbrother.core.data.root.ModulePaths.MODULE_DIR
 import li.mercury.bigbrother.core.data.root.ModulePaths.MODULE_PROP
 import li.mercury.bigbrother.core.data.root.ModulePaths.PENDING_UPDATE_DIR
 import li.mercury.bigbrother.core.data.root.RootShell
@@ -28,6 +29,16 @@ interface ModuleRepository {
      * @throws RecordsException if root is missing or the installer fails.
      */
     suspend fun installBundled(): String
+
+    /**
+     * Starts the daemon through the module's own service script, as at boot.
+     * Returns false, without starting it, when the module is disabled or
+     * marked for removal: by the user in the root manager, or by the
+     * module's own boot guard after a boot that did not finish.
+     *
+     * @throws RecordsException if root is missing or the script fails.
+     */
+    suspend fun startDaemon(): Boolean
 }
 
 internal class RootModuleRepository @Inject constructor(
@@ -63,6 +74,22 @@ internal class RootModuleRepository @Inject constructor(
         val result = rootShell.run(installCommand(context.applicationInfo.sourceDir))
         if (!result.isSuccess) throw RecordsException.CommandFailed(result.output)
         return result.output
+    }
+
+    override suspend fun startDaemon(): Boolean {
+        if (rootShell.run("[ -e $MODULE_DIR/disable ] || [ -e $MODULE_DIR/remove ]").isSuccess) {
+            return false
+        }
+        // The script leaves the supervisor running in the background; with
+        // its output detached, the shell returns once it has been started.
+        // No `exit` here: the root shell is shared and must stay open.
+        val script = "$MODULE_DIR/service.sh"
+        val result = rootShell.run(
+            "if [ -f $script ]; then sh $script </dev/null >/dev/null 2>&1; " +
+                "else echo '$script not found'; false; fi",
+        )
+        if (!result.isSuccess) throw RecordsException.CommandFailed(result.output)
+        return true
     }
 }
 

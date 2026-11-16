@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,6 +20,18 @@ import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.TimeRange
+
+/** Why the daemon could not be started from the app. */
+sealed interface StartFailure {
+    /** The module is disabled or marked for removal in the root manager. */
+    data object ModuleDisabled : StartFailure
+
+    /** Started, but it never reported in; its log says why. */
+    data object NotReporting : StartFailure
+
+    /** The service script failed, with its output. */
+    data class Failed(val output: String) : StartFailure
+}
 
 /** Progress of flashing the module from inside the app. */
 sealed interface ModuleSetup {
@@ -53,6 +66,10 @@ data class AppListUiState(
      * dominate the list.
      */
     val showSystemApps: Boolean = false,
+    /** A request to start the daemon is in progress. */
+    val daemonStarting: Boolean = false,
+    /** Why the last request to start the daemon failed, if it did. */
+    val daemonStartError: StartFailure? = null,
 )
 
 @HiltViewModel
@@ -90,6 +107,8 @@ class AppListViewModel @Inject constructor(
                         refreshing = false,
                         failure = null,
                         moduleSetup = ModuleSetup.Idle,
+                        // Recording again means an earlier start problem is over.
+                        daemonStartError = it.daemonStartError.takeUnless { status.recording },
                         moduleOutdated = outdated,
                         modulePendingReboot = pending,
                     )
@@ -108,6 +127,44 @@ class AppListViewModel @Inject constructor(
 
     fun setShowSystemApps(show: Boolean) {
         _uiState.update { it.copy(showSystemApps = show) }
+    }
+
+    /**
+     * Start the daemon when the module is installed but not running, then
+     * wait for it to report in: it counts as recording only once it has
+     * written its first batch, a few seconds after starting.
+     */
+    fun startDaemon() {
+        if (_uiState.value.daemonStarting) return
+        loadJob?.cancel()
+        _uiState.update { it.copy(daemonStarting = true, daemonStartError = null) }
+        viewModelScope.launch {
+            val error = try {
+                when {
+                    !moduleRepository.startDaemon() -> StartFailure.ModuleDisabled
+                    awaitRecording() -> null
+                    else -> StartFailure.NotReporting
+                }
+            } catch (e: RecordsException) {
+                StartFailure.Failed(e.message.orEmpty())
+            }
+            _uiState.update { it.copy(daemonStarting = false, daemonStartError = error) }
+            refresh()
+        }
+    }
+
+    /** Polls the daemon's status until it is recording, or gives up. */
+    private suspend fun awaitRecording(): Boolean {
+        repeat(START_POLLS) {
+            delay(START_POLL_INTERVAL_MS)
+            val recording = try {
+                accessRepository.getRecorderStatus().recording
+            } catch (_: RecordsException) {
+                false
+            }
+            if (recording) return true
+        }
+        return false
     }
 
     /** Flash the module bundled in this app's APK. */
@@ -130,3 +187,7 @@ class AppListViewModel @Inject constructor(
         }
     }
 }
+
+/** How long to wait for a started daemon: its first write comes within seconds. */
+private const val START_POLLS = 20
+private const val START_POLL_INTERVAL_MS = 1_000L
