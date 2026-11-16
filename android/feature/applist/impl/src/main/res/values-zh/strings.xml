@@ -30,9 +30,9 @@
     <string name="sort_sensitivity">敏感程度</string>
     <string name="sort_recent">最近访问</string>
     <string name="sort_name">名称</string>
-    <string name="show_system_apps_summary">默认隐藏：读取数据属于系统组件的正常行为。</string>
+    <string name="show_system_apps_summary">默认隐藏，包括无法归属到应用的隔离进程：读取数据属于系统组件的正常行为。</string>
     <string name="show_system_apps">显示系统应用</string>
-    <string name="only_system_apps">仅系统应用有记录</string>
+    <string name="only_system_apps">仅默认隐藏的应用有记录</string>
     <string name="app_name_with_user">%1$s（用户 %2$d）</string>
 
     <string name="daemon_stopped">记录守护进程未运行。</string>

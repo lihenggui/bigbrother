@@ -84,9 +84,13 @@ enum class Action {
         private const val MODE_CONNECT = 128
         private const val MODE_EXEC = 256
         private const val MODE_CALL = 512
+        private const val MODE_ISOLATED = 1024
 
         /** Whether the system opened the file on the app's behalf. */
         fun isViaProvider(mode: Int): Boolean = mode and MODE_VIA_PROVIDER != 0
+
+        /** Whether one of the app's isolated processes did it, rather than the app itself. */
+        fun isFromIsolated(mode: Int): Boolean = mode and MODE_ISOLATED != 0
 
         fun fromMode(mode: Int): Action = when {
             mode and MODE_EXEC != 0 -> EXEC
@@ -129,10 +133,20 @@ data class AppSummary(
     /** Android user the app runs as: uid = user * 100000 + app id. */
     val userId: Int get() = uid / PER_USER_RANGE
 
+    /**
+     * An isolated process the daemon could not trace to its app: one it did
+     * trace is recorded under the app's own uid.
+     */
+    val isUnattributedIsolated: Boolean
+        get() = packageName.isEmpty() && uid % PER_USER_RANGE >= FIRST_ISOLATED_APP_ID
+
     fun count(category: Category): Int = counts[category] ?: 0
 
     private companion object {
         const val PER_USER_RANGE = 100_000
+
+        /** Isolated processes, with or without an app zygote, have app ids from here up. */
+        const val FIRST_ISOLATED_APP_ID = 90_000
     }
 }
 
@@ -158,6 +172,11 @@ data class Access(
      * (e.g. "mac_address"). Null for user files and provider URIs.
      */
     val topic: String? = null,
+    /**
+     * Done by one of the app's isolated processes (a sandboxed renderer or
+     * the like) rather than by the app itself.
+     */
+    val fromIsolated: Boolean = false,
 )
 
 /**

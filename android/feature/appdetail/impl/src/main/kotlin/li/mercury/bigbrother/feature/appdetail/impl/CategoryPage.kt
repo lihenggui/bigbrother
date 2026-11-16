@@ -1,5 +1,6 @@
 package li.mercury.bigbrother.feature.appdetail.impl
 
+import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.expandVertically
@@ -45,33 +46,57 @@ import li.mercury.bigbrother.core.ui.label
 import li.mercury.bigbrother.core.ui.relativeTime
 import li.mercury.bigbrother.core.ui.topicTitle
 
+/** Where a record comes from, in the order the rows are listed. */
+internal enum class RecordSource(@StringRes val label: Int?) {
+    /** Observed by the daemon, done by the app itself. */
+    APP(null),
+
+    /** Observed by the daemon, done by one of the app's isolated processes. */
+    ISOLATED(R.string.source_isolated),
+
+    /** The system's own permission records. */
+    PERMISSIONS(R.string.source_permissions),
+}
+
+private val Access.source: RecordSource
+    get() = when {
+        category == Category.PERMISSION -> RecordSource.PERMISSIONS
+        fromIsolated -> RecordSource.ISOLATED
+        else -> RecordSource.APP
+    }
+
 /**
  * Records of one kind: grouped by topic (or by path, for records without
- * one) and by source, since the system's permission records and what the
- * daemon observed answer different questions.
+ * one) and by source, since the app itself, its sandboxed processes and the
+ * system's permission records answer different questions.
  */
-internal class TopicGroup(val topic: String, val accesses: List<Access>, val category: DataCategory) {
+internal class TopicGroup(
+    val topic: String,
+    val accesses: List<Access>,
+    val category: DataCategory,
+    val source: RecordSource,
+) {
     /** From the system's own permission records rather than observed by the daemon. */
-    val fromPermissions: Boolean get() = accesses.first().category == Category.PERMISSION
+    val fromPermissions: Boolean get() = source == RecordSource.PERMISSIONS
 
     /** Unique within the screen. */
-    val key: String get() = "$topic:$fromPermissions"
+    val key: String get() = "$topic:$source"
 }
 
 /**
  * Every record that is not a file, grouped into its category of private data
- * in category order. Within a category, what was observed comes before the
- * permission records.
+ * in category order. Within a category, the app's own records come first,
+ * then its isolated processes', then the permission records.
  */
 internal fun groupByCategory(accesses: List<Access>): Map<DataCategory, List<TopicGroup>> =
     accesses
         .filterNot { it.isFile() }
-        .groupBy { (it.topic ?: it.path) to (it.category == Category.PERMISSION) }
+        .groupBy { (it.topic ?: it.path) to it.source }
         .map { (key, group) ->
             val first = group.first()
-            TopicGroup(key.first, group, dataCategoryOf(first.topic, first.category))
+            TopicGroup(key.first, group, dataCategoryOf(first.topic, first.category), key.second)
         }
-        .sortedBy { it.fromPermissions }
+        .sortedBy { it.source }
         .groupBy { it.category }
         .toSortedMap()
 
@@ -131,11 +156,9 @@ private fun LazyItemScope.TopicRow(group: TopicGroup, index: Int, count: Int) {
                 // What is known differs by how it was observed: a file was
                 // read, a service was only seen being asked.
                 val kind = group.accesses.map { it.action }.distinct().singleOrNull()
-                val source = if (group.fromPermissions) {
-                    stringResource(R.string.source_permissions) + stringResource(R.string.time_separator)
-                } else {
-                    ""
-                }
+                val source = group.source.label?.let {
+                    stringResource(it) + stringResource(R.string.time_separator)
+                }.orEmpty()
                 Text(
                     text = source + if (allowed == 0) {
                         val blocked = if (kind == Action.EXEC) R.plurals.total_not_run else R.plurals.total_blocked

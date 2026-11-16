@@ -122,6 +122,6 @@
     <string name="info_open_settings">App settings</string>
     <string name="info_launch">Open app</string>
     <string name="info_copied">Copied</string>
-    <!-- Stands in for the package name of an isolated process. -->
-    <string name="uid_label">UID %d</string>
+    <!-- Marks a row done by one of the app's sandboxed (isolated) processes, such as a web renderer. -->
+    <string name="source_isolated">Isolated process</string>
 </resources>

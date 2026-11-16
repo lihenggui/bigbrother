@@ -91,5 +91,5 @@
     <string name="info_open_settings">系统应用设置</string>
     <string name="info_launch">打开应用</string>
     <string name="info_copied">已复制</string>
-    <string name="uid_label">UID %d</string>
+    <string name="source_isolated">隔离进程</string>
 </resources>

@@ -64,6 +64,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -148,12 +149,13 @@ internal fun AppListScreen(
 ) {
     // This app's own probes are not what the user is looking for.
     val ownPackage = LocalContext.current.packageName
-    // System apps are hidden unless asked for. An app whose details are
-    // unknown (uninstalled, isolated process) is not assumed to be one.
+    // System apps, and isolated processes not traced to an app, are hidden
+    // unless asked for. An uninstalled app, whose details are unknown, is not
+    // assumed to be a system app.
     val entries = remember(state.apps, state.appInfo, state.showSystemApps, ownPackage) {
         state.apps
             ?.filter { it.packageName != ownPackage }
-            ?.filter { state.showSystemApps || state.appInfo[it.packageName]?.isSystem != true }
+            ?.filter { state.showSystemApps || !isHiddenByDefault(it, state.appInfo) }
             ?.map { Entry(it, it.dataCategories()) }
     }
     val hiddenSystemApps = state.apps.orEmpty().count { it.packageName != ownPackage } -
@@ -506,10 +508,8 @@ private fun AppList(
     onStartDaemon: () -> Unit,
     onShowSystemApps: () -> Unit,
 ) {
-    val isolated = stringResource(UiR.string.isolated_process)
-    val nameOf = { app: AppSummary ->
-        appInfo[app.packageName]?.label ?: app.packageName.ifEmpty { isolated }
-    }
+    val resources = LocalResources.current
+    val nameOf = { app: AppSummary -> appDisplayName(app, appInfo[app.packageName], resources) }
     val shown = remember(entries, appInfo, query, sort, category) {
         val needle = query.trim()
         entries
@@ -603,6 +603,14 @@ private fun AppList(
     }
 }
 
+/**
+ * Whether an app is left out unless system apps are shown: system apps,
+ * whose reading data is how they work, and isolated processes that could not
+ * be traced to an app, which are mostly system sandboxes too.
+ */
+private fun isHiddenByDefault(app: AppSummary, appInfo: Map<String, AppInfo>): Boolean =
+    appInfo[app.packageName]?.isSystem == true || app.isUnattributedIsolated
+
 /** A notice at the top of the list, with an optional action. */
 @Composable
 private fun ModuleNotice(text: String, actionLabel: String? = null, onAction: () -> Unit = {}) {
@@ -646,7 +654,9 @@ private fun AppRow(
     val baseName = appDisplayName(app, info)
     // The same app can run as several Android users (clones, work profile);
     // without the user, their rows would be indistinguishable.
-    val name = if (app.userId == 0) {
+    // An unattributed isolated process is named by its uid, which already
+    // says which user it runs as.
+    val name = if (app.userId == 0 || app.isUnattributedIsolated) {
         baseName
     } else {
         stringResource(R.string.app_name_with_user, baseName, app.userId)
