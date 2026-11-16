@@ -165,7 +165,8 @@ internal fun AppDetailScreen(
     val shownCategories = remember(shown, filtering, allCategories) {
         if (filtering) groupByCategory(shown) else allCategories
     }
-    val fileCount = remember(accesses) { fileTabCount(accesses.orEmpty()) }
+    // The counts follow the search, so they point to the tabs with matches.
+    val fileCount = remember(shown) { fileTabCount(shown) }
 
     val closeSearch = {
         searching = false
@@ -258,7 +259,7 @@ internal fun AppDetailScreen(
                     tabCount = { tab ->
                         when (tab) {
                             DetailTab.Files -> fileCount
-                            is DetailTab.Data -> allCategories[tab.category].orEmpty().size
+                            is DetailTab.Data -> shownCategories[tab.category].orEmpty().size
                             DetailTab.Info -> null
                         }
                     },

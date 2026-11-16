@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
 import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
@@ -103,7 +104,10 @@ internal fun InfoPage(
                 onClick = {
                     context.getSystemService(ClipboardManager::class.java)
                         ?.setPrimaryClip(ClipData.newPlainText(null, value))
-                    Toast.makeText(context, copied, Toast.LENGTH_SHORT).show()
+                    // Android 13 and later confirm a copy themselves.
+                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                        Toast.makeText(context, copied, Toast.LENGTH_SHORT).show()
+                    }
                 },
                 shapes = ListItemDefaults.segmentedShapes(index, rows.size),
                 colors = ListItemDefaults.segmentedColors(),
