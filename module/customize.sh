@@ -1,4 +1,5 @@
-# Sourced by the KernelSU installer. See https://kernelsu.org/guide/module.html
+# Sourced by the module installer of KernelSU, Magisk or APatch, which share
+# one module format. See https://kernelsu.org/guide/module.html
 #
 # This module ships inside the Big Brother APK: the same file is both the
 # Android app and a flashable module. The installer must therefore not unpack
@@ -8,7 +9,17 @@ SKIPUNZIP=1
 
 APP_PACKAGE=li.mercury.bigbrother
 
-[ "$KSU" = true ] || abort "! This module requires KernelSU"
+# Magisk is tested last: KernelSU and APatch also set MAGISK_VER_CODE, for
+# modules that only know Magisk.
+if [ "$APATCH" = true ]; then
+    ui_print "- Installing on APatch"
+elif [ "$KSU" = true ]; then
+    ui_print "- Installing on KernelSU"
+elif [ -n "$MAGISK_VER_CODE" ]; then
+    ui_print "- Installing on Magisk $MAGISK_VER"
+else
+    abort "! This module requires KernelSU, Magisk or APatch"
+fi
 [ "$ARCH" = arm64 ] || abort "! Unsupported architecture: $ARCH (arm64 only)"
 
 # The daemon resolves kernel struct layouts from BTF at startup.
@@ -24,11 +35,11 @@ fi
 ui_print "- Kernel $kernel"
 
 ui_print "- Extracting module files"
-unzip -o "$ZIPFILE" module.prop service.sh boot-completed.sh supervise.sh stop.sh uninstall.sh \
+unzip -o "$ZIPFILE" module.prop service.sh supervise.sh stop.sh uninstall.sh \
     action.sh 'bin/*' -d "$MODPATH" >&2 ||
     abort "! Failed to extract module files"
 # unzip does not reliably fail for a name that is missing from the archive.
-for file in module.prop service.sh boot-completed.sh supervise.sh stop.sh uninstall.sh \
+for file in module.prop service.sh supervise.sh stop.sh uninstall.sh \
     action.sh bin/bbd; do
     [ -f "$MODPATH/$file" ] || abort "! $file is missing from the archive"
 done
@@ -55,7 +66,8 @@ if unzip -l "$ZIPFILE" AndroidManifest.xml >/dev/null 2>&1; then
     fi
 fi
 
-# Apply without a reboot where the manager supports it. Updates don't run
+# Apply without a reboot where the manager supports it (KernelSU; the others
+# ignore the request and apply the module at the next boot). Updates don't run
 # uninstall.sh, so service.sh stops the previous daemon itself.
 MODULE_HOT_INSTALL_REQUEST=true
 MODULE_HOT_RUN_SCRIPT=service.sh

@@ -19,9 +19,9 @@ import org.gradle.kotlin.dsl.configure
 import org.gradle.kotlin.dsl.register
 
 /**
- * Makes the APK double as the KernelSU module.
+ * Makes the APK double as the root module (KernelSU, Magisk, APatch).
  *
- * An APK is a zip archive, and the KernelSU installer only needs to find the
+ * An APK is a zip archive, and a module installer only needs to find the
  * module's files (`module.prop`, the scripts, `bin/bbd`) at the root of the
  * archive it is given. Java resources are packaged at the APK root, so the
  * module files are added as generated Java resources.
@@ -61,7 +61,7 @@ class FlashableModuleConventionPlugin : Plugin<Project> {
     }
 }
 
-/** Collects the KernelSU module files into one directory for packaging. */
+/** Collects the module files into one directory for packaging. */
 abstract class StageModule : DefaultTask() {
     @get:InputDirectory
     abstract val moduleFiles: DirectoryProperty

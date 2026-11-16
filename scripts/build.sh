@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Cross-compile bbd (with the eBPF object embedded) for Android arm64, then
-# build the APK, which is both the app and the flashable KernelSU module.
+# build the APK, which is both the app and the flashable root module.
 #
 # Requires: rustup target aarch64-linux-android, nightly toolchain with
 # rust-src, bpf-linker in PATH, an Android NDK, a JDK and the Android SDK.
@@ -41,10 +41,16 @@ cp "target/$TARGET/release/bbd" out/bbd
 echo "built: out/bbd ($(du -h out/bbd | cut -f1))"
 
 # ---- build the app, which carries the module --------------------------------
-# The APK is also the flashable KernelSU module: Gradle packages module/ and
+# The APK is also the flashable root module: Gradle packages module/ and
 # out/bbd into the root of the archive.
 (cd android && ./gradlew --quiet :app:assembleRelease)
 version="$(sed -n 's/^version=//p' module/module.prop)"
 apk="out/big_brother-$version.apk"
 cp android/app/build/outputs/apk/release/app-release.apk "$apk"
 echo "built: $apk ($(du -h "$apk" | cut -f1))"
+
+# The same file under the name root managers' file pickers accept. Flashing
+# it installs the app as well (see module/customize.sh).
+zip="${apk%.apk}.zip"
+cp "$apk" "$zip"
+echo "built: $zip (same file, for flashing)"

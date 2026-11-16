@@ -5,7 +5,7 @@ sealed interface LoadFailure {
     /** The app has not been granted root. */
     data object NoRoot : LoadFailure
 
-    /** The KernelSU module, and with it the daemon, is not installed. */
+    /** The root module, and with it the daemon, is not installed. */
     data object ModuleMissing : LoadFailure
 
     data class Other(val message: String) : LoadFailure

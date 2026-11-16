@@ -8,10 +8,10 @@ LOG=$DATA/bbd.log
 mkdir -p "$DATA"
 . "$MODDIR/stop.sh"
 
-# Boot guard. A marker is left while the system boots and removed by
-# boot-completed.sh. Finding it here means the previous boot started the
-# daemon and never finished, so the module disables itself rather than risk
-# the same again. Not applied when started after boot (a hot install).
+# Boot guard. A marker is left while the system boots and removed once it has
+# finished. Finding it here means the previous boot started the daemon and
+# never finished, so the module disables itself rather than risk the same
+# again. Not applied when started after boot (a hot install).
 BOOT_MARKER=$DATA/boot_pending
 if [ "$(getprop sys.boot_completed)" != 1 ]; then
     if [ -f "$BOOT_MARKER" ]; then
@@ -21,9 +21,15 @@ if [ "$(getprop sys.boot_completed)" != 1 ]; then
         exit 0
     fi
     touch "$BOOT_MARKER"
-    # The boot may have completed between the check and the touch, in which
-    # case boot-completed.sh has already run and nothing would remove the marker.
-    [ "$(getprop sys.boot_completed)" = 1 ] && rm -f "$BOOT_MARKER"
+    # Waited for here rather than in a boot-completed.sh, which Magisk does
+    # not run. A boot that hangs takes this process down with it, and the
+    # marker stays.
+    (
+        while [ "$(getprop sys.boot_completed)" != 1 ]; do
+            sleep 2
+        done
+        rm -f "$BOOT_MARKER"
+    ) &
 fi
 
 # Start a new log once the old one passes 1 MiB. Checked at each start only.

@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# Action button in the KernelSU manager: show daemon status.
+# Action button in the root manager: show daemon status.
 MODDIR=${0%/*}
 DATA=/data/adb/big_brother
 

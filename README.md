@@ -3,7 +3,7 @@
 Records which apps read which of your files on a rooted Android device, and
 which device identifiers they collect.
 
-It consists of a KernelSU module that does the recording, an Android app to
+It consists of a root module that does the recording, an Android app to
 browse the result, and an optional LSPosed hook that covers access made
 through the media library.
 
@@ -23,30 +23,41 @@ through the media library.
 
 ## Requirements
 
-- arm64 device with a GKI 2.0 kernel (5.10 or newer) and
-  [KernelSU](https://kernelsu.org).
+- arm64 device with a GKI 2.0 kernel (5.10 or newer, with BTF).
+- Root with module support: [KernelSU](https://kernelsu.org),
+  [Magisk](https://github.com/topjohnwu/Magisk) or
+  [APatch](https://apatch.dev).
 - Optional: [LSPosed](https://github.com/LSPosed/LSPosed) with Xposed API 101
   or newer.
 
-Developed and tested on Android 16, kernel 6.6.
+Developed and tested on Android 16, kernel 6.6, with KernelSU.
 
 ## Installation
 
-The APK is both the app and the KernelSU module.
+The APK is both the app and the flashable module; the `.zip` is the same
+file under another name. Use either route:
 
-1. Install the APK and grant it root in the KernelSU manager.
-2. Open the app and tap **Install module**, then reboot.
-3. Optional: enable Big Brother in the LSPosed manager, confirm its scope
+- Flash `big_brother-<version>.zip` in your root manager. This installs the
+  app as well.
+- Or install the APK, grant it root in your root manager, open the app and
+  tap **Install module**.
+
+Then:
+
+1. Reboot (not needed on KernelSU, which applies the module at once).
+2. Optional: enable Big Brother in the LSPosed manager, confirm its scope
    (media provider, external storage provider, download provider) and reboot.
 
-Alternatively, flash the APK directly:
+From a root shell:
 
 ```sh
-ksud module install big_brother-<version>.apk
+ksud module install big_brother-<version>.apk       # KernelSU
+magisk --install-module big_brother-<version>.apk   # Magisk
+apd module install big_brother-<version>.apk        # APatch
 ```
 
-The module's Action button in the KernelSU manager shows the daemon's status
-and the end of its log.
+The module's Action button in the root manager shows the daemon's status
+and the end of its log (Magisk 28 or newer).
 
 ## Building
 
@@ -119,7 +130,7 @@ app      reads the daemon's JSON output as root
 | `bb-ebpf/` | eBPF programs ([aya](https://aya-rs.dev)) |
 | `bb-common/` | Types shared between the eBPF programs and the daemon |
 | `bbd/` | Daemon and query CLI |
-| `module/` | KernelSU module scripts, packaged into the APK |
+| `module/` | Module scripts, packaged into the APK |
 | `android/` | App and LSPosed hook |
 | `scripts/` | Build script |
 

@@ -10,7 +10,7 @@
 
     <string name="empty_title">这段时间没有记录</string>
     <string name="no_root_title">需要 root 权限</string>
-    <string name="no_root_body">请在 KernelSU 管理器里授予 root，然后重试。</string>
+    <string name="no_root_body">请在 root 管理器（KernelSU、Magisk 或 APatch）里授予 root，然后重试。</string>
     <string name="no_module_title">模块未安装</string>
     <string name="no_module_body">负责记录的模块已随本应用提供。</string>
     <string name="error_title">读取记录失败</string>
