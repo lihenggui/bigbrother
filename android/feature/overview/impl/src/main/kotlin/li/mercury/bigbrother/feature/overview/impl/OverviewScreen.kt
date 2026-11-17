@@ -87,6 +87,7 @@ fun OverviewScreen(
         onRefresh = viewModel::refresh,
         onOpenCategory = onOpenCategory,
         onInstallModule = viewModel::installModule,
+        onUpdateModule = viewModel::updateModule,
         onStartDaemon = viewModel::startDaemon,
     )
 }
@@ -100,6 +101,7 @@ internal fun OverviewScreen(
     onRefresh: () -> Unit,
     onOpenCategory: (DataCategory) -> Unit,
     onInstallModule: () -> Unit,
+    onUpdateModule: () -> Unit,
     onStartDaemon: () -> Unit,
 ) {
     Scaffold(
@@ -119,7 +121,7 @@ internal fun OverviewScreen(
                     ModuleSetupMessage(state.moduleSetup, onInstallModule, onRefresh)
                 state.failure != null -> LoadFailureMessage(state.failure, onRetry = onRefresh)
                 files == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
-                else -> Content(state, files, onRange, onOpenCategory, onInstallModule, onStartDaemon)
+                else -> Content(state, files, onRange, onOpenCategory, onUpdateModule, onStartDaemon)
             }
         }
     }
@@ -131,7 +133,7 @@ private fun Content(
     files: FilesOverview,
     onRange: (TimeRange) -> Unit,
     onOpenCategory: (DataCategory) -> Unit,
-    onInstallModule: () -> Unit,
+    onUpdateModule: () -> Unit,
     onStartDaemon: () -> Unit,
 ) {
     val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
@@ -149,7 +151,7 @@ private fun Content(
                 .verticalScroll(rememberScrollState())
                 .padding(start = margin, end = margin, bottom = 24.dp + bottomInset),
         ) {
-            StatusCards(state, onInstallModule, onStartDaemon)
+            StatusCards(state, onUpdateModule, onStartDaemon)
             TimeRangeButtonGroup(
                 range = state.range,
                 onRange = onRange,
@@ -345,7 +347,7 @@ private fun Modifier.ring(color: Color, width: Dp): Modifier = this
 /** Status that needs the user, shown only when something is wrong. */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun StatusCards(state: OverviewUiState, onInstallModule: () -> Unit, onStartDaemon: () -> Unit) {
+private fun StatusCards(state: OverviewUiState, onUpdateModule: () -> Unit, onStartDaemon: () -> Unit) {
     // A staged update comes first: starting now would run the old module.
     when {
         state.modulePendingReboot -> StatusCard(
@@ -375,20 +377,44 @@ private fun StatusCards(state: OverviewUiState, onInstallModule: () -> Unit, onS
                 onAction = onStartDaemon,
             )
         }
-        state.moduleOutdated -> {
-            val setup = state.moduleSetup
-            StatusCard(
-                icon = Icons.Outlined.SystemUpdate,
-                title = stringResource(
-                    if (setup is ModuleSetup.Failed) R.string.install_failed_title else R.string.module_outdated,
-                ),
-                body = (setup as? ModuleSetup.Failed)?.let { installerError(it.output) },
-                error = setup is ModuleSetup.Failed,
-                action = stringResource(R.string.update_module),
-                busy = setup == ModuleSetup.Installing,
-                onAction = onInstallModule,
-            )
-        }
+        state.moduleUpdate != ModuleUpdate.Idle -> ModuleUpdateCard(state.moduleUpdate, onUpdateModule, onStartDaemon)
+    }
+}
+
+/** Bringing the module up to date with the app: while it happens, and when it did not work. */
+@Composable
+private fun ModuleUpdateCard(update: ModuleUpdate, onUpdateModule: () -> Unit, onStartDaemon: () -> Unit) {
+    when (update) {
+        ModuleUpdate.Idle -> Unit
+        ModuleUpdate.Updating -> StatusCard(
+            icon = Icons.Outlined.SystemUpdate,
+            title = stringResource(R.string.updating_module),
+            body = null,
+            error = false,
+            busy = true,
+        )
+        ModuleUpdate.Disabled -> StatusCard(
+            icon = Icons.Outlined.SystemUpdate,
+            title = stringResource(R.string.module_disabled),
+            body = null,
+            error = false,
+        )
+        ModuleUpdate.NotReporting -> StatusCard(
+            icon = Icons.Filled.ErrorOutline,
+            title = stringResource(R.string.status_stopped),
+            body = stringResource(R.string.daemon_not_reporting),
+            error = true,
+            action = stringResource(R.string.start_daemon),
+            onAction = onStartDaemon,
+        )
+        is ModuleUpdate.Failed -> StatusCard(
+            icon = Icons.Filled.ErrorOutline,
+            title = stringResource(R.string.update_failed_title),
+            body = installerError(update.output),
+            error = true,
+            action = stringResource(UiR.string.retry),
+            onAction = onUpdateModule,
+        )
     }
 }
 

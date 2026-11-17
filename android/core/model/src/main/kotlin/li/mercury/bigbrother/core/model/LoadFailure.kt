@@ -8,5 +8,8 @@ sealed interface LoadFailure {
     /** The root module, and with it the daemon, is not installed. */
     data object ModuleMissing : LoadFailure
 
+    /** The installed daemon predates what this screen asks of it. */
+    data object ModuleOutdated : LoadFailure
+
     data class Other(val message: String) : LoadFailure
 }

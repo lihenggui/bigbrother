@@ -38,8 +38,8 @@
     <string name="module_disabled">The module is disabled. Enable it in the root manager.</string>
     <string name="start_daemon">Start recording</string>
     <string name="install_module">Install module</string>
-    <string name="module_outdated">The installed module is older than this app</string>
-    <string name="update_module">Update module</string>
+    <string name="updating_module">Updating the module…</string>
+    <string name="update_failed_title">Module update failed</string>
     <string name="module_pending_reboot">Module update takes effect after restart</string>
     <string name="installing_module">Installing module…</string>
     <string name="reboot_title">Restart required</string>

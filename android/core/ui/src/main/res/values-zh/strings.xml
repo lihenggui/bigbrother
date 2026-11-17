@@ -13,6 +13,8 @@
     <string name="no_root_body">请在 KernelSU、Magisk 或 APatch 中授予 root 权限后重试。</string>
     <string name="no_module_title">模块未安装</string>
     <string name="no_module_body">安装应用内置的模块后开始记录。</string>
+    <string name="old_module_title">需要更新模块</string>
+    <string name="old_module_body">已安装的模块还不支持此功能。打开概览页会自动更新模块。</string>
     <string name="error_title">无法加载记录</string>
 
     <string name="topic_mac_address_title">MAC 地址</string>
