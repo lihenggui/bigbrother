@@ -76,13 +76,13 @@ use bb_common::filter::{
 use bb_common::{
     ABI_COMPAT32, ABI_NATIVE, AF_INET, AF_INET6, BINDER_ARGS_CAP, BINDER_ARGS_SHORT, BINDER_CODES,
     BINDER_KEY_HEAD, BINDER_KEY_LEN, BINDER_KEY_TAIL, BINDER_MAX_NAME, BINDER_MIN_NAME,
-    BinderEvent, BinderKey, BinderValue, ConnectEvent, DATA_START_LIMIT, EV_BINDER, EV_CONNECT,
-    EV_EXEC, EV_FILE, EV_NETLINK, EV_PATH, EV_PROCESS, EV_RESULT, EXEC_ARG_CAP, EXEC_ARGS,
-    EventHeader, ExecEvent, FUSE_SUPER_MAGIC, FileEvent, NAME_CAP, NetlinkEvent, OFF_COUNT,
-    OFF_DENTRY_INODE, OFF_DENTRY_NAME, OFF_DENTRY_PARENT, OFF_DENTRY_SB, OFF_FILE_DENTRY,
-    OFF_FILE_FLAGS, OFF_INODE_MODE, OFF_SB_DEV, OFF_SB_MAGIC, OFF_SKB_DATA, OFF_SOCK_PROTOCOL,
-    OP_OPEN, OP_PAIRED, OP_PROBE, OP_WATCH, PROC_SUPER_MAGIC, PROCESS_READ, PROCESS_TRACE,
-    PROCESS_WRITE, PathEvent, ProcessEvent, ResultEvent, SELINUX_MAGIC, SYSFS_MAGIC,
+    BINDER_WAKE, BinderEvent, BinderKey, BinderValue, ConnectEvent, DATA_START_LIMIT, EV_BINDER,
+    EV_CONNECT, EV_EXEC, EV_FILE, EV_NETLINK, EV_PATH, EV_PROCESS, EV_RESULT, EXEC_ARG_CAP,
+    EXEC_ARGS, EventHeader, ExecEvent, FUSE_SUPER_MAGIC, FileEvent, NAME_CAP, NetlinkEvent,
+    OFF_COUNT, OFF_DENTRY_INODE, OFF_DENTRY_NAME, OFF_DENTRY_PARENT, OFF_DENTRY_SB,
+    OFF_FILE_DENTRY, OFF_FILE_FLAGS, OFF_INODE_MODE, OFF_SB_DEV, OFF_SB_MAGIC, OFF_SKB_DATA,
+    OFF_SOCK_PROTOCOL, OP_OPEN, OP_PAIRED, OP_PROBE, OP_WATCH, PROC_SUPER_MAGIC, PROCESS_READ,
+    PROCESS_TRACE, PROCESS_WRITE, PathEvent, ProcessEvent, ResultEvent, SELINUX_MAGIC, SYSFS_MAGIC,
 };
 
 const AT_FDCWD: i32 = -100;
@@ -1084,6 +1084,13 @@ fn binder_transaction(transaction: u64, uid: u32) -> Result<(), i32> {
     // The low half of the `target` union: the handle, for a call to another
     // process.
     let target: u32 = unsafe { bpf_probe_read_user(transaction as *const u32)? };
+    // A sensor turned on must reach the daemon while the app runs (see
+    // `BINDER_WAKE`); everything else waits for the next read.
+    let flags = if watched[0] & BINDER_WAKE != 0 {
+        BPF_RB_FORCE_WAKEUP
+    } else {
+        wakeup_flags()
+    };
 
     let Some(mut entry) = EVENTS.reserve::<BinderEvent>(0) else {
         count_drop();
@@ -1115,7 +1122,7 @@ fn binder_transaction(transaction: u64, uid: u32) -> Result<(), i32> {
             (*ev).args_len = if have < read { have } else { read } as u32;
         }
     }
-    entry.submit(wakeup_flags());
+    entry.submit(flags);
     Ok(())
 }
 

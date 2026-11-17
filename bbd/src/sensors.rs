@@ -36,11 +36,12 @@
 //! sensor that is already on, or changing its rate, with a different rate
 //! ends the session and starts another at the same time, so each session
 //! has one rate; within the second the session started, the rate is
-//! updated instead. Whether the processes of open sessions still run is
-//! checked when the daemon writes; the sessions of one that has ended end
-//! when it was last found running or last made a call, up to 30 seconds
-//! early, rather than when that was noticed, which after the device slept
-//! can be hours late. A process is known by its pid and start time, so a
+//! updated instead. Turning a sensor on wakes the daemon at once, and
+//! while a session is open, whether its process still runs is checked
+//! every 5 seconds (`SENSOR_PROCESS_CHECK` in `trace`); the sessions of one
+//! that has ended end when it was last found running or last made a call,
+//! up to 5 seconds early, rather than when that was noticed, which after
+//! the device slept can be hours late. A process is known by its pid and start time, so a
 //! process that reuses a pid takes over none of the earlier one's sessions.
 //! Each app may have 64 sessions open and 256 sensors turned on waiting to
 //! be identified; beyond that, sessions are counted
@@ -1466,6 +1467,21 @@ BMI160 accelerometer| Bosch     | version=1 |android.sensor.accelerometer| 0x000
             )]
         );
         assert!(!sensors.any_on());
+    }
+
+    #[test]
+    fn an_app_killed_seconds_after_turning_a_sensor_on_keeps_those_seconds() {
+        let mut sensors = Sensors::new(list);
+        let now = Instant::now();
+        sensors.on_call(call(9, on(1, 0), 1000), running, now);
+        // Checked every 5 s while it is on; the process dies at 1012.
+        for at in [1005, 1010, 1015] {
+            sensors.check_processes(at, |_, _| at < 1012);
+        }
+        assert_eq!(
+            spans(&sensors.settle(now, 5000, WAIT)),
+            [("android.sensor.gyroscope".into(), 0, 1000, Some(1010))]
+        );
     }
 
     #[test]

@@ -267,6 +267,11 @@ pub const BINDER_CODES: u32 = 512;
 /// bitmap of the watched transaction codes.
 pub const BINDER_VALUE_WORDS: usize = 1 + (BINDER_CODES / 64) as usize;
 pub type BinderValue = [u64; BINDER_VALUE_WORDS];
+/// Set in `[0]` next to the id: calls to the interface wake the daemon at
+/// once instead of waiting for its next read. Turning a sensor on starts a
+/// session the daemon must know of while the app's process still runs.
+/// Such calls are rare; other calls never wake it early.
+pub const BINDER_WAKE: u64 = 1 << 32;
 
 /// Calls that carry no interface name, which some native interfaces make
 /// (`ISensorEventConnection::destroy` sends an empty parcel), are looked up

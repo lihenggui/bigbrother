@@ -81,6 +81,13 @@ const PRUNE_INTERVAL: Duration = Duration::from_secs(6 * 3600);
 /// would write needs it: short, since the app's queries wait for the
 /// write. What still waits is written with the next one.
 const SENSOR_LIST_WAIT: Duration = Duration::from_millis(300);
+/// How often, while a sensor session is open, its process is checked. A
+/// session whose process has ended ends when the process was last found
+/// running, so this is the most of it that is lost when an app is killed
+/// or swiped away, which often happens seconds after it turned a sensor on.
+/// A check reads one small /proc file per such process and writes nothing;
+/// with no session open there is no timer at all.
+const SENSOR_PROCESS_CHECK: Duration = Duration::from_secs(5);
 /// How long an opened file waits for its syscall result before being
 /// recorded as successful anyway (the result event can be lost).
 const RESULT_TIMEOUT_SECS: i64 = 10;
@@ -283,13 +290,21 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     let mut sigint = signal(SignalKind::interrupt())?;
     let mut sigterm = signal(SignalKind::terminate())?;
     let mut write_errors = RecurringLog::default();
+    let mut sensor_check = SensorCheck::default();
 
     loop {
+        sensor_check.arm(tracer.sensors.any_on());
         // Every branch that does not end in a flush continues the loop.
         let request = tokio::select! {
             _ = sigint.recv() => break,
             _ = sigterm.recv() => break,
             _ = flush_tick.tick() => None,
+            // Sessions whose process has ended end now, and are written
+            // with the next write.
+            _ = sensor_check.tick(), if sensor_check.armed() => {
+                tracer.sensors.check_processes(now(), sensors::process_alive);
+                continue;
+            }
             // The device's transaction codes are known: watch the services
             // that need them now, not at the next write.
             loaded = async { catalog_loader.as_mut().expect("guarded").await },
@@ -376,6 +391,41 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         c.seen, c.kept, c.unresolved, c.dropped
     );
     Ok(())
+}
+
+/// The timer of the check of sensor sessions' processes, which exists only
+/// while a session is open (see `SENSOR_PROCESS_CHECK`).
+#[derive(Default)]
+struct SensorCheck(Option<tokio::time::Interval>);
+
+impl SensorCheck {
+    /// Start the timer when a sensor is on and stop it when none is.
+    fn arm(&mut self, any_on: bool) {
+        match (any_on, &self.0) {
+            (true, None) => {
+                let first = tokio::time::Instant::now() + SENSOR_PROCESS_CHECK;
+                let mut timer = tokio::time::interval_at(first, SENSOR_PROCESS_CHECK);
+                timer.set_missed_tick_behavior(MissedTickBehavior::Delay);
+                self.0 = Some(timer);
+            }
+            (false, Some(_)) => self.0 = None,
+            _ => {}
+        }
+    }
+
+    fn armed(&self) -> bool {
+        self.0.is_some()
+    }
+
+    /// The next check; never, while not armed.
+    async fn tick(&mut self) {
+        match &mut self.0 {
+            Some(timer) => {
+                timer.tick().await;
+            }
+            None => std::future::pending().await,
+        }
+    }
 }
 
 /// The next query asking for the records to be written; `None` if accepting
@@ -1647,6 +1697,24 @@ mod tests {
             Some("java.lang.IllegalStateException: no service")
         );
         assert_eq!(first_line(&b""[..]), None);
+    }
+
+    #[tokio::test]
+    async fn the_sensor_process_check_runs_only_while_a_sensor_is_on() {
+        let soon = Duration::from_millis(50);
+        let mut check = SensorCheck::default();
+        check.arm(false);
+        assert!(!check.armed());
+        // No timer: it never fires.
+        assert!(tokio::time::timeout(soon, check.tick()).await.is_err());
+        check.arm(true);
+        assert!(check.armed());
+        // Not before the interval is up.
+        assert!(tokio::time::timeout(soon, check.tick()).await.is_err());
+        // The last session ending takes the timer away.
+        check.arm(false);
+        assert!(!check.armed());
+        assert!(check.0.is_none());
     }
 
     #[test]

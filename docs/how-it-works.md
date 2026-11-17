@@ -43,9 +43,11 @@ app      reads the daemon's JSON output as root
   which type from `dumpsys sensorservice` the first time a sensor is turned
   on, and again, at most once a minute, for a handle it does not know. Each
   period a sensor was on is stored (`bbd sensors`), ended by the call that
-  turns it off, the connection closing, or the app's process ending, which
-  is noticed at the next write. Only the rate asked for is known; Android 12
-  and later deliver at most 200 Hz to apps without the
+  turns it off, the connection closing, or the app's process ending. Calls
+  that turn a sensor on wake the daemon at once, and while a sensor is on,
+  its process is checked every 5 seconds, so a session whose app is killed
+  ends at most 5 seconds early. Only the rate asked for is known;
+  Android 12 and later deliver at most 200 Hz to apps without the
   `HIGH_SAMPLING_RATE_SENSORS` permission.
 - Permission use comes from the system's app-ops records, read by another
   small program from the app (`AppOpsDump`). It is the one source that says

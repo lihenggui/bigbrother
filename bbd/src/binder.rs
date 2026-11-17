@@ -39,7 +39,7 @@ use std::collections::HashMap;
 
 use bb_common::{
     BINDER_CODES, BINDER_KEY_HEAD, BINDER_KEY_LEN, BINDER_KEY_TAIL, BINDER_MAX_NAME,
-    BINDER_MIN_NAME, BINDER_UNNAMED_KEY, BINDER_VALUE_WORDS, BinderKey, BinderValue,
+    BINDER_MIN_NAME, BINDER_UNNAMED_KEY, BINDER_VALUE_WORDS, BINDER_WAKE, BinderKey, BinderValue,
 };
 
 use crate::{rules::topic, sensors};
@@ -494,7 +494,9 @@ impl Catalog {
             .keys()
             .filter(|method| Some(**method) != self.unnamed)
         {
-            values.entry(*id).or_insert_with(|| map_value(*id))[1 + (*code / 64) as usize] |=
+            values
+                .entry(*id)
+                .or_insert_with(|| map_value(*id, wakes(*id)))[1 + (*code / 64) as usize] |=
                 1 << (*code % 64);
         }
         let mut entries: Vec<(BinderKey, BinderValue)> = values
@@ -502,7 +504,7 @@ impl Catalog {
             .filter_map(|(id, value)| Some((key(WATCHED.get(id as usize)?.0)?, value)))
             .collect();
         if let Some((id, code)) = self.unnamed {
-            let mut value = map_value(id);
+            let mut value = map_value(id, false);
             value[1 + (code / 64) as usize] |= 1 << (code % 64);
             entries.push((BINDER_UNNAMED_KEY, value));
         }
@@ -567,9 +569,22 @@ impl Catalog {
 }
 
 /// A map value for the interface `id`, with no code watched yet.
-fn map_value(id: u32) -> BinderValue {
+/// Whether calls to the interface `id` wake the daemon at once.
+fn wakes(id: u32) -> bool {
+    WATCHED
+        .get(id as usize)
+        .is_some_and(|(name, _)| *name == sensors::CONNECTION)
+}
+
+/// Calls to the sensor connection wake the daemon at once (`BINDER_WAKE`):
+/// turning a sensor on starts a session, whose process is then checked
+/// while it runs. Closing a connection, the call without a name, need not.
+fn map_value(id: u32, wake: bool) -> BinderValue {
     let mut value = [0u64; BINDER_VALUE_WORDS];
     value[0] = u64::from(id);
+    if wake {
+        value[0] |= BINDER_WAKE;
+    }
     value
 }
 
@@ -737,12 +752,20 @@ mod tests {
             .unwrap() as u64;
         assert_eq!(unnamed[0].1[0], connection);
         assert_eq!(unnamed[0].1[1], 1 << 6);
-        // Named calls to the connection: enableDisable and setEventRate.
+        // Named calls to the connection: enableDisable and setEventRate,
+        // the only calls that wake the daemon at once.
         let named = entries
             .iter()
-            .find(|(key, value)| value[0] == connection && *key != BINDER_UNNAMED_KEY)
+            .find(|(key, value)| value[0] == connection | BINDER_WAKE && *key != BINDER_UNNAMED_KEY)
             .unwrap();
         assert_eq!(named.1[1], 1 << 2 | 1 << 3);
+        assert_eq!(
+            entries
+                .iter()
+                .filter(|(_, value)| value[0] & BINDER_WAKE != 0)
+                .count(),
+            1
+        );
         let packages = entries.iter().find(|(_, value)| value[0] == 0).unwrap();
         assert_eq!(
             packages.0,
