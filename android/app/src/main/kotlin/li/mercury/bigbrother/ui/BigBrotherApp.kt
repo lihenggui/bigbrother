@@ -81,15 +81,18 @@ import li.mercury.bigbrother.feature.timeline.api.navigation.TimelineNavKey
 import li.mercury.bigbrother.feature.timeline.impl.navigation.timelineEntry
 
 /** A destination in the navigation bar or rail. */
-private class TopLevelDestination(
+internal class TopLevelDestination(
     val key: NavKey,
     @StringRes val label: Int,
     val icon: ImageVector,
     val selectedIcon: ImageVector,
 )
 
-/** What was accessed, by whom, and when: the three ways into the records. */
-private val TOP_LEVEL_DESTINATIONS = listOf(
+/**
+ * What was accessed, by whom, and when: the three ways into the records.
+ * Internal, like the layout decisions below, for the screenshot tests.
+ */
+internal val TOP_LEVEL_DESTINATIONS = listOf(
     TopLevelDestination(OverviewNavKey, R.string.nav_overview, Icons.Outlined.SpaceDashboard, Icons.Filled.SpaceDashboard),
     TopLevelDestination(AppListNavKey, R.string.nav_apps, Icons.Outlined.Apps, Icons.Filled.Apps),
     TopLevelDestination(TimelineNavKey, R.string.nav_timeline, Icons.Outlined.History, Icons.Filled.History),
@@ -236,7 +239,7 @@ fun BigBrotherApp(recordingStopped: Boolean, modifier: Modifier = Modifier) {
  * rail expanded in extra-large windows, where there is room for labels.
  */
 @OptIn(ExperimentalMaterial3AdaptiveApi::class)
-private fun navigationSuiteType(adaptiveInfo: WindowAdaptiveInfo): NavigationSuiteType {
+internal fun navigationSuiteType(adaptiveInfo: WindowAdaptiveInfo): NavigationSuiteType {
     val type = NavigationSuiteScaffoldDefaults.navigationSuiteType(adaptiveInfo)
     val extraLarge = adaptiveInfo.windowSizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_EXTRA_LARGE_LOWER_BOUND)
     return if (type == NavigationSuiteType.WideNavigationRailCollapsed && extraLarge) {
@@ -252,7 +255,7 @@ private fun navigationSuiteType(adaptiveInfo: WindowAdaptiveInfo): NavigationSui
  * Panes keep clear of a separating hinge on foldables.
  */
 @OptIn(ExperimentalMaterial3AdaptiveApi::class)
-private fun paneDirective(adaptiveInfo: WindowAdaptiveInfo): PaneScaffoldDirective {
+internal fun paneDirective(adaptiveInfo: WindowAdaptiveInfo): PaneScaffoldDirective {
     val base = calculatePaneScaffoldDirective(adaptiveInfo)
     val sizeClass = adaptiveInfo.windowSizeClass
     val partitions = when {
