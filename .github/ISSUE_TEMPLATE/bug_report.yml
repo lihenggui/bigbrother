@@ -14,7 +14,7 @@ body:
     attributes:
       label: Big Brother version
       description: Settings → About, and the module version in the root manager if it differs.
-      placeholder: 0.1.6
+      placeholder: 0.2.0
     validations:
       required: true
   - type: dropdown
