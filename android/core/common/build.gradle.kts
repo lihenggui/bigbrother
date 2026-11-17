@@ -24,5 +24,8 @@ android {
 }
 
 dependencies {
+    // Logging, for every module that builds on this one.
+    api(libs.timber)
+
     implementation(libs.kotlinx.coroutines.android)
 }

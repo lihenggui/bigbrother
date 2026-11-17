@@ -28,6 +28,7 @@ dependencies {
     implementation(projects.feature.overview.api)
     implementation(projects.feature.appdetail.api)
 
+    implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3.adaptive)
     implementation(libs.androidx.compose.material3.adaptive.navigation3)
 

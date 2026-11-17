@@ -17,20 +17,18 @@
 package li.mercury.bigbrother.core.ui
 
 import android.content.res.Resources
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.unit.Dp
+import coil3.compose.AsyncImage
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
 
@@ -48,26 +46,36 @@ fun appDisplayName(app: AppSummary, info: AppInfo?, resources: Resources): Strin
     else -> resources.getString(R.string.isolated_process_uid, app.uid)
 }
 
-/** App icon, or a tonal tile with the name's first letter when there is none. */
+/**
+ * An app's icon, or a tonal tile with the name's first letter when there is
+ * none (not installed, or an isolated process with no package).
+ *
+ * Icons load when shown, off the main thread, and stay in memory (Coil, with
+ * [li.mercury.bigbrother.core.ui.coil.AppIconFetcher]), so that a list of
+ * hundreds of apps does not wait for all their icons.
+ */
 @Composable
 fun AppIcon(info: AppInfo?, name: String, size: Dp, modifier: Modifier = Modifier) {
-    val icon = info?.icon
-    if (icon != null) {
-        val bitmap = remember(icon) { icon.asImageBitmap() }
-        Image(bitmap = bitmap, contentDescription = null, modifier = modifier.size(size))
+    if (info == null) {
+        LetterTile(name, size, modifier)
     } else {
-        Box(
-            modifier = modifier
-                .size(size)
-                .clip(MaterialTheme.shapes.medium)
-                .background(MaterialTheme.colorScheme.secondaryContainer),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = name.take(1).uppercase(),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSecondaryContainer,
-            )
-        }
+        AsyncImage(model = info.packageInfo, contentDescription = null, modifier = modifier.size(size))
+    }
+}
+
+@Composable
+private fun LetterTile(name: String, size: Dp, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .size(size)
+            .clip(MaterialTheme.shapes.medium)
+            .background(MaterialTheme.colorScheme.secondaryContainer),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = name.take(1).uppercase(),
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+        )
     }
 }

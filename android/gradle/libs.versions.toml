@@ -13,6 +13,8 @@ androidxLifecycle = "2.11.0"
 androidxLifecycleViewModelNavigation3 = "2.11.0"
 androidxNavigation3 = "1.2.1"
 androidxSavedStateCompose = "1.5.0"
+appiconloader = "1.5.0"
+coil = "3.6.3"
 composeRules = "0.6.8"
 hiddenApiBypass = "6.2"
 hilt = "2.60.1"
@@ -23,6 +25,7 @@ ktlint = "1.8.0"
 libsu = "6.0.0"
 libxposed = "102.0.0"
 spotless = "8.11.0"
+timber = "5.0.1"
 
 [libraries]
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "androidxActivity" }
@@ -46,6 +49,9 @@ androidx-lifecycle-viewModel-navigation3 = { group = "androidx.lifecycle", name 
 androidx-navigation3-runtime = { group = "androidx.navigation3", name = "navigation3-runtime", version.ref = "androidxNavigation3" }
 androidx-navigation3-ui = { group = "androidx.navigation3", name = "navigation3-ui", version.ref = "androidxNavigation3" }
 androidx-savedstate-compose = { group = "androidx.savedstate", name = "savedstate-compose", version.ref = "androidxSavedStateCompose" }
+appiconloader = { group = "me.zhanghai.android.appiconloader", name = "appiconloader", version.ref = "appiconloader" }
+coil = { group = "io.coil-kt.coil3", name = "coil", version.ref = "coil" }
+coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
 hiddenapibypass = { group = "org.lsposed.hiddenapibypass", name = "hiddenapibypass", version.ref = "hiddenApiBypass" }
 hilt-android = { group = "com.google.dagger", name = "hilt-android", version.ref = "hilt" }
 hilt-compiler = { group = "com.google.dagger", name = "hilt-android-compiler", version.ref = "hilt" }
@@ -54,6 +60,7 @@ kotlin-metadata = { group = "org.jetbrains.kotlin", name = "kotlin-metadata-jvm"
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "kotlinxCoroutines" }
 libsu-core = { group = "com.github.topjohnwu.libsu", name = "core", version.ref = "libsu" }
 libxposed-api = { group = "io.github.libxposed", name = "api", version.ref = "libxposed" }
+timber = { group = "com.jakewharton.timber", name = "timber", version.ref = "timber" }
 
 # Dependencies of the included build-logic
 android-gradlePlugin = { group = "com.android.tools.build", name = "gradle", version.ref = "androidGradlePlugin" }

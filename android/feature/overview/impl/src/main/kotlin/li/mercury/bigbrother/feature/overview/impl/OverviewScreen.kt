@@ -16,6 +16,7 @@
 
 package li.mercury.bigbrother.feature.overview.impl
 
+import androidx.activity.compose.ReportDrawnWhen
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -91,6 +92,9 @@ fun OverviewScreen(
     viewModel: OverviewViewModel,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    // The app counts as started once the overview shows records, or why it
+    // can't (`am start -W`, startup benchmarks).
+    ReportDrawnWhen { uiState.files != null || uiState.failure != null }
     // Records keep accumulating in the background, so reload on return.
     LifecycleResumeEffect(Unit) {
         viewModel.refreshIfStale()
