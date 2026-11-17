@@ -28,6 +28,7 @@ private val TOPICS: Map<String, TopicInfo> = mapOf(
     "input_devices" to TopicInfo(R.string.topic_input_devices_title, DataCategory.DEVICE_PROFILE),
     "battery" to TopicInfo(R.string.topic_battery_title, DataCategory.DEVICE_PROFILE),
     "root_check" to TopicInfo(R.string.topic_root_check_title, DataCategory.ENVIRONMENT),
+    "app_probe" to TopicInfo(R.string.topic_app_probe_title, DataCategory.ENVIRONMENT),
     "system_properties" to TopicInfo(R.string.topic_system_properties_title, DataCategory.DEVICE_PROFILE),
     "installed_apps" to TopicInfo(R.string.topic_installed_apps_title, DataCategory.APP_ACTIVITY),
     "system_settings" to TopicInfo(R.string.topic_system_settings_title, DataCategory.DEVICE_PROFILE),

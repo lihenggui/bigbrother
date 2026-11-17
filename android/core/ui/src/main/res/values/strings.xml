@@ -37,6 +37,7 @@
     <string name="topic_input_devices_title">Input devices</string>
     <string name="topic_battery_title">Battery status</string>
     <string name="topic_root_check_title">Root detection</string>
+    <string name="topic_app_probe_title">App probing</string>
     <string name="topic_system_properties_title">System properties</string>
     <string name="topic_installed_apps_title">Installed apps</string>
     <string name="topic_system_settings_title">System settings</string>

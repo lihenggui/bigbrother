@@ -14,6 +14,10 @@ class RecordDetailTest {
             recordDetail("binder:android.content.pm.IPackageManager/getPackageInfo#com.devadvance.rootcloak"),
         )
         assertNull(recordDetail("binder:android.content.IClipboard/getPrimaryClip"))
+        assertEquals(
+            App("eu.chainfire.supersu"),
+            recordDetail("binder:android.content.pm.IPackageManager/getPackageInfo#!eu.chainfire.supersu"),
+        )
     }
 
     @Test

@@ -22,8 +22,9 @@ internal sealed interface RecordDetail {
 /** The detail of one record of a row with a title; `null` if the title says it all. */
 internal fun recordDetail(subject: String): RecordDetail? = when {
     // Only calls about another app keep an argument, its package name.
+    // A `!` before the name: the app was not installed when asked about.
     subject.startsWith(BINDER) ->
-        subject.substringAfter('#', "").ifEmpty { null }?.let(RecordDetail::App)
+        subject.substringAfter('#', "").removePrefix("!").ifEmpty { null }?.let(RecordDetail::App)
     subject.startsWith(EXEC) -> RecordDetail.Plain(subject.removePrefix(EXEC))
     subject.startsWith(NET) -> RecordDetail.Plain(subject.removePrefix(NET))
     // System file paths, content URIs, settings and permission records: the

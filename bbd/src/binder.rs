@@ -245,6 +245,71 @@ const FRAMEWORK_LOOKUPS: &[&str] = &[
     "com.android.webview",
 ];
 
+/// Apps that only a rooted or modified device has: root managers, tools
+/// that hide root from other apps, and hooking frameworks. An app asking
+/// whether one of these is installed is checking the device for root, which
+/// says more than that it looked at the installed apps. Only fixed package
+/// names can be listed; Magisk can be installed under a random one.
+const ROOT_APPS: &[&str] = &[
+    // Root managers.
+    "com.topjohnwu.magisk",
+    "io.github.huskydg.magisk",
+    "io.github.vvb2060.magisk",
+    "me.weishu.kernelsu",
+    "me.bmax.apatch",
+    "eu.chainfire.supersu",
+    "com.koushikdutta.superuser",
+    "com.noshufou.android.su",
+    "com.noshufou.android.su.elite",
+    "com.thirdparty.superuser",
+    "com.yellowes.su",
+    "me.phh.superuser",
+    "com.kingroot.kinguser",
+    "com.kingo.root",
+    "com.smedialink.oneclickroot",
+    "com.zhiqupk.root.global",
+    "com.alephzain.framaroot",
+    // Tools that hide root.
+    "com.devadvance.rootcloak",
+    "com.devadvance.rootcloakplus",
+    "com.amphoras.hidemyroot",
+    "com.amphoras.hidemyrootadfree",
+    "com.formyhm.hideroot",
+    "com.formyhm.hiderootPremium",
+    "com.zachspong.temprootremovejb",
+    "com.ramdroid.appquarantine",
+    "com.tsng.hidemyapplist",
+    // Hooking frameworks.
+    "de.robv.android.xposed.installer",
+    "org.meowcat.edxposed.manager",
+    "org.lsposed.manager",
+    "com.saurik.substrate",
+    // Need root to work.
+    "stericson.busybox",
+    "com.chelpus.lackypatch",
+    "com.dimonvideo.luckypatcher",
+];
+
+/// Put before the package name in a stored call about a package that was
+/// not installed at the time: `.../getPackageInfo#!com.example`. Package
+/// names cannot hold it.
+const ABSENT: char = '!';
+
+/// The package a stored call asked about, if it names one.
+pub fn asked_package(subject: &str) -> Option<&str> {
+    subject
+        .strip_prefix(SCHEME)?
+        .split_once('#')
+        .map(|(_, package)| package)
+}
+
+/// A stored call about a package, marked as asking about one that is not
+/// installed.
+pub fn mark_absent(subject: &str) -> Option<String> {
+    let (call, package) = subject.split_once('#')?;
+    Some(format!("{call}#{ABSENT}{package}"))
+}
+
 /// Methods whose first argument is a uid. The framework asks these about
 /// the app's own uid on its behalf; only questions about others are kept.
 const ABOUT_A_UID: &[&str] = &["getPackagesForUid", "getNameForUid"];
@@ -272,9 +337,27 @@ pub fn topic_of(subject: &str) -> Option<&'static str> {
             .map(|(.., topic)| *topic);
     }
     let call = subject.strip_prefix(SCHEME)?;
-    let call = call.split_once('#').map_or(call, |(call, _)| call);
+    let (call, package) = call
+        .split_once('#')
+        .map_or((call, None), |(call, package)| (call, Some(package)));
     let (interface, method) = call.rsplit_once('/')?;
-    topic_of_method(interface, method)
+    let topic = topic_of_method(interface, method)?;
+    let Some(package) = package.filter(|_| topic == topic::INSTALLED_APPS) else {
+        return Some(topic);
+    };
+    let (absent, package) = match package.strip_prefix(ABSENT) {
+        Some(package) => (true, package),
+        None => (false, package),
+    };
+    Some(if ROOT_APPS.contains(&package) {
+        topic::ROOT_CHECK
+    } else if absent {
+        // An app has no reason to ask about one that isn't there, unless it
+        // is going down a list to see which of them the device has.
+        topic::APP_PROBE
+    } else {
+        topic
+    })
 }
 
 /// The map key the kernel side computes for an interface name, or `None`
@@ -626,11 +709,46 @@ mod tests {
     }
 
     #[test]
+    fn absent_packages() {
+        let subject = "binder:android.content.pm.IPackageManager/getPackageInfo#com.x";
+        assert_eq!(asked_package(subject), Some("com.x"));
+        let marked = mark_absent(subject).unwrap();
+        assert_eq!(
+            marked,
+            "binder:android.content.pm.IPackageManager/getPackageInfo#!com.x"
+        );
+        assert_eq!(
+            asked_package("binder:android.content.IClipboard/getPrimaryClip"),
+            None
+        );
+        assert_eq!(
+            mark_absent("binder:android.content.IClipboard/getPrimaryClip"),
+            None
+        );
+    }
+
+    #[test]
     fn topics() {
         for (subject, want) in [
             (
                 "binder:android.content.pm.IPackageManager/getPackageInfo#com.x",
                 topic::INSTALLED_APPS,
+            ),
+            (
+                "binder:android.content.pm.IPackageManager/getPackageInfo#eu.chainfire.supersu",
+                topic::ROOT_CHECK,
+            ),
+            (
+                "binder:android.content.pm.IPackageManager/getApplicationInfo#org.lsposed.manager",
+                topic::ROOT_CHECK,
+            ),
+            (
+                "binder:android.content.pm.IPackageManager/getPackageInfo#!eu.chainfire.supersu",
+                topic::ROOT_CHECK,
+            ),
+            (
+                "binder:android.content.pm.IPackageManager/getPackageInfo#!com.x",
+                topic::APP_PROBE,
             ),
             (
                 "binder:android.content.IClipboard/getPrimaryClip",

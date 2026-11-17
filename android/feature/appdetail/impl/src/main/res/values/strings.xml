@@ -103,6 +103,16 @@
         <item quantity="one">Looked up %d app</item>
         <item quantity="other">Looked up %d apps</item>
     </plurals>
+    <!-- How many root managers, root hiding tools and the like an app looked for. -->
+    <plurals name="root_apps_asked">
+        <item quantity="one">Checked for %d root app</item>
+        <item quantity="other">Checked for %d root apps</item>
+    </plurals>
+    <!-- How many apps an app asked about that this device does not have. -->
+    <plurals name="absent_apps_asked">
+        <item quantity="one">Looked for %d app not on this device</item>
+        <item quantity="other">Looked for %d apps not on this device</item>
+    </plurals>
     <string name="tab_info">App info</string>
     <!-- Tab title with the number of items in it: "Contacts (3)". -->
     <string name="tab_with_count">%1$s (%2$d)</string>
