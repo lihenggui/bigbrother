@@ -23,7 +23,11 @@
 //! required: the daemon does not start without them. Each of the others is
 //! attached if it can be and reported as missing if not.
 
-use std::{collections::HashSet, fs};
+use std::{
+    collections::HashSet,
+    fs,
+    io::{self, BufRead, BufReader},
+};
 
 /// (eBPF entry program, syscall entry functions it handles).
 pub type Table = &'static [(&'static str, &'static [&'static str])];
@@ -220,25 +224,49 @@ pub const REQUIRED: &str = "__arm64_sys_openat";
 #[cfg(target_arch = "x86_64")]
 pub const REQUIRED: &str = "__x64_sys_openat";
 
-/// Names of all function symbols in the running kernel.
-pub fn kernel_symbols() -> anyhow::Result<HashSet<String>> {
-    Ok(parse_kallsyms(&fs::read_to_string("/proc/kallsyms")?))
+/// The functions named in the tables that the running kernel has.
+///
+/// /proc/kallsyms lists every symbol of the kernel, a few hundred thousand
+/// of them; only the few dozen the probes attach to are kept.
+pub fn kernel_symbols() -> anyhow::Result<HashSet<&'static str>> {
+    let file = fs::File::open("/proc/kallsyms")?;
+    Ok(parse_kallsyms(BufReader::with_capacity(64 * 1024, file))?)
 }
 
-fn parse_kallsyms(text: &str) -> HashSet<String> {
-    // "<address> <type> <name> [module]"
-    text.lines()
-        .filter_map(|line| line.split_ascii_whitespace().nth(2))
-        .map(str::to_string)
+/// Every function named in a table.
+fn wanted_symbols() -> HashSet<&'static str> {
+    std::iter::once(&FILES)
+        .chain(FEATURES)
+        .flat_map(|feature| feature.table.iter())
+        .flat_map(|(_, functions)| functions.iter().copied())
         .collect()
 }
 
+fn parse_kallsyms(mut text: impl BufRead) -> io::Result<HashSet<&'static str>> {
+    let wanted = wanted_symbols();
+    let mut found = HashSet::new();
+    let mut line = String::new();
+    while text.read_line(&mut line)? > 0 {
+        // "<address> <type> <name> [module]"
+        if let Some(name) = line.split_ascii_whitespace().nth(2)
+            && let Some(known) = wanted.get(name)
+        {
+            found.insert(*known);
+        }
+        line.clear();
+    }
+    Ok(found)
+}
+
 /// (entry program, function) pairs to attach, limited to functions that exist.
-pub fn attach_plan(table: Table, symbols: &HashSet<String>) -> Vec<(&'static str, &'static str)> {
+pub fn attach_plan(
+    table: Table,
+    symbols: &HashSet<&'static str>,
+) -> Vec<(&'static str, &'static str)> {
     table
         .iter()
         .flat_map(|(program, functions)| functions.iter().map(move |f| (*program, *f)))
-        .filter(|(_, function)| symbols.contains(*function))
+        .filter(|(_, function)| symbols.contains(function))
         .collect()
 }
 
@@ -248,17 +276,36 @@ mod tests {
 
     #[test]
     fn plan_skips_missing_functions() {
-        let symbols = parse_kallsyms(&format!(
-            "0000000000000000 T {REQUIRED}\n\
-             0000000000000000 t some_static_fn\n\
-             0000000000000000 T {} [some_module]\n",
-            TABLE[2].1[0]
-        ));
+        let symbols = parse_kallsyms(
+            format!(
+                "0000000000000000 T {REQUIRED}\n\
+                 0000000000000000 t some_static_fn\n\
+                 0000000000000000 T {} [some_module]\n",
+                TABLE[2].1[0]
+            )
+            .as_bytes(),
+        )
+        .unwrap();
         let plan = attach_plan(FILES.table, &symbols);
         assert_eq!(
             plan,
             [("enter_openat", REQUIRED), ("enter_openat2", TABLE[2].1[0])]
         );
+    }
+
+    #[test]
+    fn only_the_functions_probes_attach_to_are_kept() {
+        let symbols = parse_kallsyms(
+            format!(
+                "0000000000000000 T {REQUIRED}\n\
+                 0000000000000000 t some_static_fn\n\
+                 0000000000000000 T security_netlink_send\n\
+                 0000000000000000 d some_variable\t[some_module]\n"
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(symbols, HashSet::from([REQUIRED, "security_netlink_send"]));
     }
 
     #[test]
@@ -272,7 +319,8 @@ mod tests {
 
     #[test]
     fn features_attach_what_the_kernel_has() {
-        let symbols = parse_kallsyms(&format!("0 T {}\n", NETWORK_TABLE[0].1[0]));
+        let symbols =
+            parse_kallsyms(format!("0 T {}\n", NETWORK_TABLE[0].1[0]).as_bytes()).unwrap();
         let plans: Vec<_> = FEATURES
             .iter()
             .map(|f| (f.name, attach_plan(f.table, &symbols).len()))

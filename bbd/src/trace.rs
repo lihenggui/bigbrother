@@ -322,7 +322,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
 fn attach_feature(
     ebpf: &mut aya::Ebpf,
     feature: &syscalls::Feature,
-    symbols: &std::collections::HashSet<String>,
+    symbols: &std::collections::HashSet<&'static str>,
     offsets: &[u32],
 ) -> anyhow::Result<usize> {
     anyhow::ensure!(
