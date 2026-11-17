@@ -16,6 +16,7 @@
 
 package li.mercury.bigbrother.core.common.logging
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -78,6 +79,8 @@ class ReleaseTree @Inject constructor(
         lines.trySend(if (tag == null) "$time $level $message" else "$time $level/$tag $message")
     }
 
+    // The log can't report its own failure through itself.
+    @SuppressLint("LogNotTimber")
     private fun append(line: String) {
         try {
             File(directory, "${LocalDate.now()}.log").appendText(line + "\n")

@@ -1,0 +1,55 @@
+name: Bug report
+description: Something does not work as described.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Big Brother version
+      description: Settings → About, and the module version in the root manager if it differs.
+      placeholder: 0.1.6
+    validations:
+      required: true
+  - type: dropdown
+    id: root
+    attributes:
+      label: Root manager
+      options:
+        - KernelSU
+        - Magisk
+        - APatch
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device, Android version and kernel
+      description: The kernel version is in Settings → About phone, or `uname -r`.
+      placeholder: Pixel 9, Android 16, 6.6.50-android15
+    validations:
+      required: true
+  - type: dropdown
+    id: lsposed
+    attributes:
+      label: LSPosed hook enabled
+      options:
+        - "Yes"
+        - "No"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: >
+        The daemon's log, /data/adb/big_brother/bbd.log (the module's Action
+        button shows its end), and the app's log in
+        /data/data/li.mercury.bigbrother/files/logs. Check that they don't
+        contain anything you'd rather not share.
+      render: text

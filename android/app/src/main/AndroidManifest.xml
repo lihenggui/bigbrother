@@ -27,6 +27,13 @@
         android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
 
+    <!-- The app never uses the network: what it shows stays on the device.
+         Removed in case a library asks for it; the badging check
+         (app/release-badging.txt) fails on any new permission. -->
+    <uses-permission
+        android:name="android.permission.INTERNET"
+        tools:node="remove" />
+
     <application
         android:name=".BigBrotherApplication"
         android:allowBackup="false"

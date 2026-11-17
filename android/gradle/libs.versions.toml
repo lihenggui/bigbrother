@@ -15,6 +15,7 @@ androidxNavigation3 = "1.2.1"
 androidxSavedStateCompose = "1.5.0"
 appiconloader = "1.5.0"
 coil = "3.6.3"
+dependencyGuard = "0.5.0"
 composeRules = "0.6.8"
 hiddenApiBypass = "6.2"
 hilt = "2.60.1"
@@ -23,6 +24,7 @@ kotlinxCoroutines = "1.11.0"
 ksp = "2.3.12"
 ktlint = "1.8.0"
 libsu = "6.0.0"
+licensee = "1.14.1"
 libxposed = "102.0.0"
 spotless = "8.11.0"
 timber = "5.0.1"
@@ -67,14 +69,17 @@ android-gradlePlugin = { group = "com.android.tools.build", name = "gradle", ver
 compose-gradlePlugin = { group = "org.jetbrains.kotlin", name = "compose-compiler-gradle-plugin", version.ref = "kotlin" }
 kotlin-gradlePlugin = { group = "org.jetbrains.kotlin", name = "kotlin-gradle-plugin", version.ref = "kotlin" }
 ksp-gradlePlugin = { group = "com.google.devtools.ksp", name = "com.google.devtools.ksp.gradle.plugin", version.ref = "ksp" }
+licensee-gradlePlugin = { group = "app.cash.licensee", name = "licensee-gradle-plugin", version.ref = "licensee" }
 spotless-gradlePlugin = { group = "com.diffplug.spotless", name = "spotless-plugin-gradle", version.ref = "spotless" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "androidGradlePlugin" }
 android-library = { id = "com.android.library", version.ref = "androidGradlePlugin" }
 compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+dependencyGuard = { id = "com.dropbox.dependency-guard", version.ref = "dependencyGuard" }
 hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+licensee = { id = "app.cash.licensee", version.ref = "licensee" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }
 
@@ -86,4 +91,5 @@ bigbrother-android-feature-impl = { id = "bigbrother.android.feature.impl" }
 bigbrother-android-hilt = { id = "bigbrother.android.hilt" }
 bigbrother-android-library = { id = "bigbrother.android.library" }
 bigbrother-android-library-compose = { id = "bigbrother.android.library.compose" }
+bigbrother-android-lint = { id = "bigbrother.android.lint" }
 bigbrother-flashable-module = { id = "bigbrother.flashable.module" }
