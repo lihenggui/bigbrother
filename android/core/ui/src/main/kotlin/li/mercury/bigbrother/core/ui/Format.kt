@@ -1,3 +1,19 @@
+/*
+ * Copyright (C) 2026 Mercury Li
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 3 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package li.mercury.bigbrother.core.ui
 
 import android.content.Context
@@ -30,8 +46,7 @@ fun relativeTime(epochSeconds: Long): String {
 private val dateTimeFormat = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM)
 private val timeFormat = DateTimeFormatter.ofLocalizedTime(FormatStyle.MEDIUM)
 
-private fun localTime(epochSeconds: Long) =
-    Instant.ofEpochSecond(epochSeconds).atZone(ZoneId.systemDefault())
+private fun localTime(epochSeconds: Long) = Instant.ofEpochSecond(epochSeconds).atZone(ZoneId.systemDefault())
 
 /** Date and time to the second, in the device's locale and time zone. */
 fun exactDateTime(epochSeconds: Long): String = dateTimeFormat.format(localTime(epochSeconds))
@@ -59,8 +74,7 @@ fun shortTime(context: Context, epochSeconds: Long): String {
 
 /** [shortTime] in composition. */
 @Composable
-fun shortTime(epochSeconds: Long): String =
-    shortTime(LocalContext.current, epochSeconds)
+fun shortTime(epochSeconds: Long): String = shortTime(LocalContext.current, epochSeconds)
 
 /**
  * How long ago, in as few characters as possible ("5m", "3h", "2d"), for

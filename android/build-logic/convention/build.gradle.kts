@@ -1,5 +1,22 @@
+/*
+ * Copyright (C) 2026 Mercury Li
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 3 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 plugins {
     `kotlin-dsl`
+    alias(libs.plugins.spotless)
 }
 
 group = "li.mercury.bigbrother.buildlogic"
@@ -9,6 +26,22 @@ dependencies {
     compileOnly(libs.compose.gradlePlugin)
     compileOnly(libs.kotlin.gradlePlugin)
     compileOnly(libs.ksp.gradlePlugin)
+    compileOnly(libs.spotless.gradlePlugin)
+}
+
+// The convention plugins' own sources, formatted like the modules they configure.
+spotless {
+    kotlin {
+        target("src/**/*.kt")
+        ktlint(libs.versions.ktlint.get()).editorConfigOverride(mapOf("android" to "true"))
+        licenseHeaderFile(rootDir.resolve("../spotless/copyright.kt"))
+        endWithNewline()
+    }
+    format("kts") {
+        target("*.kts")
+        licenseHeaderFile(rootDir.resolve("../spotless/copyright.kts"), "(^(?![\\/ ]\\*)(?!$).*$)")
+        endWithNewline()
+    }
 }
 
 gradlePlugin {

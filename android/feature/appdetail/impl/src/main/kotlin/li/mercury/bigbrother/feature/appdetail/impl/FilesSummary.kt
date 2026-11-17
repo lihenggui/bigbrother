@@ -1,3 +1,19 @@
+/*
+ * Copyright (C) 2026 Mercury Li
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 3 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package li.mercury.bigbrother.feature.appdetail.impl
 
 import li.mercury.bigbrother.core.model.Access
@@ -27,22 +43,21 @@ internal data class FileTotals(
  * The folders whose files the app read most, most files first, then most
  * recent; at most [limit].
  */
-internal fun topFolders(accesses: List<Access>, limit: Int): List<FolderSummary> =
-    accesses
-        .filter { it.category == Category.STORAGE && it.isSuccessfulOpen() }
-        .distinctBy { it.path }
-        .groupBy { it.path.substringBeforeLast('/') }
-        .map { (folder, files) ->
-            FolderSummary(
-                path = folder,
-                label = VOLUME_ROOT.find(folder)?.let { folder.removePrefix(it.value).removePrefix("/") }
-                    ?.ifEmpty { null } ?: folder,
-                filesRead = files.size,
-                lastSeen = files.maxOf { it.lastSeen },
-            )
-        }
-        .sortedWith(compareByDescending<FolderSummary> { it.filesRead }.thenByDescending { it.lastSeen })
-        .take(limit)
+internal fun topFolders(accesses: List<Access>, limit: Int): List<FolderSummary> = accesses
+    .filter { it.category == Category.STORAGE && it.isSuccessfulOpen() }
+    .distinctBy { it.path }
+    .groupBy { it.path.substringBeforeLast('/') }
+    .map { (folder, files) ->
+        FolderSummary(
+            path = folder,
+            label = VOLUME_ROOT.find(folder)?.let { folder.removePrefix(it.value).removePrefix("/") }
+                ?.ifEmpty { null } ?: folder,
+            filesRead = files.size,
+            lastSeen = files.maxOf { it.lastSeen },
+        )
+    }
+    .sortedWith(compareByDescending<FolderSummary> { it.filesRead }.thenByDescending { it.lastSeen })
+    .take(limit)
 
 /** Files read, and paths only looked for, each counted once. */
 internal fun fileTotals(accesses: List<Access>): FileTotals {

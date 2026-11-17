@@ -40,6 +40,20 @@ jobs:
             bash -n "$script"
           done
 
+      # The app's sources get theirs from Spotless, checked below.
+      - name: Check license headers
+        run: |
+          missing=$(git ls-files '*.rs' '*.sh' | xargs grep -L 'GNU General Public License' || true)
+          if [ -n "$missing" ]; then
+            echo "Missing license header:"
+            echo "$missing"
+            exit 1
+          fi
+
+      - name: Check the app's formatting and license headers
+        working-directory: android
+        run: ./gradlew spotlessCheck :build-logic:convention:spotlessCheck
+
       # Also needed by the app's tests: packaging the app takes the daemon
       # from out/.
       - name: Build the APK

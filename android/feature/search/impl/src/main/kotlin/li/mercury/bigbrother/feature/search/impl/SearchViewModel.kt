@@ -1,3 +1,19 @@
+/*
+ * Copyright (C) 2026 Mercury Li
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 3 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package li.mercury.bigbrother.feature.search.impl
 
 import android.content.Context
@@ -5,7 +21,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
-import javax.inject.Inject
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.Flow
@@ -33,6 +48,7 @@ import li.mercury.bigbrother.core.ui.dataCategories
 import li.mercury.bigbrother.core.ui.isShown
 import li.mercury.bigbrother.core.ui.topicCategory
 import li.mercury.bigbrother.core.ui.topicTitle
+import javax.inject.Inject
 
 /** A kind of data whose name matched, and how many apps accessed it. */
 data class DataMatch(
@@ -111,21 +127,25 @@ class SearchViewModel @Inject constructor(
         // Only the apps shown are searched, so that the limit is spent on
         // them. A single character would match nearly every path, and each
         // search scans the records through the one root shell the app shares.
-        val files = if (text.length < MIN_PATH_QUERY) emptyList() else try {
-            accessRepository
-                .searchPaths(
-                    text = text,
-                    categories = PATH_CATEGORIES,
-                    uids = visible.map { it.uid },
-                    range = TimeRange.ALL,
-                    // One row per kind of access: a file read and listed
-                    // counts twice before the rows are merged below.
-                    limit = MAX_PATHS * 2,
-                )
-                .distinctBy { it.uid to it.access.path }
-                .take(MAX_PATHS)
-        } catch (_: RecordsException) {
+        val files = if (text.length < MIN_PATH_QUERY) {
             emptyList()
+        } else {
+            try {
+                accessRepository
+                    .searchPaths(
+                        text = text,
+                        categories = PATH_CATEGORIES,
+                        uids = visible.map { it.uid },
+                        range = TimeRange.ALL,
+                        // One row per kind of access: a file read and listed
+                        // counts twice before the rows are merged below.
+                        limit = MAX_PATHS * 2,
+                    )
+                    .distinctBy { it.uid to it.access.path }
+                    .take(MAX_PATHS)
+            } catch (_: RecordsException) {
+                emptyList()
+            }
         }
         return SearchResults(
             query = text,

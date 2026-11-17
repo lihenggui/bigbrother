@@ -1,3 +1,19 @@
+/*
+ * Copyright (C) 2026 Mercury Li
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 3 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package li.mercury.bigbrother.core.ui
 
 import androidx.compose.foundation.layout.Arrangement
@@ -60,10 +76,13 @@ fun LoadFailureMessage(failure: LoadFailure, onRetry: () -> Unit, modifier: Modi
     val (title, body) = when (failure) {
         LoadFailure.NoRoot ->
             stringResource(R.string.no_root_title) to stringResource(R.string.no_root_body)
+
         LoadFailure.ModuleMissing ->
             stringResource(R.string.no_module_title) to stringResource(R.string.no_module_body)
+
         LoadFailure.ModuleOutdated ->
             stringResource(R.string.old_module_title) to stringResource(R.string.old_module_body)
+
         is LoadFailure.Other -> stringResource(R.string.error_title) to failure.message
     }
     Message(

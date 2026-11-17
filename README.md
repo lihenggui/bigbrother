@@ -107,6 +107,14 @@ cargo test -p bbd
 (cd android && ./gradlew test)
 ```
 
+The app is formatted with [ktlint](https://pinterest.github.io/ktlint/)
+through Spotless, which also adds the license header to new files. CI runs
+the check; to apply it:
+
+```sh
+(cd android && ./gradlew spotlessApply :build-logic:convention:spotlessApply)
+```
+
 On a device with the module running, `scripts/check-canary.sh` installs a
 test app (`android/canary`) that does one of everything Big Brother is meant
 to notice, and checks that each left a record:

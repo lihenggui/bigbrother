@@ -1,3 +1,19 @@
+/*
+ * Copyright (C) 2026 Mercury Li
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 3 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package li.mercury.bigbrother.feature.appdetail.impl
 
 import androidx.annotation.StringRes
@@ -76,17 +92,16 @@ class TopicGroup(
  * in category order. Within a category, the app's own records come first,
  * then its isolated processes', then the permission records.
  */
-internal fun groupByCategory(accesses: List<Access>): Map<DataCategory, List<TopicGroup>> =
-    accesses
-        .filterNot { it.isFile() }
-        .groupBy { (it.topic ?: it.path) to it.source }
-        .map { (key, group) ->
-            val first = group.first()
-            TopicGroup(key.first, group, dataCategoryOf(first.topic, first.category), key.second)
-        }
-        .sortedBy { it.source }
-        .groupBy { it.category }
-        .toSortedMap()
+internal fun groupByCategory(accesses: List<Access>): Map<DataCategory, List<TopicGroup>> = accesses
+    .filterNot { it.isFile() }
+    .groupBy { (it.topic ?: it.path) to it.source }
+    .map { (key, group) ->
+        val first = group.first()
+        TopicGroup(key.first, group, dataCategoryOf(first.topic, first.category), key.second)
+    }
+    .sortedBy { it.source }
+    .groupBy { it.category }
+    .toSortedMap()
 
 /** The topic of looking for root, among other ways by the apps that need it. */
 internal const val ROOT_CHECK = "root_check"
@@ -108,7 +123,9 @@ internal fun appsAsked(group: TopicGroup): Int {
         // Every root app looked for is in it; other records there, such
         // as commands run, are listed separately.
         group.topic == ROOT_CHECK || group.topic == APP_PROBE -> apps
+
         titled && group.accesses.all { recordDetail(it.path) is RecordDetail.App } -> apps
+
         else -> 0
     }
 }
@@ -187,9 +204,13 @@ internal fun outcome(group: TopicGroup, allowed: Int, asked: Int): String {
     val done = when {
         // The system's own records say the permission was used.
         group.fromPermissions -> R.plurals.total_used
+
         kind == Action.CALL -> R.plurals.total_requested
+
         kind == Action.CONNECT -> R.plurals.total_contacted
+
         kind == Action.EXEC -> R.plurals.total_ran
+
         else -> R.plurals.total_allowed
     }
     return pluralStringResource(done, allowed, allowed)

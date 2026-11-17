@@ -1,3 +1,19 @@
+/*
+ * Copyright (C) 2026 Mercury Li
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 3 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package li.mercury.bigbrother.feature.overview.impl
 
 import androidx.compose.foundation.border
@@ -44,12 +60,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.layout.Layout
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
@@ -61,12 +77,12 @@ import li.mercury.bigbrother.core.ui.AppIcon
 import li.mercury.bigbrother.core.ui.DataCategory
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.Message
-import li.mercury.bigbrother.core.ui.R as UiR
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.TimeRangeButtonGroup
 import li.mercury.bigbrother.core.ui.appDisplayName
 import li.mercury.bigbrother.core.ui.namedList
 import li.mercury.bigbrother.core.ui.topicTitle
+import li.mercury.bigbrother.core.ui.R as UiR
 
 @Composable
 fun OverviewScreen(
@@ -119,8 +135,11 @@ internal fun OverviewScreen(
             when {
                 state.failure == LoadFailure.ModuleMissing ->
                     ModuleSetupMessage(state.moduleSetup, onInstallModule, onRefresh)
+
                 state.failure != null -> LoadFailureMessage(state.failure, onRetry = onRefresh)
+
                 files == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
+
                 else -> Content(state, files, onRange, onOpenCategory, onUpdateModule, onStartDaemon)
             }
         }
@@ -356,6 +375,7 @@ private fun StatusCards(state: OverviewUiState, onUpdateModule: () -> Unit, onSt
             body = null,
             error = false,
         )
+
         state.recording == false -> {
             val error = state.daemonStartError
             StatusCard(
@@ -377,6 +397,7 @@ private fun StatusCards(state: OverviewUiState, onUpdateModule: () -> Unit, onSt
                 onAction = onStartDaemon,
             )
         }
+
         state.moduleUpdate != ModuleUpdate.Idle -> ModuleUpdateCard(state.moduleUpdate, onUpdateModule, onStartDaemon)
     }
 }
@@ -386,6 +407,7 @@ private fun StatusCards(state: OverviewUiState, onUpdateModule: () -> Unit, onSt
 private fun ModuleUpdateCard(update: ModuleUpdate, onUpdateModule: () -> Unit, onStartDaemon: () -> Unit) {
     when (update) {
         ModuleUpdate.Idle -> Unit
+
         ModuleUpdate.Updating -> StatusCard(
             icon = Icons.Outlined.SystemUpdate,
             title = stringResource(R.string.updating_module),
@@ -393,12 +415,14 @@ private fun ModuleUpdateCard(update: ModuleUpdate, onUpdateModule: () -> Unit, o
             error = false,
             busy = true,
         )
+
         ModuleUpdate.Disabled -> StatusCard(
             icon = Icons.Outlined.SystemUpdate,
             title = stringResource(R.string.module_disabled),
             body = null,
             error = false,
         )
+
         ModuleUpdate.NotReporting -> StatusCard(
             icon = Icons.Filled.ErrorOutline,
             title = stringResource(R.string.status_stopped),
@@ -407,6 +431,7 @@ private fun ModuleUpdateCard(update: ModuleUpdate, onUpdateModule: () -> Unit, o
             action = stringResource(R.string.start_daemon),
             onAction = onStartDaemon,
         )
+
         is ModuleUpdate.Failed -> StatusCard(
             icon = Icons.Filled.ErrorOutline,
             title = stringResource(R.string.update_failed_title),
@@ -491,6 +516,7 @@ private fun ModuleSetupMessage(setup: ModuleSetup, onInstall: () -> Unit, onRetr
             actionLabel = stringResource(R.string.install_module),
             onAction = onInstall,
         )
+
         ModuleSetup.Installing -> Column(
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
@@ -499,12 +525,14 @@ private fun ModuleSetupMessage(setup: ModuleSetup, onInstall: () -> Unit, onRetr
             LoadingIndicator()
             Text(stringResource(R.string.installing_module))
         }
+
         ModuleSetup.NeedsReboot -> Message(
             title = stringResource(R.string.reboot_title),
             body = stringResource(R.string.reboot_body),
             actionLabel = stringResource(UiR.string.retry),
             onAction = onRetry,
         )
+
         is ModuleSetup.Failed -> Message(
             title = stringResource(R.string.install_failed_title),
             body = installerError(setup.output).orEmpty(),

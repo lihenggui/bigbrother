@@ -1,3 +1,19 @@
+/*
+ * Copyright (C) 2026 Mercury Li
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 3 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package li.mercury.bigbrother.core.ui
 
 import androidx.compose.runtime.Composable
@@ -21,8 +37,7 @@ fun namedList(names: List<String>, total: Int = names.size): String? {
 
 /** The kinds of data an app accessed, most sensitive first: "Files and media, Location and 3 more". */
 @Composable
-fun categoriesSummary(categories: List<DataCategory>): String? =
-    namedList(categories.map { stringResource(it.title) })
+fun categoriesSummary(categories: List<DataCategory>): String? = namedList(categories.map { stringResource(it.title) })
 
 /** Whether an app read any user file, directly or through the media library. */
 val AppSummary.readFiles: Boolean
@@ -63,12 +78,10 @@ fun categoryDetail(app: AppSummary, category: DataCategory): String? {
  * be traced to an app, which are mostly system sandboxes too. An uninstalled
  * app, whose details are unknown, is not assumed to be a system app.
  */
-fun isHiddenByDefault(app: AppSummary, appInfo: Map<String, AppInfo>): Boolean =
-    appInfo[app.packageName]?.isSystem == true || app.isUnattributedIsolated
+fun isHiddenByDefault(app: AppSummary, appInfo: Map<String, AppInfo>): Boolean = appInfo[app.packageName]?.isSystem == true || app.isUnattributedIsolated
 
 /**
  * Whether an app's records are shown: never this app's own ([ownPackage])
  * lookups, and those of apps hidden by default only with [showSystemApps].
  */
-fun isShown(app: AppSummary, appInfo: Map<String, AppInfo>, showSystemApps: Boolean, ownPackage: String): Boolean =
-    app.packageName != ownPackage && (showSystemApps || !isHiddenByDefault(app, appInfo))
+fun isShown(app: AppSummary, appInfo: Map<String, AppInfo>, showSystemApps: Boolean, ownPackage: String): Boolean = app.packageName != ownPackage && (showSystemApps || !isHiddenByDefault(app, appInfo))

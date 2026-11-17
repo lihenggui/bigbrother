@@ -1,3 +1,19 @@
+/*
+ * Copyright (C) 2026 Mercury Li
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 3 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package li.mercury.bigbrother.hook
 
 import java.io.File
@@ -30,8 +46,7 @@ internal class EventSpool(private val directory: File) {
 
     fun addQuery(uid: Int, uri: String, items: Int) = add(uid, "q", "", items, uri, "")
 
-    fun addOpen(uid: Int, uri: String, mode: String, path: String) =
-        add(uid, "o", mode, 0, uri, path)
+    fun addOpen(uid: Int, uri: String, mode: String, path: String) = add(uid, "o", mode, 0, uri, path)
 
     private fun add(uid: Int, op: String, mode: String, items: Int, uri: String, path: String) {
         val time = System.currentTimeMillis() / 1000

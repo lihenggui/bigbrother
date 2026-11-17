@@ -1,3 +1,19 @@
+/*
+ * Copyright (C) 2026 Mercury Li
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 3 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package li.mercury.bigbrother.ui
 
 import androidx.annotation.StringRes
@@ -101,7 +117,7 @@ private class TransitionHint {
  */
 @OptIn(ExperimentalMaterial3AdaptiveApi::class)
 @Composable
-fun BigBrotherApp(recordingStopped: Boolean) {
+fun BigBrotherApp(recordingStopped: Boolean, modifier: Modifier = Modifier) {
     val topLevelKeys = remember { TOP_LEVEL_DESTINATIONS.map { it.key }.toSet() }
     val navigationState = rememberNavigationState(startKey = OverviewNavKey, topLevelKeys = topLevelKeys)
     val navigator = remember(navigationState) { Navigator(navigationState) }
@@ -143,6 +159,7 @@ fun BigBrotherApp(recordingStopped: Boolean) {
 
     val hint = remember { TransitionHint() }
     NavigationSuiteScaffold(
+        modifier = modifier,
         navigationItems = {
             for (destination in TOP_LEVEL_DESTINATIONS) {
                 val selected = navigationState.currentTopLevelKey == destination.key

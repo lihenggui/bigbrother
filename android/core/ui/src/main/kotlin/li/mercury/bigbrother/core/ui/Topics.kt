@@ -1,7 +1,24 @@
+/*
+ * Copyright (C) 2026 Mercury Li
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 3 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package li.mercury.bigbrother.core.ui
 
 import androidx.annotation.StringRes
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ManageSearch
 import androidx.compose.material.icons.outlined.Accessibility
 import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.AdminPanelSettings
@@ -18,7 +35,6 @@ import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.Fingerprint
 import androidx.compose.material.icons.outlined.Keyboard
 import androidx.compose.material.icons.outlined.Lan
-import androidx.compose.material.icons.automirrored.outlined.ManageSearch
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.MyLocation
@@ -109,5 +125,4 @@ fun topicTitle(topic: String): Int? = TOPICS[topic]?.title
 fun topicCategory(topic: String): DataCategory? = TOPICS[topic]?.category
 
 /** Icon of a topic id; for one this build doesn't know, or none, the device fingerprint's, its fallback category. */
-fun topicIcon(topic: String?): ImageVector =
-    topic?.let { TOPICS[it]?.icon } ?: DataCategory.DEVICE_PROFILE.icon
+fun topicIcon(topic: String?): ImageVector = topic?.let { TOPICS[it]?.icon } ?: DataCategory.DEVICE_PROFILE.icon

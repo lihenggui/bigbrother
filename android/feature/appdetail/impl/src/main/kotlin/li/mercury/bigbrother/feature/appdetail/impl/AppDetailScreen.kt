@@ -1,3 +1,19 @@
+/*
+ * Copyright (C) 2026 Mercury Li
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 3 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package li.mercury.bigbrother.feature.appdetail.impl
 
 import androidx.compose.foundation.layout.Arrangement
@@ -17,8 +33,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.outlined.AccountTree
-import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
@@ -60,11 +76,11 @@ import li.mercury.bigbrother.core.ui.DataCategory
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.Message
-import li.mercury.bigbrother.core.ui.R as UiR
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.appDisplayName
 import li.mercury.bigbrother.core.ui.label
 import li.mercury.bigbrother.core.ui.shortTime
+import li.mercury.bigbrother.core.ui.R as UiR
 
 /**
  * Everything one app accessed, on one page: its files first, then each kind
@@ -234,7 +250,9 @@ internal fun AppDetailScreen(
         val accesses = state.accesses
         when {
             state.failure != null -> LoadFailureMessage(state.failure, onRetry, Modifier.padding(padding))
+
             accesses == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize().padding(padding))
+
             else -> Summary(
                 items = buildItems(state, accesses),
                 empty = accesses.isEmpty(),
@@ -298,9 +316,13 @@ private fun Summary(
                     trailing = item.lastSeen?.let { stringResource(R.string.last_access, shortTime(it)) },
                     modifier = Modifier.padding(top = 8.dp),
                 )
-                is Item.Folder -> FolderRow(item, modifier) { onOpenFiles(item.folder.path) }
-                is Item.Collection -> CollectionSummaryRow(item, modifier) { onOpenFiles(Location.MEDIA) }
-                is Item.BrowseFiles -> BrowseFilesRow(item, modifier) { onOpenFiles(null) }
+
+                is Item.Folder -> FolderRow(item, onClick = { onOpenFiles(item.folder.path) }, modifier = modifier)
+
+                is Item.Collection -> CollectionSummaryRow(item, onClick = { onOpenFiles(Location.MEDIA) }, modifier = modifier)
+
+                is Item.BrowseFiles -> BrowseFilesRow(item, onClick = { onOpenFiles(null) }, modifier = modifier)
+
                 is Item.Topic -> TopicRow(
                     group = item.group,
                     index = item.index,
@@ -309,7 +331,9 @@ private fun Summary(
                     onOpen = { onOpenRecord(item.group.topic, item.group.source.name) },
                     modifier = modifier,
                 )
+
                 is Item.Info -> InfoRow(item.label, item.value, item.index, item.count, modifier)
+
                 Item.Launch -> LaunchButton(launchPackage)
             }
         }
@@ -345,7 +369,7 @@ private fun readFiles(count: Int) = buildAnnotatedString {
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun FolderRow(item: Item.Folder, modifier: Modifier, onClick: () -> Unit) {
+private fun FolderRow(item: Item.Folder, onClick: () -> Unit, modifier: Modifier = Modifier) {
     ListItem(
         onClick = onClick,
         modifier = modifier,
@@ -361,7 +385,7 @@ private fun FolderRow(item: Item.Folder, modifier: Modifier, onClick: () -> Unit
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun CollectionSummaryRow(item: Item.Collection, modifier: Modifier, onClick: () -> Unit) {
+private fun CollectionSummaryRow(item: Item.Collection, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val access = item.access
     val label = collectionLabel(access.path)
     ListItem(
@@ -375,9 +399,11 @@ private fun CollectionSummaryRow(item: Item.Collection, modifier: Modifier, onCl
                 access.allowed == 0 -> DeniedText(
                     pluralStringResource(R.plurals.total_blocked, access.denied, access.denied),
                 )
+
                 access.action == Action.QUERY -> Text(
                     pluralStringResource(R.plurals.access_query, access.allowed, access.allowed, access.items),
                 )
+
                 else -> Text(pluralStringResource(R.plurals.opened_via_media, access.allowed, access.allowed))
             }
         },
@@ -393,7 +419,7 @@ private fun CollectionSummaryRow(item: Item.Collection, modifier: Modifier, onCl
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun BrowseFilesRow(item: Item.BrowseFiles, modifier: Modifier, onClick: () -> Unit) {
+private fun BrowseFilesRow(item: Item.BrowseFiles, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val totals = item.totals
     val parts = buildList {
         if (totals.read > 0) add(pluralStringResource(R.plurals.files_read, totals.read, totals.read))

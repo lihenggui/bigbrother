@@ -1,3 +1,19 @@
+/*
+ * Copyright (C) 2026 Mercury Li
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 3 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package li.mercury.bigbrother.feature.search.impl
 
 import androidx.compose.foundation.clickable
@@ -40,11 +56,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusProperties
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -58,14 +74,14 @@ import li.mercury.bigbrother.core.model.PathMatch
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.ui.AppListItem
 import li.mercury.bigbrother.core.ui.DataCategory
-import li.mercury.bigbrother.core.ui.R as UiR
 import li.mercury.bigbrother.core.ui.SectionHeader
+import li.mercury.bigbrother.core.ui.VOLUME_ROOT
 import li.mercury.bigbrother.core.ui.categoriesSummary
 import li.mercury.bigbrother.core.ui.dataCategories
 import li.mercury.bigbrother.core.ui.shortTime
 import li.mercury.bigbrother.core.ui.topicIcon
 import li.mercury.bigbrother.core.ui.topicTitle
-import li.mercury.bigbrother.core.ui.VOLUME_ROOT
+import li.mercury.bigbrother.core.ui.R as UiR
 
 /**
  * The top bar of the top-level screens: a search field in place of a title,
@@ -85,6 +101,7 @@ fun GlobalSearchBar(
     onOpenCategory: (DataCategory) -> Unit,
     onOpenSettings: () -> Unit,
     settingsBadge: Boolean,
+    modifier: Modifier = Modifier,
     viewModel: SearchViewModel = hiltViewModel(),
 ) {
     val results by viewModel.results.collectAsStateWithLifecycle()
@@ -150,6 +167,7 @@ fun GlobalSearchBar(
     AppBarWithSearch(
         state = searchBarState,
         inputField = inputField,
+        modifier = modifier,
         colors = SearchBarDefaults.appBarWithSearchColors(
             searchBarColors = SearchBarDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
             appBarContainerColor = page,

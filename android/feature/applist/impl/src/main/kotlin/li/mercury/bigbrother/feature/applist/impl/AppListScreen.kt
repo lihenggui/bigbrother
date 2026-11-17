@@ -1,3 +1,19 @@
+/*
+ * Copyright (C) 2026 Mercury Li
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 3 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package li.mercury.bigbrother.feature.applist.impl
 
 import androidx.compose.foundation.horizontalScroll
@@ -49,16 +65,16 @@ import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.MenuFilterChip
 import li.mercury.bigbrother.core.ui.MenuOption
 import li.mercury.bigbrother.core.ui.Message
-import li.mercury.bigbrother.core.ui.R as UiR
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.appDisplayName
 import li.mercury.bigbrother.core.ui.categoriesSummary
 import li.mercury.bigbrother.core.ui.categoryDetail
 import li.mercury.bigbrother.core.ui.dataCategories
 import li.mercury.bigbrother.core.ui.isShown
-import li.mercury.bigbrother.core.ui.readFiles
 import li.mercury.bigbrother.core.ui.label
+import li.mercury.bigbrother.core.ui.readFiles
 import li.mercury.bigbrother.core.ui.shortTime
+import li.mercury.bigbrother.core.ui.R as UiR
 
 /** How the app list is ordered. */
 private enum class SortOrder(val label: Int) {
@@ -156,7 +172,9 @@ internal fun AppListScreen(
             ) {
                 when {
                     state.failure != null -> LoadFailureMessage(state.failure, onRetry = onRefresh)
+
                     entries == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
+
                     else -> AppList(
                         entries = entries,
                         appInfo = state.appInfo,
@@ -256,8 +274,10 @@ private fun AppList(
         val matching = entries.filter { category == null || category in it.categories }
         when (sort) {
             SortOrder.SENSITIVITY -> matching.sortedWith(compareBy<Entry> { it.rank }.thenByDescending { it.app.lastSeen })
+
             // The daemon already lists the most recent first.
             SortOrder.RECENT -> matching
+
             SortOrder.NAME -> matching.sortedBy { appDisplayName(it.app, appInfo[it.app.packageName], resources).lowercase() }
         }
     }
