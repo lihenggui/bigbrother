@@ -30,4 +30,6 @@ dependencies {
     // The Xposed API is provided by the framework at run time.
     compileOnly(libs.libxposed.api)
     implementation(libs.hiddenapibypass)
+
+    testImplementation(libs.kotlin.test.junit)
 }

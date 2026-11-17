@@ -49,7 +49,9 @@ use crate::{
     mounts::Mounts,
     net::{self, Destination, Listeners},
     packages::{FIRST_ISOLATED_APP_ID, PER_USER_RANGE, Packages},
-    paths, personal, rules, sensors,
+    paths, personal, rules,
+    sandbox::{self, Sandbox},
+    sensors,
     spool::{self, Spool},
     store::{
         Category, Counters, MODE_CALL, MODE_CONNECT, MODE_DIR, MODE_EXEC, MODE_ISOLATED,
@@ -91,6 +93,11 @@ const SENSOR_PROCESS_CHECK: Duration = Duration::from_secs(5);
 /// How long an opened file waits for its syscall result before being
 /// recorded as successful anyway (the result event can be lost).
 const RESULT_TIMEOUT_SECS: i64 = 10;
+/// How long before a listener that failed to accept is tried again.
+const ACCEPT_RETRY: Duration = Duration::from_secs(1);
+/// Most command connections waiting to send their request at once. Only
+/// root can connect; this only keeps a stuck client from piling them up.
+const MAX_PENDING_COMMANDS: usize = 8;
 
 pub struct Options<'a> {
     pub db: &'a Path,
@@ -106,6 +113,9 @@ pub struct Options<'a> {
     /// Collect what the LSPosed hook recorded. Off for a diagnostic run next
     /// to the real daemon, which would otherwise lose those records to it.
     pub ingest_provider_events: bool,
+    /// Run the sandbox. Off for a diagnostic run next to the real daemon:
+    /// two daemons would both stop, and mount for, every starting app.
+    pub sandbox: bool,
 }
 
 pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
@@ -275,6 +285,24 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
             Err(e) => eprintln!("bbd: warning: not recording sensor use: {e:#}"),
         }
     }
+    // The sandbox (see `sandbox`). Like the optional probes, it costs only
+    // itself where it cannot work: the daemon records regardless.
+    let mut sandbox = if opts.sandbox {
+        start_sandbox(&mut ebpf, &symbols, &offsets, &mut tracer, opts.db)
+    } else {
+        None
+    };
+    // Commands from `bbd sandbox` (see `control`). Listened for before the
+    // flush socket, which is what tells a client that the daemon is up.
+    let commands = sandbox
+        .as_ref()
+        .and_then(|_| match control::listen_commands(opts.db) {
+            Ok(listener) => Some(listener),
+            Err(e) => {
+                eprintln!("bbd: warning: not taking sandbox commands: {e:#}");
+                None
+            }
+        });
     // Queries ask for what is held to be written first (see `control`).
     let requests = match control::listen(opts.db) {
         Ok(listener) => Some(listener),
@@ -283,6 +311,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
             None
         }
     };
+    let mut command_reads = tokio::task::JoinSet::new();
     let mut flush_tick = interval(FLUSH_INTERVAL);
     flush_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
     let mut prune_tick = interval(PRUNE_INTERVAL);
@@ -327,6 +356,23 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
                 Some(stream) => Some(stream),
                 None => continue,
             },
+            // A command is read without holding up the loop, and carried
+            // out once it has arrived.
+            stream = next_request(commands.as_ref()) => {
+                if let Some(stream) = stream
+                    && command_reads.len() < MAX_PENDING_COMMANDS
+                {
+                    command_reads.spawn(control::read_request(stream));
+                }
+                continue;
+            }
+            Some(read) = command_reads.join_next(), if !command_reads.is_empty() => {
+                if let (Ok(Some((stream, line))), Some(sandbox)) = (read, sandbox.as_mut()) {
+                    let answer = sandbox.answer(&line, &tracer.writer, &mut tracer.packages);
+                    control::send_answer(stream, answer);
+                }
+                continue;
+            }
             _ = prune_tick.tick() => {
                 if let Err(e) = tracer.writer.prune(opts.retention_days, now()) {
                     eprintln!("bbd: could not prune old records: {e:#}");
@@ -376,6 +422,9 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     }
 
     control::unlisten(opts.db);
+    if commands.is_some() {
+        control::unlisten_commands(opts.db);
+    }
     if opts.profile {
         print_profile(&ebpf);
     }
@@ -431,13 +480,72 @@ impl SensorCheck {
     }
 }
 
-/// The next query asking for the records to be written; `None` if accepting
-/// it failed. Never ready without a listener.
+/// The next connection to `listener`: a query asking for the records to be
+/// written, or a command. `None` if accepting it failed. Never ready without
+/// a listener.
 async fn next_request(listener: Option<&UnixListener>) -> Option<UnixStream> {
     match listener {
-        Some(listener) => listener.accept().await.ok().map(|(stream, _)| stream),
+        Some(listener) => match listener.accept().await {
+            Ok((stream, _)) => Some(stream),
+            Err(_) => {
+                // An error that stays (no descriptors left) would otherwise
+                // be met again at once, and again.
+                tokio::time::sleep(ACCEPT_RETRY).await;
+                None
+            }
+        },
         None => std::future::pending().await,
     }
+}
+
+/// Load the sandbox, attach its gate and put the apps that were sandboxed
+/// back in. `None`, with a warning, if the sandbox's entries cannot be
+/// read; a gate that cannot be attached leaves a sandbox that refuses to
+/// take apps in.
+fn start_sandbox(
+    ebpf: &mut aya::Ebpf,
+    symbols: &std::collections::HashSet<&'static str>,
+    offsets: &[u32],
+    tracer: &mut Tracer,
+    db: &Path,
+) -> Option<Sandbox> {
+    // Where every user's apps keep their data.
+    let user_data = Path::new("/data/user");
+    let mut sandbox = match Sandbox::load(&tracer.writer, Vec::new(), Some(user_data)) {
+        Ok(sandbox) => sandbox,
+        Err(e) => {
+            eprintln!("bbd: warning: the sandbox is off: {e:#}");
+            return None;
+        }
+    };
+    // Attached while no uid is listed for it, so it holds nothing yet. The
+    // uids are listed next, and what started in between is ended last
+    // (`sweep`): no start falls between the two.
+    let storage = attach_feature(ebpf, &syscalls::GATE, symbols, offsets)
+        .and_then(|_| sandbox::gate::Storage::start(ebpf, &db.with_file_name("scratch")));
+    let _ = tracer.writer.set_meta(
+        &format!("coverage_{}", syscalls::GATE.name),
+        i64::from(storage.is_ok()),
+    );
+    let appops = sandbox::appops::AppOps::start();
+    let storage: Box<dyn sandbox::Effect> = match storage {
+        Ok(storage) => {
+            storage.on_admitted(appops.verifier());
+            Box::new(storage)
+        }
+        Err(e) => {
+            eprintln!("bbd: warning: the sandbox is not available: {e:#}");
+            Box::new(sandbox::gate::Unavailable)
+        }
+    };
+    sandbox.add_effect(Box::new(appops));
+    sandbox.add_effect(Box::new(sandbox::identity::Identity::new(
+        sandbox.snapshot(),
+    )));
+    sandbox.add_effect(storage);
+    sandbox.add_effect(Box::new(sandbox::sweep::Restart));
+    sandbox.resume(&tracer.writer, &mut tracer.packages);
+    Some(sandbox)
 }
 
 /// Load and attach the probes of one optional feature. Returns how many

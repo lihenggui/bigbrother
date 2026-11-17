@@ -142,7 +142,10 @@ Installation.
 
 ### Does it block anything?
 
-No. It records access; it does not prevent it.
+Not by default: it records access and does not prevent it. An app can be
+put in a sandbox from a root shell, where it is given empty storage, no
+personal data and an identity of its own; see
+[docs/sandbox.md](docs/sandbox.md).
 
 ### Does it drain the battery?
 

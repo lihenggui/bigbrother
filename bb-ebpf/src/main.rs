@@ -47,6 +47,10 @@
 //!   hands the binder driver its commands. Finds the transaction among them
 //!   and reports calls to the service methods the daemon listed.
 //!
+//! * `gate_setresuid` — not a recorder: kprobe on `setresuid`, which stops a
+//!   starting app the user put in the sandbox until the daemon has replaced
+//!   the storage it will see.
+//!
 //! Probing the specific syscall functions, rather than the `sys_enter` /
 //! `sys_exit` tracepoints, matters for overhead: the tracepoints run on every
 //! syscall of every process, while these run only for the dozen file-related
@@ -61,9 +65,10 @@
 use aya_ebpf::{
     Global,
     helpers::{
-        bpf_get_current_pid_tgid, bpf_get_current_uid_gid, bpf_ktime_get_boot_ns, bpf_ktime_get_ns,
-        bpf_probe_read_kernel, bpf_probe_read_kernel_str_bytes, bpf_probe_read_user,
-        bpf_probe_read_user_buf, bpf_probe_read_user_str_bytes,
+        bpf_get_current_comm, bpf_get_current_pid_tgid, bpf_get_current_uid_gid,
+        bpf_ktime_get_boot_ns, bpf_ktime_get_ns, bpf_probe_read_kernel,
+        bpf_probe_read_kernel_str_bytes, bpf_probe_read_user, bpf_probe_read_user_buf,
+        bpf_probe_read_user_str_bytes,
     },
     macros::{kprobe, kretprobe, map, raw_tracepoint},
     maps::{Array, HashMap, LruHashMap, PerCpuArray, RingBuf},
@@ -78,11 +83,12 @@ use bb_common::{
     BINDER_KEY_HEAD, BINDER_KEY_LEN, BINDER_KEY_TAIL, BINDER_MAX_NAME, BINDER_MIN_NAME,
     BINDER_WAKE, BinderEvent, BinderKey, BinderValue, ConnectEvent, DATA_START_LIMIT, EV_BINDER,
     EV_CONNECT, EV_EXEC, EV_FILE, EV_NETLINK, EV_PATH, EV_PROCESS, EV_RESULT, EXEC_ARG_CAP,
-    EXEC_ARGS, EventHeader, ExecEvent, FUSE_SUPER_MAGIC, FileEvent, NAME_CAP, NetlinkEvent,
-    OFF_COUNT, OFF_DENTRY_INODE, OFF_DENTRY_NAME, OFF_DENTRY_PARENT, OFF_DENTRY_SB,
-    OFF_FILE_DENTRY, OFF_FILE_FLAGS, OFF_INODE_MODE, OFF_SB_DEV, OFF_SB_MAGIC, OFF_SKB_DATA,
-    OFF_SOCK_PROTOCOL, OP_OPEN, OP_PAIRED, OP_PROBE, OP_WATCH, PROC_SUPER_MAGIC, PROCESS_READ,
-    PROCESS_TRACE, PROCESS_WRITE, PathEvent, ProcessEvent, ResultEvent, SELINUX_MAGIC, SYSFS_MAGIC,
+    EXEC_ARGS, EventHeader, ExecEvent, FUSE_SUPER_MAGIC, FileEvent, GATE_STALE_NS, GateEvent,
+    NAME_CAP, NetlinkEvent, OFF_COUNT, OFF_DENTRY_INODE, OFF_DENTRY_NAME, OFF_DENTRY_PARENT,
+    OFF_DENTRY_SB, OFF_FILE_DENTRY, OFF_FILE_FLAGS, OFF_INODE_MODE, OFF_SB_DEV, OFF_SB_MAGIC,
+    OFF_SKB_DATA, OFF_SOCK_PROTOCOL, OP_OPEN, OP_PAIRED, OP_PROBE, OP_WATCH, PROC_SUPER_MAGIC,
+    PROCESS_READ, PROCESS_TRACE, PROCESS_WRITE, PathEvent, ProcessEvent, ResultEvent,
+    SELINUX_MAGIC, SYSFS_MAGIC,
 };
 
 const AT_FDCWD: i32 = -100;
@@ -1155,6 +1161,112 @@ fn binder_transaction(transaction: u64, uid: u32) -> Result<(), i32> {
     }
     entry.submit(flags);
     Ok(())
+}
+
+// ---- sandbox gate -----------------------------------------------------------
+
+/// The uids the user put in the sandbox.
+#[map]
+static SANDBOX_UIDS: HashMap<u32, u32> = HashMap::with_max_entries(1024, 0);
+
+/// Processes stopped at the gate, for the daemon's gate thread. Apart from
+/// the records: letting an app start must not wait behind them.
+#[map]
+static GATE: RingBuf = RingBuf::with_byte_size(64 * 1024, 0);
+
+/// Slot 0: since when (`bpf_ktime_get_ns`) a stopped process has been
+/// waiting for the daemon, 0 while none is. The daemon clears it after each
+/// process it lets go. A time that stays for `GATE_STALE_NS` means the
+/// daemon's gate thread is stuck; `GATE_CLOSED` that it has ended.
+///
+/// This is how a stuck daemon is noticed without it having to say that it is
+/// alive on a timer, which would wake the device for as long as any app is
+/// sandboxed.
+#[map]
+static GATE_WAITING_SINCE: Array<u64> = Array::with_max_entries(1, 0);
+
+const SIGKILL: u32 = 9;
+const SIGSTOP: u32 = 19;
+
+/// Entry of `setresuid`. zygote's child calls it once, as root, to become
+/// the app, after zygote set up its mount namespace and before any of the
+/// app's code runs: the one moment at which what the app will see can still
+/// be replaced. A child taking a sandboxed uid is stopped here and reported
+/// to the daemon, which mounts the sandbox in its namespace and lets it
+/// continue.
+///
+/// An app that cannot be given its sandbox must not run without it: when the
+/// daemon cannot be told, or is not letting anything through, the process is
+/// killed, and the system starts the app again when it is next wanted.
+#[kprobe]
+pub fn gate_setresuid(ctx: ProbeContext) -> u32 {
+    let _ = try_gate(&ctx);
+    0
+}
+
+fn try_gate(ctx: &ProbeContext) -> Result<(), i32> {
+    // Runs for every process that changes uid; these two checks are all
+    // that most of them cost. Only root can take another uid.
+    if bpf_get_current_uid_gid() as u32 != 0 {
+        return Ok(());
+    }
+    let regs: *const u8 = ctx.arg(0).ok_or(-1)?;
+    let uid = unsafe { read_at::<u64>(regs, arch::ARG_OFFSETS[0])? } as u32;
+    if unsafe { SANDBOX_UIDS.get(&uid) }.is_none() {
+        return Ok(());
+    }
+    // A child of zygote still has zygote's thread name here ("main"), or
+    // that of the pool of spare processes it was taken from ("usap32",
+    // "usap64"). Anything else taking the uid (`su`, `run-as`) is not an app
+    // starting, and has no mount namespace of its own to change.
+    let comm = bpf_get_current_comm().map_err(|e| e as i32)?;
+    let zygote_child =
+        (comm[0] == b'm' && comm[1] == b'a' && comm[2] == b'i' && comm[3] == b'n' && comm[4] == 0)
+            || (comm[0] == b'u' && comm[1] == b's' && comm[2] == b'a' && comm[3] == b'p');
+    if !zygote_child {
+        return Ok(());
+    }
+
+    // Read before the clock: a time another CPU stored in between would be
+    // later than `now`, and the difference would pass for a very long wait.
+    let waiting = GATE_WAITING_SINCE.get_ptr_mut(0).ok_or(-1)?;
+    let since = unsafe { *waiting };
+    let now = unsafe { bpf_ktime_get_ns() };
+    let event = GateEvent {
+        pid: (bpf_get_current_pid_tgid() >> 32) as u32,
+        uid,
+        at_ns_low: now as u32,
+        at_ns_high: (now >> 32) as u32,
+    };
+    if since != 0 && now.wrapping_sub(since) > GATE_STALE_NS {
+        // Reported all the same: a daemon that is there after all clears
+        // the time when it reads this, and the next start is held again.
+        let _ = GATE.output(&event, BPF_RB_FORCE_WAKEUP);
+        kill();
+        return Ok(());
+    }
+    // Before the daemon is told, so that it cannot have cleared the time
+    // already when it is set.
+    if since == 0 {
+        unsafe { *waiting = now };
+    }
+    // The one event that wakes its reader every time: a process is stopped
+    // until the daemon has seen it. It happens once per start of a sandboxed
+    // app and for nothing else.
+    if GATE.output(&event, BPF_RB_FORCE_WAKEUP).is_err() {
+        kill();
+        return Ok(());
+    }
+    // Takes effect as the process leaves this system call.
+    if unsafe { aya_ebpf::helpers::generated::bpf_send_signal(SIGSTOP) } != 0 {
+        kill();
+    }
+    Ok(())
+}
+
+#[inline(always)]
+fn kill() {
+    unsafe { aya_ebpf::helpers::generated::bpf_send_signal(SIGKILL) };
 }
 
 /// Return of any tracked syscall, and of `security_netlink_send`.

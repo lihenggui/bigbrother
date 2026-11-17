@@ -14,6 +14,32 @@ JSON.
   (`control::request_flush`, over `bbd.sock`), waiting at most one second.
   `main` does this for every subcommand except `run`; a new subcommand that
   does not read the records should be exempted the same way.
+- `bbd.sock` keeps its one-byte flush answer. Commands that change what the
+  daemon does (`bbd sandbox ...`) go over `bbd.ctl`, one JSON line each way
+  (`control::Request`); they need the running daemon and never write the
+  database themselves.
+
+## Sandbox
+
+`src/sandbox/` gives an app the user put in it another view of the device
+(docs/sandbox.md). What it does to an app is a list of effects
+(`sandbox::Effect`), carried out in order and undone in reverse on failure.
+
+- Fail closed. A start that cannot be given its sandbox is killed, never let
+  through, and the kernel side does the same when the gate thread is stuck
+  or gone.
+- The gate thread (`sandbox/gate.rs`) is what a starting app waits for. It
+  never waits for the main loop, the database or a helper program, and has
+  no timer: it blocks until a sandboxed app starts.
+- A sandbox directory belongs to the sandboxed app. As root, reach into it
+  only through `sandbox/dirs.rs`, one name at a time and never through a
+  symbolic link.
+- The errors and log lines of the mounts name the step, not the path: the
+  paths have package names in them.
+- Commands run on the main loop and hold up recording while they do: keep
+  what an effect waits for bounded (`appops::ANSWER_WAIT`).
+- Helper programs cost a Java runtime each. The app ops helper runs only
+  while an app is sandboxed.
 
 ## Database
 

@@ -36,9 +36,17 @@ These programs run on every file open and many system calls of every process.
   within that second is still recorded and waits for the next read. Any new
   exception needs a bound like this one.
 
+- `gate_setresuid` is not a recorder: it stops a starting app of the sandbox
+  and wakes the daemon's gate thread for each (`BPF_RB_FORCE_WAKEUP` on its
+  own ring buffer), which is once per start of a sandboxed app. For every
+  other process that changes uid it costs a uid check and a map lookup. It
+  must never let a sandboxed start through when it cannot report it: it
+  kills the process instead.
+
 ## Testing
 
 The programs cannot be unit tested. Load them on a device or emulator: build
 with `./scripts/build.sh`, install the package, and open the app, which
 replaces the module with its own copy when the daemon differs. Then check that
-records arrive (`scripts/check-canary.sh` covers every kind).
+records arrive (`scripts/check-canary.sh` covers every kind), and that the
+gate holds (`scripts/check-sandbox.sh`).

@@ -28,6 +28,7 @@ import android.util.Log
 import io.github.libxposed.api.XposedInterface
 import io.github.libxposed.api.XposedModule
 import io.github.libxposed.api.XposedModuleInterface.PackageReadyParam
+import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 import java.io.File
 import java.lang.reflect.Method
@@ -49,11 +50,26 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Hooking the providers, rather than the apps being observed, keeps the hook
  * out of those apps' processes entirely, and the caller identity comes from
  * binder, which an app cannot forge.
+ *
+ * The same entry point is loaded into system_server (scope `system`), where
+ * it installs the sandbox's identity hooks instead; see [SandboxHook].
  */
 class ProviderHook : XposedModule() {
     private val installed = AtomicBoolean(false)
 
+    override fun onSystemServerStarting(param: SystemServerStartingParam) {
+        try {
+            SandboxHook(this).install(param.classLoader)
+        } catch (e: Throwable) {
+            log(Log.ERROR, TAG, "could not install the sandbox hooks", e)
+        }
+    }
+
     override fun onPackageReady(param: PackageReadyParam) {
+        // None of the providers in scope runs as the system uid. Should the
+        // framework report a package ready in system_server too, the provider
+        // hooks stay out of it: the settings provider lives there.
+        if (Process.myUid() == Process.SYSTEM_UID) return
         // One process can host several packages; the hooked class is shared.
         if (!installed.compareAndSet(false, true)) return
         try {
@@ -173,8 +189,5 @@ class ProviderHook : XposedModule() {
     private companion object {
         const val TAG = "BigBrother"
         const val SPOOL_DIR = "big_brother"
-
-        /** Android multi-user layout: uid = user * 100000 + app id. */
-        const val PER_USER_RANGE = 100_000
     }
 }

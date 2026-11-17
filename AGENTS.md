@@ -13,7 +13,11 @@ building, checks and releasing in CONTRIBUTING.md.
 - `bbd/`: the daemon (`bbd run`) and the query CLI the app calls. See `bbd/AGENTS.md`.
 - `module/`: root module scripts, packaged into the app. See `module/AGENTS.md`.
 - `android/`: the app, the LSPosed hook and the canary test app. See `android/AGENTS.md`.
-- `scripts/`: `build.sh` (full build) and `check-canary.sh` (on-device check).
+- `scripts/`: `build.sh` (full build), `check-canary.sh` and `check-sandbox.sh`
+  (on-device checks of the records and of the sandbox).
+
+The sandbox (`bbd sandbox`, `bbd/src/sandbox/`, `SandboxHook` in the hook,
+`AppOpsGuard` in the app) is described in docs/sandbox.md.
 
 ## Commands
 

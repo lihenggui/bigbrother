@@ -6,3 +6,4 @@ com.android.providers.contacts
 com.samsung.android.providers.contacts
 com.android.providers.telephony
 com.android.providers.calendar
+system

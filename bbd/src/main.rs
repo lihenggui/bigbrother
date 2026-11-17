@@ -29,6 +29,7 @@ mod packages;
 mod paths;
 mod personal;
 mod rules;
+mod sandbox;
 mod sensors;
 mod spool;
 mod store;
@@ -73,7 +74,8 @@ enum Command {
         /// Print events that reach userspace only to be discarded (diagnostic).
         #[arg(long, hide = true)]
         explain_discards: bool,
-        /// Leave the LSPosed hook's records for another daemon (diagnostic).
+        /// Leave the LSPosed hook's records, and the sandbox, for another
+        /// daemon (diagnostic).
         #[arg(long, hide = true)]
         no_provider_events: bool,
         #[arg(long, default_value = packages::PACKAGES_LIST, hide = true)]
@@ -141,6 +143,57 @@ enum Command {
     },
     /// Database and daemon counters.
     Stats,
+    /// Put apps in the sandbox and take them out again. Needs the daemon.
+    Sandbox {
+        /// Print the daemon's answer as JSON.
+        #[arg(long, global = true)]
+        json: bool,
+        #[command(subcommand)]
+        command: SandboxCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum SandboxCommand {
+    /// Sandbox an app, with every package that shares its uid.
+    Enable {
+        package: String,
+        /// Android user the app is installed for.
+        #[arg(long, default_value_t = 0)]
+        user: u32,
+    },
+    /// Take an app out of the sandbox; it keeps its sandbox identity.
+    Disable {
+        #[arg(required_unless_present = "all")]
+        package: Option<String>,
+        /// Android user the app is installed for.
+        #[arg(long, default_value_t = 0)]
+        user: u32,
+        /// Take every app out.
+        #[arg(long, conflicts_with = "package")]
+        all: bool,
+    },
+    /// Apps in the sandbox, enabled or not.
+    List,
+    /// Whether each part of the sandbox works on this device.
+    Status,
+}
+
+impl From<SandboxCommand> for control::Request {
+    fn from(command: SandboxCommand) -> Self {
+        match command {
+            SandboxCommand::Enable { package, user } => Self::SandboxEnable { package, user },
+            SandboxCommand::Disable {
+                package: Some(package),
+                user,
+                ..
+            } => Self::SandboxDisable { package, user },
+            // Without a package only with `--all`.
+            SandboxCommand::Disable { package: None, .. } => Self::SandboxDisableAll,
+            SandboxCommand::List => Self::SandboxList,
+            SandboxCommand::Status => Self::SandboxStatus,
+        }
+    }
 }
 
 fn now() -> i64 {
@@ -170,8 +223,8 @@ fn print_json(value: &impl Serialize) -> anyhow::Result<()> {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     // Every other command reads the records, which the daemon writes only
-    // now and then.
-    if !matches!(cli.command, Command::Run { .. }) {
+    // now and then. The sandbox commands do not read them.
+    if !matches!(cli.command, Command::Run { .. } | Command::Sandbox { .. }) {
         control::request_flush(&cli.db);
     }
     match cli.command {
@@ -193,6 +246,7 @@ fn main() -> anyhow::Result<()> {
                 profile,
                 explain_discards,
                 ingest_provider_events: !no_provider_events,
+                sandbox: !no_provider_events,
             })),
         Command::Apps { hours } => print_json(&store::Reader::open(&cli.db)?.apps(since(hours))?),
         Command::Files {
@@ -232,5 +286,6 @@ fn main() -> anyhow::Result<()> {
             stats: store::Reader::open(&cli.db)?.stats()?,
             daemon_running: control::daemon_running(&cli.db),
         }),
+        Command::Sandbox { json, command } => sandbox::command(&cli.db, command.into(), json),
     }
 }

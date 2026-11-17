@@ -24,7 +24,14 @@ They are packaged into the app's APK, which is also the flashable module, and
 - `sync.sh` is run by the app to update an installed module in place. Replace
   each file atomically (copy to a temporary name, then rename), and keep it
   working against modules installed by older versions.
-- `uninstall.sh` removes the data in `/data/adb/big_brother`.
+- `uninstall.sh` takes every app out of the sandbox. Root managers run it
+  either at once, with the daemon running, or at the next boot, before
+  anything of the module has started: it has to work both ways. It then
+  removes the data in `/data/adb/big_brother` and what the
+  sandbox shares with the hook in `/data/system`. The sandbox directories
+  under `/data/media` are the apps' files and are kept.
+- `supervise.sh` restarts a daemon that died at once the first time: apps in
+  the sandbox start without it while there is none.
 - The module has no `system/` overlay, no SELinux rules and no `post-fs-data`
   script. Keep it that way: a module that can break booting must not.
 

@@ -16,7 +16,8 @@ Hilt, Compose with Material 3 Expressive, and Navigation 3.
   `core/screenshot-testing`: Roborazzi helpers and sample data.
 - `feature/<name>/api` (navigation keys) and `feature/<name>/impl` (screens,
   view models) for overview, applist, appdetail, timeline, search and settings.
-- `hook/`: the LSPosed hook, which runs inside system content providers.
+- `hook/`: the LSPosed hook, which runs inside system content providers and,
+  for the sandbox, inside system_server.
   `canary/`: a test app that triggers every kind of record.
 
 ## Commands
@@ -32,6 +33,22 @@ Run from `android/`:
 ```
 
 Assembling `:app` needs the daemons in `../out/` (`../scripts/build.sh`).
+
+## Sandbox
+
+- `hook/.../SandboxHook.kt` runs inside system_server (scope `system`). A
+  fault there restarts the device: every hooker falls back to the original
+  method when its own work throws, and nothing is hooked that cannot be
+  fully resolved when system_server starts. The decisions are in
+  `SandboxRules.kt`, free of framework classes, and tested on the JVM.
+- Only packages the user installed are hidden from a sandboxed app. What
+  came with the system stays visible whatever its app id: the same check
+  decides whether an app can reach the WebView or the media provider.
+- `app/.../catalog/AppOpsGuard.kt` is run by the daemon, not the app. Its
+  line protocol is `AppOpsGuardProtocol.kt`; change it together with
+  `bbd/src/sandbox/appops.rs`.
+- The hook and the daemon share two files in `/data/system`; their formats
+  are in `SandboxRules.kt` and `bbd/src/sandbox/identity.rs`.
 
 ## Code
 

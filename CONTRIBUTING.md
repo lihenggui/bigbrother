@@ -40,6 +40,15 @@ to notice, and checks that each left a record:
 ./scripts/check-canary.sh
 ```
 
+`scripts/check-sandbox.sh` runs the same app outside the sandbox, inside it
+and outside again, and checks what it sees each time
+([docs/sandbox.md](docs/sandbox.md)). It needs the LSPosed hook, with the
+`system` scope, for the identity checks, and skips them without it:
+
+```sh
+./scripts/check-sandbox.sh              # --stress 200 adds cold starts
+```
+
 The unit tests include screenshot tests
 ([Roborazzi](https://github.com/takahirom/roborazzi)), which render the
 screens with sample records and compare them with the checked-in images:
