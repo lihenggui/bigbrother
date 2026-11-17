@@ -56,13 +56,12 @@ Developed and tested on Android 16, kernel 6.6, with KernelSU.
 
 ## Installation
 
-The APK is both the app and the flashable module; the `.zip` is the same
-file under another name. Use either route:
+Each release is a single file, `big_brother-<version>.zip`: it is both the
+flashable module and the app. Use either route:
 
-- Flash `big_brother-<version>.zip` in your root manager. This installs the
-  app as well.
-- Or install the APK, grant it root in your root manager, open the app and
-  tap **Install module**.
+- Flash it in your root manager. This installs the app as well.
+- Or rename it to `.apk` and install it as an app, grant it root in your
+  root manager, open the app and tap **Install module**.
 
 Then:
 
@@ -74,9 +73,9 @@ Then:
 From a root shell:
 
 ```sh
-ksud module install big_brother-<version>.apk       # KernelSU
-magisk --install-module big_brother-<version>.apk   # Magisk
-apd module install big_brother-<version>.apk        # APatch
+ksud module install big_brother-<version>.zip       # KernelSU
+magisk --install-module big_brother-<version>.zip   # Magisk
+apd module install big_brother-<version>.zip        # APatch
 ```
 
 The module's Action button in the root manager shows the daemon's status
