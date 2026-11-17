@@ -65,6 +65,8 @@ SENSOR_SESSIONS=(
     "android.sensor.gyroscope true"
 )
 SENSORS_ON_S=10
+# How many times the records are read before one counts as missing.
+QUERY_ATTEMPTS=4
 # Recorded only with the LSPosed hook enabled for these providers, and only
 # if the system let the query through (it has to be granted the permission).
 OPTIONAL=(
@@ -117,20 +119,19 @@ done
     echo "error: the canary did not finish; is the screen on and unlocked?" >&2
     exit 2
 }
-# The queries have the daemon write what it holds before they read.
-records="$(as_root "$BBD files --uid $uid --hours 1 --limit 2000")"
-sessions="$(as_root "$BBD sensors --uid $uid --hours 1" || true)"
-
 missing=0
+report=""
+say() { report+="$*"$'\n'; }
+
 check() {
     local want="$1" required="$2"
     if grep -qF -- "$want" <<<"$records"; then
-        echo "  recorded  ${want%\"}"
+        say "  recorded  ${want%\"}"
     elif [[ "$required" == yes ]]; then
-        echo "  MISSING   ${want%\"}"
+        say "  MISSING   ${want%\"}"
         missing=$((missing + 1))
     else
-        echo "  absent    ${want%\"} (optional)"
+        say "  absent    ${want%\"} (optional)"
     fi
 }
 
@@ -143,28 +144,40 @@ check_session() {
     start="$(sed -n 's/.*"start_ts":\([0-9]*\).*/\1/p' <<<"$session")"
     end="$(sed -n 's/.*"end_ts":\([0-9]*\).*/\1/p' <<<"$session")"
     if [[ -z "$session" ]]; then
-        echo "  MISSING   session of $sensor"
+        say "  MISSING   session of $sensor"
     elif [[ -z "$end" ]]; then
-        echo "  OPEN      session of $sensor: not seen turned off"
+        say "  OPEN      session of $sensor: not seen turned off"
     elif ! grep -qF "\"high_rate\":$high" <<<"$session"; then
-        echo "  WRONG     session of $sensor: high rate should be $high"
+        say "  WRONG     session of $sensor: high rate should be $high"
     elif ((end - start < SENSORS_ON_S - 1 || end - start > SENSORS_ON_S + 2)); then
-        echo "  WRONG     session of $sensor: on for $((end - start)) s, not $SENSORS_ON_S"
+        say "  WRONG     session of $sensor: on for $((end - start)) s, not $SENSORS_ON_S"
     else
-        echo "  recorded  session of $sensor, $((end - start)) s, high rate $high"
+        say "  recorded  session of $sensor, $((end - start)) s, high rate $high"
         return
     fi
     missing=$((missing + 1))
 }
 
-echo "records for uid $uid:"
-for want in "${REQUIRED[@]}"; do check "$want" yes; done
-for want in "${OPTIONAL[@]}"; do check "$want" no; done
-echo "sensor sessions:"
-for expected in "${SENSOR_SESSIONS[@]}"; do
-    read -r sensor high <<<"$expected"
-    check_session "$sensor" "$high"
+# The queries have the daemon write what it holds before they read. Right
+# after it starts, what waits for the sensor list to be read is written a
+# little later, so a query that misses something is repeated a few times.
+for ((attempt = 1; ; attempt++)); do
+    records="$(as_root "$BBD files --uid $uid --hours 1 --limit 2000")"
+    sessions="$(as_root "$BBD sensors --uid $uid --hours 1" || true)"
+    missing=0
+    report=""
+    say "records for uid $uid:"
+    for want in "${REQUIRED[@]}"; do check "$want" yes; done
+    for want in "${OPTIONAL[@]}"; do check "$want" no; done
+    say "sensor sessions:"
+    for expected in "${SENSOR_SESSIONS[@]}"; do
+        read -r sensor high <<<"$expected"
+        check_session "$sensor" "$high"
+    done
+    ((missing == 0 || attempt == QUERY_ATTEMPTS)) && break
+    sleep 5
 done
+printf '%s' "$report"
 
 if ((missing > 0)); then
     echo "$missing required record(s) missing"
