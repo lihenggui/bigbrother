@@ -16,12 +16,10 @@
 
 package li.mercury.bigbrother.feature.overview.impl
 
-import android.content.Context
 import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -33,6 +31,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import li.mercury.bigbrother.core.common.di.AppPackageName
 import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.DEFAULT
 import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.data.RecordsException
@@ -111,7 +110,7 @@ data class OverviewUiState(
 
 @HiltViewModel
 class OverviewViewModel @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @AppPackageName private val ownPackage: String,
     private val accessRepository: AccessRepository,
     private val moduleRepository: ModuleRepository,
     private val appInfoRepository: AppInfoRepository,
@@ -281,7 +280,7 @@ class OverviewViewModel @Inject constructor(
         apps: List<AppSummary>,
         appInfo: Map<String, AppInfo>,
         showSystemApps: Boolean,
-    ): List<AppSummary> = apps.filter { isShown(it, appInfo, showSystemApps, context.packageName) }
+    ): List<AppSummary> = apps.filter { isShown(it, appInfo, showSystemApps, ownPackage) }
 
     fun setRange(range: TimeRange) {
         viewModelScope.launch { userDataRepository.setTimeRange(range) }

@@ -16,14 +16,12 @@
 
 package li.mercury.bigbrother.feature.overview.impl
 
-import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -31,6 +29,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import li.mercury.bigbrother.core.common.di.AppPackageName
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.AccessRepository
 import li.mercury.bigbrother.core.data.repository.AppInfoRepository
@@ -56,7 +55,7 @@ data class CategoryUiState(
 
 @HiltViewModel(assistedFactory = CategoryViewModel.Factory::class)
 class CategoryViewModel @AssistedInject constructor(
-    @ApplicationContext private val context: Context,
+    @AppPackageName private val ownPackage: String,
     private val accessRepository: AccessRepository,
     private val appInfoRepository: AppInfoRepository,
     private val userDataRepository: UserDataRepository,
@@ -78,7 +77,7 @@ class CategoryViewModel @AssistedInject constructor(
                     apps.map { it.packageName }.filter { it.isNotEmpty() }.toSet(),
                 )
                 val shown = apps
-                    .filter { isShown(it, appInfo, userData.showSystemApps, context.packageName) }
+                    .filter { isShown(it, appInfo, userData.showSystemApps, ownPackage) }
                     .filter { category in it.dataCategories() }
                     // For files, apps that read some come before those that only looked.
                     .sortedWith(

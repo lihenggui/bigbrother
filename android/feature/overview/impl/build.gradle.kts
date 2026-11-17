@@ -32,5 +32,5 @@ dependencies {
     implementation(libs.androidx.compose.material3.adaptive)
     implementation(libs.androidx.compose.material3.adaptive.navigation3)
 
-    testImplementation(libs.kotlin.test.junit)
+    testImplementation(projects.core.testing)
 }
