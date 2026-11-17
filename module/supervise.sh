@@ -23,6 +23,12 @@ LOG=$DATA/bbd.log
 # A run shorter than this many seconds counts as a failed start.
 MIN_UPTIME=30
 MAX_FAILED_STARTS=5
+# Seconds before a daemon that died is started again: twice as long after
+# each restart, up to MAX_DELAY, and FIRST_DELAY again once a run has lasted
+# HEALTHY_UPTIME.
+FIRST_DELAY=5
+MAX_DELAY=600
+HEALTHY_UPTIME=600
 
 log() {
     echo "--- $(date '+%F %T') $*" >>"$LOG"
@@ -34,18 +40,38 @@ uptime_seconds() {
     cut -d. -f1 /proc/uptime
 }
 
+# The daemon, and the programs it starts, yield the CPU and the disk to the
+# apps, where the system has the commands for it.
+priority=
+nice -n 10 true 2>/dev/null && priority="nice -n 10"
+ionice -c 2 -n 7 true 2>/dev/null && priority="$priority ionice -c 2 -n 7"
+
 pid=
+sleeping=
 # Asked to stop: take the daemon down too, and wait so that it can flush.
-trap 'kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; rm -f "$DATA/bbd.pid"; exit 0' TERM INT
+stop() {
+    if [ -n "$pid" ]; then
+        kill "$pid" 2>/dev/null
+        wait "$pid" 2>/dev/null
+    fi
+    [ -n "$sleeping" ] && kill "$sleeping" 2>/dev/null
+    rm -f "$DATA/bbd.pid"
+    exit 0
+}
+trap stop TERM INT
 
 failed=0
+delay=$FIRST_DELAY
 while :; do
     started=$(uptime_seconds)
-    "$MODDIR/bin/bbd" run >>"$LOG" 2>&1 &
+    # Unquoted: a command with its arguments, or nothing.
+    $priority "$MODDIR/bin/bbd" run >>"$LOG" 2>&1 &
     pid=$!
     echo "$pid" >"$DATA/bbd.pid"
     wait "$pid"
     code=$?
+    # Gone: its pid may be handed to another process.
+    pid=
     ran=$(($(uptime_seconds) - started))
 
     # The daemon exits with status 0 only when it is asked to stop.
@@ -63,8 +89,15 @@ while :; do
         log "daemon exited with status $code after ${ran}s; giving up after $failed failed starts"
         break
     fi
-    log "daemon exited with status $code after ${ran}s; restarting"
-    sleep 5
+    [ "$ran" -ge "$HEALTHY_UPTIME" ] && delay=$FIRST_DELAY
+    log "daemon exited with status $code after ${ran}s; restarting in ${delay}s"
+    # In the background, so that a request to stop is acted on at once.
+    sleep "$delay" &
+    sleeping=$!
+    wait "$sleeping"
+    sleeping=
+    delay=$((delay * 2))
+    [ "$delay" -gt "$MAX_DELAY" ] && delay=$MAX_DELAY
 done
 
 rm -f "$DATA/supervisor.pid" "$DATA/bbd.pid"
