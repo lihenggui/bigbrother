@@ -9,6 +9,18 @@ It consists of a root module that does the recording, an Android app to
 browse the result, and an optional LSPosed hook that covers access made
 through the media library.
 
+<p>
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/1_overview.png" width="200" alt="Overview: the apps that read files, and the other kinds of data accessed">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/2_app_detail.png" width="200" alt="An app's page: the folders it read files in, and the data it asked for">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/3_timeline.png" width="200" alt="Timeline: each app's activity by the hour">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/4_files.png" width="200" alt="The photos an app read in the camera folder">
+</p>
+<p>
+  <img src="fastlane/metadata/android/en-US/images/tenInchScreenshots/1_list_detail.png" width="824" alt="On a tablet: the app list beside the page of the selected app">
+</p>
+
+The apps shown are made up.
+
 ## Features
 
 - An overview of which kinds of private data were accessed and by how many
@@ -105,6 +117,17 @@ Tests:
 ```sh
 cargo test -p bbd
 (cd android && ./gradlew test)
+```
+
+The app's tests include screenshot tests
+([Roborazzi](https://github.com/takahirom/roborazzi)), which compare the
+screens, showing made-up records, with the checked-in images: the ones
+above, which also serve the store listing, in
+`fastlane/metadata/android/<locale>/images/`, and the rest in the modules'
+`src/test/screenshots/`. After a change to the UI, record them anew:
+
+```sh
+(cd android && ./gradlew recordRoborazziDebug)
 ```
 
 The app is formatted with [ktlint](https://pinterest.github.io/ktlint/)
