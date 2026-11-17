@@ -80,6 +80,9 @@ enum Command {
         /// Only paths starting with this prefix.
         #[arg(long)]
         prefix: Option<String>,
+        /// Only paths containing this text, ignoring ASCII case.
+        #[arg(long)]
+        contains: Option<String>,
         /// Only the last N hours (default: everything).
         #[arg(long)]
         hours: Option<u32>,
@@ -99,15 +102,31 @@ enum Command {
         #[arg(long)]
         hours: Option<u32>,
     },
+    /// Each app's activity per hour and kind, most recent first, a page at a time.
+    Timeline {
+        /// Only the last N hours (default: everything).
+        #[arg(long)]
+        hours: Option<u32>,
+        /// Only hours that start before this unix time (default: now); the
+        /// `next_before` of the previous page.
+        #[arg(long)]
+        before: Option<i64>,
+        /// Entries after which the page ends (at the end of a day of records).
+        #[arg(long, default_value_t = 300)]
+        limit: usize,
+    },
     /// Database and daemon counters.
     Stats,
 }
 
-fn since(hours: Option<u32>) -> i64 {
-    let now = SystemTime::now()
+fn now() -> i64 {
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64);
-    hours.map_or(0, |h| now - i64::from(h) * 3600)
+        .map_or(0, |d| d.as_secs() as i64)
+}
+
+fn since(hours: Option<u32>) -> i64 {
+    hours.map_or(0, |h| now() - i64::from(h) * 3600)
 }
 
 fn print_json(value: &impl Serialize) -> anyhow::Result<()> {
@@ -142,6 +161,7 @@ fn main() -> anyhow::Result<()> {
             uid,
             cat,
             prefix,
+            contains,
             hours,
             limit,
             offset,
@@ -149,9 +169,20 @@ fn main() -> anyhow::Result<()> {
             uid,
             cat,
             prefix.as_deref(),
+            contains.as_deref(),
             since(hours),
             limit,
             offset,
+        )?),
+        Command::Timeline {
+            hours,
+            before,
+            limit,
+        } => print_json(&store::Reader::open(&cli.db)?.timeline(
+            since(hours),
+            // Through the current hour.
+            before.unwrap_or_else(|| now() + 1),
+            limit,
         )?),
         Command::History { uid, path, hours } => {
             print_json(&store::Reader::open(&cli.db)?.history(uid, &path, since(hours))?)

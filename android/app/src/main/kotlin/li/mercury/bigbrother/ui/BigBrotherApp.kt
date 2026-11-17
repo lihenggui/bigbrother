@@ -1,73 +1,240 @@
 package li.mercury.bigbrother.ui
 
+import androidx.annotation.StringRes
+import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.SpaceDashboard
+import androidx.compose.material.icons.outlined.Apps
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.SpaceDashboard
+import androidx.compose.material3.Badge
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MotionScheme
-import androidx.compose.ui.Modifier
+import androidx.compose.material3.Text
 import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
+import androidx.compose.material3.adaptive.WindowAdaptiveInfo
+import androidx.compose.material3.adaptive.currentWindowAdaptiveInfoV2
+import androidx.compose.material3.adaptive.layout.PaneScaffoldDirective
+import androidx.compose.material3.adaptive.layout.calculatePaneScaffoldDirective
 import androidx.compose.material3.adaptive.navigation3.rememberListDetailSceneStrategy
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteItem
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffoldDefaults
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
+import androidx.compose.material3.adaptive.navigationsuite.rememberNavigationSuiteScaffoldState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
 import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.ui.NavDisplay
+import androidx.window.core.layout.WindowSizeClass
+import li.mercury.bigbrother.R
+import li.mercury.bigbrother.core.navigation.BottomSheetSceneStrategy
 import li.mercury.bigbrother.core.navigation.Navigator
 import li.mercury.bigbrother.core.navigation.rememberNavigationState
 import li.mercury.bigbrother.core.navigation.toEntries
-import li.mercury.bigbrother.feature.appdetail.impl.navigation.appDetailEntry
+import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
+import li.mercury.bigbrother.feature.appdetail.api.navigation.navigateToAppDetail
+import li.mercury.bigbrother.feature.appdetail.impl.navigation.appDetailEntries
 import li.mercury.bigbrother.feature.applist.api.navigation.AppListNavKey
 import li.mercury.bigbrother.feature.applist.impl.navigation.appListEntry
+import li.mercury.bigbrother.feature.overview.api.navigation.OverviewNavKey
+import li.mercury.bigbrother.feature.overview.api.navigation.navigateToCategory
+import li.mercury.bigbrother.feature.overview.impl.navigation.overviewEntries
+import li.mercury.bigbrother.feature.search.impl.GlobalSearchBar
+import li.mercury.bigbrother.feature.settings.api.navigation.SettingsNavKey
+import li.mercury.bigbrother.feature.settings.impl.navigation.settingsEntry
+import li.mercury.bigbrother.feature.timeline.api.navigation.TimelineNavKey
+import li.mercury.bigbrother.feature.timeline.impl.navigation.timelineEntry
+
+/** A destination in the navigation bar or rail. */
+private class TopLevelDestination(
+    val key: NavKey,
+    @StringRes val label: Int,
+    val icon: ImageVector,
+    val selectedIcon: ImageVector,
+)
+
+/** What was accessed, by whom, and when: the three ways into the records. */
+private val TOP_LEVEL_DESTINATIONS = listOf(
+    TopLevelDestination(OverviewNavKey, R.string.nav_overview, Icons.Outlined.SpaceDashboard, Icons.Filled.SpaceDashboard),
+    TopLevelDestination(AppListNavKey, R.string.nav_apps, Icons.Outlined.Apps, Icons.Filled.Apps),
+    TopLevelDestination(TimelineNavKey, R.string.nav_timeline, Icons.Outlined.History, Icons.Filled.History),
+)
 
 /** The screen underneath moves this fraction of the distance, for depth. */
 private const val PARALLAX = 4
 
+/** Lets the transition spec tell a switch between top-level destinations from going forward. */
+private class TransitionHint {
+    var topLevelSwitch = false
+}
+
 /**
- * Root of the UI: hosts navigation between the feature screens.
+ * Root of the UI: the navigation bar or rail, and the screens.
  *
- * The app list is the only top-level destination; an app's detail opens
- * above it. On wide screens the two are shown side by side.
+ * Three top-level destinations: the overview (what was accessed), the app
+ * list (by whom) and the timeline (when). Compact windows show one pane and
+ * a navigation bar; wider ones a navigation rail and, from the expanded
+ * breakpoint, a list beside the app it opens; extra-large ones also a third
+ * pane for a record or the files.
  */
 @OptIn(ExperimentalMaterial3AdaptiveApi::class)
 @Composable
-fun BigBrotherApp() {
-    val navigationState = rememberNavigationState(
-        startKey = AppListNavKey,
-        topLevelKeys = setOf(AppListNavKey),
-    )
+fun BigBrotherApp(recordingStopped: Boolean) {
+    val topLevelKeys = remember { TOP_LEVEL_DESTINATIONS.map { it.key }.toSet() }
+    val navigationState = rememberNavigationState(startKey = OverviewNavKey, topLevelKeys = topLevelKeys)
     val navigator = remember(navigationState) { Navigator(navigationState) }
-    val listDetailStrategy = rememberListDetailSceneStrategy<NavKey>()
 
+    val adaptiveInfo = currentWindowAdaptiveInfoV2()
+    val directive = remember(adaptiveInfo) { paneDirective(adaptiveInfo) }
+    val listDetailStrategy = rememberListDetailSceneStrategy<NavKey>(directive = directive)
+    val singlePane = directive.maxHorizontalPartitions == 1
+    // Material keeps bottom sheets to windows with a single pane; wider ones
+    // show a record as a pane instead.
+    val bottomSheetStrategy = remember(singlePane) { BottomSheetSceneStrategy<NavKey>(enabled = singlePane) }
+
+    val searchBar: @Composable () -> Unit = {
+        GlobalSearchBar(
+            onOpenApp = { app, range, category ->
+                navigator.navigateToAppDetail(app.uid, app.packageName, range, category?.name)
+            },
+            onOpenCategory = { navigator.navigateToCategory(it.name) },
+            onOpenSettings = { navigator.navigate(SettingsNavKey) },
+            settingsBadge = recordingStopped,
+        )
+    }
     val entryProvider = entryProvider {
-        appListEntry(navigator)
-        appDetailEntry(navigator)
+        overviewEntries(navigator, searchBar)
+        appListEntry(navigator, searchBar)
+        timelineEntry(navigator, searchBar)
+        appDetailEntries(navigator)
+        settingsEntry(navigator)
     }
 
-    // Screen transitions use the standard motion scheme: expressive springs
-    // overshoot, which suits components but not a whole screen moving.
-    // Going forward, the new screen slides in over the old one; going back
-    // reverses it. Predictive back keeps the navigation library's default,
-    // which follows the system's back preview.
-    val motion = MotionScheme.standard()
-    val slide = motion.defaultSpatialSpec<IntOffset>()
-    val fade = motion.defaultEffectsSpec<Float>()
-    val forward = slideInHorizontally(slide) { it } + fadeIn(fade) togetherWith
-        slideOutHorizontally(slide) { -it / PARALLAX } + fadeOut(fade)
-    val backward = slideInHorizontally(slide) { -it / PARALLAX } + fadeIn(fade) togetherWith
-        slideOutHorizontally(slide) { it } + fadeOut(fade)
+    val suiteType = navigationSuiteType(adaptiveInfo)
+    // A navigation bar makes room on the screens below a destination; a
+    // rail stays, being out of the way at the side.
+    val scaffoldState = rememberNavigationSuiteScaffoldState()
+    val isBar = suiteType == NavigationSuiteType.ShortNavigationBarCompact ||
+        suiteType == NavigationSuiteType.ShortNavigationBarMedium
+    val hideBar = isBar && navigationState.currentKey !in topLevelKeys
+    LaunchedEffect(hideBar) { if (hideBar) scaffoldState.hide() else scaffoldState.show() }
 
-    NavDisplay(
-        entries = navigationState.toEntries(entryProvider),
-        // Screens slide during transitions; this is what shows between them.
-        modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer),
-        sceneStrategies = listOf(listDetailStrategy),
-        onBack = { navigator.goBack() },
-        transitionSpec = { forward },
-        popTransitionSpec = { backward },
-    )
+    val hint = remember { TransitionHint() }
+    NavigationSuiteScaffold(
+        navigationItems = {
+            for (destination in TOP_LEVEL_DESTINATIONS) {
+                val selected = navigationState.currentTopLevelKey == destination.key
+                NavigationSuiteItem(
+                    selected = selected,
+                    onClick = {
+                        hint.topLevelSwitch = destination.key != navigationState.currentTopLevelKey
+                        navigator.navigate(destination.key)
+                    },
+                    icon = {
+                        Icon(
+                            if (selected) destination.selectedIcon else destination.icon,
+                            contentDescription = null,
+                        )
+                    },
+                    label = { Text(stringResource(destination.label)) },
+                    navigationSuiteType = suiteType,
+                    // While recording is stopped, the overview, which says
+                    // so, is marked from the other destinations.
+                    badge = if (recordingStopped && destination.key == OverviewNavKey && !selected) {
+                        { Badge() }
+                    } else {
+                        null
+                    },
+                )
+            }
+        },
+        navigationSuiteType = suiteType,
+        state = scaffoldState,
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+    ) {
+        CompositionLocalProvider(LocalShowsDetailBesideList provides !singlePane) {
+            // Screen transitions use the standard motion scheme: expressive
+            // springs overshoot, which suits components but not a whole
+            // screen moving. Going forward, the new screen slides in over the
+            // old one; going back reverses it; switching destinations fades.
+            // Predictive back keeps the navigation library's default, which
+            // follows the system's back preview.
+            val motion = MotionScheme.standard()
+            val slide = motion.defaultSpatialSpec<IntOffset>()
+            val fade = motion.defaultEffectsSpec<Float>()
+            val forward = slideInHorizontally(slide) { it } + fadeIn(fade) togetherWith
+                slideOutHorizontally(slide) { -it / PARALLAX } + fadeOut(fade)
+            val backward = slideInHorizontally(slide) { -it / PARALLAX } + fadeIn(fade) togetherWith
+                slideOutHorizontally(slide) { it } + fadeOut(fade)
+            val switch: ContentTransform = fadeIn(fade) togetherWith fadeOut(motion.fastEffectsSpec())
+            NavDisplay(
+                entries = navigationState.toEntries(entryProvider),
+                // Screens slide during transitions; this is what shows between them.
+                modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer),
+                sceneStrategies = listOf(bottomSheetStrategy, listDetailStrategy),
+                onBack = { navigator.goBack() },
+                transitionSpec = {
+                    if (hint.topLevelSwitch) {
+                        hint.topLevelSwitch = false
+                        switch
+                    } else {
+                        forward
+                    }
+                },
+                popTransitionSpec = { backward },
+            )
+        }
+    }
+}
+
+/**
+ * The navigation component for the window: Material's choice (a bar in
+ * compact windows and in short ones, a collapsed rail otherwise), with the
+ * rail expanded in extra-large windows, where there is room for labels.
+ */
+@OptIn(ExperimentalMaterial3AdaptiveApi::class)
+private fun navigationSuiteType(adaptiveInfo: WindowAdaptiveInfo): NavigationSuiteType {
+    val type = NavigationSuiteScaffoldDefaults.navigationSuiteType(adaptiveInfo)
+    val extraLarge = adaptiveInfo.windowSizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_EXTRA_LARGE_LOWER_BOUND)
+    return if (type == NavigationSuiteType.WideNavigationRailCollapsed && extraLarge) {
+        NavigationSuiteType.WideNavigationRailExpanded
+    } else {
+        type
+    }
+}
+
+/**
+ * Panes per Material's breakpoints: one below expanded; two from expanded,
+ * with the list fixed at 360dp, or 412dp from large; three from extra-large.
+ * Panes keep clear of a separating hinge on foldables.
+ */
+@OptIn(ExperimentalMaterial3AdaptiveApi::class)
+private fun paneDirective(adaptiveInfo: WindowAdaptiveInfo): PaneScaffoldDirective {
+    val base = calculatePaneScaffoldDirective(adaptiveInfo)
+    val sizeClass = adaptiveInfo.windowSizeClass
+    val partitions = when {
+        sizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_EXTRA_LARGE_LOWER_BOUND) -> 3
+        sizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_EXPANDED_LOWER_BOUND) -> 2
+        else -> 1
+    }
+    val paneWidth = if (sizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_LARGE_LOWER_BOUND)) 412.dp else 360.dp
+    return base.copy(maxHorizontalPartitions = partitions, defaultPanePreferredWidth = paneWidth)
 }

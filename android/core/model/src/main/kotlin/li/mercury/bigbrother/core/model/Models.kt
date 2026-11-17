@@ -89,6 +89,9 @@ enum class Action {
         /** Whether the system opened the file on the app's behalf. */
         fun isViaProvider(mode: Int): Boolean = mode and MODE_VIA_PROVIDER != 0
 
+        /** Whether entries of a content provider were listed. */
+        fun isQuery(mode: Int): Boolean = mode and MODE_QUERY != 0
+
         /** Whether one of the app's isolated processes did it, rather than the app itself. */
         fun isFromIsolated(mode: Int): Boolean = mode and MODE_ISOLATED != 0
 
@@ -192,6 +195,58 @@ data class AccessPeriod(
     val denied: Int,
     val firstSeen: Long,
     val lastSeen: Long,
+)
+
+/**
+ * One app's activity of one kind within one hour: a line of the timeline.
+ * A kind is a [category] and, for everything but user files, a [topic].
+ */
+data class TimelineEntry(
+    /** Start of the hour, as Unix time. */
+    val hourStart: Long,
+    val uid: Int,
+    /** Empty for isolated processes, which have no package of their own. */
+    val packageName: String,
+    val category: Category,
+    /** What the records mean (e.g. "mac_address"); null for user files and provider URIs. */
+    val topic: String?,
+    /** Distinct paths touched. */
+    val paths: Int,
+    /** Distinct user files opened successfully; 0 for other categories. */
+    val filesRead: Int,
+    val allowed: Int,
+    val denied: Int,
+    /** The daemon's mode bits of every access, combined. */
+    val modes: Int,
+    /** For provider queries: the most entries a single query returned. */
+    val items: Int,
+    /** For user files: the top-level folder most of them are in. */
+    val folder: String?,
+    val firstSeen: Long,
+    val lastSeen: Long,
+) {
+    /** Whether the only file accesses were listings, probes or watches: nothing was read. */
+    val onlyLookedForFiles: Boolean get() = category == Category.STORAGE && filesRead == 0
+
+    /** Whether everything recorded was done through a content provider query. */
+    val isQuery: Boolean get() = Action.isQuery(modes)
+
+    /** Whether files were opened through a content provider. */
+    val viaProvider: Boolean get() = Action.isViaProvider(modes)
+}
+
+/** A page of the timeline, most recent first. */
+data class TimelinePage(
+    val entries: List<TimelineEntry>,
+    /** Where the next, older, page starts; null when there is no more. */
+    val nextBefore: Long?,
+)
+
+/** A path that matched a search, with the app that touched it. */
+data class PathMatch(
+    val uid: Int,
+    val packageName: String,
+    val access: Access,
 )
 
 /** What the daemon is doing. */

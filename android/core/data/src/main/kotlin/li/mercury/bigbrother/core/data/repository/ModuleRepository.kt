@@ -19,6 +19,9 @@ interface ModuleRepository {
     /** Whether the installed module is older than the one bundled in this app. */
     suspend fun isOutdated(): Boolean
 
+    /** The installed module's version name, or null if it is not installed or root is missing. */
+    suspend fun installedVersion(): String?
+
     /** Whether a module update has been installed but needs a restart to take effect. */
     suspend fun isUpdatePending(): Boolean
 
@@ -62,6 +65,13 @@ internal class RootModuleRepository @Inject constructor(
         // The app and the bundled module share one version (module.prop).
         val bundled = context.packageManager.getPackageInfo(context.packageName, 0).longVersionCode
         return installed < bundled
+    }
+
+    override suspend fun installedVersion(): String? = try {
+        rootShell.run("sed -n 's/^version=//p' $MODULE_PROP")
+            .output.lineSequence().firstOrNull()?.trim()?.ifEmpty { null }
+    } catch (_: RecordsException.NoRoot) {
+        null
     }
 
     override suspend fun isUpdatePending(): Boolean = try {

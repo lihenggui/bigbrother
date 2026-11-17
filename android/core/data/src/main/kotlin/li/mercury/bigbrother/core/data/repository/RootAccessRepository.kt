@@ -1,6 +1,10 @@
 package li.mercury.bigbrother.core.data.repository
 
 import javax.inject.Inject
+import javax.inject.Singleton
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.root.ModulePaths.BBD
 import li.mercury.bigbrother.core.data.root.RootShell
@@ -10,8 +14,11 @@ import li.mercury.bigbrother.core.model.AccessPeriod
 import li.mercury.bigbrother.core.model.Action
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.Category
+import li.mercury.bigbrother.core.model.PathMatch
 import li.mercury.bigbrother.core.model.RecorderStatus
 import li.mercury.bigbrother.core.model.TimeRange
+import li.mercury.bigbrother.core.model.TimelineEntry
+import li.mercury.bigbrother.core.model.TimelinePage
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -21,9 +28,13 @@ import org.json.JSONObject
  * daemon owns the database; its CLI prints JSON, which is the contract
  * between the two.
  */
+@Singleton
 internal class RootAccessRepository @Inject constructor(
     private val rootShell: RootShell,
 ) : AccessRepository {
+
+    private val _recorderStatus = MutableStateFlow<RecorderStatus?>(null)
+    override val recorderStatus: StateFlow<RecorderStatus?> = _recorderStatus.asStateFlow()
 
     override suspend fun getApps(range: TimeRange): List<AppSummary> = parsing {
         val rows = JSONArray(query("apps" + range.argument()))
@@ -65,24 +76,79 @@ internal class RootAccessRepository @Inject constructor(
             append(range.argument())
         }
         val rows = JSONArray(query(args))
+        (0 until rows.length()).mapNotNull { i -> rows.getJSONObject(i).toAccess() }
+    }
+
+    override suspend fun searchPaths(
+        text: String,
+        category: Category,
+        range: TimeRange,
+        limit: Int,
+    ): List<PathMatch> = parsing {
+        // The text is typed by the user, so it is quoted: it must reach the
+        // daemon as one argument, whatever it holds.
+        val rows = JSONArray(
+            query(
+                "files --contains ${text.shellQuoted()} --cat ${category.id} --limit $limit" + range.argument(),
+            ),
+        )
         (0 until rows.length()).mapNotNull { i ->
             val row = rows.getJSONObject(i)
-            // A category this build doesn't know is skipped rather than guessed at.
-            val rowCategory = Category.fromId(row.getString("cat")) ?: return@mapNotNull null
-            val mode = row.getInt("mode")
-            Access(
-                category = rowCategory,
-                path = row.getString("path"),
-                action = Action.fromMode(mode),
-                viaProvider = Action.isViaProvider(mode),
-                items = row.optInt("items"),
-                allowed = row.getInt("ok"),
-                denied = row.getInt("fail"),
-                lastSeen = row.getLong("last_ts"),
-                topic = row.optString("topic").ifEmpty { null },
-                fromIsolated = Action.isFromIsolated(mode),
-            )
+            val access = row.toAccess() ?: return@mapNotNull null
+            PathMatch(uid = row.getInt("uid"), packageName = row.getString("pkg"), access = access)
         }
+    }
+
+    override suspend fun getTimeline(range: TimeRange, before: Long?, limit: Int): TimelinePage = parsing {
+        val args = buildString {
+            append("timeline --limit ").append(limit)
+            if (before != null) append(" --before ").append(before)
+            append(range.argument())
+        }
+        val page = JSONObject(query(args))
+        val rows = page.getJSONArray("entries")
+        TimelinePage(
+            entries = (0 until rows.length()).mapNotNull { i ->
+                val row = rows.getJSONObject(i)
+                // A category this build doesn't know is skipped rather than guessed at.
+                val category = Category.fromId(row.getString("cat")) ?: return@mapNotNull null
+                TimelineEntry(
+                    hourStart = row.getLong("hour_ts"),
+                    uid = row.getInt("uid"),
+                    packageName = row.getString("pkg"),
+                    category = category,
+                    topic = row.optString("topic").ifEmpty { null },
+                    paths = row.getInt("paths"),
+                    filesRead = row.getInt("files_read"),
+                    allowed = row.getInt("ok"),
+                    denied = row.getInt("fail"),
+                    modes = row.getInt("modes"),
+                    items = row.optInt("items"),
+                    folder = row.optString("folder").ifEmpty { null },
+                    firstSeen = row.getLong("first_ts"),
+                    lastSeen = row.getLong("last_ts"),
+                )
+            },
+            nextBefore = if (page.has("next_before")) page.getLong("next_before") else null,
+        )
+    }
+
+    /** A row of `bbd files`; null for a category this build doesn't know, which is skipped rather than guessed at. */
+    private fun JSONObject.toAccess(): Access? {
+        val rowCategory = Category.fromId(getString("cat")) ?: return null
+        val mode = getInt("mode")
+        return Access(
+            category = rowCategory,
+            path = getString("path"),
+            action = Action.fromMode(mode),
+            viaProvider = Action.isViaProvider(mode),
+            items = optInt("items"),
+            allowed = getInt("ok"),
+            denied = getInt("fail"),
+            lastSeen = getLong("last_ts"),
+            topic = optString("topic").ifEmpty { null },
+            fromIsolated = Action.isFromIsolated(mode),
+        )
     }
 
     override suspend fun getHistory(
@@ -109,7 +175,14 @@ internal class RootAccessRepository @Inject constructor(
         }
     }
 
-    override suspend fun getRecorderStatus(): RecorderStatus = parsing {
+    override suspend fun getRecorderStatus(): RecorderStatus = try {
+        readRecorderStatus().also { _recorderStatus.value = it }
+    } catch (e: RecordsException) {
+        _recorderStatus.value = null
+        throw e
+    }
+
+    private suspend fun readRecorderStatus(): RecorderStatus = parsing {
         val meta = JSONObject(query("stats")).optJSONObject("meta") ?: JSONObject()
         val lastFlush = meta.optLong("last_flush")
         RecorderStatus(

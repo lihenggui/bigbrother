@@ -11,6 +11,10 @@ through the media library.
 
 ## Features
 
+- An overview of which kinds of private data were accessed and by how many
+  apps, a timeline of each app's activity by the hour, and search across apps
+  and file paths. Phone, foldable, tablet and desktop windows each get a
+  layout of their own, from a single pane up to three side by side.
 - Per-app list of the files on shared storage an app opened, with read counts
   and timestamps, browsable like a file manager.
 - Attempts that the system denied, existence checks (`stat`, `access`) and

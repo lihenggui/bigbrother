@@ -11,6 +11,9 @@ android {
 dependencies {
     api(libs.androidx.navigation3.runtime)
 
+    api(libs.androidx.navigation3.ui)
+
+    implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.runtime)
     implementation(libs.androidx.lifecycle.viewModel.navigation3)
     implementation(libs.androidx.savedstate.compose)

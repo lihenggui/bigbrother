@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_title">Settings</string>
+    <string name="section_recording">Recording</string>
+    <string name="section_display">Display</string>
+    <string name="section_about">About</string>
+    <string name="status_recording">Recording</string>
+    <string name="status_stopped">Recording stopped</string>
+    <string name="status_unknown">Recording status unknown</string>
+    <string name="module_version">Module %s</string>
+    <string name="retention">Records kept for 30 days</string>
+    <!-- Kinds of activity the kernel of this device does not let the daemon observe. -->
+    <string name="coverage_title">Not supported on this device</string>
+    <string name="feature_exec">Command execution</string>
+    <string name="feature_network">Local network connections</string>
+    <string name="feature_process">Process memory access</string>
+    <string name="feature_netlink">Netlink queries</string>
+    <string name="feature_binder">System service calls</string>
+    <string name="feature_appops">Permission usage</string>
+    <string name="lsposed_title">LSPosed module</string>
+    <string name="lsposed_summary">Enable Big Brother in LSPosed to record access to the media library, contacts, messages and the calendar.</string>
+    <string name="show_system_apps">Show system apps</string>
+    <string name="show_system_apps_summary">Hidden by default, along with isolated processes not traced to an app: reading data is part of how system components work.</string>
+    <string name="dynamic_color">Use wallpaper colors</string>
+    <string name="dynamic_color_summary">When off, the app uses its own colors</string>
+    <string name="version">Version</string>
+    <string name="source_code">Source code</string>
+    <string name="license">License</string>
+</resources>

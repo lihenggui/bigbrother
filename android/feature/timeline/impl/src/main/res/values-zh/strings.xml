@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="all_data">全部数据</string>
+    <string name="records_access">读取与访问</string>
+    <string name="records_all">全部记录</string>
+    <string name="timeline_empty">无记录</string>
+    <string name="today">今天</string>
+    <string name="yesterday">昨天</string>
+    <plurals name="read_files">
+        <item quantity="other">读取 %d 个文件</item>
+    </plurals>
+    <plurals name="looked_for_paths">
+        <item quantity="other">查找 %d 个路径</item>
+    </plurals>
+    <string name="media_queried">查询媒体库</string>
+    <plurals name="media_opened">
+        <item quantity="other">经媒体库打开 %d 个文件</item>
+    </plurals>
+    <plurals name="media_denied">
+        <item quantity="other">媒体库访问被拒绝 %d 次</item>
+    </plurals>
+    <plurals name="times">
+        <item quantity="other">%d 次</item>
+    </plurals>
+    <plurals name="times_denied">
+        <item quantity="other">已拒绝 %d 次</item>
+    </plurals>
+</resources>

@@ -90,4 +90,37 @@
     <string name="range_day">Last 24 hours</string>
     <string name="range_week">Last 7 days</string>
     <string name="range_all">All time</string>
+
+    <!-- Time ranges, short, for four buttons in a row: the last hour, day and week, or all records. -->
+    <string name="range_hour_short">Hour</string>
+    <string name="range_day_short">Day</string>
+    <string name="range_week_short">Week</string>
+    <string name="range_all_short">All</string>
+
+    <!-- The detail pane beside a list, before anything is selected. -->
+    <string name="select_app">Select an app to see what it accessed</string>
+
+    <!-- Summaries in list rows. -->
+    <plurals name="summary_storage">
+        <item quantity="one">%d file</item>
+        <item quantity="other">%d files</item>
+    </plurals>
+    <string name="summary_separator">", "</string>
+    <!-- A shortened list: the first names, then how many are not named. -->
+    <plurals name="summary_more">
+        <item quantity="one">%1$s and %2$d more</item>
+        <item quantity="other">%1$s and %2$d more</item>
+    </plurals>
+    <string name="summary_media_library">Media library</string>
+    <!-- Folders an app listed or was denied, without reading any file. %s is a list of folder names. -->
+    <string name="summary_not_read">%s (not read)</string>
+    <!-- An app's name followed by the Android user it runs as, for cloned apps
+         and work profiles: "WeChat (user 999)". -->
+    <string name="app_name_with_user">%1$s (user %2$d)</string>
+    <plurals name="app_count">
+        <item quantity="one">%d app</item>
+        <item quantity="other">%d apps</item>
+    </plurals>
+    <!-- Between parts of a supporting line: "Location · 3 apps". -->
+    <string name="dot_separator" translatable="false">" · "</string>
 </resources>

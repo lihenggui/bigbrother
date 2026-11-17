@@ -11,6 +11,8 @@ dependencies {
     api(projects.core.common)
     api(projects.core.model)
 
+    implementation(projects.core.datastore)
+
     implementation(libs.androidx.core.ktx)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.libsu.core)

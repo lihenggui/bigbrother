@@ -1,0 +1,52 @@
+package li.mercury.bigbrother.feature.appdetail.impl
+
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import li.mercury.bigbrother.core.model.Access
+import li.mercury.bigbrother.core.model.Action
+import li.mercury.bigbrother.core.model.Category
+
+class FilesSummaryTest {
+    private fun access(path: String, action: Action = Action.READ, allowed: Int = 1, lastSeen: Long = 0) = Access(
+        category = Category.STORAGE,
+        path = path,
+        action = action,
+        viaProvider = false,
+        items = 0,
+        allowed = allowed,
+        denied = if (allowed == 0) 1 else 0,
+        lastSeen = lastSeen,
+    )
+
+    @Test
+    fun folders_are_ranked_by_files_read_and_named_below_the_volume() {
+        val folders = topFolders(
+            listOf(
+                access("/storage/emulated/0/DCIM/Camera/a.jpg"),
+                access("/storage/emulated/0/DCIM/Camera/b.jpg"),
+                // The same file read twice counts once.
+                access("/storage/emulated/0/DCIM/Camera/b.jpg", lastSeen = 5),
+                access("/storage/emulated/0/Download/c.pdf", lastSeen = 9),
+                // Probed or refused files were not read.
+                access("/storage/emulated/0/Music/d.mp3", action = Action.PROBE),
+                access("/storage/emulated/0/Documents/e.txt", allowed = 0),
+            ),
+            limit = 3,
+        )
+        assertEquals(listOf("DCIM/Camera" to 2, "Download" to 1), folders.map { it.label to it.filesRead })
+        assertEquals("/storage/emulated/0/DCIM/Camera", folders.first().path)
+    }
+
+    @Test
+    fun totals_count_each_path_once() {
+        val totals = fileTotals(
+            listOf(
+                access("/storage/emulated/0/DCIM/a.jpg"),
+                access("/storage/emulated/0/DCIM/a.jpg", action = Action.PROBE),
+                access("/storage/emulated/0/Music", action = Action.LIST),
+                access("/storage/emulated/0/x", allowed = 0),
+            ),
+        )
+        assertEquals(FileTotals(read = 1, lookedFor = 2), totals)
+    }
+}

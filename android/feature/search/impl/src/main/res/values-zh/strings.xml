@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="search_hint">搜索应用和文件</string>
+    <string name="clear">清除</string>
+    <string name="settings">设置</string>
+    <string name="results">搜索结果</string>
+    <string name="section_apps">应用</string>
+    <string name="section_files">文件</string>
+    <string name="section_data">数据类型</string>
+</resources>
