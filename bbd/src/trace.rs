@@ -127,9 +127,14 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         .unwrap_or(0);
     sensors.adopt(
         writer.open_sensor_sessions()?,
-        sensors::process_alive,
+        |pid, start| {
+            sensors::process_alive(pid, start)
+                .then(|| uid_of_pid(pid))
+                .flatten()
+        },
         last_up,
         Instant::now(),
+        now(),
     );
     writer.set_meta("started_at", now())?;
 
@@ -243,6 +248,8 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         searches: commands::Searches::default(),
         catalog: None,
         sensors,
+        sensors_dropped: 0,
+        sensors_dropped_log: RecurringLog::default(),
         writer,
         counters: Counters::default(),
         awaiting_result: HashMap::new(),
@@ -799,6 +806,10 @@ struct Tracer {
     catalog: Option<Catalog>,
     /// The sensors apps have on.
     sensors: sensors::Sensors,
+    /// Sensor sessions not kept for being over the limits, as last written
+    /// (`sensor_sessions_dropped` in `bbd stats`), and its log.
+    sensors_dropped: u64,
+    sensors_dropped_log: RecurringLog,
     writer: Writer,
     counters: Counters,
     /// Keyed by thread id.
@@ -1000,6 +1011,7 @@ impl Tracer {
                     if !self.excluded(uid) {
                         let call = sensors::Call {
                             uid,
+                            process_uid: hdr.uid,
                             mode: MODE_CALL | origin,
                             pid: hdr.pid,
                             connection: ev.target,
@@ -1012,8 +1024,12 @@ impl Tracer {
                                 hdr.pid, ev.target
                             );
                         }
-                        self.sensors
-                            .on_call(call, sensors::process_start, Instant::now());
+                        let known =
+                            self.sensors
+                                .on_call(call, sensors::process_start, Instant::now());
+                        if let Some((uid, mode, subject, ts)) = known {
+                            self.store(uid, Category::Service, subject, mode, true, ts, 0);
+                        }
                     }
                     return;
                 }
@@ -1116,6 +1132,18 @@ impl Tracer {
         }
         for session in settled.sessions {
             self.writer.sensor_session(session);
+        }
+        // Written when it changes, which takes an app over the limits.
+        let dropped = self.sensors.dropped();
+        if dropped != self.sensors_dropped
+            && self
+                .writer
+                .set_meta("sensor_sessions_dropped", dropped as i64)
+                .is_ok()
+        {
+            self.sensors_dropped_log
+                .log("bbd: sensor sessions not kept: an app has too many open".into());
+            self.sensors_dropped = dropped;
         }
     }
 
