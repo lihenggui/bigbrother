@@ -20,13 +20,12 @@ elif [ -n "$MAGISK_VER_CODE" ]; then
 else
     abort "! This module requires KernelSU, Magisk or APatch"
 fi
-# The archive carries a daemon for each of these, as bin/$ARCH/bbd: devices
-# are arm64; the Android emulator and Chromebooks are x86_64. GKI 2.0
-# kernels are 64-bit only.
-case "$ARCH" in
-arm64 | x64) ui_print "- Architecture $ARCH" ;;
-*) abort "! Unsupported architecture: $ARCH (arm64 and x86_64 only)" ;;
-esac
+# The archive carries a daemon for each supported architecture, as
+# bin/$ARCH/bbd (see scripts/build.sh): arm64 for devices, x64 for the
+# Android emulator and Chromebooks.
+unzip -l "$ZIPFILE" "bin/$ARCH/bbd" >/dev/null 2>&1 ||
+    abort "! Unsupported architecture: $ARCH"
+ui_print "- Architecture $ARCH"
 
 # The daemon resolves kernel struct layouts from BTF at startup.
 [ -r /sys/kernel/btf/vmlinux ] || abort "! Kernel has no BTF (/sys/kernel/btf/vmlinux); GKI 5.10+ required"

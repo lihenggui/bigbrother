@@ -13,9 +13,9 @@ class InstallerErrorTest {
              Powered by Magisk
             *******************
             - Installing on Magisk 31.1
-            ! Unsupported architecture: x64 (arm64 only)
+            ! Kernel has no BTF (/sys/kernel/btf/vmlinux); GKI 5.10+ required
         """.trimIndent()
-        assertEquals("Unsupported architecture: x64 (arm64 only)", installerError(output))
+        assertEquals("Kernel has no BTF (/sys/kernel/btf/vmlinux); GKI 5.10+ required", installerError(output))
     }
 
     @Test

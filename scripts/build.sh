@@ -10,15 +10,19 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# Rust target -> the architecture name module installers set in $ARCH.
-# arm64 is what devices run; x86_64 is what the Android emulator and
-# Chromebooks run. GKI 2.0 kernels are 64-bit only, so there is no 32-bit
-# build.
+# The architectures the module supports, and the one place they are listed:
+# Gradle packages every out/bbd-<arch>, and the installer accepts a device
+# whose $ARCH has a daemon in the archive. arm64 is what devices run; x86_64
+# is what the Android emulator and Chromebooks run. GKI 2.0 kernels are
+# 64-bit only, so there is no 32-bit build.
 TARGETS=(aarch64-linux-android x86_64-linux-android)
+
+# Rust target -> the architecture name module installers set in $ARCH.
 arch_of() {
     case "$1" in
     aarch64-*) echo arm64 ;;
     x86_64-*) echo x64 ;;
+    *) die "no module architecture name for $1" ;;
     esac
 }
 API=30 # Android 11; GKI 2.0 devices ship Android 12+, so this is safely low.
@@ -42,21 +46,27 @@ host_tag="$(uname -s | tr '[:upper:]' '[:lower:]')-x86_64"
 bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/$host_tag/bin"
 command -v bpf-linker >/dev/null || die "bpf-linker not found; install it with: cargo install bpf-linker"
 
-mkdir -p out
-# A binary from before the module carried one per architecture.
-rm -f out/bbd
+target_args=()
 for target in "${TARGETS[@]}"; do
     clang="$bin/${target}${API}-clang"
     [[ -x "$clang" ]] || die "no NDK toolchain for $target at $bin"
     # cargo and the cc crate take the linker and compilers from variables
-    # named after the target.
+    # named after the target. (tr rather than ${var^^}: macOS ships bash 3.)
     target_env="${target//-/_}"
-    export "CARGO_TARGET_${target_env^^}_LINKER=$clang"
+    export "CARGO_TARGET_$(echo "$target_env" | tr '[:lower:]' '[:upper:]')_LINKER=$clang"
     export "CC_${target_env}=$clang"
     export "AR_${target_env}=$bin/llvm-ar"
+    target_args+=(--target "$target")
+done
 
-    cargo build --release --package bbd --target "$target" "$@"
+# One cargo run builds every target, sharing the host-side work.
+cargo build --release --package bbd "${target_args[@]}" "$@"
 
+mkdir -p out
+# Only this build's daemons: Gradle packages every out/bbd-*. (out/bbd is
+# the single binary of builds before there was one per architecture.)
+rm -f out/bbd out/bbd-*
+for target in "${TARGETS[@]}"; do
     daemon="out/bbd-$(arch_of "$target")"
     cp "target/$target/release/bbd" "$daemon"
     echo "built: $daemon ($(du -h "$daemon" | cut -f1))"
