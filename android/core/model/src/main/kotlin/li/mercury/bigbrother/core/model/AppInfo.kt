@@ -16,12 +16,15 @@
 
 package li.mercury.bigbrother.core.model
 
-import android.graphics.Bitmap
+import android.content.pm.PackageInfo
 
-/** Display name and icon of an installed app. */
+/**
+ * Display name of an installed app, and its package, from which its icon is
+ * loaded where it is shown.
+ */
 class AppInfo(
     val label: String,
-    val icon: Bitmap?,
+    val packageInfo: PackageInfo,
     /** Part of the system image, as opposed to installed by the user. */
     val isSystem: Boolean,
 )

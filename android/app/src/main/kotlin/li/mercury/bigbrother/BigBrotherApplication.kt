@@ -17,7 +17,32 @@
 package li.mercury.bigbrother
 
 import android.app.Application
+import android.content.pm.ApplicationInfo
+import coil3.ImageLoader
+import coil3.PlatformContext
+import coil3.SingletonImageLoader
+import dagger.Lazy
 import dagger.hilt.android.HiltAndroidApp
+import li.mercury.bigbrother.core.common.logging.ReleaseTree
+import timber.log.Timber
+import javax.inject.Inject
 
 @HiltAndroidApp
-class BigBrotherApplication : Application()
+class BigBrotherApplication :
+    Application(),
+    SingletonImageLoader.Factory {
+    @Inject
+    lateinit var releaseTree: ReleaseTree
+
+    // dagger.Lazy: created when Coil first needs it, not at startup.
+    @Inject
+    lateinit var imageLoader: Lazy<ImageLoader>
+
+    override fun onCreate() {
+        super.onCreate()
+        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) Timber.plant(Timber.DebugTree())
+        Timber.plant(releaseTree)
+    }
+
+    override fun newImageLoader(context: PlatformContext): ImageLoader = imageLoader.get()
+}

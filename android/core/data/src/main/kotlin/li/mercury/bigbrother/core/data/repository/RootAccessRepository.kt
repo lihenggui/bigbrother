@@ -16,7 +16,6 @@
 
 package li.mercury.bigbrother.core.data.repository
 
-import android.os.SystemClock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -53,7 +52,16 @@ internal class RootAccessRepository @Inject constructor(
     private val _recorderStatus = MutableStateFlow<RecorderStatus?>(null)
     override val recorderStatus: StateFlow<RecorderStatus?> = _recorderStatus.asStateFlow()
 
-    override suspend fun getApps(range: TimeRange): List<AppSummary> = parsing {
+    /**
+     * The overview, the app list, a category and an app's page each start
+     * from the list of apps; one read serves them all within a flush of the
+     * daemon, which writes every 5 s.
+     */
+    private val recentApps = RecentRead<TimeRange, List<AppSummary>>(maxAgeMs = 5_000)
+
+    override suspend fun getApps(range: TimeRange): List<AppSummary> = recentApps.get(range) { readApps(range) }
+
+    private suspend fun readApps(range: TimeRange): List<AppSummary> = parsing {
         val rows = JSONArray(query("apps" + range.argument()))
         List(rows.length()) { i ->
             val row = rows.getJSONObject(i)
@@ -75,11 +83,8 @@ internal class RootAccessRepository @Inject constructor(
 
     private fun JSONArray?.toStringList(): List<String> = if (this == null) emptyList() else List(length()) { getString(it) }
 
-    /** The most recent [getAccesses] result, and when it was read. */
-    private class CachedAccesses(val request: List<Any?>, val readAt: Long, val accesses: List<Access>)
-
-    @Volatile
-    private var cachedAccesses: CachedAccesses? = null
+    /** An app's page, its files and its records each read all of its records within moments; they share one read. */
+    private val recentAccesses = RecentRead<List<Any?>, List<Access>>(maxAgeMs = 10_000)
 
     override suspend fun getAccesses(
         uid: Int,
@@ -87,18 +92,8 @@ internal class RootAccessRepository @Inject constructor(
         range: TimeRange,
         limit: Int,
         offset: Int,
-    ): List<Access> {
-        // An app's page, its files and its records each read all of its
-        // records within moments of each other; they share one read.
-        val request = listOf(uid, category, range, limit, offset)
-        cachedAccesses?.let { cached ->
-            if (cached.request == request && SystemClock.elapsedRealtime() - cached.readAt < CACHE_MS) {
-                return cached.accesses
-            }
-        }
-        return readAccesses(uid, category, range, limit, offset).also {
-            cachedAccesses = CachedAccesses(request, SystemClock.elapsedRealtime(), it)
-        }
+    ): List<Access> = recentAccesses.get(listOf(uid, category, range, limit, offset)) {
+        readAccesses(uid, category, range, limit, offset)
     }
 
     private suspend fun readAccesses(
@@ -259,6 +254,7 @@ internal class RootAccessRepository @Inject constructor(
     private suspend fun query(args: String): String {
         val result = rootShell.run(
             "if [ -x $BBD ]; then $BBD $args; else echo $MISSING_MARKER >&2; false; fi",
+            label = "bbd ${args.substringBefore(' ')}",
         )
         if (!result.isSuccess) {
             if (MISSING_MARKER in result.error) throw RecordsException.ModuleMissing()
@@ -281,9 +277,6 @@ internal class RootAccessRepository @Inject constructor(
             "cannot be used multiple times",
         )
         const val COVERAGE_PREFIX = "coverage_"
-
-        /** How long an app's records are reused across its screens. */
-        const val CACHE_MS = 10_000L
 
         /** The daemon flushes every 5 s; allow several missed beats. */
         const val STALE_AFTER_SECONDS = 30

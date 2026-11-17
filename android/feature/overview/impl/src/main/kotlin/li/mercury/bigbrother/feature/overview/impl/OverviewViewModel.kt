@@ -22,6 +22,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,6 +33,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.DEFAULT
+import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.AccessRepository
 import li.mercury.bigbrother.core.data.repository.AppInfoRepository
@@ -44,6 +47,7 @@ import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.ui.isShown
+import timber.log.Timber
 import javax.inject.Inject
 
 /** Why the daemon could not be started from the app. */
@@ -112,6 +116,7 @@ class OverviewViewModel @Inject constructor(
     private val moduleRepository: ModuleRepository,
     private val appInfoRepository: AppInfoRepository,
     private val userDataRepository: UserDataRepository,
+    @Dispatcher(DEFAULT) private val defaultDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(OverviewUiState())
     val uiState: StateFlow<OverviewUiState> = _uiState.asStateFlow()
@@ -132,6 +137,9 @@ class OverviewViewModel @Inject constructor(
      * than retried on every load.
      */
     private var autoUpdated = false
+
+    /** The installed module was found to be the one this app carries. */
+    private var moduleCurrent = false
 
     init {
         // A range chosen here or on another screen reloads the overview.
@@ -170,16 +178,12 @@ class OverviewViewModel @Inject constructor(
     /** Load, or reload, the overview. */
     fun refresh() {
         loadJob?.cancel()
-        loadJob = viewModelScope.launch {
+        // Off the main thread: between its steps, the load would otherwise
+        // wait for the main thread, which is busy drawing the first screen.
+        loadJob = viewModelScope.launch(defaultDispatcher) {
+            val start = SystemClock.elapsedRealtime()
             _uiState.update { it.copy(refreshing = true) }
             try {
-                // The module follows the app: one older than it, or built
-                // differently, is replaced before anything is read from it.
-                if (!autoUpdated && moduleRepository.compareWithBundled() == InstalledModule.OUTDATED) {
-                    autoUpdated = true
-                    updateModule()
-                    return@launch
-                }
                 val userData = userDataRepository.userData.first()
                 val apps = accessRepository.getApps(userData.timeRange)
                 val status = accessRepository.getRecorderStatus()
@@ -210,15 +214,42 @@ class OverviewViewModel @Inject constructor(
                         modulePendingReboot = pending,
                     )
                 }
+                Timber.i("Overview loaded in %d ms: %d apps", SystemClock.elapsedRealtime() - start, apps.size)
             } catch (e: RecordsException) {
+                val failure = e.toLoadFailure()
+                Timber.w("Overview not loaded: %s", failure)
                 // A daemon too old for even these commands is updated too.
-                if (e is RecordsException.ModuleOutdated && !autoUpdated) {
+                if (failure == LoadFailure.ModuleOutdated && !autoUpdated) {
                     autoUpdated = true
                     updateModule()
                     return@launch
                 }
-                _uiState.update { it.copy(refreshing = false, failure = e.toLoadFailure()) }
+                _uiState.update { it.copy(refreshing = false, failure = failure) }
+                return@launch
             }
+            checkModule()
+        }
+    }
+
+    /**
+     * Once the records are on screen, compares the installed module with the
+     * one this app carries: the module follows the app, so one older than it,
+     * or built differently, is replaced. A current module stays current for
+     * as long as this app runs, and is not compared again.
+     */
+    private suspend fun checkModule() {
+        if (autoUpdated || moduleCurrent) return
+        val installed = moduleRepository.compareWithBundled()
+        Timber.i("Installed module: %s", installed)
+        when (installed) {
+            InstalledModule.OUTDATED -> {
+                autoUpdated = true
+                updateModule()
+            }
+
+            InstalledModule.CURRENT -> moduleCurrent = true
+
+            InstalledModule.NEWER, InstalledModule.UNKNOWN -> Unit
         }
     }
 
@@ -240,6 +271,7 @@ class OverviewViewModel @Inject constructor(
             } catch (e: RecordsException) {
                 ModuleUpdate.Failed(e.message.orEmpty())
             }
+            Timber.i("Module update: %s", result)
             _uiState.update { it.copy(moduleUpdate = result) }
             refresh()
         }

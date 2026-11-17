@@ -154,6 +154,7 @@ internal class RootModuleRepository @Inject constructor(
             val result = rootShell.run(
                 "sh ${staged.resolve(SYNC_SCRIPT).path.shellQuoted()} " +
                     "${staged.path.shellQuoted()} ${context.applicationInfo.sourceDir.shellQuoted()} 2>&1",
+                label = "module update",
             )
             if (!result.isSuccess) {
                 throw RecordsException.CommandFailed(result.output.ifBlank { "Module update failed (${result.code})" })
@@ -237,7 +238,7 @@ internal class RootModuleRepository @Inject constructor(
     }
 
     override suspend fun installBundled(): String {
-        val result = rootShell.run(installCommand(context.applicationInfo.sourceDir))
+        val result = rootShell.run(installCommand(context.applicationInfo.sourceDir), label = "module install")
         if (!result.isSuccess) throw RecordsException.CommandFailed(result.output)
         return result.output
     }
@@ -253,6 +254,7 @@ internal class RootModuleRepository @Inject constructor(
         val result = rootShell.run(
             "if [ -f $script ]; then sh $script </dev/null >/dev/null 2>&1; " +
                 "else echo '$script not found'; false; fi",
+            label = "daemon start",
         )
         if (!result.isSuccess) throw RecordsException.CommandFailed(result.output)
         return true

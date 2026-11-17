@@ -16,12 +16,14 @@
 
 package li.mercury.bigbrother.core.data.root
 
+import android.os.SystemClock
 import com.topjohnwu.superuser.Shell
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.IO
 import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.data.RecordsException
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -33,12 +35,24 @@ class CommandResult(val isSuccess: Boolean, val code: Int, val output: String, v
 class RootShell @Inject constructor(
     @Dispatcher(IO) private val ioDispatcher: CoroutineDispatcher,
 ) {
-    /** @throws RecordsException.NoRoot if the app has not been granted root. */
-    suspend fun run(command: String): CommandResult = withContext(ioDispatcher) {
+    /**
+     * Runs [command], logging how long it took under [label]. The label is
+     * all that is logged of it: commands carry paths and search text.
+     *
+     * @throws RecordsException.NoRoot if the app has not been granted root.
+     */
+    suspend fun run(command: String, label: String = command.substringBefore(' ')): CommandResult = withContext(ioDispatcher) {
         // A job only captures output into lists it is given.
         val output = ArrayList<String>()
         val error = ArrayList<String>()
-        val result = rootShell().newJob().add(command).to(output, error).exec()
+        val start = SystemClock.elapsedRealtime()
+        val shell = rootShell()
+        val opened = SystemClock.elapsedRealtime()
+        val result = shell.newJob().add(command).to(output, error).exec()
+        val elapsed = SystemClock.elapsedRealtime() - opened
+        // Opening the shell is slow once, then free.
+        val opening = if (opened - start > 0) " after ${opened - start} ms to open the shell" else ""
+        Timber.d("%s: exit %d in %d ms, %d lines%s", label, result.code, elapsed, output.size, opening)
         CommandResult(
             isSuccess = result.isSuccess,
             code = result.code,

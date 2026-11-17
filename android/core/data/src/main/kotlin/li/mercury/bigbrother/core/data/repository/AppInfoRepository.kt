@@ -19,7 +19,6 @@ package li.mercury.bigbrother.core.data.repository
 import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
-import androidx.core.graphics.drawable.toBitmap
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
@@ -56,26 +55,28 @@ internal class PackageManagerAppInfoRepository @Inject constructor(
     @Dispatcher(IO) private val ioDispatcher: CoroutineDispatcher,
 ) : AppInfoRepository {
     private val packageManager = context.packageManager
-    private val iconSizePx = (ICON_SIZE_DP * context.resources.displayMetrics.density).toInt()
     private val cache = ConcurrentHashMap<String, AppInfo>()
 
-    override suspend fun getAppInfo(packageName: String): AppInfo? {
-        cache[packageName]?.let { return it }
-        return withContext(ioDispatcher) {
-            try {
-                val info = packageManager.getApplicationInfo(packageName, 0)
-                AppInfo(
-                    label = packageManager.getApplicationLabel(info).toString(),
-                    icon = packageManager.getApplicationIcon(info).toBitmap(iconSizePx, iconSizePx),
-                    isSystem = info.flags and ApplicationInfo.FLAG_SYSTEM != 0,
-                ).also { cache[packageName] = it }
-            } catch (_: PackageManager.NameNotFoundException) {
-                null
-            }
-        }
+    override suspend fun getAppInfo(packageName: String): AppInfo? = cache[packageName] ?: withContext(ioDispatcher) { load(packageName) }
+
+    override suspend fun getAppInfo(packageNames: Collection<String>): Map<String, AppInfo> {
+        val missing = packageNames.filterNot { cache.containsKey(it) }
+        // One trip to the IO threads for all of them, not one per app.
+        if (missing.isNotEmpty()) withContext(ioDispatcher) { missing.forEach(::load) }
+        return packageNames.mapNotNull { name -> cache[name]?.let { name to it } }.toMap()
     }
 
-    override suspend fun getAppInfo(packageNames: Collection<String>): Map<String, AppInfo> = packageNames.mapNotNull { name -> getAppInfo(name)?.let { name to it } }.toMap()
+    private fun load(packageName: String): AppInfo? = try {
+        val packageInfo = packageManager.getPackageInfo(packageName, 0)
+        val info = packageInfo.applicationInfo ?: return null
+        AppInfo(
+            label = packageManager.getApplicationLabel(info).toString(),
+            packageInfo = packageInfo,
+            isSystem = info.flags and ApplicationInfo.FLAG_SYSTEM != 0,
+        ).also { cache[packageName] = it }
+    } catch (_: PackageManager.NameNotFoundException) {
+        null
+    }
 
     override suspend fun getPackageDetails(packageName: String): PackageDetails? = withContext(ioDispatcher) {
         try {
@@ -91,10 +92,5 @@ internal class PackageManagerAppInfoRepository @Inject constructor(
         } catch (_: PackageManager.NameNotFoundException) {
             null
         }
-    }
-
-    private companion object {
-        /** Large enough for the detail screen header; list rows scale it down. */
-        const val ICON_SIZE_DP = 56
     }
 }
