@@ -28,8 +28,8 @@ interface AccessRepository {
         offset: Int,
     ): List<Access>
 
-    /** Each time [uid] touched [path], most recent first. */
-    suspend fun getHistory(uid: Int, path: String, range: TimeRange): List<AccessPeriod>
+    /** Each time [uid] touched any of [paths], most recent first. */
+    suspend fun getHistory(uid: Int, paths: List<String>, range: TimeRange): List<AccessPeriod>
 
     /** Whether the daemon is currently recording, and what it can't record. */
     suspend fun getRecorderStatus(): RecorderStatus
@@ -48,8 +48,14 @@ interface AccessRepository {
     suspend fun getTimeline(range: TimeRange, before: Long?, limit: Int): TimelinePage
 
     /**
-     * Paths of [category] any app touched that contain [text], ignoring
-     * case, most recent first.
+     * Paths in any of [categories] that any of [uids] touched and that
+     * contain [text], ignoring case, most recent first.
      */
-    suspend fun searchPaths(text: String, category: Category, range: TimeRange, limit: Int): List<PathMatch>
+    suspend fun searchPaths(
+        text: String,
+        categories: Collection<Category>,
+        uids: Collection<Int>,
+        range: TimeRange,
+        limit: Int,
+    ): List<PathMatch>
 }

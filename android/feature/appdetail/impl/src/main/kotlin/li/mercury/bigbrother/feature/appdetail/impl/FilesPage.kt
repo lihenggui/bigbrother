@@ -63,6 +63,7 @@ import li.mercury.bigbrother.core.model.Action
 import li.mercury.bigbrother.core.model.Category
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.ui.Message
+import li.mercury.bigbrother.core.ui.VOLUME_ROOT
 import li.mercury.bigbrother.core.ui.R as UiR
 import li.mercury.bigbrother.core.ui.exactDateTime
 import li.mercury.bigbrother.core.ui.exactTime
@@ -163,9 +164,6 @@ internal fun fileTabCount(accesses: List<Access>): Int {
 /** A file counts as read when the system let the app open it. */
 internal fun Access.isSuccessfulOpen(): Boolean =
     allowed > 0 && (action == Action.READ || action == Action.WRITE || action == Action.READ_WRITE)
-
-/** A storage volume's root: `/storage/emulated/<user>` or `/storage/<volume id>`. */
-internal val VOLUME_ROOT = Regex("^/storage/(?:emulated/\\d+|[^/]+)")
 
 /**
  * One tree per storage volume, so that each starts at a root the user knows

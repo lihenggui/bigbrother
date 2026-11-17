@@ -8,7 +8,7 @@ import li.mercury.bigbrother.feature.appdetail.impl.RecordDetail.Plain
 
 class RecordDetailTest {
     @Test
-    fun serviceCallsKeepOnlyTheAppAskedAbout() {
+    fun givenServiceCallAboutAnApp_whenDetailed_thenOnlyTheAppIsKept() {
         assertEquals(
             App("com.devadvance.rootcloak"),
             recordDetail("binder:android.content.pm.IPackageManager/getPackageInfo#com.devadvance.rootcloak"),
@@ -21,13 +21,13 @@ class RecordDetailTest {
     }
 
     @Test
-    fun commandsAndAddressesAreKept() {
+    fun givenCommandOrAddress_whenDetailed_thenKeptAsIs() {
         assertEquals(Plain("which su"), recordDetail("exec:which su"))
         assertEquals(Plain("127.0.0.1:8080"), recordDetail("net://127.0.0.1:8080"))
     }
 
     @Test
-    fun whatTheTitleAlreadySaysIsDropped() {
+    fun givenRecordTheTitleNames_whenDetailed_thenNoDetail() {
         assertNull(recordDetail("/proc/sys/kernel/random/boot_id"))
         assertNull(recordDetail("content://sms"))
         assertNull(recordDetail("setting:secure/android_id"))
@@ -35,7 +35,7 @@ class RecordDetailTest {
     }
 
     @Test
-    fun detailsAreDistinct() {
+    fun givenCallsAboutTheSameApp_whenDetailed_thenAppListedOnce() {
         assertEquals(
             listOf(App("com.a")),
             recordDetails(
@@ -50,7 +50,7 @@ class RecordDetailTest {
     }
 
     @Test
-    fun untitledRowsListTheirRecordsAsTheyAre() {
+    fun givenUntitledRow_whenDetailed_thenEachRecordListedOnceAsIs() {
         assertEquals(
             listOf(Plain("/sys/x"), Plain("/sys/y")),
             recordDetails(listOf("/sys/x", "/sys/y", "/sys/x"), titled = false),

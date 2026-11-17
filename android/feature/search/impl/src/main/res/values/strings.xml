@@ -5,6 +5,7 @@
     <string name="clear">Clear</string>
     <string name="settings">Settings</string>
     <string name="results">Results</string>
+    <string name="searching">Searching…</string>
     <string name="section_apps">Apps</string>
     <string name="section_files">Files</string>
     <string name="section_data">Kinds of data</string>

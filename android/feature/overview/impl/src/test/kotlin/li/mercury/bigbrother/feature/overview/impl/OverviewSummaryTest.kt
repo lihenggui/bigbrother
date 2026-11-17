@@ -26,7 +26,7 @@ class OverviewSummaryTest {
     )
 
     @Test
-    fun readers_are_apps_that_read_files_most_recent_first() {
+    fun givenAppsWithAndWithoutReads_whenSummarised_thenReadersMostRecentFirst() {
         val (files, _) = overviewOf(
             listOf(
                 app(1, lastSeen = 10, storage = 2, filesRead = 2, folders = listOf("DCIM")),
@@ -42,7 +42,7 @@ class OverviewSummaryTest {
     }
 
     @Test
-    fun folders_are_ranked_by_how_many_readers_used_them() {
+    fun givenReadersInSeveralFolders_whenSummarised_thenFoldersRankedByReaders() {
         val (files, _) = overviewOf(
             listOf(
                 app(1, 1, storage = 1, filesRead = 1, folders = listOf("Download", "DCIM")),
@@ -54,7 +54,7 @@ class OverviewSummaryTest {
     }
 
     @Test
-    fun categories_follow_category_order_and_count_apps() {
+    fun givenAppsAcrossCategories_whenSummarised_thenCategoriesInOrderWithAppCounts() {
         val (_, categories) = overviewOf(
             listOf(
                 app(1, 1, topics = listOf("android_id", "location")),

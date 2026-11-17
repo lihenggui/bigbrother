@@ -6,7 +6,7 @@ import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.model.TimelineEntry
 import li.mercury.bigbrother.core.ui.DataCategory
 import li.mercury.bigbrother.core.ui.dataCategoryOf
-import li.mercury.bigbrother.core.ui.isHiddenByDefault
+import li.mercury.bigbrother.core.ui.isShown
 
 /** What the timeline shows. */
 data class TimelineFilter(
@@ -65,8 +65,7 @@ fun timelineItems(
     dayStartOf: (Long) -> Long,
 ): List<TimelineItem> {
     val shown = entries.filter { entry ->
-        entry.packageName != ownPackage &&
-            (showSystemApps || !isHiddenByDefault(entry.toAppSummary(), appInfo)) &&
+        isShown(entry.toAppSummary(), appInfo, showSystemApps, ownPackage) &&
             (filter.category == null || entry.dataCategory == filter.category) &&
             (filter.includeLookups || !entry.onlyLookedForFiles)
     }

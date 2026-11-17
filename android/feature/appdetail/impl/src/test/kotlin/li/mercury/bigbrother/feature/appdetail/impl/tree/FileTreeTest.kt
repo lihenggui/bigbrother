@@ -21,7 +21,7 @@ class FileTreeTest {
     private val root = "/storage/emulated/0"
 
     @Test
-    fun chainsOfEmptyFoldersCollapseIntoOneRow() {
+    fun givenChainOfUntouchedFolders_whenBuilt_thenCollapsesIntoOneRow() {
         val tree = buildFileTree(
             listOf(
                 access("$root/DCIM/Camera/a.jpg"),
@@ -41,7 +41,7 @@ class FileTreeTest {
     }
 
     @Test
-    fun aTouchedFolderIsNotCollapsedAway() {
+    fun givenTouchedFolderInChain_whenBuilt_thenKeepsItsOwnRow() {
         val tree = buildFileTree(
             listOf(
                 access("$root/DCIM", Action.LIST),
@@ -58,7 +58,7 @@ class FileTreeTest {
     }
 
     @Test
-    fun severalActionsOnOnePathShareANode() {
+    fun givenSeveralActionsOnOnePath_whenBuilt_thenShareOneNode() {
         val tree = buildFileTree(
             listOf(
                 access("$root/notes.txt", Action.PROBE),
@@ -71,7 +71,7 @@ class FileTreeTest {
     }
 
     @Test
-    fun foldersSortBeforeFilesAndIgnoreCase() {
+    fun givenFoldersAndFiles_whenBuilt_thenFoldersFirstAndCaseIgnored() {
         val tree = buildFileTree(
             listOf(
                 access("$root/zeta.txt"),
@@ -84,7 +84,7 @@ class FileTreeTest {
     }
 
     @Test
-    fun separateVolumesAreSeparateRoots() {
+    fun givenPathsOnTwoVolumes_whenBuilt_thenEachVolumeIsARoot() {
         val tree = buildFileTree(
             listOf(access("$root/a.txt"), access("$root/b.txt"), access("/storage/1A2B-3C4D/c.txt")),
         )

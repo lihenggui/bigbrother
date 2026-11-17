@@ -23,6 +23,7 @@ import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -32,6 +33,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
@@ -42,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
 import li.mercury.bigbrother.core.model.Category
@@ -180,8 +183,8 @@ private fun Timeline(
             last >= info.totalItemsCount - LOAD_AHEAD
         }
     }
-    LaunchedEffect(nearEnd, state.nextBefore, items.size) {
-        if (nearEnd && state.nextBefore != null) onLoadMore()
+    LaunchedEffect(nearEnd, state.nextBefore, items.size, state.loadMoreFailed) {
+        if (nearEnd && state.nextBefore != null && !state.loadMoreFailed) onLoadMore()
     }
     val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     LazyColumn(
@@ -237,6 +240,22 @@ private fun Timeline(
                 }
             }
         }
+        if (state.loadMoreFailed) {
+            item(key = "load-more-failed") {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = stringResource(UiR.string.error_title),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onLoadMore) { Text(stringResource(UiR.string.retry)) }
+                }
+            }
+        }
     }
 }
 
@@ -248,9 +267,13 @@ private const val LOAD_AHEAD = 20
 private fun dayLabel(dayStart: Long): String {
     val context = LocalContext.current
     val millis = dayStart * 1000
-    return when {
-        DateUtils.isToday(millis) -> stringResource(R.string.today)
-        DateUtils.isToday(millis + DateUtils.DAY_IN_MILLIS) -> stringResource(R.string.yesterday)
+    // By calendar date: a day is not always 24 hours long.
+    val zone = ZoneId.systemDefault()
+    val day = Instant.ofEpochSecond(dayStart).atZone(zone).toLocalDate()
+    val today = LocalDate.now(zone)
+    return when (day) {
+        today -> stringResource(R.string.today)
+        today.minusDays(1) -> stringResource(R.string.yesterday)
         else -> DateUtils.formatDateTime(
             context,
             millis,

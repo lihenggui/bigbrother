@@ -1266,7 +1266,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn access_modes() {
+    fn open_flags_and_file_type_set_the_mode() {
         assert_eq!(access_mode(libc::O_RDONLY as u32, 0), MODE_READ);
         assert_eq!(
             access_mode((libc::O_WRONLY | libc::O_CREAT) as u32, 0),

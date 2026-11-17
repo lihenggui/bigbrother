@@ -28,6 +28,8 @@ data class RecordUiState(
     val periods: List<AccessPeriod>? = null,
     /** Only the history of some of the paths was loaded. */
     val partialHistory: Boolean = false,
+    /** Why the history could not be loaded, when the records could. */
+    val historyFailure: LoadFailure? = null,
     val loaded: Boolean = false,
     val failure: LoadFailure? = null,
 )
@@ -52,6 +54,7 @@ class RecordViewModel @AssistedInject constructor(
     fun retry() = load()
 
     private fun load() {
+        _uiState.update { it.copy(failure = null, historyFailure = null) }
         if (packageName.isNotEmpty()) {
             viewModelScope.launch {
                 _uiState.update { it.copy(appInfo = appInfoRepository.getAppInfo(packageName)) }
@@ -71,21 +74,18 @@ class RecordViewModel @AssistedInject constructor(
     }
 
     /**
-     * The history of each path in the group, merged. A kind of data can span
+     * The history of the paths in the group, merged. A kind of data can span
      * many paths (an app looking up hundreds of other apps); the most recent
      * ones are enough to show when it happened.
      */
     private suspend fun loadHistory(group: TopicGroup) {
         val paths = group.accesses.sortedByDescending { it.lastSeen }.map { it.path }.distinct()
-        val periods = try {
-            paths.take(MAX_HISTORY_PATHS)
-                .flatMap { accessRepository.getHistory(uid, it, range) }
-                .sortedByDescending { it.lastSeen }
-                .take(MAX_PERIODS)
-        } catch (_: RecordsException) {
-            emptyList()
+        try {
+            val periods = accessRepository.getHistory(uid, paths.take(MAX_HISTORY_PATHS), range).take(MAX_PERIODS)
+            _uiState.update { it.copy(periods = periods, partialHistory = paths.size > MAX_HISTORY_PATHS) }
+        } catch (e: RecordsException) {
+            _uiState.update { it.copy(historyFailure = e.toLoadFailure()) }
         }
-        _uiState.update { it.copy(periods = periods, partialHistory = paths.size > MAX_HISTORY_PATHS) }
     }
 
     @AssistedFactory

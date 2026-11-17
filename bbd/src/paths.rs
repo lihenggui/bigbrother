@@ -211,7 +211,7 @@ mod tests {
     }
 
     #[test]
-    fn top_level_folders() {
+    fn top_level_folder_is_the_first_name_below_the_volume() {
         for (path, want) in [
             ("/storage/emulated/0/DCIM/Camera/a.jpg", Some("DCIM")),
             ("/storage/emulated/0/Download", Some("Download")),
@@ -226,7 +226,7 @@ mod tests {
     }
 
     #[test]
-    fn own_dirs() {
+    fn own_dirs_are_only_the_apps_android_dirs() {
         let pkgs = vec!["com.x".to_string(), "com.x.shared".to_string()];
         for own in [
             "/storage/emulated/0/Android/data/com.x",

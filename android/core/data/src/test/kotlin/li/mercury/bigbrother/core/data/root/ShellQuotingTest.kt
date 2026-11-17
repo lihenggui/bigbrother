@@ -11,12 +11,12 @@ class ShellQuotingTest {
     }
 
     @Test
-    fun plainPathIsUnchanged() {
+    fun givenPlainPath_whenQuoted_thenOnlyWrappedInQuotes() {
         assertEquals("'/storage/emulated/0/DCIM/a.jpg'", "/storage/emulated/0/DCIM/a.jpg".shellQuoted())
     }
 
     @Test
-    fun shellSyntaxInAFileNameIsNotInterpreted() {
+    fun givenShellSyntaxInFileName_whenPassedThroughShell_thenArrivesUnchanged() {
         for (name in listOf(
             "/sdcard/it's here.txt",
             "/sdcard/\$(reboot).txt",

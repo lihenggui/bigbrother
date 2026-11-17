@@ -29,6 +29,8 @@ data class TimelineUiState(
     /** Where the next, older, page starts; null when everything is loaded. */
     val nextBefore: Long? = null,
     val loadingMore: Boolean = false,
+    /** Loading the next page failed; it is tried again on request, not on its own. */
+    val loadMoreFailed: Boolean = false,
     val refreshing: Boolean = false,
     val appInfo: Map<String, AppInfo> = emptyMap(),
     val showSystemApps: Boolean = false,
@@ -97,7 +99,7 @@ class TimelineViewModel @Inject constructor(
         val state = _uiState.value
         val before = state.nextBefore ?: return
         if (state.loadingMore || loadJob?.isActive == true) return
-        _uiState.update { it.copy(loadingMore = true) }
+        _uiState.update { it.copy(loadingMore = true, loadMoreFailed = false) }
         loadJob = viewModelScope.launch {
             try {
                 val page = accessRepository.getTimeline(TimeRange.ALL, before = before, limit = PAGE_SIZE)
@@ -111,8 +113,8 @@ class TimelineViewModel @Inject constructor(
                     )
                 }
             } catch (_: RecordsException) {
-                // What is already shown stays; reaching the end again retries.
-                _uiState.update { it.copy(loadingMore = false) }
+                // What is already shown stays, with a way to try again below it.
+                _uiState.update { it.copy(loadingMore = false, loadMoreFailed = true) }
             }
         }
     }

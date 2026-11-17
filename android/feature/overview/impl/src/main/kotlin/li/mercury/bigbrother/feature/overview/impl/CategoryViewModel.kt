@@ -26,7 +26,7 @@ import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.ui.DataCategory
 import li.mercury.bigbrother.core.ui.dataCategories
-import li.mercury.bigbrother.core.ui.isHiddenByDefault
+import li.mercury.bigbrother.core.ui.isShown
 import li.mercury.bigbrother.core.ui.readFiles
 
 data class CategoryUiState(
@@ -62,8 +62,7 @@ class CategoryViewModel @AssistedInject constructor(
                     apps.map { it.packageName }.filter { it.isNotEmpty() }.toSet(),
                 )
                 val shown = apps
-                    .filter { it.packageName != context.packageName }
-                    .filter { userData.showSystemApps || !isHiddenByDefault(it, appInfo) }
+                    .filter { isShown(it, appInfo, userData.showSystemApps, context.packageName) }
                     .filter { category in it.dataCategories() }
                     // For files, apps that read some come before those that only looked.
                     .sortedWith(

@@ -2,6 +2,7 @@ package li.mercury.bigbrother.feature.appdetail.impl
 
 import li.mercury.bigbrother.core.model.Access
 import li.mercury.bigbrother.core.model.Category
+import li.mercury.bigbrother.core.ui.VOLUME_ROOT
 
 /** A folder the app read files in, for the summary at the top of the app's page. */
 internal data class FolderSummary(

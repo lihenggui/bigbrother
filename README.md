@@ -44,7 +44,8 @@ through the media library.
 ## Requirements
 
 - arm64 or x86_64 device with a GKI 2.0 kernel (5.10 or newer, with BTF).
-  x86_64 covers the Android emulator.
+  x86_64 covers the Android emulator; on x86_64, only 64-bit apps are
+  recorded (current emulator images run no others).
 - Root with module support: [KernelSU](https://kernelsu.org),
   [Magisk](https://github.com/topjohnwu/Magisk) or
   [APatch](https://apatch.dev).

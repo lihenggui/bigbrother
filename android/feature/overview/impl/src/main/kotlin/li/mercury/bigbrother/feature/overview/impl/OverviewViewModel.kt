@@ -1,6 +1,7 @@
 package li.mercury.bigbrother.feature.overview.impl
 
 import android.content.Context
+import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -26,7 +27,7 @@ import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.TimeRange
-import li.mercury.bigbrother.core.ui.isHiddenByDefault
+import li.mercury.bigbrother.core.ui.isShown
 
 /** Why the daemon could not be started from the app. */
 sealed interface StartFailure {
@@ -85,21 +86,49 @@ class OverviewViewModel @Inject constructor(
 
     private var loadJob: Job? = null
 
+    /** The apps last loaded, before the system apps setting is applied. */
+    private class Loaded(val apps: List<AppSummary>, val appInfo: Map<String, AppInfo>)
+
+    private var loaded: Loaded? = null
+
+    /** When the last load finished, on the elapsed realtime clock. */
+    private var loadedAt = 0L
+
     init {
-        // A change of range or of the system apps setting, here or on
-        // another screen, reloads the overview.
+        // A range chosen here or on another screen reloads the overview.
         viewModelScope.launch {
-            userDataRepository.userData
-                .map { it.timeRange to it.showSystemApps }
-                .distinctUntilChanged()
-                .collect { (range, _) ->
-                    _uiState.update { it.copy(range = range) }
-                    refresh()
-                }
+            userDataRepository.userData.map { it.timeRange }.distinctUntilChanged().collect { range ->
+                _uiState.update { it.copy(range = range) }
+                refresh()
+            }
+        }
+        // The system apps setting only changes which of the loaded apps count.
+        viewModelScope.launch {
+            userDataRepository.userData.map { it.showSystemApps }.distinctUntilChanged().collect { show ->
+                val loaded = loaded ?: return@collect
+                val (files, categories) = overviewOf(visibleApps(loaded.apps, loaded.appInfo, show))
+                _uiState.update { it.copy(files = files, categories = categories) }
+            }
         }
     }
 
-    /** Load, or reload, the overview. The screen also calls this each time it is resumed. */
+    /**
+     * Reload when the screen is shown again, unless a load is running or has
+     * just finished: at launch, the first load is still on its way.
+     */
+    fun refreshIfStale() {
+        if (loadJob?.isActive == true) return
+        if (SystemClock.elapsedRealtime() - loadedAt < STALE_AFTER_MS) return
+        refresh()
+    }
+
+    /** Stop a load in progress, and with it the refresh indicator. */
+    private fun cancelLoad() {
+        loadJob?.cancel()
+        _uiState.update { it.copy(refreshing = false) }
+    }
+
+    /** Load, or reload, the overview. */
     fun refresh() {
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
@@ -115,8 +144,11 @@ class OverviewViewModel @Inject constructor(
                 val appInfo = appInfoRepository.getAppInfo(
                     apps.map { it.packageName }.filter { it.isNotEmpty() }.toSet(),
                 )
-                val shown = visibleApps(apps, appInfo, userData.showSystemApps)
-                val (files, categories) = overviewOf(shown)
+                loaded = Loaded(apps, appInfo)
+                loadedAt = SystemClock.elapsedRealtime()
+                // The setting as it is now: it may have changed during the load.
+                val showSystemApps = userDataRepository.userData.first().showSystemApps
+                val (files, categories) = overviewOf(visibleApps(apps, appInfo, showSystemApps))
                 _uiState.update {
                     it.copy(
                         range = userData.timeRange,
@@ -142,14 +174,11 @@ class OverviewViewModel @Inject constructor(
         }
     }
 
-    /** This app's own lookups, and the apps hidden by default, are left out. */
     private fun visibleApps(
         apps: List<AppSummary>,
         appInfo: Map<String, AppInfo>,
         showSystemApps: Boolean,
-    ): List<AppSummary> = apps
-        .filter { it.packageName != context.packageName }
-        .filter { showSystemApps || !isHiddenByDefault(it, appInfo) }
+    ): List<AppSummary> = apps.filter { isShown(it, appInfo, showSystemApps, context.packageName) }
 
     fun setRange(range: TimeRange) {
         viewModelScope.launch { userDataRepository.setTimeRange(range) }
@@ -162,7 +191,7 @@ class OverviewViewModel @Inject constructor(
      */
     fun startDaemon() {
         if (_uiState.value.daemonStarting) return
-        loadJob?.cancel()
+        cancelLoad()
         _uiState.update { it.copy(daemonStarting = true, daemonStartError = null) }
         viewModelScope.launch {
             val error = try {
@@ -214,6 +243,9 @@ class OverviewViewModel @Inject constructor(
         }
     }
 }
+
+/** How soon after a load the screen being shown again reloads it. */
+private const val STALE_AFTER_MS = 10_000L
 
 /** How long to wait for a started daemon: its first write comes within seconds. */
 private const val START_POLLS = 20

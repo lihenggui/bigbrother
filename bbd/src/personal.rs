@@ -53,7 +53,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn collections_and_topics() {
+    fn uris_are_stored_as_their_collection_with_a_topic() {
         for (uri, stored, topic) in [
             (
                 "content://com.android.contacts/data/phones?limit=5",

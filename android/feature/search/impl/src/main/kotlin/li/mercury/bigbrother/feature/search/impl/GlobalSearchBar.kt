@@ -65,6 +65,7 @@ import li.mercury.bigbrother.core.ui.dataCategories
 import li.mercury.bigbrother.core.ui.shortTime
 import li.mercury.bigbrother.core.ui.topicIcon
 import li.mercury.bigbrother.core.ui.topicTitle
+import li.mercury.bigbrother.core.ui.VOLUME_ROOT
 
 /**
  * The top bar of the top-level screens: a search field in place of a title,
@@ -191,7 +192,8 @@ private fun Results(
     onOpenApp: (AppSummary, DataCategory?) -> Unit,
     onOpenCategory: (DataCategory) -> Unit,
 ) {
-    if (results.query.isEmpty()) return
+    // Nothing typed, or the first search still running with nothing to show.
+    if (results.query.isEmpty() && results.complete) return
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
@@ -199,10 +201,16 @@ private fun Results(
     ) {
         val nothing = results.apps.isEmpty() && results.files.isEmpty() && results.data.isEmpty()
         // A label says that what follows are results, as Material asks for
-        // focused search; it also announces when nothing matched.
+        // focused search; it also announces when nothing matched. While a
+        // new text is looked up, the previous results stay, but the label
+        // does not speak for them.
         item(key = "label") {
             Text(
-                text = if (nothing) stringResource(UiR.string.no_matches) else stringResource(R.string.results),
+                text = when {
+                    !results.complete -> stringResource(R.string.searching)
+                    nothing -> stringResource(UiR.string.no_matches)
+                    else -> stringResource(R.string.results)
+                },
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
@@ -240,9 +248,6 @@ private fun Results(
         }
     }
 }
-
-/** A storage volume's root: `/storage/emulated/<user>` or `/storage/<volume id>`. */
-private val VOLUME_ROOT = Regex("^/storage/(?:emulated/\\d+|[^/]+)")
 
 private fun PathMatch.toAppSummary() = AppSummary(uid, packageName, emptyMap(), access.lastSeen)
 

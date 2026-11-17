@@ -92,6 +92,12 @@ enum class Action {
         /** Whether entries of a content provider were listed. */
         fun isQuery(mode: Int): Boolean = mode and MODE_QUERY != 0
 
+        /**
+         * Whether [modes], the modes of several accesses combined, hold
+         * provider queries and nothing else, whichever process made them.
+         */
+        fun onlyQueries(modes: Int): Boolean = modes and MODE_ISOLATED.inv() == MODE_QUERY
+
         /** Whether one of the app's isolated processes did it, rather than the app itself. */
         fun isFromIsolated(mode: Int): Boolean = mode and MODE_ISOLATED != 0
 
@@ -229,7 +235,7 @@ data class TimelineEntry(
     val onlyLookedForFiles: Boolean get() = category == Category.STORAGE && filesRead == 0
 
     /** Whether everything recorded was done through a content provider query. */
-    val isQuery: Boolean get() = Action.isQuery(modes)
+    val isQuery: Boolean get() = Action.onlyQueries(modes)
 
     /** Whether files were opened through a content provider. */
     val viaProvider: Boolean get() = Action.isViaProvider(modes)
@@ -271,6 +277,7 @@ enum class TimeRange(val hours: Int) {
     ALL(0);
 
     companion object {
-        fun fromHours(hours: Int): TimeRange = entries.firstOrNull { it.hours == hours } ?: ALL
+        /** The range of [hours], or the default range for a value it does not know. */
+        fun fromHours(hours: Int): TimeRange = entries.firstOrNull { it.hours == hours } ?: DAY
     }
 }

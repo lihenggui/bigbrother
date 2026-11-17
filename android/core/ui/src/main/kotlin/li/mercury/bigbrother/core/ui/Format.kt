@@ -39,16 +39,20 @@ fun exactDateTime(epochSeconds: Long): String = dateTimeFormat.format(localTime(
 /** Time of day to the second, in the device's locale and time zone. */
 fun exactTime(epochSeconds: Long): String = timeFormat.format(localTime(epochSeconds))
 
+/** A storage volume's root: `/storage/emulated/<user>` or `/storage/<volume id>`. */
+val VOLUME_ROOT = Regex("^/storage/(?:emulated/\\d+|[^/]+)")
+
 /**
  * When something happened, for the end of a list row: the time of day for
- * today, otherwise the date, in the device's locale and time zone.
+ * today, otherwise the date, in the device's locale and time zone. The year
+ * is shown only when it is not the current one.
  */
 fun shortTime(context: Context, epochSeconds: Long): String {
     val millis = epochSeconds * 1000
     val flags = if (DateUtils.isToday(millis)) {
         DateUtils.FORMAT_SHOW_TIME
     } else {
-        DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH or DateUtils.FORMAT_NO_YEAR
+        DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH
     }
     return DateUtils.formatDateTime(context, millis, flags)
 }

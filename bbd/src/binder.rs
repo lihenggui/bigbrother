@@ -587,7 +587,7 @@ mod tests {
     }
 
     #[test]
-    fn calls_about_a_package_name_it_and_skip_the_caller() {
+    fn calls_about_a_package_name_it_unless_it_is_the_callers() {
         let catalog = Catalog::parse(CATALOG);
         let own = ["com.me".to_string()];
         assert_eq!(
@@ -644,7 +644,7 @@ mod tests {
     }
 
     #[test]
-    fn reads_of_identifying_settings() {
+    fn only_reads_of_identifying_settings_are_recorded() {
         let catalog = Catalog::parse(CATALOG);
         let provider = WATCHED
             .iter()
@@ -709,7 +709,7 @@ mod tests {
     }
 
     #[test]
-    fn absent_packages() {
+    fn an_absent_package_is_marked_in_the_subject() {
         let subject = "binder:android.content.pm.IPackageManager/getPackageInfo#com.x";
         assert_eq!(asked_package(subject), Some("com.x"));
         let marked = mark_absent(subject).unwrap();
@@ -728,7 +728,7 @@ mod tests {
     }
 
     #[test]
-    fn topics() {
+    fn topic_follows_the_method_and_the_package_asked_about() {
         for (subject, want) in [
             (
                 "binder:android.content.pm.IPackageManager/getPackageInfo#com.x",
