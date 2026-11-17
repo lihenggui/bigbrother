@@ -43,9 +43,16 @@ fn pid_file(db: &Path) -> PathBuf {
 }
 
 /// Whether the daemon recording into `db` is running: the process the
-/// supervisor started is still there. Unlike the time of the last write,
-/// this does not depend on anything having been recorded lately.
+/// supervisor started is still there, and has its probes attached, which is
+/// when it starts listening on its socket. A daemon still starting, or one
+/// that fails to attach and exits, does not count. Unlike the time of the
+/// last write, this does not depend on anything having been recorded lately.
 pub fn daemon_running(db: &Path) -> bool {
+    // The supervisor removes a socket left by a daemon that crashed before it
+    // starts the next one, so a socket here is the running daemon's.
+    if !socket_path(db).exists() {
+        return false;
+    }
     let Some(pid) = fs::read_to_string(pid_file(db))
         .ok()
         .and_then(|text| text.trim().parse::<u32>().ok())

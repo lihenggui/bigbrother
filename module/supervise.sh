@@ -64,6 +64,9 @@ failed=0
 delay=$FIRST_DELAY
 while :; do
     started=$(uptime_seconds)
+    # Left by a daemon that crashed: the new one creates its own once its
+    # probes are attached, which is what tells the app it is running.
+    rm -f "$DATA/bbd.sock"
     # Unquoted: a command with its arguments, or nothing.
     $priority "$MODDIR/bin/bbd" run >>"$LOG" 2>&1 &
     pid=$!
