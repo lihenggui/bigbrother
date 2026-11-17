@@ -16,6 +16,7 @@
 
 package li.mercury.bigbrother.feature.settings.impl
 
+import android.content.ClipData
 import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
@@ -121,6 +122,9 @@ internal fun SettingsScreen(
             .setType("application/zip")
             .putExtra(Intent.EXTRA_STREAM, uri)
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        // As ClipData too, so that the share sheet itself may read the file
+        // to show it, not only the app it is shared with.
+        send.clipData = ClipData.newRawUri(null, uri)
         context.startActivity(Intent.createChooser(send, null))
         onDismissLogExport()
     }
