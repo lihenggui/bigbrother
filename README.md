@@ -12,11 +12,16 @@ when. It consists of a root module that does the recording and an app to
 browse the records. Nothing leaves the device.
 
 <p>
-  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/1_overview.png" width="24%" alt="Overview">
-  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/2_app_detail.png" width="24%" alt="An app's records">
-  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/3_timeline.png" width="24%" alt="Timeline">
-  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/4_files.png" width="24%" alt="Files an app read">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/1_overview.png" width="24%" alt="Overview: the apps that read files, and the other kinds of data accessed">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/2_app_detail.png" width="24%" alt="An app's page: the folders it read files in, and the data it asked for">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/3_timeline.png" width="24%" alt="Timeline: each app's activity by the hour">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/4_files.png" width="24%" alt="The photos an app read in the camera folder">
 </p>
+<p>
+  <img src="fastlane/metadata/android/en-US/images/tenInchScreenshots/1_list_detail.png" width="98%" alt="On a tablet: the app list beside the page of the selected app">
+</p>
+
+The apps and records in the screenshots are sample data.
 
 ## What it records
 

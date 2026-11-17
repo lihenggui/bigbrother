@@ -11,11 +11,16 @@ Big Brother 用于在已 root 的 Android 设备上记录应用对隐私数据�
 查看记录的应用组成，所有数据仅保存在本机。
 
 <p>
-  <img src="fastlane/metadata/android/zh-CN/images/phoneScreenshots/1_overview.png" width="24%" alt="概览">
-  <img src="fastlane/metadata/android/zh-CN/images/phoneScreenshots/2_app_detail.png" width="24%" alt="应用详情">
-  <img src="fastlane/metadata/android/zh-CN/images/phoneScreenshots/3_timeline.png" width="24%" alt="时间线">
-  <img src="fastlane/metadata/android/zh-CN/images/phoneScreenshots/4_files.png" width="24%" alt="文件记录">
+  <img src="fastlane/metadata/android/zh-CN/images/phoneScreenshots/1_overview.png" width="24%" alt="概览：读取过文件的应用，以及被访问的其他数据类别">
+  <img src="fastlane/metadata/android/zh-CN/images/phoneScreenshots/2_app_detail.png" width="24%" alt="应用详情：读取文件的目录和访问的其他数据">
+  <img src="fastlane/metadata/android/zh-CN/images/phoneScreenshots/3_timeline.png" width="24%" alt="时间线：按小时展示各应用的行为">
+  <img src="fastlane/metadata/android/zh-CN/images/phoneScreenshots/4_files.png" width="24%" alt="应用在相机目录中读取的照片">
 </p>
+<p>
+  <img src="fastlane/metadata/android/zh-CN/images/tenInchScreenshots/1_list_detail.png" width="98%" alt="平板上：应用列表与所选应用的详情并排显示">
+</p>
+
+截图中的应用和记录均为示例数据。
 
 ## 功能
 
