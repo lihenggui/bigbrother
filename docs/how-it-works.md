@@ -37,6 +37,16 @@ app      reads the daemon's JSON output as root
   Android versions and manufacturers, so the daemon asks the device at
   startup, by running a small program from the app (`BinderCatalog`) that
   prints them from the framework's own classes.
+- Sensors are turned on and off on a connection to the sensor service, a
+  C++ interface whose method numbers are fixed. The calls name a sensor by a
+  handle that differs between devices; the daemon reads which handle is
+  which type from `dumpsys sensorservice` the first time a sensor is turned
+  on, and again, at most once a minute, for a handle it does not know. Each
+  period a sensor was on is stored (`bbd sensors`), ended by the call that
+  turns it off, the connection closing, or the app's process ending, which
+  is noticed at the next write. Only the rate asked for is known; Android 12
+  and later deliver at most 200 Hz to apps without the
+  `HIGH_SAMPLING_RATE_SENSORS` permission.
 - Permission use comes from the system's app-ops records, read by another
   small program from the app (`AppOpsDump`). It is the one source that says
   what an app was actually given; the app marks these as permission records.
@@ -65,7 +75,7 @@ The daemon runs as `bbd run` under `module/supervise.sh`, which restarts it
 with increasing delays if it exits. Its database is
 `/data/adb/big_brother/bb.db` and its log `/data/adb/big_brother/bbd.log`.
 The app runs the same binary for its queries (`bbd apps`, `bbd files`,
-`bbd timeline`, `bbd stats` and others), which print JSON.
+`bbd timeline`, `bbd sensors`, `bbd stats` and others), which print JSON.
 
 When the app is updated, it compares the installed module with the one it
 carries, by version code and, for the same version, by the daemon's SHA-256,

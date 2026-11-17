@@ -35,9 +35,12 @@ The apps and records in the screenshots are sample data.
   `/dev` entries that identify the device or reveal its state, such as
   hardware addresses, serial numbers, the ARP table, other processes, and
   root and emulator checks.
-- Requests to system services: the list of installed apps, the clipboard,
-  the location, Wi-Fi networks, phone identifiers, accounts, running apps,
-  usage statistics and sensors, and reads of the Android ID.
+- Requests to system services: the list of installed apps, the clipboard
+  (read, written, or watched for changes), the location, Wi-Fi networks,
+  phone identifiers, accounts, running apps and usage statistics, and reads
+  of the Android ID.
+- Sensors: which sensors an app turned on, when and for how long, and the
+  rate it asked for, with rates of 200 Hz and above marked as high.
 - Permission use: use of the camera, microphone, location and other
   sensitive permissions, and refusals, from the system's app-ops records.
 - Personal data: queries for contacts, the call log, text messages and the

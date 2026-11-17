@@ -26,6 +26,7 @@ import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.Category
 import li.mercury.bigbrother.core.model.PathMatch
 import li.mercury.bigbrother.core.model.RecorderStatus
+import li.mercury.bigbrother.core.model.SensorSession
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.model.TimelinePage
 
@@ -39,9 +40,15 @@ class TestAccessRepository(
     var history: List<AccessPeriod> = emptyList(),
     var timeline: TimelinePage = TimelinePage(emptyList(), nextBefore = null),
     var status: RecorderStatus = RecorderStatus(recording = true),
+    var sensorSessions: List<SensorSession> = emptyList(),
 ) : AccessRepository {
     var failure: RecordsException? = null
+
+    /** Thrown by [getSensorSessions] alone, as by a module that does not keep sensor sessions. */
+    var sensorSessionsFailure: RecordsException? = null
     var appReads = 0
+        private set
+    var sensorSessionReads = 0
         private set
 
     private val _recorderStatus = MutableStateFlow<RecorderStatus?>(null)
@@ -65,6 +72,13 @@ class TestAccessRepository(
     override suspend fun getHistory(uid: Int, paths: List<String>, range: TimeRange): List<AccessPeriod> {
         check()
         return history
+    }
+
+    override suspend fun getSensorSessions(uid: Int, range: TimeRange): List<SensorSession> {
+        check()
+        sensorSessionReads++
+        sensorSessionsFailure?.let { throw it }
+        return sensorSessions
     }
 
     override suspend fun getRecorderStatus(): RecorderStatus {

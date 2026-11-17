@@ -27,8 +27,9 @@
 //! the device doesn't have is simply not watched.
 //!
 //! A recorded call is stored as `binder:<interface>/<method>`, followed by
-//! `#<package>` for the calls that ask about one particular app. Reads of
-//! the few system settings that identify the device are stored as
+//! `#<package>` for the calls that ask about one particular app, or by
+//! `@<sensor type>` for a sensor turned on (see `sensors`). Reads of the few
+//! system settings that identify the device are stored as
 //! `setting:<table>/<name>`.
 //!
 //! Only the call is seen, not the answer: a record means the app asked, not
@@ -38,10 +39,10 @@ use std::collections::HashMap;
 
 use bb_common::{
     BINDER_CODES, BINDER_KEY_HEAD, BINDER_KEY_LEN, BINDER_KEY_TAIL, BINDER_MAX_NAME,
-    BINDER_MIN_NAME, BINDER_VALUE_WORDS, BinderKey, BinderValue,
+    BINDER_MIN_NAME, BINDER_UNNAMED_KEY, BINDER_VALUE_WORDS, BinderKey, BinderValue,
 };
 
-use crate::rules::topic;
+use crate::{rules::topic, sensors};
 
 /// Prefix of a stored call.
 pub const SCHEME: &str = "binder:";
@@ -71,11 +72,18 @@ const WATCHED: &[(&str, &[TopicMethods])] = &[
             ],
         )],
     ),
+    // Reads, listening for changes and writes are told apart by the app.
     (
         "android.content.IClipboard",
         &[(
             topic::CLIPBOARD,
-            &["getPrimaryClip", "addPrimaryClipChangedListener"],
+            &[
+                "getPrimaryClip",
+                "addPrimaryClipChangedListener",
+                "setPrimaryClip",
+                "setPrimaryClipAsPackage",
+                "clearPrimaryClip",
+            ],
         )],
     ),
     (
@@ -197,6 +205,13 @@ const WATCHED: &[(&str, &[TopicMethods])] = &[
         "android.gui.SensorServer",
         &[(topic::SENSORS, &["createSensorEventConnection"])],
     ),
+    // Never stored as it is; see `sensors`. Only turning a sensor on is
+    // stored as a call; turning it off and the connection's other methods
+    // end what `sensors` keeps of it.
+    (
+        sensors::CONNECTION,
+        &[(topic::SENSORS, &[sensors::ENABLE_DISABLE])],
+    ),
     // Never stored under this name; see `CONTENT_PROVIDER`.
     (CONTENT_PROVIDER, &[(topic::ANDROID_ID, &["CALL"])]),
     (
@@ -215,9 +230,20 @@ const WATCHED: &[(&str, &[TopicMethods])] = &[
 /// codes are taken from the Android sources, where these have not moved
 /// since the interface was introduced. (interface, method, code).
 const FIXED: &[(&str, &str, u32)] = &[
-    // The first step of listening to any sensor.
+    // The first step of listening to any sensor
+    // (frameworks/native/libs/sensor/ISensorServer.cpp).
     ("android.gui.SensorServer", "createSensorEventConnection", 2),
+    // frameworks/native/libs/sensor/ISensorEventConnection.cpp, the same
+    // from Android 11 to 16.
+    (sensors::CONNECTION, sensors::ENABLE_DISABLE, 2),
+    (sensors::CONNECTION, sensors::SET_EVENT_RATE, 3),
 ];
+
+/// The one call watched although it carries no interface name: closing a
+/// sensor connection sends an empty parcel. The kernel side reports such
+/// calls by code alone (`BINDER_UNNAMED_KEY`), and `sensors` keeps only
+/// those that went to a connection it knows.
+const UNNAMED: (&str, &str, u32) = (sensors::CONNECTION, sensors::DESTROY, 6);
 
 /// Every content provider is called through this one interface; what is
 /// wanted from it is the reads of system settings, which go to the settings
@@ -354,6 +380,9 @@ pub fn topic_of(subject: &str) -> Option<&'static str> {
     let (call, package) = call
         .split_once('#')
         .map_or((call, None), |(call, package)| (call, Some(package)));
+    let call = call
+        .split_once(sensors::SENSOR_MARK)
+        .map_or(call, |(call, _)| call);
     let (interface, method) = call.rsplit_once('/')?;
     let topic = topic_of_method(interface, method)?;
     let Some(package) = package.filter(|_| topic == topic::INSTALLED_APPS) else {
@@ -395,6 +424,9 @@ pub fn key(interface: &str) -> Option<BinderKey> {
 pub struct Catalog {
     /// (index into `WATCHED`, code) -> method name.
     methods: HashMap<(u32, u32), &'static str>,
+    /// The one call watched by code alone, if its interface is watched:
+    /// (index into `WATCHED`, code).
+    unnamed: Option<(u32, u32)>,
     /// How many of them the device reported, as opposed to `FIXED`.
     reflected: usize,
 }
@@ -435,7 +467,19 @@ impl Catalog {
                 methods.insert((id as u32, *code), *method);
             }
         }
-        Self { methods, reflected }
+        let (interface, method, code) = UNNAMED;
+        let unnamed = WATCHED
+            .iter()
+            .position(|(name, _)| *name == interface)
+            .map(|id| (id as u32, code));
+        if let Some(key) = unnamed {
+            methods.insert(key, method);
+        }
+        Self {
+            methods,
+            unnamed,
+            reflected,
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -445,18 +489,40 @@ impl Catalog {
     /// What to put in the kernel side's map.
     pub fn map_entries(&self) -> Vec<(BinderKey, BinderValue)> {
         let mut values: HashMap<u32, BinderValue> = HashMap::new();
-        for (id, code) in self.methods.keys() {
-            let value = values.entry(*id).or_insert_with(|| {
-                let mut value = [0u64; BINDER_VALUE_WORDS];
-                value[0] = u64::from(*id);
-                value
-            });
-            value[1 + (*code / 64) as usize] |= 1 << (*code % 64);
+        for (id, code) in self
+            .methods
+            .keys()
+            .filter(|method| Some(**method) != self.unnamed)
+        {
+            values.entry(*id).or_insert_with(|| map_value(*id))[1 + (*code / 64) as usize] |=
+                1 << (*code % 64);
         }
-        values
+        let mut entries: Vec<(BinderKey, BinderValue)> = values
             .into_iter()
             .filter_map(|(id, value)| Some((key(WATCHED.get(id as usize)?.0)?, value)))
-            .collect()
+            .collect();
+        if let Some((id, code)) = self.unnamed {
+            let mut value = map_value(id);
+            value[1 + (code / 64) as usize] |= 1 << (code % 64);
+            entries.push((BINDER_UNNAMED_KEY, value));
+        }
+        entries
+    }
+
+    /// A call to a sensor connection, which `sensors` keeps track of rather
+    /// than it being stored as it is. `None` for any other call, or one whose
+    /// arguments can't be read.
+    pub fn sensor_request(
+        &self,
+        interface: u32,
+        code: u32,
+        args: &[u8],
+    ) -> Option<sensors::Request> {
+        let method = self.methods.get(&(interface, code))?;
+        if WATCHED.get(interface as usize)?.0 != sensors::CONNECTION {
+            return None;
+        }
+        sensors::request(method, args)
     }
 
     /// What to store for a call reported by the kernel side. `args` is the
@@ -477,6 +543,9 @@ impl Catalog {
         if name == CONTENT_PROVIDER {
             return setting_read(args);
         }
+        if name == sensors::CONNECTION {
+            return None;
+        }
         let mut subject = format!("{SCHEME}{name}/{method}");
         if ABOUT_A_UID.contains(method)
             && let Some(asked) = args.first_chunk::<4>()
@@ -495,6 +564,13 @@ impl Catalog {
         }
         Some(subject)
     }
+}
+
+/// A map value for the interface `id`, with no code watched yet.
+fn map_value(id: u32) -> BinderValue {
+    let mut value = [0u64; BINDER_VALUE_WORDS];
+    value[0] = u64::from(id);
+    value
 }
 
 /// The device-identifying setting a provider call reads, if that is what it
@@ -584,7 +660,8 @@ mod tests {
     #[test]
     fn the_catalog_keeps_watched_methods_only() {
         let catalog = Catalog::parse(CATALOG);
-        assert_eq!((catalog.reflected, catalog.len()), (4, 4 + FIXED.len()));
+        // The fixed codes, and the one call watched without a name.
+        assert_eq!((catalog.reflected, catalog.len()), (4, 4 + FIXED.len() + 1));
         let own = ["com.me".to_string()];
         assert_eq!(
             catalog.subject(0, 70, &[], &[10100], &own).as_deref(),
@@ -646,7 +723,26 @@ mod tests {
     #[test]
     fn the_kernel_map_has_a_bit_per_code() {
         let entries = Catalog::parse(CATALOG).map_entries();
-        assert_eq!(entries.len(), 4);
+        // Four interfaces from the catalog, two fixed ones, and the calls
+        // without a name.
+        assert_eq!(entries.len(), 6);
+        let unnamed: Vec<_> = entries
+            .iter()
+            .filter(|(key, _)| *key == BINDER_UNNAMED_KEY)
+            .collect();
+        assert_eq!(unnamed.len(), 1);
+        let connection = WATCHED
+            .iter()
+            .position(|(name, _)| *name == sensors::CONNECTION)
+            .unwrap() as u64;
+        assert_eq!(unnamed[0].1[0], connection);
+        assert_eq!(unnamed[0].1[1], 1 << 6);
+        // Named calls to the connection: enableDisable and setEventRate.
+        let named = entries
+            .iter()
+            .find(|(key, value)| value[0] == connection && *key != BINDER_UNNAMED_KEY)
+            .unwrap();
+        assert_eq!(named.1[1], 1 << 2 | 1 << 3);
         let packages = entries.iter().find(|(_, value)| value[0] == 0).unwrap();
         assert_eq!(
             packages.0,
@@ -704,6 +800,38 @@ mod tests {
             catalog.subject(sensors, 2, &[], &[10100], &[]).as_deref(),
             Some("binder:android.gui.SensorServer/createSensorEventConnection")
         );
+    }
+
+    #[test]
+    fn sensor_connection_calls_are_requests_not_subjects() {
+        let catalog = Catalog::parse("");
+        let connection = WATCHED
+            .iter()
+            .position(|(name, _)| *name == sensors::CONNECTION)
+            .unwrap() as u32;
+        let mut enable = 3i32.to_le_bytes().to_vec();
+        enable.extend(1i32.to_le_bytes());
+        enable.extend(5_000_000i64.to_le_bytes());
+        enable.extend([0; 12]);
+        assert_eq!(
+            catalog.sensor_request(connection, 2, &enable),
+            Some(sensors::Request::Enable {
+                handle: 3,
+                period_ns: 5_000_000
+            })
+        );
+        assert_eq!(
+            catalog.sensor_request(connection, 6, &[]),
+            Some(sensors::Request::Close)
+        );
+        // Never stored as calls of their own, and not watched otherwise.
+        assert_eq!(catalog.subject(connection, 2, &enable, &[10100], &[]), None);
+        assert_eq!(catalog.sensor_request(connection, 4, &[]), None);
+        let server = WATCHED
+            .iter()
+            .position(|(name, _)| *name == "android.gui.SensorServer")
+            .unwrap() as u32;
+        assert_eq!(catalog.sensor_request(server, 2, &enable), None);
     }
 
     #[test]
@@ -769,6 +897,26 @@ mod tests {
                 topic::CLIPBOARD,
             ),
             (
+                "binder:android.content.IClipboard/addPrimaryClipChangedListener",
+                topic::CLIPBOARD,
+            ),
+            (
+                "binder:android.content.IClipboard/setPrimaryClip",
+                topic::CLIPBOARD,
+            ),
+            (
+                "binder:android.content.IClipboard/setPrimaryClipAsPackage",
+                topic::CLIPBOARD,
+            ),
+            (
+                "binder:android.content.IClipboard/clearPrimaryClip",
+                topic::CLIPBOARD,
+            ),
+            (
+                "binder:android.gui.SensorEventConnection/enableDisable@android.sensor.gyroscope:fast",
+                topic::SENSORS,
+            ),
+            (
                 "binder:com.android.internal.telephony.ITelephony/getImeiForSlot",
                 topic::PHONE_IDENTITY,
             ),
@@ -780,6 +928,11 @@ mod tests {
             assert_eq!(topic_of(subject), Some(want), "{subject}");
         }
         assert_eq!(topic_of("binder:android.content.IClipboard/clear"), None);
+        // Turning a sensor off and closing the connection are not stored.
+        assert_eq!(
+            topic_of("binder:android.gui.SensorEventConnection/setEventRate"),
+            None
+        );
         assert_eq!(topic_of("binder:nonsense"), None);
         assert_eq!(topic_of("exec:su"), None);
         // Everything watched has a topic.

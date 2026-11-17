@@ -23,6 +23,7 @@ import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.Category
 import li.mercury.bigbrother.core.model.PathMatch
 import li.mercury.bigbrother.core.model.RecorderStatus
+import li.mercury.bigbrother.core.model.SensorSession
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.model.TimelinePage
 
@@ -46,6 +47,13 @@ interface AccessRepository {
 
     /** Each time [uid] touched any of [paths], most recent first. */
     suspend fun getHistory(uid: Int, paths: List<String>, range: TimeRange): List<AccessPeriod>
+
+    /**
+     * The periods in which [uid] had a sensor turned on that overlap
+     * [range], most recent first. A module older than this app does not
+     * keep them and throws [li.mercury.bigbrother.core.data.RecordsException.ModuleOutdated].
+     */
+    suspend fun getSensorSessions(uid: Int, range: TimeRange): List<SensorSession>
 
     /** Whether the daemon is currently recording, and what it can't record. */
     suspend fun getRecorderStatus(): RecorderStatus

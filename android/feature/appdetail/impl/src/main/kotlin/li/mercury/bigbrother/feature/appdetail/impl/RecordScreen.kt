@@ -56,6 +56,8 @@ import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndica
 import li.mercury.bigbrother.core.designsystem.component.ShapedIcon
 import li.mercury.bigbrother.core.model.AccessPeriod
 import li.mercury.bigbrother.core.model.AppSummary
+import li.mercury.bigbrother.core.model.ClipboardUse
+import li.mercury.bigbrother.core.model.clipboardUse
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.Message
@@ -65,6 +67,7 @@ import li.mercury.bigbrother.core.ui.exactDateTime
 import li.mercury.bigbrother.core.ui.exactTime
 import li.mercury.bigbrother.core.ui.relativeTime
 import li.mercury.bigbrother.core.ui.topicIcon
+import li.mercury.bigbrother.core.ui.topicRecordsSummary
 import li.mercury.bigbrother.core.ui.topicTitle
 import li.mercury.bigbrother.core.ui.R as UiR
 
@@ -82,6 +85,9 @@ fun RecordScreen(uid: Int, packageName: String, onClose: () -> Unit, viewModel: 
 /** Details listed before the rest are asked for. */
 private const val DETAILS_SHOWN = 8
 
+/** Sensor sessions up to which every sensor's are shown open. */
+private const val SESSIONS_SHOWN_OPEN = 12
+
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 internal fun RecordScreen(
@@ -92,6 +98,8 @@ internal fun RecordScreen(
     onRetry: () -> Unit,
 ) {
     val group = state.group
+    // Sessions still going are counted up to when they were loaded.
+    val now = remember(state.sensorSessions) { System.currentTimeMillis() / 1000 }
     val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     // As a pane it reaches the top of the window, under the status bar; in a
     // bottom sheet it starts below it.
@@ -124,6 +132,19 @@ internal fun RecordScreen(
                 if (details.isNotEmpty()) {
                     item(key = "details-header") { SectionHeader(stringResource(R.string.record_details)) }
                     item(key = "details") { Details(details) }
+                }
+                val sessions = state.sensorSessions
+                if (!sessions.isNullOrEmpty()) {
+                    val groups = groupSessions(sessions)
+                    // A few are shown open; many, each sensor folded.
+                    val open = sessions.size <= SESSIONS_SHOWN_OPEN
+                    item(key = "sensors-header") { SectionHeader(stringResource(R.string.sensor_sessions)) }
+                    for (sensorGroup in groups) {
+                        item(key = "sensor:${sensorGroup.sensor}") {
+                            SensorGroup(sensorGroup, now, initiallyExpanded = open, modifier = Modifier.padding(bottom = 8.dp))
+                        }
+                    }
+                    item(key = "sensors-note") { SensorSessionsNote() }
                 }
                 val periods = state.periods
                 item(key = "history-header") { SectionHeader(stringResource(R.string.record_history)) }
@@ -205,8 +226,10 @@ private fun Header(state: RecordUiState, uid: Int, packageName: String, onClose:
         if (group != null) {
             val asked = remember(group) { appsAsked(group) }
             val last = remember(group) { relativeTime(group.lastSeen) }
+            val records = remember(group) { group.records }
             val summary = if (group.allowed == 0) {
-                pluralStringResource(R.plurals.total_blocked, group.denied, group.denied)
+                topicRecordsSummary(group.topic, records)
+                    ?: pluralStringResource(R.plurals.total_blocked, group.denied, group.denied)
             } else {
                 outcome(group, group.allowed, asked)
             } + stringResource(R.string.time_separator) + last
@@ -241,12 +264,26 @@ private fun Details(details: List<RecordDetail.Plain>) {
     }
 }
 
+/** What an access to the clipboard did, as a verb: "Read", "Watched", "Written". */
+private val ClipboardUse.label: Int
+    get() = when (this) {
+        ClipboardUse.READ -> R.string.action_read
+        ClipboardUse.LISTEN -> R.string.action_watch
+        ClipboardUse.WRITE -> R.string.action_clipboard_write
+    }
+
 /** One access, or several in the same second, or an hour recorded only in aggregate. */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun PeriodItem(period: AccessPeriod, fromPermissions: Boolean, index: Int, count: Int) {
-    // The system's permission records say a permission was used, not how.
-    val label = if (fromPermissions) stringResource(R.string.action_used) else actionLabel(period.action, period.viaProvider)
+    // The system's permission records say a permission was used, not how;
+    // the clipboard's say which way.
+    val clipboard = period.subject?.let(::clipboardUse)
+    val label = when {
+        clipboard != null -> stringResource(clipboard.label)
+        fromPermissions -> stringResource(R.string.action_used)
+        else -> actionLabel(period.action, period.viaProvider)
+    }
     ListItem(
         shapes = ListItemDefaults.segmentedShapes(index, count),
         colors = ListItemDefaults.segmentedColors(),

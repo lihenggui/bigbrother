@@ -16,6 +16,10 @@
 
 package li.mercury.bigbrother.feature.appdetail.impl
 
+import li.mercury.bigbrother.core.model.Access
+import li.mercury.bigbrother.core.model.Action
+import li.mercury.bigbrother.core.model.Category
+import li.mercury.bigbrother.core.ui.DataCategory
 import li.mercury.bigbrother.feature.appdetail.impl.RecordDetail.App
 import li.mercury.bigbrother.feature.appdetail.impl.RecordDetail.Plain
 import kotlin.test.Test
@@ -71,5 +75,22 @@ class RecordDetailTest {
             listOf(Plain("/sys/x"), Plain("/sys/y")),
             recordDetails(listOf("/sys/x", "/sys/y", "/sys/x"), titled = false),
         )
+    }
+
+    @Test
+    fun givenSensorTurnedOn_whenDetailed_thenNotTakenForAnApp() {
+        assertNull(recordDetail("binder:android.gui.SensorEventConnection/enableDisable@android.sensor.gyroscope:fast"))
+        assertNull(recordDetail("binder:android.gui.SensorEventConnection/enableDisable"))
+    }
+
+    @Test
+    fun givenSensorRecords_whenAppsAskedCounted_thenNone() {
+        val calls = listOf(
+            "binder:android.gui.SensorEventConnection/enableDisable@android.sensor.accelerometer",
+            "binder:android.gui.SensorEventConnection/enableDisable@android.sensor.gyroscope:fast",
+        ).map {
+            Access(Category.SERVICE, it, Action.CALL, viaProvider = false, items = 0, allowed = 1, denied = 0, lastSeen = 0, topic = "sensors")
+        }
+        assertEquals(0, appsAsked(TopicGroup("sensors", calls, DataCategory.SENSORS, RecordSource.APP)))
     }
 }

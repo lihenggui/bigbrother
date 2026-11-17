@@ -29,6 +29,7 @@ mod packages;
 mod paths;
 mod personal;
 mod rules;
+mod sensors;
 mod spool;
 mod store;
 mod syscalls;
@@ -130,6 +131,14 @@ enum Command {
         #[arg(long, default_value_t = 300)]
         limit: usize,
     },
+    /// The periods one app had sensors on, most recent first.
+    Sensors {
+        #[arg(long)]
+        uid: u32,
+        /// Only periods that overlap the last N hours (default: everything).
+        #[arg(long)]
+        hours: Option<u32>,
+    },
     /// Database and daemon counters.
     Stats,
 }
@@ -215,6 +224,9 @@ fn main() -> anyhow::Result<()> {
         )?),
         Command::History { uid, path, hours } => {
             print_json(&store::Reader::open(&cli.db)?.history_of(uid, &path, since(hours))?)
+        }
+        Command::Sensors { uid, hours } => {
+            print_json(&store::Reader::open(&cli.db)?.sensor_sessions(uid, since(hours))?)
         }
         Command::Stats => print_json(&StatsOutput {
             stats: store::Reader::open(&cli.db)?.stats()?,

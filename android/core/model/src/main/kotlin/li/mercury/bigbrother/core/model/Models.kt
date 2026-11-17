@@ -220,6 +220,8 @@ data class AccessPeriod(
     val denied: Int,
     val firstSeen: Long,
     val lastSeen: Long,
+    /** The record it is of, where the history of several was read one by one; null otherwise. */
+    val subject: String? = null,
 )
 
 /**
@@ -249,6 +251,12 @@ data class TimelineEntry(
     val folder: String?,
     val firstSeen: Long,
     val lastSeen: Long,
+    /**
+     * Each record of the entry, for the kinds whose records differ in what
+     * they say (the clipboard read or written, which sensor). Empty for the
+     * other kinds, and from a daemon that does not report them.
+     */
+    val subjects: List<SubjectCount> = emptyList(),
 ) {
     /** Whether the only file accesses were listings, probes or watches: nothing was read. */
     val onlyLookedForFiles: Boolean get() = category == Category.STORAGE && filesRead == 0
@@ -259,6 +267,42 @@ data class TimelineEntry(
     /** Whether files were opened through a content provider. */
     val viaProvider: Boolean get() = Action.isViaProvider(modes)
 }
+
+/** One record and how often it happened: a subject as the daemon stores it, with its counts. */
+data class SubjectCount(
+    /** What was recorded, e.g. `binder:android.content.IClipboard/getPrimaryClip`. */
+    val path: String,
+    /** Times the system allowed it. */
+    val allowed: Int,
+    /** Times the system refused it. */
+    val denied: Int,
+)
+
+/**
+ * One period in which an app had a sensor turned on: from when it turned
+ * the sensor on until it turned it off, closed the connection or ended.
+ */
+data class SensorSession(
+    /**
+     * The sensor's type as the system names it, such as
+     * `android.sensor.accelerometer`; empty if it could not be identified.
+     */
+    val sensor: String,
+    /** Whether the app asked for 200 events a second or more. */
+    val highRate: Boolean,
+    /**
+     * The time between events the app asked for, in nanoseconds; 0 for as
+     * fast as the sensor goes. Null for sensors that report on change or
+     * once, for which a rate means nothing.
+     */
+    val periodNs: Long?,
+    /** The rate the app asked for; null when [periodNs] is null or 0. */
+    val rateHz: Double?,
+    /** Unix time. */
+    val start: Long,
+    /** Unix time; null while the sensor is still on. */
+    val end: Long?,
+)
 
 /** A page of the timeline, most recent first. */
 data class TimelinePage(

@@ -139,4 +139,83 @@
     </plurals>
     <!-- Between parts of a supporting line: "Location · 3 apps". -->
     <string name="dot_separator" translatable="false">" · "</string>
+
+    <!-- Which way an app used the clipboard. Several share a line:
+         "Read 3 times · Listens for changes · Written once". -->
+    <plurals name="clipboard_read">
+        <item quantity="one">Read once</item>
+        <item quantity="other">Read %d times</item>
+    </plurals>
+    <string name="clipboard_listens">Listens for changes</string>
+    <plurals name="clipboard_written">
+        <item quantity="one">Written once</item>
+        <item quantity="other">Written %d times</item>
+    </plurals>
+    <!-- Reads or writes the system refused every time. -->
+    <plurals name="clipboard_read_denied">
+        <item quantity="one">Read denied once</item>
+        <item quantity="other">Read denied %d times</item>
+    </plurals>
+    <plurals name="clipboard_write_denied">
+        <item quantity="one">Write denied once</item>
+        <item quantity="other">Write denied %d times</item>
+    </plurals>
+    <!-- The same, shorter, for a line shared with more: "Read 3× · Listens · Written 1×". -->
+    <string name="clipboard_read_short">Read %d×</string>
+    <string name="clipboard_listens_short">Listens</string>
+    <string name="clipboard_written_short">Written %d×</string>
+    <string name="clipboard_read_denied_short">Read denied %d×</string>
+    <string name="clipboard_write_denied_short">Write denied %d×</string>
+    <!-- %1$s is a count of reads or writes, %2$d how many of them the system refused. -->
+    <string name="clipboard_partly_denied">%1$s (%2$d\u00A0denied)</string>
+
+    <!-- Sensors an app turned on: "Accelerometer, Gyroscope (high rate) · 12 times".
+         High rate: the app asked for 200 events a second or more. -->
+    <string name="sensor_high_rate">%s (high rate)</string>
+    <!-- How many times sensors were turned on. -->
+    <plurals name="sensor_times">
+        <item quantity="one">%d time</item>
+        <item quantity="other">%d times</item>
+    </plurals>
+    <string name="sensor_times_short">%d×</string>
+    <string name="sensor_unknown">Unknown sensor</string>
+    <!-- A sensor the device names only by number. -->
+    <string name="sensor_type_number">Sensor type %s</string>
+    <!-- Sensor types, by the system's names for them (android.sensor.*). -->
+    <string name="sensor_accelerometer">Accelerometer</string>
+    <string name="sensor_accelerometer_uncalibrated">Accelerometer (uncalibrated)</string>
+    <string name="sensor_accelerometer_limited_axes">Accelerometer (limited axes)</string>
+    <string name="sensor_accelerometer_limited_axes_uncalibrated">Accelerometer (limited axes, uncalibrated)</string>
+    <string name="sensor_gyroscope">Gyroscope</string>
+    <string name="sensor_gyroscope_uncalibrated">Gyroscope (uncalibrated)</string>
+    <string name="sensor_gyroscope_limited_axes">Gyroscope (limited axes)</string>
+    <string name="sensor_gyroscope_limited_axes_uncalibrated">Gyroscope (limited axes, uncalibrated)</string>
+    <string name="sensor_magnetic_field">Magnetometer</string>
+    <string name="sensor_magnetic_field_uncalibrated">Magnetometer (uncalibrated)</string>
+    <string name="sensor_orientation">Orientation</string>
+    <string name="sensor_light">Light sensor</string>
+    <string name="sensor_proximity">Proximity sensor</string>
+    <string name="sensor_pressure">Barometer</string>
+    <string name="sensor_relative_humidity">Humidity sensor</string>
+    <string name="sensor_ambient_temperature">Ambient temperature</string>
+    <string name="sensor_gravity">Gravity</string>
+    <string name="sensor_linear_acceleration">Linear acceleration</string>
+    <string name="sensor_rotation_vector">Rotation vector</string>
+    <string name="sensor_game_rotation_vector">Game rotation vector</string>
+    <string name="sensor_geomagnetic_rotation_vector">Geomagnetic rotation vector</string>
+    <string name="sensor_significant_motion">Significant motion</string>
+    <string name="sensor_step_detector">Step detector</string>
+    <string name="sensor_step_counter">Step counter</string>
+    <string name="sensor_heart_rate">Heart rate</string>
+    <string name="sensor_heart_beat">Heartbeat</string>
+    <string name="sensor_device_orientation">Device orientation</string>
+    <string name="sensor_pick_up_gesture">Pick-up gesture</string>
+    <string name="sensor_tilt_detector">Tilt detector</string>
+    <string name="sensor_hinge_angle">Hinge angle</string>
+    <string name="sensor_low_latency_offbody_detect">Off-body detection</string>
+    <string name="sensor_stationary_detect">Stationary detection</string>
+    <string name="sensor_motion_detect">Motion detection</string>
+    <string name="sensor_pose_6dof">6DoF pose</string>
+    <string name="sensor_head_tracker">Head tracker</string>
+    <string name="sensor_heading">Heading</string>
 </resources>

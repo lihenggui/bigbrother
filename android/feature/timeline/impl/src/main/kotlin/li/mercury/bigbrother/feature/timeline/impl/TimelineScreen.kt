@@ -70,6 +70,7 @@ import li.mercury.bigbrother.core.ui.MenuFilterChip
 import li.mercury.bigbrother.core.ui.MenuOption
 import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.namedList
+import li.mercury.bigbrother.core.ui.topicRecordsSummary
 import li.mercury.bigbrother.core.ui.topicTitle
 import java.time.Instant
 import java.time.LocalDate
@@ -329,7 +330,13 @@ private fun entryName(entry: TimelineEntry): String = when (entry.category) {
     else -> entry.topic?.let { topicTitle(it) }?.let { stringResource(it) } ?: stringResource(entry.dataCategory.title)
 }
 
-/** One entry in a few words: "Read 23 files · DCIM", "Android ID · 3 times". */
+/** The topic id of sensors. */
+private const val SENSORS = "sensors"
+
+/**
+ * One entry in a few words: "Read 23 files · DCIM", "Android ID · 3 times",
+ * "Clipboard · Read 2× · Written 1×", "Accelerometer · 4×".
+ */
 @Composable
 private fun entrySummary(entry: TimelineEntry): String {
     val separator = stringResource(UiR.string.dot_separator)
@@ -349,9 +356,13 @@ private fun entrySummary(entry: TimelineEntry): String {
             else -> pluralStringResource(R.plurals.media_opened, entry.paths, entry.paths)
         }
 
+        // Sensors are named by the sensors turned on, which say what they are.
         else -> {
+            val records = topicRecordsSummary(entry.topic, entry.subjects, compact = true)
+            if (records != null && entry.topic == SENSORS) return records
             val title = entry.topic?.let { topicTitle(it) }?.let { stringResource(it) }
                 ?: stringResource(entry.dataCategory.title)
+            if (records != null) return title + separator + records
             val count = if (entry.allowed == 0) {
                 pluralStringResource(R.plurals.times_denied, entry.denied, entry.denied)
             } else {

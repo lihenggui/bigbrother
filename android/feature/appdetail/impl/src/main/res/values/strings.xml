@@ -28,6 +28,8 @@
     <string name="action_exec">Executed</string>
     <string name="action_used">Used</string>
     <string name="action_call">Called</string>
+    <!-- Put something on the clipboard, or cleared it. -->
+    <string name="action_clipboard_write">Written</string>
     <string name="search_paths">Search paths</string>
     <!-- A media library query: how many times the app listed a collection
          (the quantity) and the most entries one listing returned. -->
@@ -172,4 +174,30 @@
     <string name="record_details">Details</string>
     <string name="record_history">Each access</string>
     <string name="record_history_partial">Times shown for the most recent records of this kind.</string>
+
+    <!-- Record of sensors: when each sensor was on. -->
+    <string name="sensor_sessions">Sensor use</string>
+    <!-- After how many times a sensor was turned on: how long it was on in all. %s is a duration. -->
+    <string name="sensor_total">%s total</string>
+    <!-- A period a sensor was on: start and end time. -->
+    <string name="session_span">%1$s – %2$s</string>
+    <!-- A period a sensor is still on: %s is when it was turned on. -->
+    <string name="sensor_since">Since %s</string>
+    <string name="sensor_still_on">Still on</string>
+    <!-- The app asked for 200 events a second or more. -->
+    <string name="high_rate">High rate</string>
+    <!-- The app asked for events as fast as the sensor can deliver them. -->
+    <string name="rate_fastest">Fastest</string>
+    <string name="rate_hz" translatable="false">%s Hz</string>
+    <string name="sensor_sessions_note">Rates as requested. The system may deliver fewer events.</string>
+    <!-- Durations, short: seconds; minutes; hours; hours and minutes; days; days and hours. -->
+    <string name="duration_seconds">%d s</string>
+    <string name="duration_minutes">%d min</string>
+    <string name="duration_hours">%d h</string>
+    <string name="duration_hours_minutes">%1$d h %2$d min</string>
+    <string name="duration_days">%d d</string>
+    <string name="duration_days_hours">%1$d d %2$d h</string>
+    <!-- Whether a group of rows is open, for screen readers. -->
+    <string name="expanded">Expanded</string>
+    <string name="collapsed">Collapsed</string>
 </resources>

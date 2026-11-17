@@ -1024,40 +1024,53 @@ fn try_binder_ioctl(ctx: &RawTracePointContext) -> Result<(), i32> {
 fn binder_transaction(transaction: u64, uid: u32) -> Result<(), i32> {
     // struct binder_transaction_data: target and cookie (8 bytes each),
     // code and flags (4 each), sender pid and euid (4 each), data_size,
-    // offsets_size, data buffer, offsets buffer (8 each). Only three fields
+    // offsets_size, data buffer, offsets buffer (8 each). Only four fields
     // are wanted, and the stack is small.
     let code: u32 = unsafe { bpf_probe_read_user((transaction + 16) as *const u32)? };
     let size: u64 = unsafe { bpf_probe_read_user((transaction + 32) as *const u64)? };
     let data: u64 = unsafe { bpf_probe_read_user((transaction + 48) as *const u64)? };
-    if code >= BINDER_CODES || size < PARCEL_NAME_OFFSET {
+    if code >= BINDER_CODES {
         return Ok(());
     }
-    let prefix: [u32; 4] = unsafe { bpf_probe_read_user(data as *const [u32; 4])? };
-    let len = prefix[3];
-    if prefix[2] != PARCEL_HEADER_SYSTEM || len < BINDER_MIN_NAME || len > BINDER_MAX_NAME {
-        return Ok(());
-    }
-    // The name: `len` UTF-16 code units, a terminator, padding to 4 bytes.
-    let name = data + PARCEL_NAME_OFFSET;
-    let name_bytes = len as u64 * 2;
     let mut key: BinderKey = [0; BINDER_KEY_LEN];
-    let len_bytes = len.to_ne_bytes();
-    key[0] = len_bytes[0];
-    key[1] = len_bytes[1];
-    key[2] = len_bytes[2];
-    key[3] = len_bytes[3];
-    unsafe {
-        let key_bytes = (&raw mut key).cast::<u8>();
-        bpf_probe_read_user_buf(
-            name as *const u8,
-            core::slice::from_raw_parts_mut(key_bytes.add(4), BINDER_KEY_HEAD),
-        )
-        .map_err(|e| e as i32)?;
-        bpf_probe_read_user_buf(
-            (name + name_bytes - BINDER_KEY_TAIL as u64) as *const u8,
-            core::slice::from_raw_parts_mut(key_bytes.add(4 + BINDER_KEY_HEAD), BINDER_KEY_TAIL),
-        )
-        .map_err(|e| e as i32)?;
+    // A call without arguments has no interface name either; it is looked up
+    // under the all-zero key (`BINDER_UNNAMED_KEY`) and has no arguments to
+    // copy.
+    let mut args = 0;
+    if size != 0 {
+        if size < PARCEL_NAME_OFFSET {
+            return Ok(());
+        }
+        let prefix: [u32; 4] = unsafe { bpf_probe_read_user(data as *const [u32; 4])? };
+        let len = prefix[3];
+        if prefix[2] != PARCEL_HEADER_SYSTEM || len < BINDER_MIN_NAME || len > BINDER_MAX_NAME {
+            return Ok(());
+        }
+        // The name: `len` UTF-16 code units, a terminator, padding to 4 bytes.
+        let name = data + PARCEL_NAME_OFFSET;
+        let name_bytes = len as u64 * 2;
+        let len_bytes = len.to_ne_bytes();
+        key[0] = len_bytes[0];
+        key[1] = len_bytes[1];
+        key[2] = len_bytes[2];
+        key[3] = len_bytes[3];
+        unsafe {
+            let key_bytes = (&raw mut key).cast::<u8>();
+            bpf_probe_read_user_buf(
+                name as *const u8,
+                core::slice::from_raw_parts_mut(key_bytes.add(4), BINDER_KEY_HEAD),
+            )
+            .map_err(|e| e as i32)?;
+            bpf_probe_read_user_buf(
+                (name + name_bytes - BINDER_KEY_TAIL as u64) as *const u8,
+                core::slice::from_raw_parts_mut(
+                    key_bytes.add(4 + BINDER_KEY_HEAD),
+                    BINDER_KEY_TAIL,
+                ),
+            )
+            .map_err(|e| e as i32)?;
+        }
+        args = name + ((name_bytes + 2 + 3) & !3);
     }
     let Some(watched) = (unsafe { BINDER_WATCH.get(&key) }) else {
         return Ok(());
@@ -1068,8 +1081,10 @@ fn binder_transaction(transaction: u64, uid: u32) -> Result<(), i32> {
     if word & (1 << (code & 63)) == 0 {
         return Ok(());
     }
+    // The low half of the `target` union: the handle, for a call to another
+    // process.
+    let target: u32 = unsafe { bpf_probe_read_user(transaction as *const u32)? };
 
-    let args = name + ((name_bytes + 2 + 3) & !3);
     let Some(mut entry) = EVENTS.reserve::<BinderEvent>(0) else {
         count_drop();
         return Err(-1);
@@ -1079,20 +1094,26 @@ fn binder_transaction(transaction: u64, uid: u32) -> Result<(), i32> {
         (*ev).hdr = header(EV_BINDER, uid, bpf_get_current_pid_tgid());
         (*ev).interface = watched[0] as u32;
         (*ev).code = code;
-        // The arguments are read at a fixed length, which can run past the
-        // parcel into whatever follows it; the daemon only trusts what the
-        // parcel's size covers.
-        let have = (data + size).saturating_sub(args);
-        let short =
-            core::slice::from_raw_parts_mut((&raw mut (*ev).args).cast::<u8>(), BINDER_ARGS_SHORT);
-        let read = if bpf_probe_read_user_buf(args as *const u8, &mut (*ev).args).is_ok() {
-            BINDER_ARGS_CAP as u64
-        } else if bpf_probe_read_user_buf(args as *const u8, short).is_ok() {
-            BINDER_ARGS_SHORT as u64
-        } else {
-            0
-        };
-        (*ev).args_len = if have < read { have } else { read } as u32;
+        (*ev).target = target;
+        (*ev).args_len = 0;
+        if args != 0 {
+            // The arguments are read at a fixed length, which can run past
+            // the parcel into whatever follows it; the daemon only trusts
+            // what the parcel's size covers.
+            let have = (data + size).saturating_sub(args);
+            let short = core::slice::from_raw_parts_mut(
+                (&raw mut (*ev).args).cast::<u8>(),
+                BINDER_ARGS_SHORT,
+            );
+            let read = if bpf_probe_read_user_buf(args as *const u8, &mut (*ev).args).is_ok() {
+                BINDER_ARGS_CAP as u64
+            } else if bpf_probe_read_user_buf(args as *const u8, short).is_ok() {
+                BINDER_ARGS_SHORT as u64
+            } else {
+                0
+            };
+            (*ev).args_len = if have < read { have } else { read } as u32;
+        }
     }
     entry.submit(wakeup_flags());
     Ok(())

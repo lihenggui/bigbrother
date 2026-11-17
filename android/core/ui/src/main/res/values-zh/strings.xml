@@ -120,4 +120,68 @@
     <plurals name="app_count">
         <item quantity="other">%d 个应用</item>
     </plurals>
+
+    <plurals name="clipboard_read">
+        <item quantity="other">读取 %d 次</item>
+    </plurals>
+    <string name="clipboard_listens">监听变化</string>
+    <plurals name="clipboard_written">
+        <item quantity="other">写入 %d 次</item>
+    </plurals>
+    <plurals name="clipboard_read_denied">
+        <item quantity="other">读取被拒绝 %d 次</item>
+    </plurals>
+    <plurals name="clipboard_write_denied">
+        <item quantity="other">写入被拒绝 %d 次</item>
+    </plurals>
+    <string name="clipboard_read_short">读取 %d 次</string>
+    <string name="clipboard_listens_short">监听变化</string>
+    <string name="clipboard_written_short">写入 %d 次</string>
+    <string name="clipboard_read_denied_short">读取被拒绝 %d 次</string>
+    <string name="clipboard_write_denied_short">写入被拒绝 %d 次</string>
+    <string name="clipboard_partly_denied">%1$s（%2$d 次被拒绝）</string>
+
+    <string name="sensor_high_rate">%s（高采样率）</string>
+    <plurals name="sensor_times">
+        <item quantity="other">%d 次</item>
+    </plurals>
+    <string name="sensor_times_short">%d 次</string>
+    <string name="sensor_unknown">未知传感器</string>
+    <string name="sensor_type_number">传感器类型 %s</string>
+    <string name="sensor_accelerometer">加速度计</string>
+    <string name="sensor_accelerometer_uncalibrated">加速度计（未校准）</string>
+    <string name="sensor_accelerometer_limited_axes">加速度计（部分轴）</string>
+    <string name="sensor_accelerometer_limited_axes_uncalibrated">加速度计（部分轴，未校准）</string>
+    <string name="sensor_gyroscope">陀螺仪</string>
+    <string name="sensor_gyroscope_uncalibrated">陀螺仪（未校准）</string>
+    <string name="sensor_gyroscope_limited_axes">陀螺仪（部分轴）</string>
+    <string name="sensor_gyroscope_limited_axes_uncalibrated">陀螺仪（部分轴，未校准）</string>
+    <string name="sensor_magnetic_field">磁力计</string>
+    <string name="sensor_magnetic_field_uncalibrated">磁力计（未校准）</string>
+    <string name="sensor_orientation">方向传感器</string>
+    <string name="sensor_light">光线传感器</string>
+    <string name="sensor_proximity">距离传感器</string>
+    <string name="sensor_pressure">气压计</string>
+    <string name="sensor_relative_humidity">湿度传感器</string>
+    <string name="sensor_ambient_temperature">环境温度传感器</string>
+    <string name="sensor_gravity">重力传感器</string>
+    <string name="sensor_linear_acceleration">线性加速度</string>
+    <string name="sensor_rotation_vector">旋转矢量</string>
+    <string name="sensor_game_rotation_vector">游戏旋转矢量</string>
+    <string name="sensor_geomagnetic_rotation_vector">地磁旋转矢量</string>
+    <string name="sensor_significant_motion">显著运动检测</string>
+    <string name="sensor_step_detector">步伐检测器</string>
+    <string name="sensor_step_counter">计步器</string>
+    <string name="sensor_heart_rate">心率</string>
+    <string name="sensor_heart_beat">心跳</string>
+    <string name="sensor_device_orientation">设备方向</string>
+    <string name="sensor_pick_up_gesture">拿起手势</string>
+    <string name="sensor_tilt_detector">倾斜检测</string>
+    <string name="sensor_hinge_angle">铰链角度</string>
+    <string name="sensor_low_latency_offbody_detect">离身检测</string>
+    <string name="sensor_stationary_detect">静止检测</string>
+    <string name="sensor_motion_detect">运动检测</string>
+    <string name="sensor_pose_6dof">六自由度姿态</string>
+    <string name="sensor_head_tracker">头部追踪</string>
+    <string name="sensor_heading">航向</string>
 </resources>
