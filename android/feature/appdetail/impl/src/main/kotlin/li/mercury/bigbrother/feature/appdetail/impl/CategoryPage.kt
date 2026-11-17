@@ -1,5 +1,6 @@
 package li.mercury.bigbrother.feature.appdetail.impl
 
+import android.content.pm.PackageManager
 import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
@@ -22,6 +23,7 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -31,6 +33,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
@@ -119,14 +122,34 @@ internal fun CategoryPage(groups: List<TopicGroup>, contentPadding: PaddingValue
     }
 }
 
+/** At most this many details are listed before the rest are asked for. */
+private const val DETAILS_SHOWN = 5
+
 /**
  * One kind of private data: what it is, where the record comes from, and how
- * often it was accessed. Tapping reveals the exact paths.
+ * often it was accessed. Tapping reveals what was accessed, when the records
+ * say more than the title: which files, which apps were asked about.
  */
 @Composable
 private fun LazyItemScope.TopicRow(group: TopicGroup, index: Int, count: Int) {
-    var expanded by rememberSaveable(group.key) { mutableStateOf(false) }
     val title = topicTitle(group.topic)
+    val details = remember(group) { recordDetails(group.accesses.map { it.path }, titled = title != null) }
+    val modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme)
+    val shapes = ListItemDefaults.segmentedShapes(index, count)
+    if (details.isEmpty()) {
+        ListItem(
+            modifier = modifier,
+            shapes = shapes,
+            colors = ListItemDefaults.segmentedColors(),
+            supportingContent = { TopicSummary(group) },
+        ) {
+            Text(if (title != null) stringResource(title) else group.topic)
+        }
+        return
+    }
+
+    var expanded by rememberSaveable(group.key) { mutableStateOf(false) }
+    var showAll by rememberSaveable(group.key) { mutableStateOf(false) }
     val motion = MaterialTheme.motionScheme
     val rotation by animateFloatAsState(
         targetValue = if (expanded) 180f else 0f,
@@ -145,42 +168,12 @@ private fun LazyItemScope.TopicRow(group: TopicGroup, index: Int, count: Int) {
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         },
-        modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
-        shapes = ListItemDefaults.segmentedShapes(index, count),
+        modifier = modifier,
+        shapes = shapes,
         colors = ListItemDefaults.segmentedColors(),
         supportingContent = {
             Column {
-                val allowed = group.accesses.sumOf { it.allowed }
-                val denied = group.accesses.sumOf { it.denied }
-                val lastSeen = group.accesses.maxOf { it.lastSeen }
-                // What is known differs by how it was observed: a file was
-                // read, a service was only seen being asked.
-                val kind = group.accesses.map { it.action }.distinct().singleOrNull()
-                val source = group.source.label?.let {
-                    stringResource(it) + stringResource(R.string.time_separator)
-                }.orEmpty()
-                Text(
-                    text = source + if (allowed == 0) {
-                        val blocked = if (kind == Action.EXEC) R.plurals.total_not_run else R.plurals.total_blocked
-                        pluralStringResource(blocked, denied, denied)
-                    } else {
-                        val done = when {
-                            // The system's own records say the permission was used.
-                            group.fromPermissions -> R.plurals.total_used
-                            kind == Action.CALL -> R.plurals.total_requested
-                            kind == Action.CONNECT -> R.plurals.total_contacted
-                            kind == Action.EXEC -> R.plurals.total_ran
-                            else -> R.plurals.total_allowed
-                        }
-                        pluralStringResource(done, allowed, allowed)
-                    } + stringResource(R.string.time_separator) +
-                        remember(lastSeen) { relativeTime(lastSeen) },
-                    color = if (allowed == 0) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                )
+                TopicSummary(group)
                 AnimatedVisibility(
                     visible = expanded,
                     enter = expandVertically(motion.defaultSpatialSpec()) +
@@ -189,12 +182,15 @@ private fun LazyItemScope.TopicRow(group: TopicGroup, index: Int, count: Int) {
                         fadeOut(motion.fastEffectsSpec()),
                 ) {
                     Column(Modifier.padding(top = 8.dp)) {
-                        for (path in group.accesses.map { it.path }.distinct()) {
-                            Text(
-                                text = path,
-                                style = MaterialTheme.typography.bodySmall,
-                                fontFamily = FontFamily.Monospace,
-                            )
+                        val shown = if (showAll) details else details.take(DETAILS_SHOWN)
+                        for (detail in shown) DetailLine(detail)
+                        if (shown.size < details.size) {
+                            TextButton(
+                                onClick = { showAll = true },
+                                contentPadding = PaddingValues(0.dp),
+                            ) {
+                                Text(stringResource(R.string.show_all_details, details.size))
+                            }
                         }
                     }
                 }
@@ -203,4 +199,66 @@ private fun LazyItemScope.TopicRow(group: TopicGroup, index: Int, count: Int) {
     ) {
         Text(if (title != null) stringResource(title) else group.topic)
     }
+}
+
+/** One detail of an expanded row: an app by its name where it is installed. */
+@Composable
+private fun DetailLine(detail: RecordDetail) {
+    val packageManager = LocalContext.current.packageManager
+    val label = when (detail) {
+        is RecordDetail.App -> remember(detail) {
+            try {
+                packageManager.getApplicationInfo(detail.packageName, 0)
+                    .loadLabel(packageManager).toString()
+            } catch (_: PackageManager.NameNotFoundException) {
+                null
+            }
+        }
+        is RecordDetail.Plain -> null
+    }
+    Text(
+        text = label ?: when (detail) {
+            is RecordDetail.App -> detail.packageName
+            is RecordDetail.Plain -> detail.text
+        },
+        style = MaterialTheme.typography.bodySmall,
+        // Names as the system has them, such as package names and commands.
+        fontFamily = if (label == null) FontFamily.Monospace else null,
+    )
+}
+
+/** How often the records of a row were accessed, by whom, and when last. */
+@Composable
+private fun TopicSummary(group: TopicGroup) {
+    val allowed = group.accesses.sumOf { it.allowed }
+    val denied = group.accesses.sumOf { it.denied }
+    val lastSeen = group.accesses.maxOf { it.lastSeen }
+    // What is known differs by how it was observed: a file was
+    // read, a service was only seen being asked.
+    val kind = group.accesses.map { it.action }.distinct().singleOrNull()
+    val source = group.source.label?.let {
+        stringResource(it) + stringResource(R.string.time_separator)
+    }.orEmpty()
+    Text(
+        text = source + if (allowed == 0) {
+            val blocked = if (kind == Action.EXEC) R.plurals.total_not_run else R.plurals.total_blocked
+            pluralStringResource(blocked, denied, denied)
+        } else {
+            val done = when {
+                // The system's own records say the permission was used.
+                group.fromPermissions -> R.plurals.total_used
+                kind == Action.CALL -> R.plurals.total_requested
+                kind == Action.CONNECT -> R.plurals.total_contacted
+                kind == Action.EXEC -> R.plurals.total_ran
+                else -> R.plurals.total_allowed
+            }
+            pluralStringResource(done, allowed, allowed)
+        } + stringResource(R.string.time_separator) +
+            remember(lastSeen) { relativeTime(lastSeen) },
+        color = if (allowed == 0) {
+            MaterialTheme.colorScheme.error
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        },
+    )
 }
