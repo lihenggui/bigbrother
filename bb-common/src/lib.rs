@@ -105,6 +105,17 @@ pub struct EventHeader {
     pub uid: u32,
     pub pid: u32,
     pub tid: u32,
+    /// When it happened, in nanoseconds since boot, time suspended included
+    /// (`bpf_ktime_get_boot_ns`). Two halves, low first, to keep to 4-byte
+    /// fields; see [`EventHeader::boot_ns`].
+    pub boot_ns_low: u32,
+    pub boot_ns_high: u32,
+}
+
+impl EventHeader {
+    pub fn boot_ns(&self) -> u64 {
+        u64::from(self.boot_ns_high) << 32 | u64::from(self.boot_ns_low)
+    }
 }
 
 /// Longest single path component (NAME_MAX + NUL).

@@ -61,9 +61,9 @@
 use aya_ebpf::{
     Global,
     helpers::{
-        bpf_get_current_pid_tgid, bpf_get_current_uid_gid, bpf_ktime_get_ns, bpf_probe_read_kernel,
-        bpf_probe_read_kernel_str_bytes, bpf_probe_read_user, bpf_probe_read_user_buf,
-        bpf_probe_read_user_str_bytes,
+        bpf_get_current_pid_tgid, bpf_get_current_uid_gid, bpf_ktime_get_boot_ns, bpf_ktime_get_ns,
+        bpf_probe_read_kernel, bpf_probe_read_kernel_str_bytes, bpf_probe_read_user,
+        bpf_probe_read_user_buf, bpf_probe_read_user_str_bytes,
     },
     macros::{kprobe, kretprobe, map, raw_tracepoint},
     maps::{HashMap, LruHashMap, PerCpuArray, RingBuf},
@@ -113,6 +113,13 @@ static EVENTS: RingBuf = RingBuf::with_byte_size(8 * 1024 * 1024, 0);
 /// adds the per-CPU values up.
 #[map]
 static DROPPED: PerCpuArray<u64> = PerCpuArray::with_max_entries(1, 0);
+
+/// Where `file_open` assembles its event. Most of what it sees is dropped
+/// once the path is known, and a record reserved in the ring buffer and then
+/// discarded would still take up space there until the daemon next reads it.
+/// So the event is copied to the ring buffer only once it is to be kept.
+#[map]
+static FILE_SCRATCH: PerCpuArray<FileEvent> = PerCpuArray::with_max_entries(1, 0);
 
 /// Destinations reported recently, with the time of the report. An app
 /// streaming to a device on the local network sends thousands of datagrams a
@@ -173,8 +180,9 @@ const WAKE_THRESHOLD: u64 = 1024 * 1024;
 
 /// Flags for submitting an event. By default every submit wakes the reader,
 /// which on a busy device means waking the daemon hundreds of times a second
-/// for no benefit: it also polls on a timer. So events are queued silently,
-/// and the daemon is woken early only when the buffer is filling up.
+/// for no benefit: events carry the time they happened, and the daemon reads
+/// them on a timer. So events are queued silently, and the daemon is woken
+/// early only when the buffer is filling up.
 #[inline(always)]
 fn wakeup_flags() -> u64 {
     if EVENTS.query(BPF_RB_AVAIL_DATA) >= WAKE_THRESHOLD {
@@ -193,11 +201,14 @@ fn count_drop() {
 
 #[inline(always)]
 fn header(kind: u32, uid: u32, pid_tgid: u64) -> EventHeader {
+    let boot_ns = unsafe { bpf_ktime_get_boot_ns() };
     EventHeader {
         kind,
         uid,
         pid: (pid_tgid >> 32) as u32,
         tid: pid_tgid as u32,
+        boot_ns_low: boot_ns as u32,
+        boot_ns_high: (boot_ns >> 32) as u32,
     }
 }
 
@@ -266,11 +277,9 @@ fn try_file_open(ctx: &ProbeContext) -> Result<(), i32> {
     }
 
     let pid_tgid = bpf_get_current_pid_tgid();
-    let Some(mut entry) = EVENTS.reserve::<FileEvent>(0) else {
-        count_drop();
-        return Err(-1);
-    };
-    let ev = entry.as_mut_ptr();
+    // Per CPU, and a kprobe program does not run nested on its own CPU, so
+    // nothing else writes to it meanwhile.
+    let ev = FILE_SCRATCH.get_ptr_mut(0).ok_or(-1)?;
 
     // Walk dentry -> d_parent up to the filesystem root, writing each name.
     // `top_name` and `second_name` point at the names of the two outermost
@@ -321,8 +330,8 @@ fn try_file_open(ctx: &ProbeContext) -> Result<(), i32> {
 
     // Most of what apps open under /proc and /sys is of no interest: their
     // own /proc/<pid> entries (where /proc/self resolves to), CPU and memory
-    // statistics, kernel tunables. Drop those here rather than wake the
-    // daemon for them.
+    // statistics, kernel tunables. Drop those here rather than pass them to
+    // the daemon.
     let mut top = [0u8; 8];
     let mut second = [0u8; 8];
     // If the outermost name can't be read (which includes the filesystem's
@@ -351,11 +360,9 @@ fn try_file_open(ctx: &ProbeContext) -> Result<(), i32> {
 
     if walked.is_err() {
         count_drop();
-        entry.discard(0);
         return Ok(());
     }
     if boring {
-        entry.discard(0);
         return Ok(());
     }
 
@@ -376,7 +383,13 @@ fn try_file_open(ctx: &ProbeContext) -> Result<(), i32> {
         (*ev).truncated = truncated;
         (*ev).data_len = len as u32;
     }
-    entry.submit(wakeup_flags());
+    if EVENTS
+        .output::<FileEvent>(unsafe { &*ev }, wakeup_flags())
+        .is_err()
+    {
+        count_drop();
+        return Err(-1);
+    }
     Ok(())
 }
 

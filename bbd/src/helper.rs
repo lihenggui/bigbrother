@@ -21,6 +21,7 @@
 //! from the copy of the APK that was installed with the module.
 
 use std::{
+    fs,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
 };
@@ -81,12 +82,19 @@ pub fn run<'a>(class: &str, args: impl Iterator<Item = &'a str>) -> anyhow::Resu
     Ok(printed)
 }
 
-/// Start `class` and leave it running, with its input and output connected
-/// to the daemon. A helper started this way exits when its input closes.
+/// Start `class` and leave it running, with its input, output and errors
+/// connected to the daemon. A helper started this way exits when its input
+/// closes.
 pub fn spawn<'a>(class: &str, args: impl Iterator<Item = &'a str>) -> anyhow::Result<Child> {
-    command(class, args)?
+    let child = command(class, args)?
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
-        .with_context(|| format!("starting {APP_PROCESS}"))
+        .with_context(|| format!("starting {APP_PROCESS}"))?;
+    // The daemon is started exempt from the out-of-memory killer, and so
+    // would be the helper, a Java runtime of 40 MB or more. It is started
+    // again when it ends, so it may be killed like any other process.
+    let _ = fs::write(format!("/proc/{}/oom_score_adj", child.id()), "0");
+    Ok(child)
 }
