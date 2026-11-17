@@ -71,9 +71,9 @@ enum Command {
     },
     /// Accessed paths, most recent first.
     Files {
-        /// Only this uid.
+        /// Only these uids (repeat for several).
         #[arg(long)]
-        uid: Option<u32>,
+        uid: Vec<u32>,
         /// Only these categories (repeat for several).
         #[arg(long, value_enum)]
         cat: Vec<store::Category>,
@@ -166,7 +166,7 @@ fn main() -> anyhow::Result<()> {
             limit,
             offset,
         } => print_json(&store::Reader::open(&cli.db)?.files(
-            uid,
+            &uid,
             &cat,
             prefix.as_deref(),
             contains.as_deref(),
