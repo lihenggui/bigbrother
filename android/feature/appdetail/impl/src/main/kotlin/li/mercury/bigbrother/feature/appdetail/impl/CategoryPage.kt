@@ -1,6 +1,5 @@
 package li.mercury.bigbrother.feature.appdetail.impl
 
-import android.content.pm.PackageManager
 import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
@@ -33,7 +32,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
@@ -128,20 +126,29 @@ private const val DETAILS_SHOWN = 5
 /**
  * One kind of private data: what it is, where the record comes from, and how
  * often it was accessed. Tapping reveals what was accessed, when the records
- * say more than the title: which files, which apps were asked about.
+ * say more than the title: which commands ran, which addresses were contacted.
  */
 @Composable
 private fun LazyItemScope.TopicRow(group: TopicGroup, index: Int, count: Int) {
     val title = topicTitle(group.topic)
     val details = remember(group) { recordDetails(group.accesses.map { it.path }, titled = title != null) }
+    // The apps asked about are counted, not listed: an app that looks up
+    // the installed apps may well go through hundreds. Counted only when
+    // every record names one; a call that lists them all would make the
+    // count too low.
+    val appsAsked = remember(group) {
+        val paths = group.accesses.map { it.path }
+        if (title != null && paths.all { recordDetail(it) is RecordDetail.App }) details.size else 0
+    }
+    val listed = details.filterIsInstance<RecordDetail.Plain>()
     val modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme)
     val shapes = ListItemDefaults.segmentedShapes(index, count)
-    if (details.isEmpty()) {
+    if (listed.isEmpty()) {
         ListItem(
             modifier = modifier,
             shapes = shapes,
             colors = ListItemDefaults.segmentedColors(),
-            supportingContent = { TopicSummary(group) },
+            supportingContent = { TopicSummary(group, appsAsked) },
         ) {
             Text(if (title != null) stringResource(title) else group.topic)
         }
@@ -173,7 +180,7 @@ private fun LazyItemScope.TopicRow(group: TopicGroup, index: Int, count: Int) {
         colors = ListItemDefaults.segmentedColors(),
         supportingContent = {
             Column {
-                TopicSummary(group)
+                TopicSummary(group, appsAsked)
                 AnimatedVisibility(
                     visible = expanded,
                     enter = expandVertically(motion.defaultSpatialSpec()) +
@@ -182,14 +189,20 @@ private fun LazyItemScope.TopicRow(group: TopicGroup, index: Int, count: Int) {
                         fadeOut(motion.fastEffectsSpec()),
                 ) {
                     Column(Modifier.padding(top = 8.dp)) {
-                        val shown = if (showAll) details else details.take(DETAILS_SHOWN)
-                        for (detail in shown) DetailLine(detail)
-                        if (shown.size < details.size) {
+                        val shown = if (showAll) listed else listed.take(DETAILS_SHOWN)
+                        for (detail in shown) {
+                            Text(
+                                text = detail.text,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                            )
+                        }
+                        if (shown.size < listed.size) {
                             TextButton(
                                 onClick = { showAll = true },
                                 contentPadding = PaddingValues(0.dp),
                             ) {
-                                Text(stringResource(R.string.show_all_details, details.size))
+                                Text(stringResource(R.string.show_all_details, listed.size))
                             }
                         }
                     }
@@ -201,35 +214,13 @@ private fun LazyItemScope.TopicRow(group: TopicGroup, index: Int, count: Int) {
     }
 }
 
-/** One detail of an expanded row: an app by its name where it is installed. */
+/**
+ * How often the records of a row were accessed, by whom, and when last.
+ * For lookups of other apps, how many apps were asked about, which says
+ * more than how many calls it took.
+ */
 @Composable
-private fun DetailLine(detail: RecordDetail) {
-    val packageManager = LocalContext.current.packageManager
-    val label = when (detail) {
-        is RecordDetail.App -> remember(detail) {
-            try {
-                packageManager.getApplicationInfo(detail.packageName, 0)
-                    .loadLabel(packageManager).toString()
-            } catch (_: PackageManager.NameNotFoundException) {
-                null
-            }
-        }
-        is RecordDetail.Plain -> null
-    }
-    Text(
-        text = label ?: when (detail) {
-            is RecordDetail.App -> detail.packageName
-            is RecordDetail.Plain -> detail.text
-        },
-        style = MaterialTheme.typography.bodySmall,
-        // Names as the system has them, such as package names and commands.
-        fontFamily = if (label == null) FontFamily.Monospace else null,
-    )
-}
-
-/** How often the records of a row were accessed, by whom, and when last. */
-@Composable
-private fun TopicSummary(group: TopicGroup) {
+private fun TopicSummary(group: TopicGroup, appsAsked: Int) {
     val allowed = group.accesses.sumOf { it.allowed }
     val denied = group.accesses.sumOf { it.denied }
     val lastSeen = group.accesses.maxOf { it.lastSeen }
@@ -252,7 +243,11 @@ private fun TopicSummary(group: TopicGroup) {
                 kind == Action.EXEC -> R.plurals.total_ran
                 else -> R.plurals.total_allowed
             }
-            pluralStringResource(done, allowed, allowed)
+            if (appsAsked > 0) {
+                pluralStringResource(R.plurals.apps_asked, appsAsked, appsAsked)
+            } else {
+                pluralStringResource(done, allowed, allowed)
+            }
         } + stringResource(R.string.time_separator) +
             remember(lastSeen) { relativeTime(lastSeen) },
         color = if (allowed == 0) {
