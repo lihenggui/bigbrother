@@ -28,8 +28,8 @@
     <string name="module_disabled">模块已停用，请在 root 管理器中启用。</string>
     <string name="start_daemon">启动记录</string>
     <string name="install_module">安装模块</string>
-    <string name="module_outdated">已安装的模块版本低于本应用</string>
-    <string name="update_module">更新模块</string>
+    <string name="updating_module">正在更新模块…</string>
+    <string name="update_failed_title">模块更新失败</string>
     <string name="module_pending_reboot">模块更新将在重启后生效</string>
     <string name="installing_module">正在安装模块…</string>
     <string name="reboot_title">需要重启</string>

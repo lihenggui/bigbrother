@@ -15,6 +15,8 @@
     <string name="no_root_body">Grant root in your root manager (KernelSU, Magisk or APatch), then try again.</string>
     <string name="no_module_title">Module not installed</string>
     <string name="no_module_body">Install the module bundled with this app to start recording.</string>
+    <string name="old_module_title">Module update needed</string>
+    <string name="old_module_body">The installed module does not support this yet. Opening the overview updates it.</string>
     <string name="error_title">Could not load records</string>
 
     <!-- Kinds of device and system information an app can read. Ids match the

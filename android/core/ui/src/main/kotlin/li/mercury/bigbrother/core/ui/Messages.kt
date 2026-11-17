@@ -62,6 +62,8 @@ fun LoadFailureMessage(failure: LoadFailure, onRetry: () -> Unit, modifier: Modi
             stringResource(R.string.no_root_title) to stringResource(R.string.no_root_body)
         LoadFailure.ModuleMissing ->
             stringResource(R.string.no_module_title) to stringResource(R.string.no_module_body)
+        LoadFailure.ModuleOutdated ->
+            stringResource(R.string.old_module_title) to stringResource(R.string.old_module_body)
         is LoadFailure.Other -> stringResource(R.string.error_title) to failure.message
     }
     Message(

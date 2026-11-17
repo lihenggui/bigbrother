@@ -10,6 +10,9 @@ sealed class RecordsException(message: String) : Exception(message) {
     /** The root module, and with it the daemon binary, is not installed. */
     class ModuleMissing : RecordsException("module not installed")
 
+    /** The installed daemon does not know a command or option this app uses. */
+    class ModuleOutdated : RecordsException("module older than the app")
+
     /** A root command failed; [message] carries its output. */
     class CommandFailed(message: String) : RecordsException(message)
 }
@@ -18,5 +21,6 @@ sealed class RecordsException(message: String) : Exception(message) {
 fun Throwable.toLoadFailure(): LoadFailure = when (this) {
     is RecordsException.NoRoot -> LoadFailure.NoRoot
     is RecordsException.ModuleMissing -> LoadFailure.ModuleMissing
+    is RecordsException.ModuleOutdated -> LoadFailure.ModuleOutdated
     else -> LoadFailure.Other(message ?: toString())
 }

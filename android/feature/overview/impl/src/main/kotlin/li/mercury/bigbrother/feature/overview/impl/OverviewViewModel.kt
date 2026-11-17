@@ -20,6 +20,7 @@ import kotlinx.coroutines.launch
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.AccessRepository
 import li.mercury.bigbrother.core.data.repository.AppInfoRepository
+import li.mercury.bigbrother.core.data.repository.InstalledModule
 import li.mercury.bigbrother.core.data.repository.ModuleRepository
 import li.mercury.bigbrother.core.data.repository.UserDataRepository
 import li.mercury.bigbrother.core.data.toLoadFailure
@@ -51,6 +52,21 @@ sealed interface ModuleSetup {
     data class Failed(val output: String) : ModuleSetup
 }
 
+/** Bringing the installed module up to date with the one this app carries. */
+sealed interface ModuleUpdate {
+    data object Idle : ModuleUpdate
+    data object Updating : ModuleUpdate
+
+    /** Disabled or marked for removal in the root manager, and left as it is. */
+    data object Disabled : ModuleUpdate
+
+    /** The files were replaced, but the new daemon did not report in. */
+    data object NotReporting : ModuleUpdate
+
+    /** Replacing the files failed, with the output saying why. */
+    data class Failed(val output: String) : ModuleUpdate
+}
+
 data class OverviewUiState(
     val range: TimeRange = TimeRange.DAY,
     /** The overview of the apps shown; null until the first load finishes. */
@@ -63,8 +79,8 @@ data class OverviewUiState(
     val refreshing: Boolean = false,
     val failure: LoadFailure? = null,
     val moduleSetup: ModuleSetup = ModuleSetup.Idle,
-    /** The installed module is older than the one bundled in this app. */
-    val moduleOutdated: Boolean = false,
+    /** Bringing the installed module up to date, when it is older than this app's. */
+    val moduleUpdate: ModuleUpdate = ModuleUpdate.Idle,
     /** A module update is installed and waits for a restart. */
     val modulePendingReboot: Boolean = false,
     /** A request to start the daemon is in progress. */
@@ -93,6 +109,13 @@ class OverviewViewModel @Inject constructor(
 
     /** When the last load finished, on the elapsed realtime clock. */
     private var loadedAt = 0L
+
+    /**
+     * Whether an outdated module has been updated automatically already.
+     * Once is enough: a failure is shown with a way to try again rather
+     * than retried on every load.
+     */
+    private var autoUpdated = false
 
     init {
         // A range chosen here or on another screen reloads the overview.
@@ -134,13 +157,17 @@ class OverviewViewModel @Inject constructor(
         loadJob = viewModelScope.launch {
             _uiState.update { it.copy(refreshing = true) }
             try {
+                // The module follows the app: one older than it, or built
+                // differently, is replaced before anything is read from it.
+                if (!autoUpdated && moduleRepository.compareWithBundled() == InstalledModule.OUTDATED) {
+                    autoUpdated = true
+                    updateModule()
+                    return@launch
+                }
                 val userData = userDataRepository.userData.first()
                 val apps = accessRepository.getApps(userData.timeRange)
                 val status = accessRepository.getRecorderStatus()
                 val pending = moduleRepository.isUpdatePending()
-                // An update that is already staged makes the installed copy
-                // look current; it isn't running until the restart.
-                val outdated = !pending && moduleRepository.isOutdated()
                 val appInfo = appInfoRepository.getAppInfo(
                     apps.map { it.packageName }.filter { it.isNotEmpty() }.toSet(),
                 )
@@ -164,13 +191,41 @@ class OverviewViewModel @Inject constructor(
                             ?: ModuleSetup.Idle,
                         // Recording again means an earlier start problem is over.
                         daemonStartError = it.daemonStartError.takeUnless { status.recording },
-                        moduleOutdated = outdated,
                         modulePendingReboot = pending,
                     )
                 }
             } catch (e: RecordsException) {
+                // A daemon too old for even these commands is updated too.
+                if (e is RecordsException.ModuleOutdated && !autoUpdated) {
+                    autoUpdated = true
+                    updateModule()
+                    return@launch
+                }
                 _uiState.update { it.copy(refreshing = false, failure = e.toLoadFailure()) }
             }
+        }
+    }
+
+    /**
+     * Replace the installed module's files with this app's and restart the
+     * daemon, without a reboot, then wait for the new daemon to report in.
+     */
+    fun updateModule() {
+        if (_uiState.value.moduleUpdate == ModuleUpdate.Updating) return
+        cancelLoad()
+        _uiState.update { it.copy(moduleUpdate = ModuleUpdate.Updating) }
+        viewModelScope.launch {
+            val result = try {
+                when {
+                    !moduleRepository.updateInPlace() -> ModuleUpdate.Disabled
+                    awaitRecording() -> ModuleUpdate.Idle
+                    else -> ModuleUpdate.NotReporting
+                }
+            } catch (e: RecordsException) {
+                ModuleUpdate.Failed(e.message.orEmpty())
+            }
+            _uiState.update { it.copy(moduleUpdate = result) }
+            refresh()
         }
     }
 

@@ -247,6 +247,10 @@ internal class RootAccessRepository @Inject constructor(
         )
         if (!result.isSuccess) {
             if (MISSING_MARKER in result.error) throw RecordsException.ModuleMissing()
+            // How the daemon's argument parser rejects a command or option
+            // it does not have, or an option repeated that it takes once:
+            // the module is older than this app.
+            if (UNKNOWN_ARGUMENT.any { it in result.error }) throw RecordsException.ModuleOutdated()
             throw RecordsException.CommandFailed(
                 result.error.ifBlank { "bbd exited with ${result.code}" },
             )
@@ -256,6 +260,11 @@ internal class RootAccessRepository @Inject constructor(
 
     private companion object {
         const val MISSING_MARKER = "bbd-not-installed"
+        val UNKNOWN_ARGUMENT = listOf(
+            "unrecognized subcommand",
+            "unexpected argument",
+            "cannot be used multiple times",
+        )
         const val COVERAGE_PREFIX = "coverage_"
 
         /** How long an app's records are reused across its screens. */

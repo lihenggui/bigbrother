@@ -1,8 +1,16 @@
 package li.mercury.bigbrother.core.data.repository
 
 import android.content.Context
+import android.os.Build
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.File
+import java.security.MessageDigest
+import java.util.zip.ZipFile
 import javax.inject.Inject
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.withContext
+import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.IO
+import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.root.ModulePaths.BBD
 import li.mercury.bigbrother.core.data.root.ModulePaths.MODULE_DIR
@@ -16,8 +24,18 @@ interface ModuleRepository {
     /** Whether the module's files are in place, i.e. it is installed and active. */
     suspend fun isActive(): Boolean
 
-    /** Whether the installed module is older than the one bundled in this app. */
-    suspend fun isOutdated(): Boolean
+    /** How the installed module compares with the one bundled in this app. */
+    suspend fun compareWithBundled(): InstalledModule
+
+    /**
+     * Brings the installed module up to date with the one bundled in this
+     * app, without a reboot: replaces its files and restarts the daemon.
+     * Returns false, changing nothing, when the module is disabled or marked
+     * for removal.
+     *
+     * @throws RecordsException if root is missing or a file can't be replaced.
+     */
+    suspend fun updateInPlace(): Boolean
 
     /** The installed module's version name, or null if it is not installed or root is missing. */
     suspend fun installedVersion(): String?
@@ -44,9 +62,49 @@ interface ModuleRepository {
     suspend fun startDaemon(): Boolean
 }
 
+/** How the installed module compares with the one bundled in this app. */
+enum class InstalledModule {
+    /** The one this app carries: nothing to do. */
+    CURRENT,
+
+    /**
+     * Older than this app's, or the same version built differently (a
+     * development build): this app's replaces it.
+     */
+    OUTDATED,
+
+    /**
+     * Newer than this app's. Left alone: its daemon may have upgraded the
+     * database past what this app's daemon can read.
+     */
+    NEWER,
+
+    /** Not installed, or not readable without root. */
+    UNKNOWN,
+}
+
+/**
+ * Compares an installed module's version code and daemon digest with this
+ * app's. Without both digests, a module of the same version can't be told
+ * apart, and is taken to be current.
+ */
+internal fun compareModules(
+    installedCode: Long,
+    installedDigest: String?,
+    bundledCode: Long,
+    bundledDigest: String?,
+): InstalledModule = when {
+    installedCode < bundledCode -> InstalledModule.OUTDATED
+    installedCode > bundledCode -> InstalledModule.NEWER
+    installedDigest == null || bundledDigest == null -> InstalledModule.CURRENT
+    installedDigest.equals(bundledDigest, ignoreCase = true) -> InstalledModule.CURRENT
+    else -> InstalledModule.OUTDATED
+}
+
 internal class RootModuleRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val rootShell: RootShell,
+    @Dispatcher(IO) private val ioDispatcher: CoroutineDispatcher,
 ) : ModuleRepository {
 
     override suspend fun isActive(): Boolean = try {
@@ -55,16 +113,99 @@ internal class RootModuleRepository @Inject constructor(
         false
     }
 
-    override suspend fun isOutdated(): Boolean {
+    override suspend fun compareWithBundled(): InstalledModule {
         val installed = try {
-            rootShell.run("sed -n 's/^versionCode=//p' $MODULE_PROP")
-                .output.lineSequence().firstOrNull()?.trim()?.toLongOrNull()
+            rootShell.run("sed -n 's/^versionCode=//p' $MODULE_PROP; sha256sum $BBD 2>/dev/null").output.lines()
         } catch (_: RecordsException.NoRoot) {
-            null
-        } ?: return false
-        // The app and the bundled module share one version (module.prop).
-        val bundled = context.packageManager.getPackageInfo(context.packageName, 0).longVersionCode
-        return installed < bundled
+            return InstalledModule.UNKNOWN
+        }
+        val code = installed.firstOrNull()?.trim()?.toLongOrNull() ?: return InstalledModule.UNKNOWN
+        // sha256sum prints the digest, then the file name.
+        val digest = installed.getOrNull(1)?.substringBefore(' ')?.trim()?.ifEmpty { null }
+        return compareModules(code, digest, bundledVersionCode(), bundledDaemonDigest())
+    }
+
+    override suspend fun updateInPlace(): Boolean {
+        if (rootShell.run("[ -e $MODULE_DIR/disable ] || [ -e $MODULE_DIR/remove ]").isSuccess) {
+            return false
+        }
+        val staged = withContext(ioDispatcher) { stageBundledModule() }
+            ?: throw RecordsException.CommandFailed("This app carries no daemon for ${Build.SUPPORTED_ABIS.first()}")
+        try {
+            // The script comes from this app, not the installed module, so
+            // that a module from before it existed can be updated too. Run by
+            // its own shell, its exit leaves the shared root shell open.
+            val result = rootShell.run(
+                "sh ${staged.resolve(SYNC_SCRIPT).path.shellQuoted()} " +
+                    "${staged.path.shellQuoted()} ${context.applicationInfo.sourceDir.shellQuoted()} 2>&1",
+            )
+            if (!result.isSuccess) {
+                throw RecordsException.CommandFailed(result.output.ifBlank { "Module update failed (${result.code})" })
+            }
+        } finally {
+            withContext(ioDispatcher) { staged.deleteRecursively() }
+        }
+        return true
+    }
+
+    private fun bundledVersionCode(): Long =
+        context.packageManager.getPackageInfo(context.packageName, 0).longVersionCode
+
+    /** The daemon this app carries for this device, as its path inside the APK. */
+    private val daemonEntry: String? =
+        Build.SUPPORTED_ABIS.firstNotNullOfOrNull { ARCH_BY_ABI[it] }?.let { "bin/$it/bbd" }
+
+    /** The SHA-256 of [daemonEntry], read once: the APK does not change while the app runs. */
+    private var bundledDigest: String? = null
+
+    private suspend fun bundledDaemonDigest(): String? = bundledDigest ?: withContext(ioDispatcher) {
+        val entry = daemonEntry ?: return@withContext null
+        ZipFile(context.applicationInfo.sourceDir).use { zip ->
+            val file = zip.getEntry(entry) ?: return@withContext null
+            val digest = MessageDigest.getInstance("SHA-256")
+            zip.getInputStream(file).use { input ->
+                val buffer = ByteArray(BUFFER_SIZE)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    digest.update(buffer, 0, read)
+                }
+            }
+            digest.digest().joinToString("") { "%02x".format(it) }
+        }
+    }.also { bundledDigest = it }
+
+    /**
+     * Copies the module files this app carries into its cache, where root
+     * can read them: the scripts and module.prop, the daemon for this device
+     * as `bbd`, and the script that installs them. Null if one is missing.
+     */
+    private fun stageBundledModule(): File? {
+        val daemon = daemonEntry ?: return null
+        val dir = File(context.cacheDir, "module-update")
+        dir.deleteRecursively()
+        dir.mkdirs()
+        ZipFile(context.applicationInfo.sourceDir).use { zip ->
+            for (name in MODULE_FILES + SYNC_SCRIPT + daemon) {
+                val entry = zip.getEntry(name) ?: return null.also { dir.deleteRecursively() }
+                val target = File(dir, if (name == daemon) "bbd" else name)
+                zip.getInputStream(entry).use { input -> target.outputStream().use { input.copyTo(it) } }
+            }
+        }
+        return dir
+    }
+
+    private companion object {
+        /** Module files installed besides the daemon; the list module/customize.sh extracts. */
+        val MODULE_FILES = listOf("module.prop", "service.sh", "supervise.sh", "stop.sh", "uninstall.sh", "action.sh")
+
+        /** Installs staged module files over the installed ones (module/sync.sh). */
+        const val SYNC_SCRIPT = "sync.sh"
+
+        /** Android ABI -> the architecture name module installers use, as in bin/<arch>/bbd. */
+        val ARCH_BY_ABI = mapOf("arm64-v8a" to "arm64", "x86_64" to "x64")
+
+        const val BUFFER_SIZE = 64 * 1024
     }
 
     override suspend fun installedVersion(): String? = try {
