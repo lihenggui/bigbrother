@@ -72,6 +72,7 @@
     <string name="time_span">%1$s – %2$s</string>
     <string name="show_details">显示详情</string>
     <string name="hide_details">隐藏详情</string>
+    <string name="show_all_details">显示全部 %d 项</string>
     <string name="tab_info">应用信息</string>
     <string name="tab_with_count">%1$s (%2$d)</string>
     <string name="header_subtitle">%1$s · %2$s</string>
