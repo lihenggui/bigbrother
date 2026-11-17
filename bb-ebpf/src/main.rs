@@ -66,7 +66,7 @@ use aya_ebpf::{
         bpf_probe_read_user_buf, bpf_probe_read_user_str_bytes,
     },
     macros::{kprobe, kretprobe, map, raw_tracepoint},
-    maps::{HashMap, LruHashMap, PerCpuArray, RingBuf},
+    maps::{Array, HashMap, LruHashMap, PerCpuArray, RingBuf},
     programs::{ProbeContext, RawTracePointContext, RetProbeContext},
 };
 use bb_common::filter::{
@@ -113,6 +113,12 @@ static EVENTS: RingBuf = RingBuf::with_byte_size(8 * 1024 * 1024, 0);
 /// adds the per-CPU values up.
 #[map]
 static DROPPED: PerCpuArray<u64> = PerCpuArray::with_max_entries(1, 0);
+
+/// Slot 0: when (boot time, ns) a call asking for it last woke the daemon
+/// early (see `early_wakeup_flags`). One slot for all CPUs: two of them
+/// racing can each wake it once, which keeps to the bound per CPU.
+#[map]
+static LAST_EARLY_WAKE: Array<u64> = Array::with_max_entries(1, 0);
 
 /// Where `file_open` assembles its event. Most of what it sees is dropped
 /// once the path is known, and a record reserved in the ring buffer and then
@@ -190,6 +196,30 @@ fn wakeup_flags() -> u64 {
     } else {
         BPF_RB_NO_WAKEUP
     }
+}
+
+/// Least time between two early wakeups for calls that ask for one
+/// (`BINDER_WAKE`: turning a sensor on). Such calls are rare, but an app can
+/// make them in a loop; this keeps that to one wakeup a second. A call that
+/// may not wake the daemon is still recorded, and read with the next batch.
+const EARLY_WAKE_INTERVAL_NS: u64 = 1_000_000_000;
+
+/// Flags for submitting an event that asks to wake the daemon at once:
+/// the wakeup if none was done for the last `EARLY_WAKE_INTERVAL_NS`,
+/// otherwise the usual ones.
+#[inline(always)]
+fn early_wakeup_flags() -> u64 {
+    let Some(last) = LAST_EARLY_WAKE.get_ptr_mut(0) else {
+        return wakeup_flags();
+    };
+    let now = unsafe { bpf_ktime_get_boot_ns() };
+    unsafe {
+        if now.wrapping_sub(*last) < EARLY_WAKE_INTERVAL_NS {
+            return wakeup_flags();
+        }
+        *last = now;
+    }
+    BPF_RB_FORCE_WAKEUP
 }
 
 #[inline(always)]
@@ -1085,9 +1115,10 @@ fn binder_transaction(transaction: u64, uid: u32) -> Result<(), i32> {
     // process.
     let target: u32 = unsafe { bpf_probe_read_user(transaction as *const u32)? };
     // A sensor turned on must reach the daemon while the app runs (see
-    // `BINDER_WAKE`); everything else waits for the next read.
+    // `BINDER_WAKE`), within the bound of `early_wakeup_flags`; everything
+    // else waits for the next read.
     let flags = if watched[0] & BINDER_WAKE != 0 {
-        BPF_RB_FORCE_WAKEUP
+        early_wakeup_flags()
     } else {
         wakeup_flags()
     };

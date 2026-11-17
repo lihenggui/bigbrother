@@ -300,8 +300,11 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
             _ = sigterm.recv() => break,
             _ = flush_tick.tick() => None,
             // Sessions whose process has ended end now, and are written
-            // with the next write.
+            // with the next write. Sensors turned on since that did not
+            // wake the daemon (the kernel side wakes it at most once a
+            // second for them) are taken in first.
             _ = sensor_check.tick(), if sensor_check.armed() => {
+                tracer.drain(ring.get_mut());
                 tracer.sensors.check_processes(now(), sensors::process_alive);
                 continue;
             }

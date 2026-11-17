@@ -270,7 +270,8 @@ pub type BinderValue = [u64; BINDER_VALUE_WORDS];
 /// Set in `[0]` next to the id: calls to the interface wake the daemon at
 /// once instead of waiting for its next read. Turning a sensor on starts a
 /// session the daemon must know of while the app's process still runs.
-/// Such calls are rare; other calls never wake it early.
+/// Such calls are rare, and the kernel side wakes the daemon for them at
+/// most once a second; other calls never wake it early.
 pub const BINDER_WAKE: u64 = 1 << 32;
 
 /// Calls that carry no interface name, which some native interfaces make
