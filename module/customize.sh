@@ -90,7 +90,7 @@ if unzip -l "$ZIPFILE" AndroidManifest.xml >/dev/null 2>&1; then
         if cp "$ZIPFILE" "$apk" && chmod 644 "$apk" && pm install -r "$apk" >&2; then
             ui_print "- App installed"
         else
-            ui_print "! Could not install the app; install the APK manually"
+            ui_print "! Could not install the app; rename this .zip to .apk and install it"
         fi
         rm -f "$apk"
     fi

@@ -92,15 +92,13 @@ done
 # the daemons in out/ into the root of the archive.
 (cd android && ./gradlew --quiet :app:assembleRelease)
 version="$(sed -n 's/^version=//p' module/module.prop)"
-apk="out/big_brother-$version.apk"
-cp android/app/build/outputs/apk/release/app-release.apk "$apk"
-echo "built: $apk ($(du -h "$apk" | cut -f1))"
-
-# The same file under the name root managers' file pickers accept. Flashing
-# it installs the app as well (see module/customize.sh).
-zip="${apk%.apk}.zip"
-cp "$apk" "$zip"
-echo "built: $zip (same file, for flashing)"
+# Published as a .zip: root managers flash nothing else (KernelSU's file
+# picker offers only .zip files). Flashing it installs the app as well (see
+# module/customize.sh); renamed to .apk, the same file installs as the app.
+zip="out/big_brother-$version.zip"
+rm -f "out/big_brother-$version.apk"
+cp android/app/build/outputs/apk/release/app-release.apk "$zip"
+echo "built: $zip ($(du -h "$zip" | cut -f1))"
 
 # R8's mapping for this build: what turns a stack trace from the app's log
 # back into class and method names.
