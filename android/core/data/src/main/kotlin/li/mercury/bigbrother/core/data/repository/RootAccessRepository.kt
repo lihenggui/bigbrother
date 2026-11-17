@@ -223,9 +223,9 @@ internal class RootAccessRepository @Inject constructor(
                 denied = row.getInt("fail"),
                 firstSeen = row.getLong("first_ts"),
                 lastSeen = row.getLong("last_ts"),
-                // Named when several paths are asked for; an older module
-                // leaves it out.
-                subject = row.optString("path").ifEmpty { null },
+                // The daemon names it when several paths are asked for (an
+                // older one does not); with one, it is that one.
+                subject = row.optString("path").ifEmpty { paths.singleOrNull() },
             )
         }
     }

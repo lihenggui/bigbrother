@@ -220,7 +220,7 @@ data class AccessPeriod(
     val denied: Int,
     val firstSeen: Long,
     val lastSeen: Long,
-    /** The record it is of, where the history of several was read one by one; null otherwise. */
+    /** The record it is of; null when an older module merged the histories of several without saying. */
     val subject: String? = null,
 )
 
