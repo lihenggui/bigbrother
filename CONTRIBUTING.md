@@ -88,7 +88,7 @@ shell file has a license header.
 
 ## Releasing
 
-Push a tag that matches `version` in `module/module.prop`, such as `v0.1.6`.
+Push a tag that matches `version` in `module/module.prop`, such as `v0.2.0`.
 `release.yml` builds the signed `.zip` and publishes it, with the R8
 mapping, as a GitHub release. It needs the repository secrets
 `SIGNING_KEYSTORE_BASE64`, `SIGNING_STORE_PASSWORD`, `SIGNING_KEY_ALIAS` and
