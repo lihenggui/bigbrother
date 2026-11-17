@@ -22,6 +22,7 @@ plugins {
     alias(libs.plugins.bigbrother.android.hilt)
     alias(libs.plugins.bigbrother.flashable.module)
     alias(libs.plugins.dependencyGuard)
+    alias(libs.plugins.roborazzi)
 }
 
 // Release signing is configured in keystore.properties (not in version
@@ -66,6 +67,8 @@ android {
         // Locales the app is translated into; drives the per-app language picker.
         generateLocaleConfig = true
     }
+
+    testOptions.unitTests.isIncludeAndroidResources = true
 }
 
 dependencies {
@@ -101,6 +104,10 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewModel.navigation3)
     implementation(libs.androidx.navigation3.ui)
     implementation(libs.androidx.compose.material3)
+
+    testImplementation(libs.robolectric)
+    testImplementation(projects.core.screenshotTesting)
+    testImplementation(projects.core.testing)
 }
 
 // Every library in the release APK, checked in (app/dependencies/): a new

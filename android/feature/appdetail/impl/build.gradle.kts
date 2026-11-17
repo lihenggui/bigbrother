@@ -17,10 +17,12 @@
 plugins {
     alias(libs.plugins.bigbrother.android.feature.impl)
     alias(libs.plugins.bigbrother.android.library.compose)
+    alias(libs.plugins.roborazzi)
 }
 
 android {
     namespace = "li.mercury.bigbrother.feature.appdetail.impl"
+    testOptions.unitTests.isIncludeAndroidResources = true
 }
 
 dependencies {
@@ -30,4 +32,6 @@ dependencies {
     implementation(libs.androidx.compose.material3.adaptive.navigation3)
 
     testImplementation(libs.kotlin.test.junit)
+    testImplementation(libs.robolectric)
+    testImplementation(projects.core.screenshotTesting)
 }

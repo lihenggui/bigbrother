@@ -1,76 +1,88 @@
 # Big Brother
 
 [![CI](https://github.com/lihenggui/bigbrother/actions/workflows/ci.yml/badge.svg)](https://github.com/lihenggui/bigbrother/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/lihenggui/bigbrother)](https://github.com/lihenggui/bigbrother/releases/latest)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
-Records which apps read which of your files on a rooted Android device, and
-which device identifiers they collect.
+English | [简体中文](README.zh-CN.md)
 
-It consists of a root module that does the recording, an Android app to
-browse the result, and an optional LSPosed hook that covers access made
-through the media library.
+Big Brother records which apps on a rooted Android device read your files,
+collect device identifiers or ask the system for other private data, and
+when. It consists of a root module that does the recording and an app to
+browse the records. Nothing leaves the device.
 
-## Features
+<p>
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/1_overview.png" width="24%" alt="Overview: the apps that read files, and the other kinds of data accessed">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/2_app_detail.png" width="24%" alt="An app's page: the folders it read files in, and the data it asked for">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/3_timeline.png" width="24%" alt="Timeline: each app's activity by the hour">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/4_files.png" width="24%" alt="The photos an app read in the camera folder">
+</p>
+<p>
+  <img src="fastlane/metadata/android/en-US/images/tenInchScreenshots/1_list_detail.png" width="98%" alt="On a tablet: the app list beside the page of the selected app">
+</p>
 
-- An overview of which kinds of private data were accessed and by how many
-  apps, a timeline of each app's activity by the hour, and search across apps
-  and file paths. Phone, foldable, tablet and desktop windows each get a
-  layout of their own, from a single pane up to three side by side.
-- Per-app list of the files on shared storage an app opened, with read counts
-  and timestamps, browsable like a file manager.
-- Attempts that the system denied, existence checks (`stat`, `access`) and
-  inotify watches, shown separately from successful reads.
-- MediaStore queries and files opened through MediaStore, the Storage Access
-  Framework and the download provider, attributed to the calling app
+The apps and records in the screenshots are sample data.
+
+## What it records
+
+- Files: each file on shared storage an app opened, with the time and how
+  often. Listing a folder, checking whether a file exists and watching for
+  changes are recorded separately from reading, as are attempts the system
+  denied. Files opened through MediaStore, the Storage Access Framework or
+  the download provider are attributed to the app that asked for them
   (requires LSPosed).
-- Reads of privacy-relevant `/proc`, `/sys` and `/dev` entries: network
-  hardware address, ARP table, serial numbers, other processes, root and
-  emulator checks, and so on.
-- Requests to system services for the installed apps, the clipboard, the
-  location, Wi-Fi networks, phone identifiers, accounts, running apps,
-  usage history and sensors, and reads of the Android ID.
-- Use of the camera, the microphone, the location and other sensitive
-  permissions, and refusals, as the system itself recorded them.
-- Queries for contacts, the call log, text messages and the calendar,
-  attributed to the calling app (requires LSPosed).
-- Requests for the device's network interfaces, hardware addresses and
-  neighbours over netlink, and whether the system allowed them.
-- Attempts to trace another app's process or read its memory.
-- System programs an app runs to learn about the device: `getprop`,
-  `pm list packages`, `ip neigh`, attempts to run `su`, and so on.
-- Connections to ports on the device itself and to other devices on the
-  local network, and multicast device discovery.
-- Records are kept on the device for 30 days, with the time of each access.
+- Device identifiers and system information: reads of `/proc`, `/sys` and
+  `/dev` entries that identify the device or reveal its state, such as
+  hardware addresses, serial numbers, the ARP table, other processes, and
+  root and emulator checks.
+- Requests to system services: the list of installed apps, the clipboard,
+  the location, Wi-Fi networks, phone identifiers, accounts, running apps,
+  usage statistics and sensors, and reads of the Android ID.
+- Permission use: use of the camera, microphone, location and other
+  sensitive permissions, and refusals, from the system's app-ops records.
+- Personal data: queries for contacts, the call log, text messages and the
+  calendar (requires LSPosed). Only the kind of data is recorded, never
+  which contact or message.
+- Other activity: programs an app runs to probe the device (`getprop`,
+  `pm list packages`, attempts to run `su`), connections to ports on the
+  device and to the local network, network configuration requests over
+  netlink, and attempts to read another app's memory.
+
+Records are kept for 30 days.
 
 ## Requirements
 
-- arm64 or x86_64 device with a GKI 2.0 kernel (5.10 or newer, with BTF).
-  x86_64 covers the Android emulator; on x86_64, only 64-bit apps are
-  recorded (current emulator images run no others).
+- Android 12 or later on an arm64 or x86_64 device
+- A GKI 2.0 kernel (5.10 or newer) with BTF; the file
+  `/sys/kernel/btf/vmlinux` must exist
 - Root with module support: [KernelSU](https://kernelsu.org),
   [Magisk](https://github.com/topjohnwu/Magisk) or
-  [APatch](https://apatch.dev).
-- Optional: [LSPosed](https://github.com/LSPosed/LSPosed) with Xposed API 101
-  or newer.
+  [APatch](https://apatch.dev)
+- Optional: [LSPosed](https://github.com/LSPosed/LSPosed) (Xposed API 101
+  or newer), for access through content providers
 
-Developed and tested on Android 16, kernel 6.6, with KernelSU.
+On x86_64, which covers the Android emulator, only 64-bit apps are
+recorded. Development and testing are done on Android 16 with kernel 6.6
+and KernelSU.
 
 ## Installation
 
-Each release is a single file, `big_brother-<version>.zip`: it is both the
-flashable module and the app. Use either route:
+Download `big_brother-<version>.zip` from the
+[latest release](https://github.com/lihenggui/bigbrother/releases/latest).
+The file is both the module and the app. Then either:
 
-- Flash it in your root manager. This installs the app as well.
-- Or rename it to `.apk` and install it as an app, grant it root in your
-  root manager, open the app and tap **Install module**.
+- flash it in your root manager, which installs the app as well, or
+- rename it to `.apk` and install it, open the app, grant it root and tap
+  "Install module".
 
-Then:
+Restart the device, except on KernelSU, which applies the module
+immediately. Settings shows "Recording" once the module is running.
 
-1. Reboot (not needed on KernelSU, which applies the module at once).
-2. Optional: enable Big Brother in the LSPosed manager, confirm its scope
-   (the media, external storage and download providers; the contacts,
-   telephony and calendar providers) and reboot.
+To record access through content providers, enable Big Brother in LSPosed,
+keep the suggested scope (the media, external storage and download
+providers, and the contacts, telephony and calendar providers) and restart.
 
-From a root shell:
+The module can also be installed from a root shell:
 
 ```sh
 ksud module install big_brother-<version>.zip       # KernelSU
@@ -78,122 +90,87 @@ magisk --install-module big_brother-<version>.zip   # Magisk
 apd module install big_brother-<version>.zip        # APatch
 ```
 
-The module's Action button in the root manager shows the daemon's status
-and the end of its log (Magisk 28 or newer).
+### Updating
 
-## Building
+Flash the new `.zip`, or install it over the old app as an `.apk`, then
+open the app. It replaces the module's files with its own and restarts the
+recording, without a restart of the device.
 
-Prerequisites:
+### Uninstalling
 
-- Rust stable and nightly with `rust-src`; targets `aarch64-linux-android`
-  and `x86_64-linux-android`
-- [bpf-linker](https://github.com/aya-rs/bpf-linker)
-- Android NDK and SDK (platform 37)
-- JDK 17 or newer
+Remove the module in your root manager and restart; this also deletes the
+records. Then uninstall the app.
 
-```sh
-./scripts/build.sh
-```
+## Usage
 
-The APK is written to `out/`. It is signed with the debug key unless
-`android/keystore.properties` exists, with the keys `storeFile`,
-`storePassword`, `keyAlias` and `keyPassword`.
+- Overview: the kinds of data accessed in the selected period (last hour,
+  24 hours, 7 days or all), with the number of apps for each. The first card
+  shows the apps that read files.
+- Apps: every app with records, the most sensitive first. An app's page
+  shows the files it read, their folders, the other data it asked for, and
+  the time of each access.
+- Timeline: what each app did, hour by hour.
+- Search: apps, file names and kinds of data across all records.
 
-Tests:
+System apps are hidden by default, since reading data is part of how they
+work. They can be shown in Settings.
 
-```sh
-cargo test -p bbd
-(cd android && ./gradlew test)
-```
+How an access is described:
 
-The app is formatted with [ktlint](https://pinterest.github.io/ktlint/)
-through Spotless, which also adds the license header to new files. CI runs
-the check; to apply it:
+| In the app | Meaning |
+| --- | --- |
+| Read | The app opened the file and the system allowed it. |
+| Listed, Probed, Watched | It listed a folder, checked whether a file exists, or watched it for changes. Nothing was read. |
+| Denied | The system refused the access. |
+| Read via provider, Queried | A system provider (the media library, for example) opened the file or ran the query on the app's behalf. |
+| Used | A permission the app used, as recorded by the system. |
 
-```sh
-(cd android && ./gradlew spotlessApply :build-logic:convention:spotlessApply)
-```
+## FAQ
 
-On a device with the module running, `scripts/check-canary.sh` installs a
-test app (`android/canary`) that does one of everything Big Brother is meant
-to notice, and checks that each left a record:
+### The overview says "Recording stopped"
 
-```sh
-(cd android && ./gradlew :canary:assembleDebug)
-./scripts/check-canary.sh
-```
+Tap "Start recording". If it stops again, tap "Export logs" in Settings
+and attach the file to an [issue](https://github.com/lihenggui/bigbrother/issues).
 
-Every push and pull request is built and tested by GitHub Actions
-(`.github/workflows/ci.yml`). Pushing a tag that matches the version in
-`module/module.prop`, such as `v0.1.6`, builds the signed APK and publishes
-it as a release (`release.yml`); this needs the repository secrets
-`SIGNING_KEYSTORE_BASE64`, `SIGNING_STORE_PASSWORD`, `SIGNING_KEY_ALIAS` and
-`SIGNING_KEY_PASSWORD`.
+### Nothing from the media library, contacts or messages is recorded
 
-## How it works
+These are recorded by the LSPosed hook. Enable it as described under
+Installation.
 
-```
-kernel   kprobe on security_file_open            the file actually opened
-         kprobes on file-related syscalls        return values, stat/access/inotify
-         kprobes on execve, connect, sendto      programs run, local destinations
-         kprobes on ptrace, process_vm_*         access to other processes
-         kprobe on security_netlink_send         network configuration requests
-         tracepoint binder_ioctl                 requests to system services
-           | ring buffer
-daemon   bbd: classify, aggregate, store in SQLite
-           ^ spool file
-hook     LSPosed, inside the provider processes  who queried or opened what
-           |
-app      reads the daemon's JSON output as root
-```
+### Does it block anything?
 
-- Opens are observed at `security_file_open`, after path resolution. The
-  recorded path is rebuilt from the dentry chain, so `..`, symlinks and
-  `/proc/self/root` do not hide a file. Shared storage is identified by
-  filesystem type (FUSE), not by path prefix.
-- Kernel struct offsets are read from BTF at startup and passed to the eBPF
-  programs, so one binary works across kernel versions.
-- Network destinations are classified in the kernel; only loopback, private,
-  link-local and multicast addresses leave it. A connection to a port the
-  app itself listens on is not recorded.
-- The kernel side timestamps each event and keeps it in a buffer. The daemon
-  takes the events in and writes them to the database every 30 seconds, or
-  sooner if the buffer is filling up. Each query from the app has it write
-  first, so the app sees the latest records.
-- Only the file probes are required. The others are attached if the kernel
-  allows it; `bbd stats` reports which are active (`coverage_*`), and the
-  app says which kinds of activity are not recorded on the device.
-- Requests to system services are read from the binder transaction the app
-  hands to the kernel: the interface name and the method's number, both part
-  of binder's userspace format. Which number is which method differs between
-  Android versions and manufacturers, so the daemon asks the device at
-  startup, by running a small program from the app (`BinderCatalog`) that
-  prints them from the framework's own classes.
-- Permission use comes from the system's app-ops records, read by another
-  small program from the app (`AppOpsDump`). It is the one source that says
-  what an app was actually given, and the app shows it in a tab of its own.
-- For personal data, only the collection asked for is kept
-  (`content://sms/inbox`), never which person or message.
-- The LSPosed hook intercepts `ContentProvider.Transport` in the provider
-  processes and takes the caller's uid from Binder. The observed apps are not
-  hooked.
-- The module has no `system/` overlay, no SELinux rules and no
-  `post-fs-data` script. If a boot does not complete while the daemon is
-  running, the module disables itself on the next boot; if a hooked provider
-  process keeps restarting, the hook stops installing itself.
+No. It records access; it does not prevent it.
+
+### Does it drain the battery?
+
+The module holds no wakelocks and does nothing while the device sleeps.
+While the device is awake and idle it wakes about once every ten seconds,
+and writes to its database only when there is something to record.
+
+### Where are the records?
+
+In `/data/adb/big_brother`, readable only by root.
+
+## Privacy
+
+The app has no network access: the INTERNET permission is removed from its
+manifest, and CI fails if the APK requests a new permission. Records stay
+in `/data/adb/big_brother` until they are 30 days old or the module is
+removed. Exported logs contain the app's and the module's logs and the
+device and version details listed in the file; they are shared only if you
+choose to.
 
 ## Limitations
 
 - Without the LSPosed hook, access through content providers is not
   recorded. With it, only successful provider calls are, and a query is
   recorded as the collection and the number of rows returned.
-- `stat`/`access`/inotify records and opens that fail during path lookup are
-  matched on the path string the app passed, and can be evaded by an app that
-  spells the path unusually. Successful opens cannot.
-- A request to a system service is recorded when it is made. What the
-  service answered, or whether it refused, is not seen. Until the device's
-  method numbers are known, shortly after boot, such requests are not
-  recorded.
+- Existence checks, inotify watches and opens that fail during path lookup
+  are matched on the path string the app passed, and can be evaded by an
+  app that spells the path unusually. Successful opens cannot.
+- A request to a system service is recorded when it is made; the answer,
+  or a refusal, is not seen. Until the device's method numbers are known,
+  shortly after boot, such requests are not recorded.
 - Permission use is read from the system twice a minute. The system keeps
   the latest use and the latest refusal per app and permission, so several
   uses in between count as one.
@@ -203,36 +180,38 @@ app      reads the daemon's JSON output as root
 - A command line is recorded up to six arguments of 63 bytes each.
 - File operations an app delegates to a privileged process (root, Shizuku)
   are not attributed to it.
-- Files already open when the daemon starts are not seen.
+- Files already open when the module starts are not seen.
 - A record means a file was opened, not how much of it was read.
 
-## Repository layout
+## How it works
 
-| Path | Contents |
-| --- | --- |
-| `bb-ebpf/` | eBPF programs ([aya](https://aya-rs.dev)) |
-| `bb-common/` | Types shared between the eBPF programs and the daemon |
-| `bbd/` | Daemon and query CLI |
-| `module/` | Module scripts, packaged into the APK |
-| `android/` | App, LSPosed hook, and the canary test app |
-| `scripts/` | Build script |
+eBPF programs in the kernel observe file opens, related system calls,
+program execution, connections, netlink requests and binder transactions,
+and pass them to a daemon that classifies them and stores them in SQLite.
+The optional LSPosed hook reports who queried or opened what in the
+system's content providers. The app reads the daemon's output as root.
+See [docs/how-it-works.md](docs/how-it-works.md).
 
-The app follows the module structure of
-[Now in Android](https://github.com/android/nowinandroid), as used by
-[Blocker](https://github.com/lihenggui/blocker).
+## Contributing
+
+Bug reports and pull requests are welcome. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for building, testing and the project's
+conventions.
 
 ## License
 
 Copyright (C) 2026 Mercury Li
 
-This program is free software: you can redistribute it and/or modify it under
-the terms of the GNU General Public License version 3 as published by the Free
-Software Foundation. See [LICENSE](LICENSE).
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License version 3 as published by
+the Free Software Foundation. See [LICENSE](LICENSE).
 
 The eBPF programs (`bb-ebpf/`) and the types they share with the daemon
 (`bb-common/`) are loaded into the kernel and are licensed under the GNU
 General Public License version 2 or, at your option, any later version. See
 [LICENSE-GPL-2.0](LICENSE-GPL-2.0).
 
-The Cargo build scripts are based on
-[aya-template](https://github.com/aya-rs/aya-template).
+The app's module structure follows
+[Now in Android](https://github.com/android/nowinandroid), as used by
+[Blocker](https://github.com/lihenggui/blocker). The Cargo build scripts are
+based on [aya-template](https://github.com/aya-rs/aya-template).
