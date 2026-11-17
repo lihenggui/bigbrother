@@ -174,6 +174,8 @@ choose to.
 - A request to a system service is recorded when it is made; the answer,
   or a refusal, is not seen. Until the device's method numbers are known,
   shortly after boot, such requests are not recorded.
+- Sensors read through a direct channel (SensorDirectChannel, used for very
+  high rates) are not recorded.
 - Permission use is read from the system twice a minute. The system keeps
   the latest use and the latest refusal per app and permission, so several
   uses in between count as one.
