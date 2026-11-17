@@ -91,8 +91,8 @@ as_root "$BBD stats" | tr ',' '\n' | grep -o '"coverage_[a-z]*":[01]' | sed 's/^
 
 adb shell am force-stop "$PACKAGE"
 adb shell am start -W -n "$PACKAGE/.MainActivity" >/dev/null
-# The probes take a few seconds (two connection timeouts); the daemon drains
-# the kernel's buffer every second and writes every five.
+# The probes take a few seconds (two connection timeouts). The query has the
+# daemon write what it holds before it reads.
 sleep 20
 records="$(as_root "$BBD files --uid $uid --hours 1 --limit 2000")"
 

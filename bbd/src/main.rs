@@ -21,6 +21,7 @@ mod appops;
 mod binder;
 mod btf;
 mod commands;
+mod control;
 mod helper;
 mod mounts;
 mod net;
@@ -150,6 +151,11 @@ fn print_json(value: &impl Serialize) -> anyhow::Result<()> {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    // Every other command reads the records, which the daemon writes only
+    // now and then.
+    if !matches!(cli.command, Command::Run { .. }) {
+        control::request_flush(&cli.db);
+    }
     match cli.command {
         Command::Run {
             retention_days,

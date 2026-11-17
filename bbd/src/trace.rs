@@ -36,6 +36,7 @@ use bb_common::{
 };
 use tokio::{
     io::{Interest, unix::AsyncFd},
+    net::{UnixListener, UnixStream},
     signal::unix::{SignalKind, signal},
     time::{MissedTickBehavior, interval},
 };
@@ -44,7 +45,7 @@ use crate::{
     appops,
     binder::{self, Catalog},
     btf::Btf,
-    commands, helper,
+    commands, control, helper,
     mounts::Mounts,
     net::{self, Destination, Listeners},
     packages::{FIRST_ISOLATED_APP_ID, PER_USER_RANGE, Packages},
@@ -69,7 +70,10 @@ const FIRST_APPLICATION_UID: u32 = 10_000;
 /// isolated uid is handed to another process, possibly another app's, once
 /// it is free.
 const ISOLATED_OWNER_TTL: Duration = Duration::from_secs(60);
-const FLUSH_INTERVAL: Duration = Duration::from_secs(5);
+/// How often what was recorded is written. A write costs about the same
+/// whether it holds one record or a thousand, and the query commands ask for
+/// one before they read (see `control`), so this need not be often.
+const FLUSH_INTERVAL: Duration = Duration::from_secs(30);
 const PRUNE_INTERVAL: Duration = Duration::from_secs(6 * 3600);
 /// The kernel side only wakes us when the ring buffer is filling up; this
 /// timer bounds how long events otherwise sit in it.
@@ -227,6 +231,14 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         explain_discards: opts.explain_discards,
         ingest_provider_events: opts.ingest_provider_events,
     };
+    // Queries ask for what is held to be written first (see `control`).
+    let requests = match control::listen(opts.db) {
+        Ok(listener) => Some(listener),
+        Err(e) => {
+            eprintln!("bbd: warning: queries will not wait for records to be written: {e:#}");
+            None
+        }
+    };
     let mut flush_tick = interval(FLUSH_INTERVAL);
     flush_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
     let mut drain_tick = interval(DRAIN_INTERVAL);
@@ -237,74 +249,78 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     let mut sigterm = signal(SignalKind::terminate())?;
 
     loop {
-        tokio::select! {
+        // Every branch that does not end in a flush continues the loop.
+        let request = tokio::select! {
             _ = sigint.recv() => break,
             _ = sigterm.recv() => break,
-            _ = flush_tick.tick() => {
-                tracer.counters.dropped = dropped_events();
-                tracer.expire(now() - RESULT_TIMEOUT_SECS);
-                tracer.prune_isolated_owners();
-                tracer.ingest_provider_events();
-                while let Ok(reading) = permission_uses.try_recv() {
-                    // A reading at all shows the records can be read here.
-                    let covered = i64::from(reading.is_some());
-                    tracer.writer.set_meta("coverage_appops", covered).ok();
-                    if let Some(entries) = reading {
-                        tracer.record_permission_uses(appops.update(&entries));
-                    }
-                }
-                if let Some((map, loaded)) = &mut binder_watch
-                    && let Ok(loaded) = loaded.try_recv()
-                {
-                    let watching = loaded.and_then(|catalog| match watch(map, &catalog) {
-                        Ok(()) => Some(catalog),
-                        Err(e) => {
-                            eprintln!("bbd: warning: not recording service calls: {e:#}");
-                            None
-                        }
-                    });
-                    if let Some(catalog) = &watching {
-                        eprintln!("bbd: watching {} service methods", catalog.len());
-                    }
-                    let covered = i64::from(watching.is_some());
-                    tracer.writer.set_meta("coverage_binder", covered).ok();
-                    tracer.catalog = watching;
-                }
-                // A failed write (disk full, database busy) keeps the batch
-                // for the next attempt; it is not a reason to stop recording.
-                if let Err(e) = tracer.writer.flush(&tracer.counters, now()) {
-                    eprintln!("bbd: could not write records: {e:#}");
-                }
-            }
+            _ = flush_tick.tick() => None,
+            request = next_request(requests.as_ref()) => match request {
+                Some(stream) => Some(stream),
+                None => continue,
+            },
             _ = drain_tick.tick() => {
-                let ts = now();
-                while let Some(item) = ring.get_mut().next() {
-                    tracer.on_event(&item, ts);
-                }
+                tracer.drain(ring.get_mut());
+                continue;
             }
             _ = prune_tick.tick() => {
                 if let Err(e) = tracer.writer.prune(opts.retention_days, now()) {
                     eprintln!("bbd: could not prune old records: {e:#}");
                 }
+                continue;
             }
             guard = ring.readable_mut() => {
                 let mut guard = guard?;
-                let ts = now();
-                while let Some(item) = guard.get_inner_mut().next() {
-                    tracer.on_event(&item, ts);
-                }
+                tracer.drain(guard.get_inner_mut());
                 guard.clear_ready();
+                continue;
             }
+        };
+
+        tracer.drain(ring.get_mut());
+        tracer.counters.dropped = dropped_events();
+        tracer.expire(now() - RESULT_TIMEOUT_SECS);
+        tracer.prune_isolated_owners();
+        tracer.ingest_provider_events();
+        while let Ok(reading) = permission_uses.try_recv() {
+            // A reading at all shows the records can be read here.
+            let covered = i64::from(reading.is_some());
+            tracer.writer.set_meta("coverage_appops", covered).ok();
+            if let Some(entries) = reading {
+                tracer.record_permission_uses(appops.update(&entries));
+            }
+        }
+        if let Some((map, loaded)) = &mut binder_watch
+            && let Ok(loaded) = loaded.try_recv()
+        {
+            let watching = loaded.and_then(|catalog| match watch(map, &catalog) {
+                Ok(()) => Some(catalog),
+                Err(e) => {
+                    eprintln!("bbd: warning: not recording service calls: {e:#}");
+                    None
+                }
+            });
+            if let Some(catalog) = &watching {
+                eprintln!("bbd: watching {} service methods", catalog.len());
+            }
+            let covered = i64::from(watching.is_some());
+            tracer.writer.set_meta("coverage_binder", covered).ok();
+            tracer.catalog = watching;
+        }
+        // A failed write (disk full, database busy) keeps the batch for the
+        // next attempt; it is not a reason to stop recording.
+        if let Err(e) = tracer.writer.flush(&tracer.counters, now()) {
+            eprintln!("bbd: could not write records: {e:#}");
+        }
+        if let Some(stream) = request {
+            control::answer(&stream);
         }
     }
 
+    control::unlisten(opts.db);
     if opts.profile {
         print_profile(&ebpf);
     }
-    let ts = now();
-    while let Some(item) = ring.get_mut().next() {
-        tracer.on_event(&item, ts);
-    }
+    tracer.drain(ring.get_mut());
     tracer.ingest_provider_events();
     tracer.counters.dropped = dropped_events();
     tracer.expire(i64::MAX);
@@ -315,6 +331,15 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         c.seen, c.kept, c.unresolved, c.dropped
     );
     Ok(())
+}
+
+/// The next query asking for the records to be written; `None` if accepting
+/// it failed. Never ready without a listener.
+async fn next_request(listener: Option<&UnixListener>) -> Option<UnixStream> {
+    match listener {
+        Some(listener) => listener.accept().await.ok().map(|(stream, _)| stream),
+        None => std::future::pending().await,
+    }
 }
 
 /// Load and attach the probes of one optional feature. Returns how many
@@ -636,6 +661,14 @@ struct Tracer {
 }
 
 impl Tracer {
+    /// Take in everything waiting in the ring buffer.
+    fn drain(&mut self, ring: &mut RingBuf<MapData>) {
+        let ts = now();
+        while let Some(item) = ring.next() {
+            self.on_event(&item, ts);
+        }
+    }
+
     fn on_event(&mut self, bytes: &[u8], ts: i64) {
         let Some(hdr) = cast::<EventHeader>(bytes) else {
             return;

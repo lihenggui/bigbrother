@@ -157,6 +157,8 @@ app      reads the daemon's JSON output as root
 - Network destinations are classified in the kernel; only loopback, private,
   link-local and multicast addresses leave it. A connection to a port the
   app itself listens on is not recorded.
+- The daemon writes what it recorded to the database every 30 seconds. Each
+  query from the app has it write first, so the app sees the latest records.
 - Only the file probes are required. The others are attached if the kernel
   allows it; `bbd stats` reports which are active (`coverage_*`), and the
   app says which kinds of activity are not recorded on the device.
