@@ -245,6 +245,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     prune_tick.tick().await; // first tick fires immediately; already pruned above
     let mut sigint = signal(SignalKind::interrupt())?;
     let mut sigterm = signal(SignalKind::terminate())?;
+    let mut write_errors = RecurringLog::default();
 
     loop {
         // Every branch that does not end in a flush continues the loop.
@@ -313,7 +314,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
             None => tracer.writer.flush(&tracer.counters, now()),
         };
         if let Err(e) = written {
-            eprintln!("bbd: could not write records: {e:#}");
+            write_errors.log(format!("bbd: could not write records: {e:#}"));
         }
         if let Some(stream) = request {
             control::answer(&stream);
@@ -438,12 +439,25 @@ fn watch(map: &mut BinderWatch, catalog: &Catalog) -> anyhow::Result<()> {
 const COVERAGE_PENDING: i64 = -1;
 
 /// How soon the program that reads the permission usage records is started
-/// again after it ends, and after how many times without a single reading
-/// the records are reported as unavailable (the attempts go on regardless).
-/// The helper itself waits for the system service at boot, so these are for
-/// a helper that fails or ends later.
+/// again after it ends: `APPOPS_RETRY` after the first failure, twice as long
+/// after each further one, up to `APPOPS_RETRY_MAX`; each start costs a Java
+/// runtime's start-up. A run of `APPOPS_HEALTHY` or longer starts the count
+/// again. After `APPOPS_GIVE_UP` failures without a single reading the
+/// records are reported as unavailable (the attempts go on regardless). The
+/// helper itself waits for the system service at boot, so these are for a
+/// helper that fails or ends later.
 const APPOPS_RETRY: Duration = Duration::from_secs(30);
-const APPOPS_GIVE_UP: u32 = 10;
+const APPOPS_RETRY_MAX: Duration = Duration::from_secs(3600);
+const APPOPS_HEALTHY: Duration = Duration::from_secs(600);
+const APPOPS_GIVE_UP: u32 = 5;
+
+/// How long to wait before the next start, after `failures` in a row.
+fn appops_retry_delay(failures: u32) -> Duration {
+    let doublings = failures.saturating_sub(1).min(16);
+    APPOPS_RETRY
+        .saturating_mul(1 << doublings)
+        .min(APPOPS_RETRY_MAX)
+}
 
 /// How often the system's permission usage records are read. The records
 /// carry their own times, so the interval costs precision only when an app
@@ -460,27 +474,71 @@ fn spawn_appops_reader() -> std::sync::mpsc::Receiver<Option<Vec<appops::Entry>>
     std::thread::spawn(move || {
         let mut failures = 0;
         let mut read_once = false;
+        let mut log = RecurringLog::default();
         loop {
+            let started = Instant::now();
             // Returns when the helper has ended, which it is not meant to.
-            let ended = stream_appops(&sender, &mut read_once);
-            if matches!(ended, Err(StreamEnd::DaemonGone)) {
-                return;
+            let e = match stream_appops(&sender, &mut read_once) {
+                StreamEnd::Helper(e) => e,
+                StreamEnd::DaemonGone => return,
+            };
+            if started.elapsed() >= APPOPS_HEALTHY {
+                failures = 0;
             }
             failures += 1;
+            log.log(format!("bbd: reading permission use: {e:#}"));
             // Reported once, when it stops looking like a system that is
             // still starting.
             if failures == APPOPS_GIVE_UP && !read_once {
-                if let Err(StreamEnd::Helper(e)) = &ended {
-                    eprintln!("bbd: warning: not recording permission use: {e:#}");
-                }
+                eprintln!("bbd: warning: not recording permission use");
                 if sender.send(None).is_err() {
                     return;
                 }
             }
-            std::thread::sleep(APPOPS_RETRY);
+            std::thread::sleep(appops_retry_delay(failures));
         }
     });
     receiver
+}
+
+/// How often a message that keeps recurring is logged again.
+const RECURRING_LOG_INTERVAL: Duration = Duration::from_secs(3600);
+
+/// Logs a message that keeps recurring once, rather than each time: again
+/// when it changes, or once an hour has passed, with how often it recurred.
+/// The log is only rotated at boot.
+#[derive(Default)]
+struct RecurringLog {
+    last: Option<(String, Instant)>,
+    /// Times `last` recurred without being logged.
+    unlogged: u32,
+}
+
+impl RecurringLog {
+    fn log(&mut self, message: String) {
+        if let Some(line) = self.line(message, Instant::now()) {
+            eprintln!("{line}");
+        }
+    }
+
+    /// What to log for `message` at `now`, if anything.
+    fn line(&mut self, message: String, now: Instant) -> Option<String> {
+        let mut line = message.clone();
+        if let Some((last, logged)) = &self.last
+            && *last == message
+        {
+            if now.duration_since(*logged) < RECURRING_LOG_INTERVAL {
+                self.unlogged += 1;
+                return None;
+            }
+            if self.unlogged > 0 {
+                line = format!("{message} ({} more since)", self.unlogged);
+            }
+        }
+        self.last = Some((message, now));
+        self.unlogged = 0;
+        Some(line)
+    }
 }
 
 /// Why [`stream_appops`] returned.
@@ -495,7 +553,7 @@ enum StreamEnd {
 fn stream_appops(
     sender: &std::sync::mpsc::Sender<Option<Vec<appops::Entry>>>,
     read_once: &mut bool,
-) -> Result<(), StreamEnd> {
+) -> StreamEnd {
     use std::io::BufRead as _;
 
     let interval = APPOPS_INTERVAL.as_secs().to_string();
@@ -505,9 +563,17 @@ fn stream_appops(
     }
     // Its stdin is held open for as long as `helper` lives; the helper
     // leaves when it closes, so it does not outlive the daemon.
-    let mut helper =
-        helper::spawn(appops::HELPER_CLASS, args.into_iter()).map_err(StreamEnd::Helper)?;
+    let mut helper = match helper::spawn(appops::HELPER_CLASS, args.into_iter()) {
+        Ok(helper) => helper,
+        Err(e) => return StreamEnd::Helper(e),
+    };
     let output = helper.stdout.take().expect("spawned with a piped stdout");
+    // What it says when it fails, for the message; read as it comes, so
+    // that the helper never waits for room in the pipe.
+    let errors = helper
+        .stderr
+        .take()
+        .map(|stderr| std::thread::spawn(move || first_line(std::io::BufReader::new(stderr))));
     let mut reading = String::new();
     for line in std::io::BufReader::new(output).lines() {
         let Ok(line) = line else { break };
@@ -520,14 +586,33 @@ fn stream_appops(
         if sender.send(Some(appops::parse(&reading))).is_err() {
             let _ = helper.kill();
             let _ = helper.wait();
-            return Err(StreamEnd::DaemonGone);
+            return StreamEnd::DaemonGone;
         }
         reading.clear();
     }
-    let status = helper.wait();
-    Err(StreamEnd::Helper(anyhow::anyhow!(
-        "the helper program ended ({status:?})"
-    )))
+    let status = match helper.wait() {
+        Ok(status) => status.to_string(),
+        Err(e) => e.to_string(),
+    };
+    let said = errors
+        .and_then(|reader| reader.join().ok())
+        .flatten()
+        .map_or_else(String::new, |line| format!(": {line}"));
+    StreamEnd::Helper(anyhow::anyhow!("the helper program ended ({status}){said}"))
+}
+
+/// The first line of `text` that has anything on it, shortened, after
+/// reading all of it.
+fn first_line(text: impl std::io::BufRead) -> Option<String> {
+    const MAX_CHARS: usize = 200;
+    let mut first = None;
+    for line in text.lines() {
+        let Ok(line) = line else { break };
+        if first.is_none() && !line.trim().is_empty() {
+            first = Some(line.trim().chars().take(MAX_CHARS).collect());
+        }
+    }
+    first
 }
 
 /// How often, and how many times, the transaction codes are asked for
@@ -1396,6 +1481,45 @@ mod tests {
         assert_eq!(join_components(b""), "");
         // Non-UTF-8 names don't abort; they are replaced lossily.
         assert_eq!(join_components(b"\xff\0d\0"), "d/\u{fffd}");
+    }
+
+    #[test]
+    fn a_failing_helper_is_restarted_less_and_less_often() {
+        let delays: Vec<u64> = (1..=10)
+            .map(|failures| appops_retry_delay(failures).as_secs())
+            .collect();
+        assert_eq!(delays, [30, 60, 120, 240, 480, 960, 1920, 3600, 3600, 3600]);
+        assert_eq!(appops_retry_delay(u32::MAX), APPOPS_RETRY_MAX);
+    }
+
+    #[test]
+    fn a_recurring_message_is_logged_once_an_hour() {
+        let mut log = RecurringLog::default();
+        let start = Instant::now();
+        let at = |secs| start + Duration::from_secs(secs);
+        assert_eq!(log.line("a".into(), at(0)).as_deref(), Some("a"));
+        assert_eq!(log.line("a".into(), at(30)), None);
+        assert_eq!(log.line("a".into(), at(90)), None);
+        assert_eq!(
+            log.line("a".into(), at(3600)).as_deref(),
+            Some("a (2 more since)")
+        );
+        assert_eq!(log.line("a".into(), at(3630)), None);
+        // A different message is logged at once.
+        assert_eq!(log.line("b".into(), at(3660)).as_deref(), Some("b"));
+        assert_eq!(log.line("a".into(), at(3690)).as_deref(), Some("a"));
+        // One that recurs no more than hourly is logged each time, as is.
+        assert_eq!(log.line("a".into(), at(7290)).as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn a_helper_failure_is_described_by_its_first_line() {
+        let said = "\n  java.lang.IllegalStateException: no service\n\tat x.y(Z.java:1)\n";
+        assert_eq!(
+            first_line(said.as_bytes()).as_deref(),
+            Some("java.lang.IllegalStateException: no service")
+        );
+        assert_eq!(first_line(&b""[..]), None);
     }
 
     #[test]
