@@ -44,6 +44,7 @@ const OPS: &[(&str, &str)] = &[
     ("android:body_sensors", topic::SENSORS),
     ("android:activity_recognition", topic::SENSORS),
     ("android:read_clipboard", topic::CLIPBOARD),
+    ("android:write_clipboard", topic::CLIPBOARD),
     ("android:read_contacts", topic::CONTACTS),
     ("android:read_call_log", topic::CALL_LOG),
     ("android:read_sms", topic::MESSAGES),
@@ -197,6 +198,15 @@ mod tests {
     #[test]
     fn only_watched_ops_have_a_topic() {
         assert_eq!(topic_of("appop:android:camera"), Some(topic::CAMERA));
+        // The clipboard both ways; the app tells them apart.
+        assert_eq!(
+            topic_of("appop:android:read_clipboard"),
+            Some(topic::CLIPBOARD)
+        );
+        assert_eq!(
+            topic_of("appop:android:write_clipboard"),
+            Some(topic::CLIPBOARD)
+        );
         assert_eq!(topic_of("appop:android:vibrate"), None);
         assert_eq!(topic_of("exec:su"), None);
         for op in ops() {

@@ -19,6 +19,7 @@ package li.mercury.bigbrother.canary
 import android.accounts.AccountManager
 import android.app.Activity
 import android.app.ActivityManager
+import android.content.ClipData
 import android.content.ClipboardManager
 import android.hardware.Sensor
 import android.hardware.SensorEvent
@@ -54,11 +55,22 @@ import kotlin.concurrent.thread
 class MainActivity : Activity() {
     private lateinit var output: TextView
 
+    private var started = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         output = TextView(this).apply { setPadding(32, 96, 32, 32) }
         setContentView(ScrollView(this).apply { addView(output) })
-        thread(name = "probes") { runProbes() }
+    }
+
+    // Only an app with focus may read the clipboard, so the probes start
+    // once the window has it.
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && !started) {
+            started = true
+            thread(name = "probes") { runProbes() }
+        }
     }
 
     @Suppress("DEPRECATION", "MissingPermission")
@@ -86,7 +98,12 @@ class MainActivity : Activity() {
         // System services.
         probe("list installed apps") { packageManager.getInstalledPackages(0).size }
         probe("look for one app") { packageManager.getPackageInfo("com.android.vending", 0).versionName }
-        probe("read the clipboard") { getSystemService(ClipboardManager::class.java).primaryClip?.itemCount }
+        val clipboard = getSystemService(ClipboardManager::class.java)
+        val clipListener = ClipboardManager.OnPrimaryClipChangedListener { }
+        probe("listen to the clipboard") { clipboard.addPrimaryClipChangedListener(clipListener) }
+        probe("write the clipboard") { clipboard.setPrimaryClip(ClipData.newPlainText("canary", "canary")) }
+        probe("read the clipboard") { clipboard.primaryClip?.itemCount }
+        clipboard.removePrimaryClipChangedListener(clipListener)
         probe("read the Android ID") { Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) }
         probe("read the last location") {
             getSystemService(LocationManager::class.java).getLastKnownLocation(LocationManager.GPS_PROVIDER)
@@ -94,14 +111,16 @@ class MainActivity : Activity() {
         probe("read the Wi-Fi connection") { getSystemService(WifiManager::class.java).connectionInfo.ssid }
         probe("list accounts") { AccountManager.get(this).accounts.size }
         probe("list running apps") { getSystemService(ActivityManager::class.java).runningAppProcesses.size }
-        probe("listen to a sensor") {
+        probe("listen to sensors for ${SENSORS_ON_MS / 1000} s") {
+            // One listener each, so each sensor has a connection of its own.
             val sensors = getSystemService(SensorManager::class.java)
-            val listener = object : SensorEventListener {
-                override fun onSensorChanged(event: SensorEvent) = Unit
-                override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) = Unit
-            }
-            sensors.registerListener(listener, sensors.getDefaultSensor(Sensor.TYPE_ACCELEROMETER), SensorManager.SENSOR_DELAY_NORMAL)
-            sensors.unregisterListener(listener)
+            val accelerometer = sensorListener()
+            val gyroscope = sensorListener()
+            sensors.registerListener(accelerometer, sensors.getDefaultSensor(Sensor.TYPE_ACCELEROMETER), SensorManager.SENSOR_DELAY_NORMAL)
+            sensors.registerListener(gyroscope, sensors.getDefaultSensor(Sensor.TYPE_GYROSCOPE), SensorManager.SENSOR_DELAY_FASTEST)
+            Thread.sleep(SENSORS_ON_MS)
+            sensors.unregisterListener(accelerometer)
+            sensors.unregisterListener(gyroscope)
         }
 
         // Personal data.
@@ -127,6 +146,11 @@ class MainActivity : Activity() {
         report("$name -> $outcome")
     }
 
+    private fun sensorListener() = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) = Unit
+        override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) = Unit
+    }
+
     private fun report(line: String) {
         Log.i(TAG, line)
         runOnUiThread { output.append(line + "\n") }
@@ -144,5 +168,8 @@ class MainActivity : Activity() {
     private companion object {
         const val TAG = "BigBrotherCanary"
         const val CONNECT_TIMEOUT_MS = 500
+
+        /** How long the sensors stay on: a known length for the recorded sessions. */
+        const val SENSORS_ON_MS = 10_000L
     }
 }

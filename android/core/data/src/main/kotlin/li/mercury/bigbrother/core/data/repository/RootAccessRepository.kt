@@ -30,6 +30,8 @@ import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.Category
 import li.mercury.bigbrother.core.model.PathMatch
 import li.mercury.bigbrother.core.model.RecorderStatus
+import li.mercury.bigbrother.core.model.SensorSession
+import li.mercury.bigbrother.core.model.SubjectCount
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.model.TimelineEntry
 import li.mercury.bigbrother.core.model.TimelinePage
@@ -167,10 +169,21 @@ internal class RootAccessRepository @Inject constructor(
                     folder = row.optString("folder").ifEmpty { null },
                     firstSeen = row.getLong("first_ts"),
                     lastSeen = row.getLong("last_ts"),
+                    subjects = row.optJSONArray("subjects").toSubjectCounts(),
                 )
             },
             nextBefore = if (page.has("next_before")) page.getLong("next_before") else null,
         )
+    }
+
+    /** A timeline entry's records; an older daemon leaves them out. */
+    private fun JSONArray?.toSubjectCounts(): List<SubjectCount> = if (this == null) {
+        emptyList()
+    } else {
+        List(length()) { i ->
+            val subject = getJSONObject(i)
+            SubjectCount(path = subject.getString("path"), allowed = subject.getInt("ok"), denied = subject.getInt("fail"))
+        }
     }
 
     /** A row of `bbd files`; null for a category this build doesn't know, which is skipped rather than guessed at. */
@@ -210,9 +223,27 @@ internal class RootAccessRepository @Inject constructor(
                 denied = row.getInt("fail"),
                 firstSeen = row.getLong("first_ts"),
                 lastSeen = row.getLong("last_ts"),
+                // The daemon names it when several paths are asked for (an
+                // older one does not); with one, it is that one.
+                subject = row.optString("path").ifEmpty { paths.singleOrNull() },
             )
         }
     }
+
+    override suspend fun getSensorSessions(uid: Int, range: TimeRange): List<SensorSession> = parsing {
+        // Only numbers are interpolated.
+        val rows = JSONArray(query("sensors --uid $uid" + range.argument()))
+        List(rows.length()) { i -> rows.getJSONObject(i).toSensorSession() }
+    }
+
+    private fun JSONObject.toSensorSession(): SensorSession = SensorSession(
+        sensor = optString("sensor"),
+        highRate = optBoolean("high_rate"),
+        periodNs = if (has("period_ns") && !isNull("period_ns")) getLong("period_ns") else null,
+        rateHz = if (has("rate_hz") && !isNull("rate_hz")) getDouble("rate_hz") else null,
+        start = getLong("start_ts"),
+        end = if (has("end_ts") && !isNull("end_ts")) getLong("end_ts") else null,
+    )
 
     override suspend fun getRecorderStatus(): RecorderStatus = try {
         readRecorderStatus().also { _recorderStatus.value = it }

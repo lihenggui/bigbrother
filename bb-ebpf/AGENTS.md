@@ -29,6 +29,12 @@ These programs run on every file open and many system calls of every process.
 - Submit with `wakeup_flags()`, which wakes the daemon only when the buffer is
   filling up. Never submit, output or discard with flag 0: that wakes the
   daemon for every event.
+- The one exception: calls to the sensor connection (`BINDER_WAKE` in the
+  binder map) wake the daemon at once, so that a sensor turned on is known
+  while its app runs. These wakeups are limited to one per second
+  (`EARLY_WAKE_INTERVAL_NS`, at most one per CPU when they race); a call
+  within that second is still recorded and waits for the next read. Any new
+  exception needs a bound like this one.
 
 ## Testing
 

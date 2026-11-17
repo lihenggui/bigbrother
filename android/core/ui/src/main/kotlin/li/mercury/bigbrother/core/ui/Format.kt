@@ -43,8 +43,10 @@ fun relativeTime(epochSeconds: Long): String {
     return DateUtils.getRelativeTimeSpanString(then, now, resolution).toString()
 }
 
-private val dateTimeFormat = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM)
-private val timeFormat = DateTimeFormatter.ofLocalizedTime(FormatStyle.MEDIUM)
+// Made for each use: a formatter keeps the locale it was made in, and the
+// user can change the language while the app runs.
+private val dateTimeFormat: DateTimeFormatter get() = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM)
+private val timeFormat: DateTimeFormatter get() = DateTimeFormatter.ofLocalizedTime(FormatStyle.MEDIUM)
 
 private fun localTime(epochSeconds: Long) = Instant.ofEpochSecond(epochSeconds).atZone(ZoneId.systemDefault())
 

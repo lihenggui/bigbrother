@@ -30,4 +30,6 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.appiconloader)
     implementation(libs.coil.compose)
+
+    testImplementation(libs.kotlin.test.junit)
 }

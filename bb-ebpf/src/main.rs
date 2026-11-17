@@ -66,7 +66,7 @@ use aya_ebpf::{
         bpf_probe_read_user_buf, bpf_probe_read_user_str_bytes,
     },
     macros::{kprobe, kretprobe, map, raw_tracepoint},
-    maps::{HashMap, LruHashMap, PerCpuArray, RingBuf},
+    maps::{Array, HashMap, LruHashMap, PerCpuArray, RingBuf},
     programs::{ProbeContext, RawTracePointContext, RetProbeContext},
 };
 use bb_common::filter::{
@@ -76,13 +76,13 @@ use bb_common::filter::{
 use bb_common::{
     ABI_COMPAT32, ABI_NATIVE, AF_INET, AF_INET6, BINDER_ARGS_CAP, BINDER_ARGS_SHORT, BINDER_CODES,
     BINDER_KEY_HEAD, BINDER_KEY_LEN, BINDER_KEY_TAIL, BINDER_MAX_NAME, BINDER_MIN_NAME,
-    BinderEvent, BinderKey, BinderValue, ConnectEvent, DATA_START_LIMIT, EV_BINDER, EV_CONNECT,
-    EV_EXEC, EV_FILE, EV_NETLINK, EV_PATH, EV_PROCESS, EV_RESULT, EXEC_ARG_CAP, EXEC_ARGS,
-    EventHeader, ExecEvent, FUSE_SUPER_MAGIC, FileEvent, NAME_CAP, NetlinkEvent, OFF_COUNT,
-    OFF_DENTRY_INODE, OFF_DENTRY_NAME, OFF_DENTRY_PARENT, OFF_DENTRY_SB, OFF_FILE_DENTRY,
-    OFF_FILE_FLAGS, OFF_INODE_MODE, OFF_SB_DEV, OFF_SB_MAGIC, OFF_SKB_DATA, OFF_SOCK_PROTOCOL,
-    OP_OPEN, OP_PAIRED, OP_PROBE, OP_WATCH, PROC_SUPER_MAGIC, PROCESS_READ, PROCESS_TRACE,
-    PROCESS_WRITE, PathEvent, ProcessEvent, ResultEvent, SELINUX_MAGIC, SYSFS_MAGIC,
+    BINDER_WAKE, BinderEvent, BinderKey, BinderValue, ConnectEvent, DATA_START_LIMIT, EV_BINDER,
+    EV_CONNECT, EV_EXEC, EV_FILE, EV_NETLINK, EV_PATH, EV_PROCESS, EV_RESULT, EXEC_ARG_CAP,
+    EXEC_ARGS, EventHeader, ExecEvent, FUSE_SUPER_MAGIC, FileEvent, NAME_CAP, NetlinkEvent,
+    OFF_COUNT, OFF_DENTRY_INODE, OFF_DENTRY_NAME, OFF_DENTRY_PARENT, OFF_DENTRY_SB,
+    OFF_FILE_DENTRY, OFF_FILE_FLAGS, OFF_INODE_MODE, OFF_SB_DEV, OFF_SB_MAGIC, OFF_SKB_DATA,
+    OFF_SOCK_PROTOCOL, OP_OPEN, OP_PAIRED, OP_PROBE, OP_WATCH, PROC_SUPER_MAGIC, PROCESS_READ,
+    PROCESS_TRACE, PROCESS_WRITE, PathEvent, ProcessEvent, ResultEvent, SELINUX_MAGIC, SYSFS_MAGIC,
 };
 
 const AT_FDCWD: i32 = -100;
@@ -113,6 +113,12 @@ static EVENTS: RingBuf = RingBuf::with_byte_size(8 * 1024 * 1024, 0);
 /// adds the per-CPU values up.
 #[map]
 static DROPPED: PerCpuArray<u64> = PerCpuArray::with_max_entries(1, 0);
+
+/// Slot 0: when (boot time, ns) a call asking for it last woke the daemon
+/// early (see `early_wakeup_flags`). One slot for all CPUs: two of them
+/// racing can each wake it once, which keeps to the bound per CPU.
+#[map]
+static LAST_EARLY_WAKE: Array<u64> = Array::with_max_entries(1, 0);
 
 /// Where `file_open` assembles its event. Most of what it sees is dropped
 /// once the path is known, and a record reserved in the ring buffer and then
@@ -190,6 +196,30 @@ fn wakeup_flags() -> u64 {
     } else {
         BPF_RB_NO_WAKEUP
     }
+}
+
+/// Least time between two early wakeups for calls that ask for one
+/// (`BINDER_WAKE`: turning a sensor on). Such calls are rare, but an app can
+/// make them in a loop; this keeps that to one wakeup a second. A call that
+/// may not wake the daemon is still recorded, and read with the next batch.
+const EARLY_WAKE_INTERVAL_NS: u64 = 1_000_000_000;
+
+/// Flags for submitting an event that asks to wake the daemon at once:
+/// the wakeup if none was done for the last `EARLY_WAKE_INTERVAL_NS`,
+/// otherwise the usual ones.
+#[inline(always)]
+fn early_wakeup_flags() -> u64 {
+    let Some(last) = LAST_EARLY_WAKE.get_ptr_mut(0) else {
+        return wakeup_flags();
+    };
+    let now = unsafe { bpf_ktime_get_boot_ns() };
+    unsafe {
+        if now.wrapping_sub(*last) < EARLY_WAKE_INTERVAL_NS {
+            return wakeup_flags();
+        }
+        *last = now;
+    }
+    BPF_RB_FORCE_WAKEUP
 }
 
 #[inline(always)]
@@ -1024,40 +1054,53 @@ fn try_binder_ioctl(ctx: &RawTracePointContext) -> Result<(), i32> {
 fn binder_transaction(transaction: u64, uid: u32) -> Result<(), i32> {
     // struct binder_transaction_data: target and cookie (8 bytes each),
     // code and flags (4 each), sender pid and euid (4 each), data_size,
-    // offsets_size, data buffer, offsets buffer (8 each). Only three fields
+    // offsets_size, data buffer, offsets buffer (8 each). Only four fields
     // are wanted, and the stack is small.
     let code: u32 = unsafe { bpf_probe_read_user((transaction + 16) as *const u32)? };
     let size: u64 = unsafe { bpf_probe_read_user((transaction + 32) as *const u64)? };
     let data: u64 = unsafe { bpf_probe_read_user((transaction + 48) as *const u64)? };
-    if code >= BINDER_CODES || size < PARCEL_NAME_OFFSET {
+    if code >= BINDER_CODES {
         return Ok(());
     }
-    let prefix: [u32; 4] = unsafe { bpf_probe_read_user(data as *const [u32; 4])? };
-    let len = prefix[3];
-    if prefix[2] != PARCEL_HEADER_SYSTEM || len < BINDER_MIN_NAME || len > BINDER_MAX_NAME {
-        return Ok(());
-    }
-    // The name: `len` UTF-16 code units, a terminator, padding to 4 bytes.
-    let name = data + PARCEL_NAME_OFFSET;
-    let name_bytes = len as u64 * 2;
     let mut key: BinderKey = [0; BINDER_KEY_LEN];
-    let len_bytes = len.to_ne_bytes();
-    key[0] = len_bytes[0];
-    key[1] = len_bytes[1];
-    key[2] = len_bytes[2];
-    key[3] = len_bytes[3];
-    unsafe {
-        let key_bytes = (&raw mut key).cast::<u8>();
-        bpf_probe_read_user_buf(
-            name as *const u8,
-            core::slice::from_raw_parts_mut(key_bytes.add(4), BINDER_KEY_HEAD),
-        )
-        .map_err(|e| e as i32)?;
-        bpf_probe_read_user_buf(
-            (name + name_bytes - BINDER_KEY_TAIL as u64) as *const u8,
-            core::slice::from_raw_parts_mut(key_bytes.add(4 + BINDER_KEY_HEAD), BINDER_KEY_TAIL),
-        )
-        .map_err(|e| e as i32)?;
+    // A call without arguments has no interface name either; it is looked up
+    // under the all-zero key (`BINDER_UNNAMED_KEY`) and has no arguments to
+    // copy.
+    let mut args = 0;
+    if size != 0 {
+        if size < PARCEL_NAME_OFFSET {
+            return Ok(());
+        }
+        let prefix: [u32; 4] = unsafe { bpf_probe_read_user(data as *const [u32; 4])? };
+        let len = prefix[3];
+        if prefix[2] != PARCEL_HEADER_SYSTEM || len < BINDER_MIN_NAME || len > BINDER_MAX_NAME {
+            return Ok(());
+        }
+        // The name: `len` UTF-16 code units, a terminator, padding to 4 bytes.
+        let name = data + PARCEL_NAME_OFFSET;
+        let name_bytes = len as u64 * 2;
+        let len_bytes = len.to_ne_bytes();
+        key[0] = len_bytes[0];
+        key[1] = len_bytes[1];
+        key[2] = len_bytes[2];
+        key[3] = len_bytes[3];
+        unsafe {
+            let key_bytes = (&raw mut key).cast::<u8>();
+            bpf_probe_read_user_buf(
+                name as *const u8,
+                core::slice::from_raw_parts_mut(key_bytes.add(4), BINDER_KEY_HEAD),
+            )
+            .map_err(|e| e as i32)?;
+            bpf_probe_read_user_buf(
+                (name + name_bytes - BINDER_KEY_TAIL as u64) as *const u8,
+                core::slice::from_raw_parts_mut(
+                    key_bytes.add(4 + BINDER_KEY_HEAD),
+                    BINDER_KEY_TAIL,
+                ),
+            )
+            .map_err(|e| e as i32)?;
+        }
+        args = name + ((name_bytes + 2 + 3) & !3);
     }
     let Some(watched) = (unsafe { BINDER_WATCH.get(&key) }) else {
         return Ok(());
@@ -1068,8 +1111,18 @@ fn binder_transaction(transaction: u64, uid: u32) -> Result<(), i32> {
     if word & (1 << (code & 63)) == 0 {
         return Ok(());
     }
+    // The low half of the `target` union: the handle, for a call to another
+    // process.
+    let target: u32 = unsafe { bpf_probe_read_user(transaction as *const u32)? };
+    // A sensor turned on must reach the daemon while the app runs (see
+    // `BINDER_WAKE`), within the bound of `early_wakeup_flags`; everything
+    // else waits for the next read.
+    let flags = if watched[0] & BINDER_WAKE != 0 {
+        early_wakeup_flags()
+    } else {
+        wakeup_flags()
+    };
 
-    let args = name + ((name_bytes + 2 + 3) & !3);
     let Some(mut entry) = EVENTS.reserve::<BinderEvent>(0) else {
         count_drop();
         return Err(-1);
@@ -1079,22 +1132,28 @@ fn binder_transaction(transaction: u64, uid: u32) -> Result<(), i32> {
         (*ev).hdr = header(EV_BINDER, uid, bpf_get_current_pid_tgid());
         (*ev).interface = watched[0] as u32;
         (*ev).code = code;
-        // The arguments are read at a fixed length, which can run past the
-        // parcel into whatever follows it; the daemon only trusts what the
-        // parcel's size covers.
-        let have = (data + size).saturating_sub(args);
-        let short =
-            core::slice::from_raw_parts_mut((&raw mut (*ev).args).cast::<u8>(), BINDER_ARGS_SHORT);
-        let read = if bpf_probe_read_user_buf(args as *const u8, &mut (*ev).args).is_ok() {
-            BINDER_ARGS_CAP as u64
-        } else if bpf_probe_read_user_buf(args as *const u8, short).is_ok() {
-            BINDER_ARGS_SHORT as u64
-        } else {
-            0
-        };
-        (*ev).args_len = if have < read { have } else { read } as u32;
+        (*ev).target = target;
+        (*ev).args_len = 0;
+        if args != 0 {
+            // The arguments are read at a fixed length, which can run past
+            // the parcel into whatever follows it; the daemon only trusts
+            // what the parcel's size covers.
+            let have = (data + size).saturating_sub(args);
+            let short = core::slice::from_raw_parts_mut(
+                (&raw mut (*ev).args).cast::<u8>(),
+                BINDER_ARGS_SHORT,
+            );
+            let read = if bpf_probe_read_user_buf(args as *const u8, &mut (*ev).args).is_ok() {
+                BINDER_ARGS_CAP as u64
+            } else if bpf_probe_read_user_buf(args as *const u8, short).is_ok() {
+                BINDER_ARGS_SHORT as u64
+            } else {
+                0
+            };
+            (*ev).args_len = if have < read { have } else { read } as u32;
+        }
     }
-    entry.submit(wakeup_flags());
+    entry.submit(flags);
     Ok(())
 }
 

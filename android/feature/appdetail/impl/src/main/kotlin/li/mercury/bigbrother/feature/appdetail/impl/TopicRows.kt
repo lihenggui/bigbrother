@@ -39,11 +39,13 @@ import androidx.compose.ui.unit.dp
 import li.mercury.bigbrother.core.model.Access
 import li.mercury.bigbrother.core.model.Action
 import li.mercury.bigbrother.core.model.Category
+import li.mercury.bigbrother.core.model.SubjectCount
 import li.mercury.bigbrother.core.ui.DataCategory
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.dataCategoryOf
 import li.mercury.bigbrother.core.ui.shortTime
 import li.mercury.bigbrother.core.ui.topicIcon
+import li.mercury.bigbrother.core.ui.topicRecordsSummary
 import li.mercury.bigbrother.core.ui.topicTitle
 
 /** Where a record comes from, in the order the rows are listed. */
@@ -85,6 +87,9 @@ class TopicGroup(
     val allowed: Int get() = accesses.sumOf { it.allowed }
     val denied: Int get() = accesses.sumOf { it.denied }
     val lastSeen: Long get() = accesses.maxOf { it.lastSeen }
+
+    /** Each record with its counts. */
+    val records: List<SubjectCount> get() = accesses.map { SubjectCount(it.path, it.allowed, it.denied) }
 }
 
 /**
@@ -168,8 +173,9 @@ internal fun TopicRow(
 /**
  * How often the records of a row were accessed, and by whom. For lookups of
  * other apps, how many apps were asked about, which says more than how many
- * calls it took. An access the system always refused is marked as such, but
- * not as an error: the refusal protected the data.
+ * calls it took; for the clipboard, which way it went; for sensors, which
+ * ones. An access the system always refused is marked as such, but not as
+ * an error: the refusal protected the data.
  */
 @Composable
 internal fun TopicSummary(group: TopicGroup) {
@@ -178,18 +184,25 @@ internal fun TopicSummary(group: TopicGroup) {
         stringResource(it) + stringResource(R.string.time_separator)
     }.orEmpty()
     val allowed = group.allowed
+    val detail = topicRecordsSummary(group.topic, remember(group) { group.records })
+    if (allowed == 0 && detail != null) {
+        DeniedText(source + detail)
+        return
+    }
     if (allowed == 0) {
         val kind = group.accesses.map { it.action }.distinct().singleOrNull()
         val blocked = if (kind == Action.EXEC) R.plurals.total_not_run else R.plurals.total_blocked
         DeniedText(source + pluralStringResource(blocked, group.denied, group.denied))
         return
     }
-    Text(source + outcome(group, allowed, asked), maxLines = 1, overflow = TextOverflow.Ellipsis)
+    // The clipboard's directions and the sensors' names may take a second line.
+    Text(source + (detail ?: outcome(group, allowed, asked)), maxLines = 2, overflow = TextOverflow.Ellipsis)
 }
 
 /** "Read 3 times", "Looked up 12 apps" and the like. */
 @Composable
 internal fun outcome(group: TopicGroup, allowed: Int, asked: Int): String {
+    topicRecordsSummary(group.topic, remember(group) { group.records })?.let { return it }
     if (asked > 0) {
         val plural = when (group.topic) {
             ROOT_CHECK -> R.plurals.root_apps_asked

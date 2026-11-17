@@ -27,6 +27,7 @@
     <string name="action_exec">执行</string>
     <string name="action_used">使用</string>
     <string name="action_call">调用</string>
+    <string name="action_clipboard_write">写入</string>
     <string name="search_paths">搜索路径</string>
     <plurals name="access_query">
         <item quantity="other">查询 %1$d 次，单次最多返回 %2$d 条</item>
@@ -128,4 +129,21 @@
     <string name="record_details">内容</string>
     <string name="record_history">每次访问</string>
     <string name="record_history_partial">仅显示此类最近几条记录的时间。</string>
+
+    <string name="sensor_sessions">传感器开启时段</string>
+    <string name="sensor_total">累计 %s</string>
+    <string name="session_span">%1$s–%2$s</string>
+    <string name="sensor_since">%s 起</string>
+    <string name="sensor_still_on">仍在采集</string>
+    <string name="high_rate">高采样率</string>
+    <string name="rate_fastest">最快</string>
+    <string name="sensor_sessions_note">显示的是应用请求的采样率，系统实际提供的可能更低。</string>
+    <string name="duration_seconds">%d 秒</string>
+    <string name="duration_minutes">%d 分钟</string>
+    <string name="duration_hours">%d 小时</string>
+    <string name="duration_hours_minutes">%1$d 小时 %2$d 分</string>
+    <string name="duration_days">%d 天</string>
+    <string name="duration_days_hours">%1$d 天 %2$d 小时</string>
+    <string name="expanded">已展开</string>
+    <string name="collapsed">已收起</string>
 </resources>

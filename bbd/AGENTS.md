@@ -28,6 +28,9 @@ The daemon runs on every device all the time; its cost is the product's cost.
 
 - No busy loops and no timers shorter than needed. It writes every 30 seconds,
   and only when there is something to write; it holds no wakelock.
+- While a sensor session is open, the processes of open sessions are checked
+  every 5 seconds (`SENSOR_PROCESS_CHECK`), so that a killed app's session ends
+  close to when it did. With no session open that timer does not exist.
 - Rate-limit anything that can repeat (log lines, helper restarts) and back off
   on failure.
 - Filter as early as possible: in the kernel if the decision can be made there

@@ -21,7 +21,7 @@
 use std::{collections::HashMap, path::Path};
 
 use anyhow::Context as _;
-use rusqlite::{Connection, OpenFlags, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension as _, params};
 use serde::Serialize;
 
 pub const DEFAULT_DB: &str = "/data/adb/big_brother/bb.db";
@@ -101,7 +101,7 @@ impl Category {
 
 /// Schema version stored in SQLite's `user_version`. Bump it and add a step
 /// to `MIGRATIONS` whenever the schema changes.
-const SCHEMA_VERSION: i32 = 3;
+const SCHEMA_VERSION: i32 = 4;
 
 /// Most entries returned for one path's history.
 const HISTORY_LIMIT: u32 = 2000;
@@ -111,6 +111,14 @@ const TOP_FOLDERS: usize = 3;
 
 /// Hours of records the timeline reads per query while it collects a page.
 const TIMELINE_WINDOW_HOURS: i64 = 24;
+
+/// Topics whose records each say something of their own (whether the
+/// clipboard was read or written, which sensor was turned on); the timeline
+/// lists them for these, where there are a handful per entry.
+const SUBJECTS_LISTED: &[&str] = &[crate::rules::topic::CLIPBOARD, crate::rules::topic::SENSORS];
+
+/// Most sensor sessions returned for one app.
+const SENSOR_SESSIONS_LIMIT: u32 = 2000;
 
 /// Mode bits of accesses that only looked for a file rather than opened it.
 const NOT_FILE_OPEN: Mode = MODE_DIR | MODE_PROBE | MODE_WATCH;
@@ -124,7 +132,30 @@ const MIGRATIONS: &[&str] = &[
     "ALTER TABLE access ADD COLUMN items INTEGER NOT NULL DEFAULT 0;",
     // 2 -> 3: individual accesses, next to the hourly aggregates.
     EVENT_SCHEMA,
+    // 3 -> 4: periods sensors were on.
+    SENSOR_SCHEMA,
 ];
+
+/// Periods during which an app had a sensor on (see `sensors`). A row is one
+/// sensor on one connection of one process, at one rate.
+const SENSOR_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS sensor_session (
+    uid        INTEGER NOT NULL,
+    pid        INTEGER NOT NULL,
+    proc_start INTEGER NOT NULL,  -- the process's start, in clock ticks after boot:
+                                  -- tells a reused pid apart
+    connection INTEGER NOT NULL,  -- the process's binder handle for the connection
+    handle     INTEGER NOT NULL,  -- the sensor's handle on this device
+    sensor     TEXT    NOT NULL,  -- its type, e.g. 'android.sensor.accelerometer';
+                                  -- '' if it could not be identified
+    continuous INTEGER NOT NULL,  -- 1 if it reports at a steady rate
+    period_ns  INTEGER NOT NULL,  -- sampling period asked for; 0 for the fastest
+    start_ts   INTEGER NOT NULL,
+    end_ts     INTEGER,           -- NULL while it is on
+    PRIMARY KEY (uid, pid, connection, handle, start_ts)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS sensor_session_end ON sensor_session (end_ts);
+";
 
 /// Individual accesses. `access` answers "what did this app touch" cheaply;
 /// `event` answers "when exactly". A row is one second in which an app
@@ -201,6 +232,21 @@ pub struct Counters {
     pub dropped: u64,
 }
 
+/// One period an app had a sensor on: a `sensor_session` row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SensorSession {
+    pub uid: u32,
+    pub pid: u32,
+    pub proc_start: u64,
+    pub connection: u32,
+    pub handle: i32,
+    pub sensor: String,
+    pub continuous: bool,
+    pub period_ns: i64,
+    pub start_ts: i64,
+    pub end_ts: Option<i64>,
+}
+
 /// Identifies an `event` row.
 #[derive(Hash, PartialEq, Eq)]
 struct EventKey {
@@ -220,6 +266,8 @@ pub struct Writer {
     pending: HashMap<Key, Agg>,
     /// Individual accesses not yet written: (allowed, refused) per key.
     events: HashMap<EventKey, (u32, u32)>,
+    /// Sensor sessions started, changed or ended, not yet written.
+    sessions: Vec<SensorSession>,
     /// The counters last written, and when.
     written: Option<(Counters, i64)>,
 }
@@ -239,8 +287,49 @@ impl Writer {
             conn,
             pending: HashMap::new(),
             events: HashMap::new(),
+            sessions: Vec::new(),
             written: None,
         })
+    }
+
+    /// Write a sensor session with the next flush, over what was written of
+    /// it before.
+    pub fn sensor_session(&mut self, session: SensorSession) {
+        self.sessions.push(session);
+    }
+
+    /// The sensor sessions not ended: those a previous run left open.
+    pub fn open_sensor_sessions(&self) -> anyhow::Result<Vec<SensorSession>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT uid, pid, proc_start, connection, handle, sensor, continuous, period_ns,
+                    start_ts
+             FROM sensor_session WHERE end_ts IS NULL",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(SensorSession {
+                uid: r.get(0)?,
+                pid: r.get(1)?,
+                proc_start: r.get::<_, i64>(2)? as u64,
+                connection: r.get(3)?,
+                handle: r.get(4)?,
+                sensor: r.get(5)?,
+                continuous: r.get(6)?,
+                period_ns: r.get(7)?,
+                start_ts: r.get(8)?,
+                end_ts: None,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// A value from `meta`.
+    pub fn meta(&self, key: &str) -> anyhow::Result<Option<i64>> {
+        Ok(self
+            .conn
+            .query_row("SELECT value FROM meta WHERE key = ?1", params![key], |r| {
+                r.get(0)
+            })
+            .optional()?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -297,7 +386,7 @@ impl Writer {
     }
 
     fn has_rows(&self) -> bool {
-        !self.pending.is_empty() || !self.events.is_empty()
+        !self.pending.is_empty() || !self.events.is_empty() || !self.sessions.is_empty()
     }
 
     /// Write buffered rows, with the counters, in one transaction. Without
@@ -375,6 +464,32 @@ impl Writer {
                 };
                 insert_event.execute(params![k.uid, id, k.mode, k.ts, ok, fail])?;
             }
+            let mut session = tx.prepare_cached(
+                "INSERT INTO sensor_session
+                     (uid, pid, proc_start, connection, handle, sensor, continuous, period_ns,
+                      start_ts, end_ts)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                 ON CONFLICT (uid, pid, connection, handle, start_ts) DO UPDATE SET
+                     sensor = excluded.sensor,
+                     continuous = excluded.continuous,
+                     period_ns = excluded.period_ns,
+                     end_ts = excluded.end_ts",
+            )?;
+            // In the order they changed: the last change of a session wins.
+            for s in &self.sessions {
+                session.execute(params![
+                    s.uid,
+                    s.pid,
+                    s.proc_start as i64,
+                    s.connection,
+                    s.handle,
+                    s.sensor,
+                    s.continuous,
+                    s.period_ns,
+                    s.start_ts,
+                    s.end_ts
+                ])?;
+            }
 
             let mut meta = tx.prepare_cached(
                 "INSERT INTO meta (key, value) VALUES (?1, ?2)
@@ -395,6 +510,7 @@ impl Writer {
         // are written by the next flush.
         self.pending.clear();
         self.events.clear();
+        self.sessions.clear();
         self.written = Some((counters.clone(), now));
         Ok(())
     }
@@ -416,6 +532,10 @@ impl Writer {
         for package in packages {
             self.conn.execute(
                 "DELETE FROM event WHERE uid IN (SELECT uid FROM access WHERE pkg = ?1)",
+                params![package],
+            )?;
+            self.conn.execute(
+                "DELETE FROM sensor_session WHERE uid IN (SELECT uid FROM access WHERE pkg = ?1)",
                 params![package],
             )?;
             removed += self
@@ -459,6 +579,10 @@ impl Writer {
         let cutoff = now - i64::from(days) * 86_400;
         self.conn
             .execute("DELETE FROM event WHERE ts < ?1", params![cutoff])?;
+        self.conn.execute(
+            "DELETE FROM sensor_session WHERE end_ts < ?1",
+            params![cutoff],
+        )?;
         self.delete_unused_paths()?;
         Ok(self
             .conn
@@ -492,6 +616,7 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
     if !has_tables {
         conn.execute_batch(SCHEMA)?;
         conn.execute_batch(EVENT_SCHEMA)?;
+        conn.execute_batch(SENSOR_SCHEMA)?;
         version = SCHEMA_VERSION;
     } else if version == 0 {
         // Databases created before versioning existed have the first layout.
@@ -588,6 +713,9 @@ pub struct HistoryRow {
     pub mode: Mode,
     pub ok: i64,
     pub fail: i64,
+    /// Which path it is of, when the histories of several are merged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 /// One app's activity of one kind within one hour: what the timeline lists.
@@ -618,6 +746,39 @@ pub struct TimelineRow {
     pub folder: Option<String>,
     pub first_ts: i64,
     pub last_ts: i64,
+    /// For the topics in `SUBJECTS_LISTED`, each path and its counts, in
+    /// path order.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subjects: Option<Vec<SubjectCount>>,
+}
+
+/// One path of a timeline entry, and how often it was allowed and refused.
+#[derive(Serialize, Debug, PartialEq, Eq)]
+pub struct SubjectCount {
+    pub path: String,
+    pub ok: i64,
+    pub fail: i64,
+}
+
+/// One period an app had a sensor on, as `bbd sensors` prints it.
+#[derive(Serialize, Debug, PartialEq)]
+pub struct SensorSessionRow {
+    /// The sensor's type (`android.sensor.accelerometer`); empty if it could
+    /// not be identified.
+    pub sensor: String,
+    /// Whether the rate asked for is high (see `sensors::HIGH_RATE_PERIOD_NS`).
+    pub high_rate: bool,
+    /// The sampling period asked for, 0 for the fastest the sensor has.
+    /// Absent for sensors that report on change or once, or that could not
+    /// be identified, for which a rate means nothing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub period_ns: Option<i64>,
+    /// The same as a rate; absent with `period_ns`, or when it is 0.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_hz: Option<f64>,
+    pub start_ts: i64,
+    /// `null` while the sensor is on.
+    pub end_ts: Option<i64>,
 }
 
 /// A page of the timeline.
@@ -641,6 +802,8 @@ struct TimelineAcc {
     items: i64,
     first_ts: i64,
     last_ts: i64,
+    /// Path -> (ok, fail), for the topics in `SUBJECTS_LISTED`.
+    subjects: std::collections::BTreeMap<String, (i64, i64)>,
 }
 
 #[derive(Serialize)]
@@ -854,6 +1017,7 @@ impl Reader {
                 mode: r.get(2)?,
                 ok: r.get(3)?,
                 fail: r.get(4)?,
+                path: None,
             })
         };
         let mut rows: Vec<HistoryRow> = stmt
@@ -890,7 +1054,15 @@ impl Reader {
     ) -> anyhow::Result<Vec<HistoryRow>> {
         let mut rows = Vec::new();
         for path in paths {
-            rows.extend(self.history(uid, path, since)?);
+            let named = (paths.len() > 1).then_some(path);
+            rows.extend(
+                self.history(uid, path, since)?
+                    .into_iter()
+                    .map(|row| HistoryRow {
+                        path: named.cloned(),
+                        ..row
+                    }),
+            );
         }
         rows.sort_by(|a, b| {
             b.last_ts
@@ -963,6 +1135,11 @@ impl Reader {
                 if is_storage && ok > 0 && mode & NOT_FILE_OPEN == 0 && mode & FILE_OPEN != 0 {
                     acc.read.insert(path.clone());
                 }
+                if topic.is_some_and(|topic| SUBJECTS_LISTED.contains(&topic)) {
+                    let counts = acc.subjects.entry(path.clone()).or_default();
+                    counts.0 += ok;
+                    counts.1 += fail;
+                }
                 acc.paths.insert(path);
                 acc.ok += ok;
                 acc.fail += fail;
@@ -998,6 +1175,14 @@ impl Reader {
                         folder,
                         first_ts: acc.first_ts,
                         last_ts: acc.last_ts,
+                        subjects: topic
+                            .is_some_and(|topic| SUBJECTS_LISTED.contains(&topic))
+                            .then(|| {
+                                acc.subjects
+                                    .into_iter()
+                                    .map(|(path, (ok, fail))| SubjectCount { path, ok, fail })
+                                    .collect()
+                            }),
                     }
                 })
                 .collect();
@@ -1024,6 +1209,40 @@ impl Reader {
             entries,
             next_before: None,
         })
+    }
+
+    /// The periods one app had sensors on that overlap the time from
+    /// `since`, most recent start first. Empty for a database the daemon has
+    /// not brought to this version yet.
+    pub fn sensor_sessions(&self, uid: u32, since: i64) -> anyhow::Result<Vec<SensorSessionRow>> {
+        let exists: bool = self.conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE name = 'sensor_session')",
+            [],
+            |r| r.get(0),
+        )?;
+        if !exists {
+            return Ok(Vec::new());
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT sensor, continuous, period_ns, start_ts, end_ts FROM sensor_session
+             WHERE uid = ?1 AND (end_ts IS NULL OR end_ts >= ?2)
+             ORDER BY start_ts DESC, sensor
+             LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(params![uid, since, SENSOR_SESSIONS_LIMIT], |r| {
+            let continuous: bool = r.get(1)?;
+            let period_ns: i64 = r.get(2)?;
+            let period = continuous.then_some(period_ns);
+            Ok(SensorSessionRow {
+                sensor: r.get(0)?,
+                high_rate: crate::sensors::is_high_rate(continuous, period_ns),
+                period_ns: period,
+                rate_hz: period.filter(|p| *p > 0).map(|p| 1e9 / p as f64),
+                start_ts: r.get(3)?,
+                end_ts: r.get(4)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
     }
 
     pub fn stats(&self) -> anyhow::Result<Stats> {
@@ -1544,6 +1763,192 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
+    fn upgrades_a_version_3_database() {
+        let dir = std::env::temp_dir().join(format!("bbd-test-migrate-3-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("bb.db");
+        {
+            // Version 3: hourly aggregates and individual accesses, no sensor
+            // sessions.
+            let conn = Connection::open(&db).unwrap();
+            conn.execute_batch(SCHEMA).unwrap();
+            conn.execute_batch(EVENT_SCHEMA).unwrap();
+            conn.execute_batch(
+                "INSERT INTO access VALUES (1, 10100, 'com.a', 'service',
+                     'binder:android.gui.SensorServer/createSensorEventConnection', 512, 2, 0,
+                     3600, 3700, 0);",
+            )
+            .unwrap();
+            conn.pragma_update(None, "user_version", 3).unwrap();
+        }
+        let mut w = Writer::open(&db).unwrap();
+        let version: i32 = w
+            .conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+        // The old rows are kept, and sessions can be written.
+        w.sensor_session(session(1000, None));
+        w.flush(&Counters::default(), 1100).unwrap();
+        drop(w);
+        let r = Reader::open(&db).unwrap();
+        assert_eq!(r.files(&[], &[], None, None, 0, 10, 0).unwrap().len(), 1);
+        assert_eq!(r.sensor_sessions(10100, 0).unwrap().len(), 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn session(start_ts: i64, end_ts: Option<i64>) -> SensorSession {
+        SensorSession {
+            uid: 10100,
+            pid: 4242,
+            proc_start: 777,
+            connection: 9,
+            handle: 1,
+            sensor: "android.sensor.gyroscope".into(),
+            continuous: true,
+            period_ns: 0,
+            start_ts,
+            end_ts,
+        }
+    }
+
+    #[test]
+    fn sensor_sessions_are_written_over_and_read_by_overlap() {
+        let dir = std::env::temp_dir().join(format!("bbd-sensors-{}", std::process::id()));
+        let db = dir.join("bb.db");
+        let mut w = Writer::open(&db).unwrap();
+        // Written while on, then again when it ended.
+        w.sensor_session(session(1000, None));
+        w.flush(&Counters::default(), 1001).unwrap();
+        assert_eq!(w.open_sensor_sessions().unwrap(), [session(1000, None)]);
+        w.sensor_session(session(1000, Some(1600)));
+        // At 20 ms, and a light sensor, which has no rate to speak of.
+        w.sensor_session(SensorSession {
+            period_ns: 20_000_000,
+            ..session(2000, Some(2300))
+        });
+        w.sensor_session(SensorSession {
+            handle: 5,
+            sensor: "android.sensor.light".into(),
+            continuous: false,
+            ..session(3000, None)
+        });
+        // Another app's.
+        w.sensor_session(SensorSession {
+            uid: 10200,
+            ..session(3000, None)
+        });
+        w.flush(&Counters::default(), 3001).unwrap();
+        let r = Reader::open(&db).unwrap();
+        let rows = r.sensor_sessions(10100, 0).unwrap();
+        assert_eq!(
+            rows,
+            [
+                SensorSessionRow {
+                    sensor: "android.sensor.light".into(),
+                    high_rate: false,
+                    period_ns: None,
+                    rate_hz: None,
+                    start_ts: 3000,
+                    end_ts: None,
+                },
+                SensorSessionRow {
+                    sensor: "android.sensor.gyroscope".into(),
+                    high_rate: false,
+                    period_ns: Some(20_000_000),
+                    rate_hz: Some(50.0),
+                    start_ts: 2000,
+                    end_ts: Some(2300),
+                },
+                SensorSessionRow {
+                    sensor: "android.sensor.gyroscope".into(),
+                    high_rate: true,
+                    period_ns: Some(0),
+                    rate_hz: None,
+                    start_ts: 1000,
+                    end_ts: Some(1600),
+                },
+            ]
+        );
+        assert_eq!(
+            serde_json::to_string(&rows[0]).unwrap(),
+            r#"{"sensor":"android.sensor.light","high_rate":false,"start_ts":3000,"end_ts":null}"#
+        );
+        // Those that ended before the range starts are left out; those still
+        // on are not.
+        let recent = r.sensor_sessions(10100, 2400).unwrap();
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].end_ts, None);
+        // Kept as long as the other records, and while they are on.
+        w.prune(1, 1600 + 86_400 + 1).unwrap();
+        assert_eq!(r.sensor_sessions(10100, 0).unwrap().len(), 2);
+        drop(r);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_timeline_lists_what_clipboard_and_sensor_entries_hold() {
+        let dir =
+            std::env::temp_dir().join(format!("bbd-timeline-subjects-{}", std::process::id()));
+        let db = dir.join("bb.db");
+        let mut w = Writer::open(&db).unwrap();
+        let t = 1_000_000 * 3600;
+        let read = "binder:android.content.IClipboard/getPrimaryClip".to_string();
+        let write = "binder:android.content.IClipboard/setPrimaryClip".to_string();
+        let sv = Category::Service;
+        for (path, ts) in [(&read, t + 1), (&read, t + 2), (&write, t + 3)] {
+            w.record(10100, "com.a", sv, path.clone(), MODE_CALL, true, ts, 0);
+        }
+        let refused = "appop:android:read_clipboard".to_string();
+        w.record(
+            10100,
+            "com.a",
+            Category::Permission,
+            refused.clone(),
+            MODE_READ,
+            false,
+            t + 4,
+            0,
+        );
+        let mac = "/sys/class/net/wlan0/address".to_string();
+        w.record(
+            10100,
+            "com.a",
+            Category::Device,
+            mac,
+            MODE_READ,
+            true,
+            t + 5,
+            0,
+        );
+        w.flush(&Counters::default(), t + 10).unwrap();
+        let r = Reader::open(&db).unwrap();
+        let page = r.timeline(0, t + 3600, 100).unwrap();
+        let subjects = |cat: &str| {
+            page.entries
+                .iter()
+                .find(|e| e.cat == cat)
+                .unwrap()
+                .subjects
+                .as_ref()
+                .map(|s| {
+                    s.iter()
+                        .map(|s| (s.path.as_str(), s.ok, s.fail))
+                        .collect::<Vec<_>>()
+                })
+        };
+        assert_eq!(
+            subjects("service"),
+            Some(vec![(read.as_str(), 2, 0), (write.as_str(), 1, 0)])
+        );
+        assert_eq!(subjects("permission"), Some(vec![(refused.as_str(), 0, 1)]));
+        // Not for other kinds, whose records the title already describes.
+        assert_eq!(subjects("device"), None);
+        drop(r);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn timeline_groups_by_hour_app_and_kind() {
         let dir = std::env::temp_dir().join(format!("bbd-timeline-{}", std::process::id()));
         let db = dir.join("bb.db");
@@ -1804,6 +2209,16 @@ mod tests {
             history.iter().map(|h| h.last_ts).collect::<Vec<_>>(),
             [t + 3600, t]
         );
+        // Each says which path it is of; one path's alone need not.
+        assert_eq!(
+            history
+                .iter()
+                .map(|h| h.path.as_deref())
+                .collect::<Vec<_>>(),
+            [Some(song), Some(photo)]
+        );
+        let one = r.history_of(10200, &[photo.to_string()], 0).unwrap();
+        assert_eq!(one[0].path, None);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

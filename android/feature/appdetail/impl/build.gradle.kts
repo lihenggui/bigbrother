@@ -34,4 +34,5 @@ dependencies {
     testImplementation(libs.kotlin.test.junit)
     testImplementation(libs.robolectric)
     testImplementation(projects.core.screenshotTesting)
+    testImplementation(projects.core.testing)
 }

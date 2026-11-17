@@ -34,6 +34,7 @@ import li.mercury.bigbrother.core.data.toLoadFailure
 import li.mercury.bigbrother.core.model.AccessPeriod
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.LoadFailure
+import li.mercury.bigbrother.core.model.SensorSession
 import li.mercury.bigbrother.core.model.TimeRange
 
 data class RecordUiState(
@@ -46,6 +47,12 @@ data class RecordUiState(
     val partialHistory: Boolean = false,
     /** Why the history could not be loaded, when the records could. */
     val historyFailure: LoadFailure? = null,
+    /**
+     * For sensors: when each was on, most recent first. Null when not
+     * loaded, or not to be had: from an older module, or for records that
+     * are not the app's own.
+     */
+    val sensorSessions: List<SensorSession>? = null,
     val loaded: Boolean = false,
     val failure: LoadFailure? = null,
 )
@@ -82,7 +89,10 @@ class RecordViewModel @AssistedInject constructor(
                 val group = groupByCategory(accesses).values.flatten()
                     .firstOrNull { it.topic == topic && it.source.name == source }
                 _uiState.update { it.copy(group = group, loaded = true, failure = null) }
-                if (group != null) loadHistory(group)
+                if (group != null) {
+                    if (group.topic == SENSORS && group.source == RecordSource.APP) loadSensorSessions()
+                    loadHistory(group)
+                }
             } catch (e: RecordsException) {
                 _uiState.update { it.copy(loaded = true, failure = e.toLoadFailure()) }
             }
@@ -104,6 +114,20 @@ class RecordViewModel @AssistedInject constructor(
         }
     }
 
+    /**
+     * When each sensor was on. A module older than this app does not keep
+     * that; the section is then left out, as it is when the read fails, and
+     * the rest of the record still shows.
+     */
+    private suspend fun loadSensorSessions() {
+        val sessions = try {
+            accessRepository.getSensorSessions(uid, range)
+        } catch (_: RecordsException) {
+            null
+        }
+        _uiState.update { it.copy(sensorSessions = sessions) }
+    }
+
     @AssistedFactory
     interface Factory {
         fun create(
@@ -116,6 +140,7 @@ class RecordViewModel @AssistedInject constructor(
     }
 
     private companion object {
+        const val SENSORS = "sensors"
         const val MAX_HISTORY_PATHS = 20
         const val MAX_PERIODS = 300
     }

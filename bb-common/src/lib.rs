@@ -267,6 +267,19 @@ pub const BINDER_CODES: u32 = 512;
 /// bitmap of the watched transaction codes.
 pub const BINDER_VALUE_WORDS: usize = 1 + (BINDER_CODES / 64) as usize;
 pub type BinderValue = [u64; BINDER_VALUE_WORDS];
+/// Set in `[0]` next to the id: calls to the interface wake the daemon at
+/// once instead of waiting for its next read. Turning a sensor on starts a
+/// session the daemon must know of while the app's process still runs.
+/// Such calls are rare, and the kernel side wakes the daemon for them at
+/// most once a second; other calls never wake it early.
+pub const BINDER_WAKE: u64 = 1 << 32;
+
+/// Calls that carry no interface name, which some native interfaces make
+/// (`ISensorEventConnection::destroy` sends an empty parcel), are looked up
+/// under this key: no name has length 0. Only calls without any arguments
+/// are looked up this way, and the daemon tells them apart by the binder
+/// handle they went to (`BinderEvent::target`).
+pub const BINDER_UNNAMED_KEY: BinderKey = [0; BINDER_KEY_LEN];
 
 /// Bytes of the call's arguments captured per `BinderEvent`: enough to reach
 /// the strings that follow the caller's identity in a provider call.
@@ -282,6 +295,10 @@ pub struct BinderEvent {
     /// The id from the map value.
     pub interface: u32,
     pub code: u32,
+    /// The caller's handle for the object called: within one process, it
+    /// tells apart two objects of the same interface, such as two sensor
+    /// connections, for as long as the caller holds them.
+    pub target: u32,
     /// Bytes of `args` that are valid; 0 if they could not be read.
     pub args_len: u32,
     /// The parcel from the first argument on.

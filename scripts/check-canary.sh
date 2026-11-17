@@ -31,7 +31,8 @@ APK=android/canary/build/outputs/apk/debug/canary-debug.apk
 BBD=/data/adb/modules/big_brother/bin/bbd
 
 # What the canary does (android/canary/.../MainActivity.kt), as a piece of
-# the record each probe should leave. Keep the two in step.
+# the record each probe should leave; a trailing quote matches the end of
+# the record. Keep the two in step.
 REQUIRED=(
     "/proc/cpuinfo"
     # Recorded under the device's real sysfs path if the read is allowed.
@@ -45,6 +46,8 @@ REQUIRED=(
     "netlink:route/"
     "binder:android.content.pm.IPackageManager/getInstalledPackages"
     "binder:android.content.pm.IPackageManager/getPackageInfo#com.android.vending"
+    "binder:android.content.IClipboard/addPrimaryClipChangedListener"
+    "binder:android.content.IClipboard/setPrimaryClip\""
     "binder:android.content.IClipboard/getPrimaryClip"
     "setting:secure/android_id"
     "binder:android.location.ILocationManager/"
@@ -52,10 +55,24 @@ REQUIRED=(
     "binder:android.accounts.IAccountManager/"
     "binder:android.app.IActivityManager/getRunningAppProcesses"
     "binder:android.gui.SensorServer/createSensorEventConnection"
+    "binder:android.gui.SensorEventConnection/enableDisable@android.sensor.accelerometer\""
+    "binder:android.gui.SensorEventConnection/enableDisable@android.sensor.gyroscope:fast\""
 )
+# The sensors the canary turns on, whether at a high rate, and how long it
+# keeps them on (SENSORS_ON_MS): each should leave a session that long.
+SENSOR_SESSIONS=(
+    "android.sensor.accelerometer false"
+    "android.sensor.gyroscope true"
+)
+SENSORS_ON_S=10
+# How many times the records are read before one counts as missing.
+QUERY_ATTEMPTS=4
 # Recorded only with the LSPosed hook enabled for these providers, and only
 # if the system let the query through (it has to be granted the permission).
 OPTIONAL=(
+    # The system's own records, read every 30 s.
+    "appop:android:read_clipboard"
+    "appop:android:write_clipboard"
     "content://com.android.contacts/"
     "content://com.android.calendar/"
     "content://sms"
@@ -90,28 +107,77 @@ echo "coverage reported by the daemon:"
 as_root "$BBD stats" | tr ',' '\n' | grep -o '"coverage_[a-z]*":[01]' | sed 's/^/  /' || true
 
 adb shell am force-stop "$PACKAGE"
+adb logcat -c
 adb shell am start -W -n "$PACKAGE/.MainActivity" >/dev/null
-# The probes take a few seconds (two connection timeouts). The query has the
-# daemon write what it holds before it reads.
-sleep 20
-records="$(as_root "$BBD files --uid $uid --hours 1 --limit 2000")"
-
+# The probes take about 15 s: two connection timeouts and the sensors. They
+# start once the canary's window has focus, which needs the screen on.
+for ((i = 0; i < 60; i++)); do
+    grep -q "BigBrotherCanary: done" <<<"$(adb logcat -d -s BigBrotherCanary:I)" && break
+    sleep 1
+done
+((i < 60)) || {
+    echo "error: the canary did not finish; is the screen on and unlocked?" >&2
+    exit 2
+}
 missing=0
+report=""
+say() { report+="$*"$'\n'; }
+
 check() {
     local want="$1" required="$2"
     if grep -qF -- "$want" <<<"$records"; then
-        echo "  recorded  $want"
+        say "  recorded  ${want%\"}"
     elif [[ "$required" == yes ]]; then
-        echo "  MISSING   $want"
+        say "  MISSING   ${want%\"}"
         missing=$((missing + 1))
     else
-        echo "  absent    $want (optional)"
+        say "  absent    ${want%\"} (optional)"
     fi
 }
 
-echo "records for uid $uid:"
-for want in "${REQUIRED[@]}"; do check "$want" yes; done
-for want in "${OPTIONAL[@]}"; do check "$want" no; done
+# The latest session of a sensor: ended, at the rate expected, and about as
+# long as the canary kept it on (times are to the second).
+check_session() {
+    local sensor="$1" high="$2" session start end
+    # One session per line; the most recent comes first.
+    session="$(grep -F "\"sensor\":\"$sensor\"" <<<"${sessions//'},{'/$'}\n{'}" | head -n 1 || true)"
+    start="$(sed -n 's/.*"start_ts":\([0-9]*\).*/\1/p' <<<"$session")"
+    end="$(sed -n 's/.*"end_ts":\([0-9]*\).*/\1/p' <<<"$session")"
+    if [[ -z "$session" ]]; then
+        say "  MISSING   session of $sensor"
+    elif [[ -z "$end" ]]; then
+        say "  OPEN      session of $sensor: not seen turned off"
+    elif ! grep -qF "\"high_rate\":$high" <<<"$session"; then
+        say "  WRONG     session of $sensor: high rate should be $high"
+    elif ((end - start < SENSORS_ON_S - 1 || end - start > SENSORS_ON_S + 2)); then
+        say "  WRONG     session of $sensor: on for $((end - start)) s, not $SENSORS_ON_S"
+    else
+        say "  recorded  session of $sensor, $((end - start)) s, high rate $high"
+        return
+    fi
+    missing=$((missing + 1))
+}
+
+# The queries have the daemon write what it holds before they read. Right
+# after it starts, what waits for the sensor list to be read is written a
+# little later, so a query that misses something is repeated a few times.
+for ((attempt = 1; ; attempt++)); do
+    records="$(as_root "$BBD files --uid $uid --hours 1 --limit 2000")"
+    sessions="$(as_root "$BBD sensors --uid $uid --hours 1" || true)"
+    missing=0
+    report=""
+    say "records for uid $uid:"
+    for want in "${REQUIRED[@]}"; do check "$want" yes; done
+    for want in "${OPTIONAL[@]}"; do check "$want" no; done
+    say "sensor sessions:"
+    for expected in "${SENSOR_SESSIONS[@]}"; do
+        read -r sensor high <<<"$expected"
+        check_session "$sensor" "$high"
+    done
+    ((missing == 0 || attempt == QUERY_ATTEMPTS)) && break
+    sleep 5
+done
+printf '%s' "$report"
 
 if ((missing > 0)); then
     echo "$missing required record(s) missing"

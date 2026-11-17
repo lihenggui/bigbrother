@@ -17,11 +17,14 @@
 package li.mercury.bigbrother.core.screenshottesting
 
 import li.mercury.bigbrother.core.model.Access
+import li.mercury.bigbrother.core.model.AccessPeriod
 import li.mercury.bigbrother.core.model.Action
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.Category
 import li.mercury.bigbrother.core.model.PackageDetails
+import li.mercury.bigbrother.core.model.SensorSession
+import li.mercury.bigbrother.core.model.SubjectCount
 import li.mercury.bigbrother.core.model.TimelineEntry
 import li.mercury.bigbrother.core.screenshottesting.DemoApp.BACKUP
 import li.mercury.bigbrother.core.screenshottesting.DemoApp.CHAT
@@ -47,8 +50,10 @@ import java.util.Locale
  * become. The story: the flashlight read the contacts and the device's
  * identifiers; the weather app read photos in DCIM, asked for the location
  * and looked up other apps; the shopping app read the clipboard and the
- * installed apps; the notes app read a document in Download. System apps and
- * an isolated process have records too, which the screens leave out.
+ * installed apps; the keyboard read and wrote the clipboard; the step counter
+ * turned motion sensors on, the gyroscope once at a high rate; the notes app
+ * read a document in Download. System apps and an isolated process have
+ * records too, which the screens leave out.
  *
  * Everything is derived from one list of accesses, so that the overview, an
  * app's page, its files and the timeline agree. [clock] places them today,
@@ -93,6 +98,39 @@ class DemoRecords(
             )
         }
         .sortedByDescending { it.lastSeen }
+
+    /** Each access of one kind by [app], most recent first, as AccessRepository.getHistory gives them. */
+    fun history(app: DemoApp, topic: String): List<AccessPeriod> = events.filter { it.uid == app.uid && it.topic == topic }
+        .sortedByDescending { it.time }
+        // The daemon names the record of each access when several are asked
+        // for; only the clipboard's rows show it.
+        .map { AccessPeriod(it.action, it.viaProvider, it.allowed, it.denied, it.time, it.time, it.path.takeIf { topic == "clipboard" }) }
+
+    /**
+     * When [app] had each sensor on, most recent first, as
+     * AccessRepository.getSensorSessions gives them: the step counter's.
+     */
+    fun sensorSessions(app: DemoApp): List<SensorSession> = if (app == STEP_COUNTER) {
+        listOf(
+            session(ACCELEROMETER, 14, 2, 14, 17, periodNs = GAME_RATE_NS),
+            session(GYROSCOPE, 12, 50, 12, 53, periodNs = 0),
+            session(ACCELEROMETER, 12, 50, 13, 5, periodNs = GAME_RATE_NS),
+            // Reports on change, for which a rate means nothing; still on.
+            SensorSession(STEP_COUNTER_SENSOR, highRate = false, periodNs = null, rateHz = null, start = clock.todayAt(8, 5), end = null),
+            session(ACCELEROMETER, 8, 5, 8, 32, periodNs = GAME_RATE_NS),
+        )
+    } else {
+        emptyList()
+    }
+
+    private fun session(sensor: String, fromHour: Int, fromMinute: Int, toHour: Int, toMinute: Int, periodNs: Long) = SensorSession(
+        sensor = sensor,
+        highRate = periodNs <= HIGH_RATE_PERIOD_NS,
+        periodNs = periodNs,
+        rateHz = if (periodNs > 0) 1e9 / periodNs else null,
+        start = clock.todayAt(fromHour, fromMinute),
+        end = clock.todayAt(toHour, toMinute),
+    )
 
     /**
      * What the package manager says about the app whose page is shown. The
@@ -159,11 +197,13 @@ class DemoRecords(
             readDevice(MAC_ADDRESS, "mac_address", allowed = 0, denied = 1)
         }
 
-        at(SHOPPING, 11, 5) { call(CLIPBOARD, "clipboard") }
+        at(SHOPPING, 11, 5) { call(CLIPBOARD_READ, "clipboard") }
         at(SHOPPING, 13, 30) {
             probe("$STORAGE/.device_id")
             call(INSTALLED_PACKAGES, "installed_apps", times = 2)
-            call(CLIPBOARD, "clipboard", times = 3)
+            call(CLIPBOARD_READ, "clipboard", times = 3)
+            // One of the reads was in the background, which the system refused.
+            permission("android:read_clipboard", "clipboard", times = 2, denied = 1)
             call(ANDROID_ID, "android_id")
             connect("net://224.0.0.251:5353", "device_discovery", times = 4)
         }
@@ -192,14 +232,28 @@ class DemoRecords(
             permission("android:record_audio", "microphone")
         }
 
-        at(STEP_COUNTER, 8, 5) { call(SENSORS, "sensors", times = 2) }
+        at(STEP_COUNTER, 8, 5) {
+            call(SENSOR_CONNECTION, "sensors")
+            call("$SENSOR_ON@$ACCELEROMETER", "sensors")
+            call("$SENSOR_ON@$STEP_COUNTER_SENSOR", "sensors")
+        }
         at(STEP_COUNTER, 12, 50) {
-            call(SENSORS, "sensors", times = 4)
+            call(SENSOR_CONNECTION, "sensors", times = 2)
+            call("$SENSOR_ON@$ACCELEROMETER", "sensors")
+            call("$SENSOR_ON@$GYROSCOPE:fast", "sensors")
             call(LOCATION, "location", times = 3)
         }
+        at(STEP_COUNTER, 14, 2) { call("$SENSOR_ON@$ACCELEROMETER", "sensors") }
 
-        at(KEYBOARD, 11, 20) { call(CLIPBOARD, "clipboard", times = 2) }
-        at(KEYBOARD, 14, 5) { call(CLIPBOARD, "clipboard", times = 3) }
+        // A keyboard offers what was copied, and copies too.
+        at(KEYBOARD, 11, 20) {
+            call(CLIPBOARD_LISTEN, "clipboard")
+            call(CLIPBOARD_READ, "clipboard", times = 2)
+        }
+        at(KEYBOARD, 14, 5) {
+            call(CLIPBOARD_READ, "clipboard", times = 2)
+            call(CLIPBOARD_WRITE, "clipboard")
+        }
 
         at(NEWS, 12, 20) {
             list("$STORAGE/Download")
@@ -265,7 +319,7 @@ class DemoRecords(
 
         fun exec(path: String, topic: String) = add(Category.COMMAND, path, Action.EXEC, topic)
 
-        fun permission(op: String, topic: String, times: Int = 1) = add(Category.PERMISSION, "appop:$op", Action.READ, topic, allowed = times)
+        fun permission(op: String, topic: String, times: Int = 1, denied: Int = 0) = add(Category.PERMISSION, "appop:$op", Action.READ, topic, allowed = times, denied = denied)
 
         fun readDevice(path: String, topic: String, allowed: Int = 1, denied: Int = 0) = add(Category.DEVICE, path, Action.READ, topic, allowed, denied)
     }
@@ -325,6 +379,14 @@ class DemoRecords(
             folder = topFolders(read).firstOrNull(),
             firstSeen = events.minOf { it.time },
             lastSeen = events.maxOf { it.time },
+            // As the daemon reports them: for the kinds whose records differ.
+            subjects = if (key.topic in LISTED_TOPICS) {
+                events.groupBy { it.path }.map { (path, events) ->
+                    SubjectCount(path, events.sumOf { it.allowed }, events.sumOf { it.denied })
+                }
+            } else {
+                emptyList()
+            },
         )
     }
 
@@ -351,8 +413,23 @@ class DemoRecords(
         const val WIFI_SCAN = "binder:android.net.wifi.IWifiManager/getScanResults"
         const val ANDROID_ID = "setting:secure/android_id"
         const val MAC_ADDRESS = "/sys/class/net/wlan0/address"
-        const val CLIPBOARD = "binder:android.content.IClipboard/getPrimaryClip"
-        const val SENSORS = "binder:android.gui.SensorServer/createSensorEventConnection"
+        const val CLIPBOARD_READ = "binder:android.content.IClipboard/getPrimaryClip"
+        const val CLIPBOARD_LISTEN = "binder:android.content.IClipboard/addPrimaryClipChangedListener"
+        const val CLIPBOARD_WRITE = "binder:android.content.IClipboard/setPrimaryClip"
+        const val SENSOR_CONNECTION = "binder:android.gui.SensorServer/createSensorEventConnection"
+        const val SENSOR_ON = "binder:android.gui.SensorEventConnection/enableDisable"
+        const val ACCELEROMETER = "android.sensor.accelerometer"
+        const val GYROSCOPE = "android.sensor.gyroscope"
+        const val STEP_COUNTER_SENSOR = "android.sensor.step_counter"
+
+        /** SensorManager.SENSOR_DELAY_GAME: 50 events a second. */
+        const val GAME_RATE_NS = 20_000_000L
+
+        /** The daemon's line for a high rate: 200 events a second. */
+        const val HIGH_RATE_PERIOD_NS = 5_000_000L
+
+        /** Topics whose timeline entries list their records. */
+        val LISTED_TOPICS = setOf("clipboard", "sensors")
         const val INSTALLED_PACKAGES = "binder:android.content.pm.IPackageManager/getInstalledPackages"
         const val PACKAGE_INFO = "binder:android.content.pm.IPackageManager/getPackageInfo"
 

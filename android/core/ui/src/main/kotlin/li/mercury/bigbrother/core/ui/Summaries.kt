@@ -22,6 +22,9 @@ import androidx.compose.ui.res.stringResource
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.Category
+import li.mercury.bigbrother.core.model.SubjectCount
+import li.mercury.bigbrother.core.model.clipboardCounts
+import li.mercury.bigbrother.core.model.sensorsUsed
 
 /** How many names a summary spells out before counting the rest. */
 private const val NAMED_IN_SUMMARY = 2
@@ -33,6 +36,24 @@ fun namedList(names: List<String>, total: Int = names.size): String? {
     val named = names.take(NAMED_IN_SUMMARY).joinToString(stringResource(R.string.summary_separator))
     val more = total - minOf(names.size, NAMED_IN_SUMMARY)
     return if (more > 0) pluralStringResource(R.plurals.summary_more, more, named, more) else named
+}
+
+/** The topic ids whose records say more than a count (see [topicRecordsSummary]). */
+private const val CLIPBOARD = "clipboard"
+private const val SENSORS = "sensors"
+
+/**
+ * What the records of one kind say beyond how often, for the kinds where
+ * they differ: which way the clipboard went ("Read 3 times · Written once"),
+ * which sensors were turned on ("Accelerometer, Gyroscope (high rate) · 12
+ * times"); [compact] for a line shared with more. Null for other kinds, and
+ * for records that do not say it, such as those of an older module.
+ */
+@Composable
+fun topicRecordsSummary(topic: String?, records: List<SubjectCount>, compact: Boolean = false): String? = when (topic) {
+    CLIPBOARD -> clipboardCounts(records)?.let { clipboardSummary(it, compact) }
+    SENSORS -> sensorsUsed(records)?.let { sensorsSummary(it, compact) }
+    else -> null
 }
 
 /** The kinds of data an app accessed, most sensitive first: "Files and media, Location and 3 more". */

@@ -49,13 +49,13 @@ class AppDetailScreenScreenshotTests {
     @Test
     @Config(qualifiers = "en-rUS")
     fun givenAppThatReadPhotos_whenShownInEnglish_thenMatchesStoreScreenshot() {
-        composeTestRule.captureStoreScreenshot(StoreScreenshotType.PHONE, "2_app_detail") { WeatherPage() }
+        composeTestRule.captureStoreScreenshot(StoreScreenshotType.PHONE, "2_app_detail") { AppPage() }
     }
 
     @Test
     @Config(qualifiers = "zh-rCN")
     fun givenAppThatReadPhotos_whenShownInChinese_thenMatchesStoreScreenshot() {
-        composeTestRule.captureStoreScreenshot(StoreScreenshotType.PHONE, "2_app_detail") { WeatherPage() }
+        composeTestRule.captureStoreScreenshot(StoreScreenshotType.PHONE, "2_app_detail") { AppPage() }
     }
 
     @Test
@@ -66,19 +66,43 @@ class AppDetailScreenScreenshotTests {
             screenshotName = "AppDetail",
             darkMode = true,
         ) {
-            WeatherPage()
+            AppPage()
         }
     }
 
-    /** The weather app's page: the demo app that did the most. */
+    @Test
+    @Config(qualifiers = "en-rUS")
+    fun givenAppThatReadTheClipboard_whenShown_thenMatchesGolden() {
+        composeTestRule.captureForDevice(
+            deviceName = "phone",
+            deviceSpec = DefaultTestDevices.PHONE.spec,
+            screenshotName = "AppDetailClipboard",
+        ) {
+            AppPage(DemoApp.SHOPPING)
+        }
+    }
+
+    @Test
+    @Config(qualifiers = "en-rUS")
+    fun givenAppThatTurnedSensorsOn_whenShown_thenMatchesGolden() {
+        composeTestRule.captureForDevice(
+            deviceName = "phone",
+            deviceSpec = DefaultTestDevices.PHONE.spec,
+            screenshotName = "AppDetailSensors",
+        ) {
+            AppPage(DemoApp.STEP_COUNTER)
+        }
+    }
+
+    /** The weather app's page, the demo app that did the most, or another [app]'s. */
     @Composable
-    private fun WeatherPage() {
+    private fun AppPage(app: DemoApp = DemoApp.WEATHER) {
         val records = remember { DemoRecords(clock) }
         AppDetailScreen(
             state = AppDetailUiState(
-                app = records.summary(DemoApp.WEATHER),
-                appInfo = records.appInfo.getValue(DemoApp.WEATHER.packageName),
-                accesses = records.accesses(DemoApp.WEATHER),
+                app = records.summary(app),
+                appInfo = records.appInfo.getValue(app.packageName),
+                accesses = records.accesses(app),
                 range = TimeRange.DAY,
                 packageDetails = records.packageDetails,
             ),

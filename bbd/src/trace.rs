@@ -49,7 +49,7 @@ use crate::{
     mounts::Mounts,
     net::{self, Destination, Listeners},
     packages::{FIRST_ISOLATED_APP_ID, PER_USER_RANGE, Packages},
-    paths, personal, rules,
+    paths, personal, rules, sensors,
     spool::{self, Spool},
     store::{
         Category, Counters, MODE_CALL, MODE_CONNECT, MODE_DIR, MODE_EXEC, MODE_ISOLATED,
@@ -77,6 +77,17 @@ const ISOLATED_OWNER_TTL: Duration = Duration::from_secs(60);
 /// is filling up, and events carry the time they happened, so they can wait.
 const FLUSH_INTERVAL: Duration = Duration::from_secs(30);
 const PRUNE_INTERVAL: Duration = Duration::from_secs(6 * 3600);
+/// How long a write waits for the sensor list to be read, when what it
+/// would write needs it: short, since the app's queries wait for the
+/// write. What still waits is written with the next one.
+const SENSOR_LIST_WAIT: Duration = Duration::from_millis(300);
+/// How often, while a sensor session is open, its process is checked. A
+/// session whose process has ended ends when the process was last found
+/// running, so this is the most of it that is lost when an app is killed
+/// or swiped away, which often happens seconds after it turned a sensor on.
+/// A check reads one small /proc file per such process and writes nothing;
+/// with no session open there is no timer at all.
+const SENSOR_PROCESS_CHECK: Duration = Duration::from_secs(5);
 /// How long an opened file waits for its syscall result before being
 /// recorded as successful anyway (the result event can be lost).
 const RESULT_TIMEOUT_SECS: i64 = 10;
@@ -114,6 +125,24 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     let pruned = writer.prune(opts.retention_days, now())?
         + writer.delete_packages(spool::PROVIDER_PACKAGES)?
         + writer.delete_untopical()?;
+    // Sensors the previous run saw turned on and not off. When it was last
+    // up: when it stopped or, if it did not get to say so, last wrote.
+    let mut sensors = sensors::Sensors::new(sensors::dumpsys);
+    let last_up = writer
+        .meta("stopped_at")?
+        .max(writer.meta("last_flush")?)
+        .unwrap_or(0);
+    sensors.adopt(
+        writer.open_sensor_sessions()?,
+        |pid, start| {
+            sensors::process_alive(pid, start)
+                .then(|| uid_of_pid(pid))
+                .flatten()
+        },
+        last_up,
+        Instant::now(),
+        now(),
+    );
     writer.set_meta("started_at", now())?;
 
     // Held for the daemon's lifetime: timing stays on while this fd is open.
@@ -182,19 +211,21 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     let permission_uses = spawn_appops_reader();
     let mut appops = appops::Tracker::new(now());
 
-    // Calls to system services. The tracepoint is attached now and reports
-    // nothing until the device's transaction codes are known, which takes a
-    // running app_process and so a system that has come up; `coverage_binder`
-    // turns 1 at that point.
+    // Calls to system services. The tracepoint is attached now. Services
+    // with fixed transaction codes (the sensor service) are watched at once;
+    // the others once the device's codes are known, which takes a running
+    // app_process and so a system that has come up. `coverage_binder` turns
+    // 1 at that point.
     writer.set_meta("coverage_binder", COVERAGE_PENDING)?;
     let mut binder_watch = match attach_binder(&mut ebpf) {
-        Ok(map) => Some((map, spawn_catalog_loader())),
+        Ok(map) => Some(map),
         Err(e) => {
             eprintln!("bbd: warning: not recording service calls: {e:#}");
             writer.set_meta("coverage_binder", 0)?;
             None
         }
     };
+    let mut catalog_loader = binder_watch.as_ref().map(|_| spawn_catalog_loader());
 
     let dropped: PerCpuArray<MapData, u64> =
         PerCpuArray::try_from(ebpf.take_map("DROPPED").context("DROPPED map missing")?)?;
@@ -223,6 +254,9 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         scans: net::Scans::default(),
         searches: commands::Searches::default(),
         catalog: None,
+        sensors,
+        sensors_dropped: 0,
+        sensors_dropped_log: RecurringLog::default(),
         writer,
         counters: Counters::default(),
         awaiting_result: HashMap::new(),
@@ -231,6 +265,16 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         explain_discards: opts.explain_discards,
         ingest_provider_events: opts.ingest_provider_events,
     };
+    if let Some(map) = &mut binder_watch {
+        let fixed = Catalog::parse("");
+        match watch(map, &fixed) {
+            Ok(()) => {
+                tracer.catalog = Some(fixed);
+                tracer.sensors.watching(Instant::now());
+            }
+            Err(e) => eprintln!("bbd: warning: not recording sensor use: {e:#}"),
+        }
+    }
     // Queries ask for what is held to be written first (see `control`).
     let requests = match control::listen(opts.db) {
         Ok(listener) => Some(listener),
@@ -246,13 +290,39 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     let mut sigint = signal(SignalKind::interrupt())?;
     let mut sigterm = signal(SignalKind::terminate())?;
     let mut write_errors = RecurringLog::default();
+    let mut sensor_check = SensorCheck::default();
 
     loop {
+        sensor_check.arm(tracer.sensors.any_on());
         // Every branch that does not end in a flush continues the loop.
         let request = tokio::select! {
             _ = sigint.recv() => break,
             _ = sigterm.recv() => break,
             _ = flush_tick.tick() => None,
+            // Sessions whose process has ended end now, and are written
+            // with the next write. Sensors turned on since that did not
+            // wake the daemon (the kernel side wakes it at most once a
+            // second for them) are taken in first.
+            _ = sensor_check.tick(), if sensor_check.armed() => {
+                tracer.drain(ring.get_mut());
+                tracer.sensors.check_processes(now(), sensors::process_alive);
+                continue;
+            }
+            // The device's transaction codes are known: watch the services
+            // that need them now, not at the next write.
+            loaded = async { catalog_loader.as_mut().expect("guarded").await },
+                if catalog_loader.is_some() =>
+            {
+                catalog_loader = None;
+                let loaded = loaded.unwrap_or_else(|e| {
+                    eprintln!("bbd: warning: not recording service calls: {e:#}");
+                    None
+                });
+                if let Some(map) = &mut binder_watch {
+                    tracer.use_catalog(map, loaded);
+                }
+                continue;
+            }
             request = next_request(requests.as_ref()) => match request {
                 Some(stream) => Some(stream),
                 None => continue,
@@ -290,23 +360,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
                 tracer.record_permission_uses(appops.update(&entries));
             }
         }
-        if let Some((map, loaded)) = &mut binder_watch
-            && let Ok(loaded) = loaded.try_recv()
-        {
-            let watching = loaded.and_then(|catalog| match watch(map, &catalog) {
-                Ok(()) => Some(catalog),
-                Err(e) => {
-                    eprintln!("bbd: warning: not recording service calls: {e:#}");
-                    None
-                }
-            });
-            if let Some(catalog) = &watching {
-                eprintln!("bbd: watching {} service methods", catalog.len());
-            }
-            let covered = i64::from(watching.is_some());
-            tracer.writer.set_meta("coverage_binder", covered).ok();
-            tracer.catalog = watching;
-        }
+        tracer.settle_sensors(SENSOR_LIST_WAIT);
         // A failed write (disk full, database busy) keeps the batch for the
         // next attempt; it is not a reason to stop recording.
         let written = match request {
@@ -327,15 +381,54 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     }
     tracer.drain(ring.get_mut());
     tracer.ingest_provider_events();
+    tracer.settle_sensors(Duration::from_secs(2));
     tracer.counters.dropped = dropped_events();
     tracer.expire(i64::MAX);
     tracer.writer.flush(&tracer.counters, now())?;
+    // Sensors still on when it stopped were on at least until now; the next
+    // run ends them here if their apps have ended by then.
+    tracer.writer.set_meta("stopped_at", now())?;
     let c = &tracer.counters;
     eprintln!(
         "bbd: stopped; seen={} kept={} unresolved={} dropped={}",
         c.seen, c.kept, c.unresolved, c.dropped
     );
     Ok(())
+}
+
+/// The timer of the check of sensor sessions' processes, which exists only
+/// while a session is open (see `SENSOR_PROCESS_CHECK`).
+#[derive(Default)]
+struct SensorCheck(Option<tokio::time::Interval>);
+
+impl SensorCheck {
+    /// Start the timer when a sensor is on and stop it when none is.
+    fn arm(&mut self, any_on: bool) {
+        match (any_on, &self.0) {
+            (true, None) => {
+                let first = tokio::time::Instant::now() + SENSOR_PROCESS_CHECK;
+                let mut timer = tokio::time::interval_at(first, SENSOR_PROCESS_CHECK);
+                timer.set_missed_tick_behavior(MissedTickBehavior::Delay);
+                self.0 = Some(timer);
+            }
+            (false, Some(_)) => self.0 = None,
+            _ => {}
+        }
+    }
+
+    fn armed(&self) -> bool {
+        self.0.is_some()
+    }
+
+    /// The next check; never, while not armed.
+    async fn tick(&mut self) {
+        match &mut self.0 {
+            Some(timer) => {
+                timer.tick().await;
+            }
+            None => std::future::pending().await,
+        }
+    }
 }
 
 /// The next query asking for the records to be written; `None` if accepting
@@ -622,18 +715,14 @@ const CATALOG_ATTEMPTS: u32 = 20;
 
 /// Look up the device's transaction codes on a thread of its own: starting
 /// the Java runtime that prints them takes about a second, and must not hold
-/// up recording. The catalog arrives on the returned channel, once; `None`
-/// if it could not be had.
-fn spawn_catalog_loader() -> std::sync::mpsc::Receiver<Option<Catalog>> {
-    let (sender, receiver) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
+/// up recording. The task ends with the catalog, or `None` if it could not
+/// be had; the event loop waits for it alongside everything else.
+fn spawn_catalog_loader() -> tokio::task::JoinHandle<Option<Catalog>> {
+    tokio::task::spawn_blocking(|| {
         let mut last_error = None;
         for _ in 0..CATALOG_ATTEMPTS {
             match binder::load() {
-                Ok(catalog) => {
-                    let _ = sender.send(Some(catalog));
-                    return;
-                }
+                Ok(catalog) => return Some(catalog),
                 Err(e) => last_error = Some(e),
             }
             std::thread::sleep(CATALOG_RETRY);
@@ -641,9 +730,8 @@ fn spawn_catalog_loader() -> std::sync::mpsc::Receiver<Option<Catalog>> {
         if let Some(e) = last_error {
             eprintln!("bbd: warning: not recording service calls: {e:#}");
         }
-        let _ = sender.send(None);
-    });
-    receiver
+        None
+    })
 }
 
 /// Per-program run counts and time, as measured by the kernel. This is the
@@ -769,6 +857,12 @@ struct Tracer {
     searches: commands::Searches,
     /// The service methods being watched; `None` until they are known.
     catalog: Option<Catalog>,
+    /// The sensors apps have on.
+    sensors: sensors::Sensors,
+    /// Sensor sessions not kept for being over the limits, as last written
+    /// (`sensor_sessions_dropped` in `bbd stats`), and its log.
+    sensors_dropped: u64,
+    sensors_dropped_log: RecurringLog,
     writer: Writer,
     counters: Counters,
     /// Keyed by thread id.
@@ -781,6 +875,25 @@ struct Tracer {
 }
 
 impl Tracer {
+    /// Watch the services whose transaction codes the device's catalog gives,
+    /// besides the fixed ones already watched. Without a catalog only the
+    /// fixed ones stay watched, and service calls count as not recorded.
+    fn use_catalog(&mut self, map: &mut BinderWatch, loaded: Option<Catalog>) {
+        let watching = loaded.and_then(|catalog| match watch(map, &catalog) {
+            Ok(()) => Some(catalog),
+            Err(e) => {
+                eprintln!("bbd: warning: not recording service calls: {e:#}");
+                None
+            }
+        });
+        let covered = i64::from(watching.is_some());
+        if let Some(catalog) = watching {
+            eprintln!("bbd: watching {} service methods", catalog.len());
+            self.catalog = Some(catalog);
+        }
+        self.writer.set_meta("coverage_binder", covered).ok();
+    }
+
     /// Take in everything waiting in the ring buffer.
     fn drain(&mut self, ring: &mut RingBuf<MapData>) {
         let clock = EventClock::now();
@@ -941,6 +1054,38 @@ impl Tracer {
                 self.counters.seen += 1;
                 let (uid, origin) = self.owner_uid(hdr.uid, hdr.pid);
                 let args = &ev.args[..(ev.args_len as usize).min(ev.args.len())];
+                // Sensors turned on and off are kept as sessions, and only
+                // turning one on as a call; see `sensors`.
+                let request = self
+                    .catalog
+                    .as_ref()
+                    .and_then(|catalog| catalog.sensor_request(ev.interface, ev.code, args));
+                if let Some(request) = request {
+                    if !self.excluded(uid) {
+                        let call = sensors::Call {
+                            uid,
+                            process_uid: hdr.uid,
+                            mode: MODE_CALL | origin,
+                            pid: hdr.pid,
+                            connection: ev.target,
+                            request,
+                            ts,
+                        };
+                        if self.verbose {
+                            println!(
+                                "uid={uid} pid={} connection={} sensor {request:?}",
+                                hdr.pid, ev.target
+                            );
+                        }
+                        let known =
+                            self.sensors
+                                .on_call(call, sensors::process_start, Instant::now());
+                        if let Some((uid, mode, subject, ts)) = known {
+                            self.store(uid, Category::Service, subject, mode, true, ts, 0);
+                        }
+                    }
+                    return;
+                }
                 let subject = self.catalog.as_ref().and_then(|catalog| {
                     catalog.subject(
                         ev.interface,
@@ -1025,6 +1170,44 @@ impl Tracer {
             }
             _ => {}
         }
+    }
+
+    /// Hand what is known of the sensors apps have on to the writer, after
+    /// ending the sessions of processes that have ended. What waits for the
+    /// sensor list is held for at most `wait`.
+    fn settle_sensors(&mut self, wait: Duration) {
+        if self.sensors.any_on() {
+            self.sensors.check_processes(now(), sensors::process_alive);
+        }
+        let settled = self.sensors.settle(Instant::now(), now(), wait);
+        for (uid, mode, subject, ts) in settled.calls {
+            self.store(uid, Category::Service, subject, mode, true, ts, 0);
+        }
+        for session in settled.sessions {
+            self.writer.sensor_session(session);
+        }
+        // Written when it changes, which takes an app over the limits.
+        let dropped = self.sensors.dropped();
+        if dropped != self.sensors_dropped
+            && self
+                .writer
+                .set_meta("sensor_sessions_dropped", dropped as i64)
+                .is_ok()
+        {
+            self.sensors_dropped_log
+                .log("bbd: sensor sessions not kept: an app has too many open".into());
+            self.sensors_dropped = dropped;
+        }
+    }
+
+    /// Whether nothing is recorded of `uid`: the storage providers serve
+    /// shared storage to every other app. Indexing and opening user files is
+    /// their function, and would account for most of the records.
+    fn excluded(&mut self, uid: u32) -> bool {
+        self.packages
+            .for_uid(uid)
+            .iter()
+            .any(|p| spool::PROVIDER_PACKAGES.contains(&p.as_str()))
     }
 
     /// Store what the system recorded about permissions being used.
@@ -1249,17 +1432,14 @@ impl Tracer {
         ts: i64,
         items: u32,
     ) {
-        let pkgs = self.packages.for_uid(uid);
-        // The storage providers serve shared storage to every other app.
-        // Indexing and opening user files is their function, and would
-        // account for most of the records.
-        if pkgs
-            .iter()
-            .any(|p| spool::PROVIDER_PACKAGES.contains(&p.as_str()))
-        {
+        if self.excluded(uid) {
             return;
         }
-        let pkg = pkgs.first().map_or("", String::as_str);
+        let pkg = self
+            .packages
+            .for_uid(uid)
+            .first()
+            .map_or("", String::as_str);
         self.counters.kept += 1;
         if self.verbose {
             println!(
@@ -1520,6 +1700,24 @@ mod tests {
             Some("java.lang.IllegalStateException: no service")
         );
         assert_eq!(first_line(&b""[..]), None);
+    }
+
+    #[tokio::test]
+    async fn the_sensor_process_check_runs_only_while_a_sensor_is_on() {
+        let soon = Duration::from_millis(50);
+        let mut check = SensorCheck::default();
+        check.arm(false);
+        assert!(!check.armed());
+        // No timer: it never fires.
+        assert!(tokio::time::timeout(soon, check.tick()).await.is_err());
+        check.arm(true);
+        assert!(check.armed());
+        // Not before the interval is up.
+        assert!(tokio::time::timeout(soon, check.tick()).await.is_err());
+        // The last session ending takes the timer away.
+        check.arm(false);
+        assert!(!check.armed());
+        assert!(check.0.is_none());
     }
 
     #[test]
