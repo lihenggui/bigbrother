@@ -110,7 +110,7 @@ private fun AppsByCategory(
     // For files, the apps that read some are told apart from those that only looked.
     val groups = if (state.category == DataCategory.FILES) {
         val (read, looked) = apps.partition { it.readFiles }
-        listOf(R.plurals.group_read_files to read, R.plurals.group_looked_only to looked)
+        listOf(R.plurals.category_group_read_files to read, R.plurals.category_group_looked_only to looked)
     } else {
         listOf(null to apps)
     }.filter { (_, members) -> members.isNotEmpty() }

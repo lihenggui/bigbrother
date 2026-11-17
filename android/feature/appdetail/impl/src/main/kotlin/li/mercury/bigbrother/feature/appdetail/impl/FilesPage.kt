@@ -351,7 +351,9 @@ private fun Listing(
         when (location) {
             Location.MEDIA -> itemsIndexed(
                 content.collections,
-                key = { _, access -> "collection:${access.path}:${access.action}" },
+                // Records of one collection can share an action (opened
+                // directly and through the provider), so the position is part of the key.
+                key = { index, access -> "collection:$index:${access.path}" },
             ) { index, access ->
                 CollectionRow(access, index, content.collections.size)
             }

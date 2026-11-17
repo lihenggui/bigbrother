@@ -266,7 +266,7 @@ private fun AppList(
     // own, which says why they come first.
     val groups: List<Pair<Int?, List<Entry>>> = if (sort == SortOrder.SENSITIVITY && category == null) {
         val (read, other) = shown.partition { it.app.readFiles }
-        listOf(R.plurals.group_read_files to read, R.plurals.group_other to other).filter { it.second.isNotEmpty() }
+        listOf(R.plurals.list_group_read_files to read, R.plurals.list_group_other to other).filter { it.second.isNotEmpty() }
     } else {
         listOf(null to shown)
     }

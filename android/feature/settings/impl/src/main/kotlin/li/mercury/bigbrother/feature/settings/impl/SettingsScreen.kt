@@ -124,9 +124,9 @@ internal fun SettingsScreen(
                     iconTint = if (status?.recording == false) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                     title = stringResource(
                         when (status?.recording) {
-                            true -> R.string.status_recording
-                            false -> R.string.status_stopped
-                            null -> R.string.status_unknown
+                            true -> R.string.recording_active
+                            false -> R.string.recording_stopped
+                            null -> R.string.recording_unknown
                         },
                     ),
                     summary = listOfNotNull(
@@ -162,8 +162,8 @@ internal fun SettingsScreen(
             item(key = "system-apps") {
                 SwitchRow(
                     icon = Icons.Outlined.VisibilityOff,
-                    title = stringResource(R.string.show_system_apps),
-                    summary = stringResource(R.string.show_system_apps_summary),
+                    title = stringResource(R.string.setting_system_apps),
+                    summary = stringResource(R.string.setting_system_apps_summary),
                     checked = state.userData.showSystemApps,
                     onCheckedChange = onShowSystemApps,
                     index = 0,

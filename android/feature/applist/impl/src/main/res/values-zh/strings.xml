@@ -6,10 +6,10 @@
     <string name="sort_name">名称</string>
     <string name="show_system_apps">显示系统应用</string>
     <string name="only_system_apps">仅默认隐藏的应用有记录</string>
-    <plurals name="group_read_files">
+    <plurals name="list_group_read_files">
         <item quantity="other">读取了文件 · %d 个应用</item>
     </plurals>
-    <plurals name="group_other">
+    <plurals name="list_group_other">
         <item quantity="other">其他 · %d 个应用</item>
     </plurals>
 </resources>

@@ -54,6 +54,7 @@ import li.mercury.bigbrother.feature.appdetail.api.navigation.navigateToAppDetai
 import li.mercury.bigbrother.feature.appdetail.impl.navigation.appDetailEntries
 import li.mercury.bigbrother.feature.applist.api.navigation.AppListNavKey
 import li.mercury.bigbrother.feature.applist.impl.navigation.appListEntry
+import li.mercury.bigbrother.feature.overview.api.navigation.CategoryNavKey
 import li.mercury.bigbrother.feature.overview.api.navigation.OverviewNavKey
 import li.mercury.bigbrother.feature.overview.api.navigation.navigateToCategory
 import li.mercury.bigbrother.feature.overview.impl.navigation.overviewEntries
@@ -77,6 +78,9 @@ private val TOP_LEVEL_DESTINATIONS = listOf(
     TopLevelDestination(AppListNavKey, R.string.nav_apps, Icons.Outlined.Apps, Icons.Filled.Apps),
     TopLevelDestination(TimelineNavKey, R.string.nav_timeline, Icons.Outlined.History, Icons.Filled.History),
 )
+
+/** Destinations shown as the list pane of a list-detail layout. */
+private val LIST_PANE_KEYS = setOf<NavKey>(AppListNavKey, TimelineNavKey)
 
 /** The screen underneath moves this fraction of the distance, for depth. */
 private const val PARALLAX = 4
@@ -170,7 +174,11 @@ fun BigBrotherApp(recordingStopped: Boolean) {
         state = scaffoldState,
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
     ) {
-        CompositionLocalProvider(LocalShowsDetailBesideList provides !singlePane) {
+        // A list and its detail share the window only if a list is on the
+        // stack: an app opened from the search on the overview stands alone,
+        // and keeps its back arrow.
+        val listOnStack = navigationState.currentSubStack.any { it in LIST_PANE_KEYS || it is CategoryNavKey }
+        CompositionLocalProvider(LocalShowsDetailBesideList provides (!singlePane && listOnStack)) {
             // Screen transitions use the standard motion scheme: expressive
             // springs overshoot, which suits components but not a whole
             // screen moving. Going forward, the new screen slides in over the

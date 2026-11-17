@@ -86,10 +86,11 @@ internal class RootAccessRepository @Inject constructor(
         limit: Int,
     ): List<PathMatch> = parsing {
         // The text is typed by the user, so it is quoted: it must reach the
-        // daemon as one argument, whatever it holds.
+        // daemon as one argument, whatever it holds. Attached with "=", it
+        // stays the option's value even when it starts with "-".
         val rows = JSONArray(
             query(
-                "files --contains ${text.shellQuoted()} --cat ${category.id} --limit $limit" + range.argument(),
+                "files --contains=${text.shellQuoted()} --cat ${category.id} --limit $limit" + range.argument(),
             ),
         )
         (0 until rows.length()).mapNotNull { i ->
@@ -159,7 +160,7 @@ internal class RootAccessRepository @Inject constructor(
         // The path comes from a file name chosen by some app, so it is
         // quoted: it must reach the daemon as one argument, whatever it holds.
         val rows = JSONArray(
-            query("history --uid $uid --path ${path.shellQuoted()}" + range.argument()),
+            query("history --uid $uid --path=${path.shellQuoted()}" + range.argument()),
         )
         List(rows.length()) { i ->
             val row = rows.getJSONObject(i)

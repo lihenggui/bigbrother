@@ -20,11 +20,11 @@
     </plurals>
 
     <!-- Groups on the files page. -->
-    <plurals name="group_read_files">
+    <plurals name="category_group_read_files">
         <item quantity="one">%d app read files</item>
         <item quantity="other">%d apps read files</item>
     </plurals>
-    <plurals name="group_looked_only">
+    <plurals name="category_group_looked_only">
         <item quantity="one">%d app only looked for files</item>
         <item quantity="other">%d apps only looked for files</item>
     </plurals>

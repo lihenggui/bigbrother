@@ -1,5 +1,6 @@
 package li.mercury.bigbrother.feature.timeline.impl
 
+import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -45,12 +46,24 @@ class TimelineViewModel @Inject constructor(
 
     private var loadJob: Job? = null
 
+    /** When the most recent page was loaded, in milliseconds since boot. */
+    private var loadedAt = 0L
+
     init {
         viewModelScope.launch {
             userDataRepository.userData.map { it.showSystemApps }.distinctUntilChanged().collect { show ->
                 _uiState.update { it.copy(showSystemApps = show) }
             }
         }
+    }
+
+    /**
+     * Load the most recent page again, unless it was loaded moments ago:
+     * reloading drops the older pages, and with them the user's place in a
+     * long timeline, each time the screen comes back.
+     */
+    fun refreshIfStale() {
+        if (_uiState.value.entries == null || SystemClock.elapsedRealtime() - loadedAt > STALE_AFTER_MS) refresh()
     }
 
     /** Load the most recent page again, dropping older pages. */
@@ -71,8 +84,10 @@ class TimelineViewModel @Inject constructor(
                         failure = null,
                     )
                 }
+                loadedAt = SystemClock.elapsedRealtime()
             } catch (e: RecordsException) {
-                _uiState.update { it.copy(refreshing = false, failure = e.toLoadFailure()) }
+                // A page that was loading when the refresh began was cancelled with it.
+                _uiState.update { it.copy(refreshing = false, loadingMore = false, failure = e.toLoadFailure()) }
             }
         }
     }
@@ -108,5 +123,8 @@ class TimelineViewModel @Inject constructor(
     private companion object {
         /** Entries after which a page ends; the daemon finishes the day it is in. */
         const val PAGE_SIZE = 300
+
+        /** How old the loaded pages may get before returning to the screen reloads them. */
+        const val STALE_AFTER_MS = 60_000L
     }
 }

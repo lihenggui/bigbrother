@@ -100,7 +100,9 @@ class SearchViewModel @Inject constructor(
         val visibleUids = visible.mapTo(HashSet()) { it.uid }
         // Only the user's files: other records are stored under identifiers
         // meant for the daemon, and are found by the name of their kind.
-        val files = try {
+        // A single character would match nearly every path, and each search
+        // scans the records through the one root shell the app shares.
+        val files = if (text.length < MIN_PATH_QUERY) emptyList() else try {
             listOf(Category.STORAGE, Category.PROVIDER)
                 .flatMap { accessRepository.searchPaths(text, it, TimeRange.ALL, MAX_PATHS) }
                 .filter { it.uid in visibleUids }
@@ -142,5 +144,6 @@ class SearchViewModel @Inject constructor(
     private companion object {
         const val DEBOUNCE_MS = 250L
         const val MAX_PATHS = 50
+        const val MIN_PATH_QUERY = 2
     }
 }

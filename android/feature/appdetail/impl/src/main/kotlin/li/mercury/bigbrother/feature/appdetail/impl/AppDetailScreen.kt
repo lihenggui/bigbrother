@@ -105,7 +105,7 @@ private sealed interface Item {
     }
 
     data class Collection(val access: Access, val index: Int, val count: Int) : Item {
-        override val key: String get() = "collection:${access.path}:${access.action}"
+        override val key: String get() = "collection:$index:${access.path}"
     }
 
     data class BrowseFiles(val totals: FileTotals, val index: Int, val count: Int) : Item {

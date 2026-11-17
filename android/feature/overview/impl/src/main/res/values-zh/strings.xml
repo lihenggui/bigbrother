@@ -13,10 +13,10 @@
         <item quantity="other">%d 类</item>
     </plurals>
 
-    <plurals name="group_read_files">
+    <plurals name="category_group_read_files">
         <item quantity="other">%d 个应用读取了文件</item>
     </plurals>
-    <plurals name="group_looked_only">
+    <plurals name="category_group_looked_only">
         <item quantity="other">%d 个应用仅查找了文件</item>
     </plurals>
 

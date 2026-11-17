@@ -17,8 +17,10 @@ data object OverviewNavKey : NavKey
 data class CategoryNavKey(val category: String) : NavKey
 
 fun Navigator.navigateToCategory(category: String) {
-    // A category replaces whatever was open above the overview, so that
-    // back returns to the overview.
+    // Categories belong to the overview, wherever they are opened from (the
+    // search bar is on every destination). A category replaces whatever was
+    // open above the overview, so that back returns to it.
+    if (state.currentTopLevelKey != OverviewNavKey) navigate(OverviewNavKey)
     state.currentSubStack.run { if (size > 1) subList(1, size).clear() }
     navigate(CategoryNavKey(category))
 }

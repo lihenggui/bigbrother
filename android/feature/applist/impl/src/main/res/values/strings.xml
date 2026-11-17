@@ -7,11 +7,11 @@
     <string name="show_system_apps">Show system apps</string>
     <string name="only_system_apps">Records exist only for apps hidden by default</string>
     <!-- Groups in sensitivity order. -->
-    <plurals name="group_read_files">
+    <plurals name="list_group_read_files">
         <item quantity="one">Read files · %d app</item>
         <item quantity="other">Read files · %d apps</item>
     </plurals>
-    <plurals name="group_other">
+    <plurals name="list_group_other">
         <item quantity="one">Other · %d app</item>
         <item quantity="other">Other · %d apps</item>
     </plurals>

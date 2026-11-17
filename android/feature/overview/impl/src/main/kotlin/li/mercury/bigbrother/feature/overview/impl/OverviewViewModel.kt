@@ -126,7 +126,10 @@ class OverviewViewModel @Inject constructor(
                         recording = status.recording,
                         refreshing = false,
                         failure = null,
-                        moduleSetup = ModuleSetup.Idle,
+                        // An installation in progress is not over because the
+                        // records loaded meanwhile.
+                        moduleSetup = it.moduleSetup.takeIf { setup -> setup == ModuleSetup.Installing }
+                            ?: ModuleSetup.Idle,
                         // Recording again means an earlier start problem is over.
                         daemonStartError = it.daemonStartError.takeUnless { status.recording },
                         moduleOutdated = outdated,
@@ -200,6 +203,7 @@ class OverviewViewModel @Inject constructor(
                 if (moduleRepository.isActive()) {
                     // Already installed: either applied on the spot, or
                     // staged until the next restart. refresh() tells which.
+                    _uiState.update { it.copy(moduleSetup = ModuleSetup.Idle) }
                     refresh()
                 } else {
                     _uiState.update { it.copy(moduleSetup = ModuleSetup.NeedsReboot) }

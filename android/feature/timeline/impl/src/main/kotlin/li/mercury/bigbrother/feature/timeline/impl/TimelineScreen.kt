@@ -66,7 +66,7 @@ fun TimelineScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     LifecycleResumeEffect(Unit) {
-        viewModel.refresh()
+        viewModel.refreshIfStale()
         onPauseOrDispose {}
     }
     TimelineScreen(uiState, topBar, selectedUid, viewModel::refresh, viewModel::loadMore, onOpenEntry)
