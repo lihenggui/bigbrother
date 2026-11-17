@@ -77,7 +77,7 @@ fun OverviewScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     // Records keep accumulating in the background, so reload on return.
     LifecycleResumeEffect(Unit) {
-        viewModel.refresh()
+        viewModel.refreshIfStale()
         onPauseOrDispose {}
     }
     OverviewScreen(

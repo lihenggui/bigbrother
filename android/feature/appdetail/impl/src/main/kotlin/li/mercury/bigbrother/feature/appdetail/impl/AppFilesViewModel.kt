@@ -89,7 +89,7 @@ class AppFilesViewModel @AssistedInject constructor(
         _uiState.update { it.copy(fileDetails = FileDetails(path)) }
         viewModelScope.launch {
             val details = try {
-                FileDetails(path, periods = accessRepository.getHistory(uid, path, range))
+                FileDetails(path, periods = accessRepository.getHistory(uid, listOf(path), range))
             } catch (e: RecordsException) {
                 FileDetails(path, failure = e.toLoadFailure())
             }

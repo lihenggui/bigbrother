@@ -1,5 +1,6 @@
 package li.mercury.bigbrother.feature.applist.impl
 
+import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -46,6 +47,9 @@ class AppListViewModel @Inject constructor(
 
     private var loadJob: Job? = null
 
+    /** When the last load finished, on the elapsed realtime clock. */
+    private var loadedAt = 0L
+
     init {
         viewModelScope.launch {
             userDataRepository.userData.map { it.showSystemApps }.distinctUntilChanged().collect { show ->
@@ -61,7 +65,17 @@ class AppListViewModel @Inject constructor(
         }
     }
 
-    /** Load, or reload, the list. The screen also calls this each time it is resumed. */
+    /**
+     * Reload when the screen is shown again, unless a load is running or has
+     * just finished: at launch, the first load is still on its way.
+     */
+    fun refreshIfStale() {
+        if (loadJob?.isActive == true) return
+        if (SystemClock.elapsedRealtime() - loadedAt < STALE_AFTER_MS) return
+        refresh()
+    }
+
+    /** Load, or reload, the list. */
     fun refresh() {
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
@@ -72,6 +86,7 @@ class AppListViewModel @Inject constructor(
                 val appInfo = appInfoRepository.getAppInfo(
                     apps.map { it.packageName }.filter { it.isNotEmpty() }.toSet(),
                 )
+                loadedAt = SystemClock.elapsedRealtime()
                 _uiState.update {
                     it.copy(range = range, apps = apps, appInfo = appInfo, refreshing = false, failure = null)
                 }
@@ -89,3 +104,6 @@ class AppListViewModel @Inject constructor(
         viewModelScope.launch { userDataRepository.setShowSystemApps(show) }
     }
 }
+
+/** How soon after a load the screen being shown again reloads it. */
+private const val STALE_AFTER_MS = 10_000L

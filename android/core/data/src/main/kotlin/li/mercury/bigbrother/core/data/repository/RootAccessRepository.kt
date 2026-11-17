@@ -1,5 +1,6 @@
 package li.mercury.bigbrother.core.data.repository
 
+import android.os.SystemClock
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -59,7 +60,33 @@ internal class RootAccessRepository @Inject constructor(
     private fun JSONArray?.toStringList(): List<String> =
         if (this == null) emptyList() else List(length()) { getString(it) }
 
+    /** The most recent [getAccesses] result, and when it was read. */
+    private class CachedAccesses(val request: List<Any?>, val readAt: Long, val accesses: List<Access>)
+
+    @Volatile
+    private var cachedAccesses: CachedAccesses? = null
+
     override suspend fun getAccesses(
+        uid: Int,
+        category: Category?,
+        range: TimeRange,
+        limit: Int,
+        offset: Int,
+    ): List<Access> {
+        // An app's page, its files and its records each read all of its
+        // records within moments of each other; they share one read.
+        val request = listOf(uid, category, range, limit, offset)
+        cachedAccesses?.let { cached ->
+            if (cached.request == request && SystemClock.elapsedRealtime() - cached.readAt < CACHE_MS) {
+                return cached.accesses
+            }
+        }
+        return readAccesses(uid, category, range, limit, offset).also {
+            cachedAccesses = CachedAccesses(request, SystemClock.elapsedRealtime(), it)
+        }
+    }
+
+    private suspend fun readAccesses(
         uid: Int,
         category: Category?,
         range: TimeRange,
@@ -81,17 +108,20 @@ internal class RootAccessRepository @Inject constructor(
 
     override suspend fun searchPaths(
         text: String,
-        category: Category,
+        categories: Collection<Category>,
+        uids: Collection<Int>,
         range: TimeRange,
         limit: Int,
     ): List<PathMatch> = parsing {
+        // No app means nothing to search, not every app.
+        if (uids.isEmpty()) return@parsing emptyList()
         // The text is typed by the user, so it is quoted: it must reach the
         // daemon as one argument, whatever it holds. Attached with "=", it
-        // stays the option's value even when it starts with "-".
+        // stays the option's value even when it starts with "-". The rest
+        // are numbers and enum constants.
+        val filters = categories.joinToString("") { " --cat ${it.id}" } + uids.joinToString("") { " --uid $it" }
         val rows = JSONArray(
-            query(
-                "files --contains=${text.shellQuoted()} --cat ${category.id} --limit $limit" + range.argument(),
-            ),
+            query("files --contains=${text.shellQuoted()}$filters --limit $limit" + range.argument()),
         )
         (0 until rows.length()).mapNotNull { i ->
             val row = rows.getJSONObject(i)
@@ -154,14 +184,13 @@ internal class RootAccessRepository @Inject constructor(
 
     override suspend fun getHistory(
         uid: Int,
-        path: String,
+        paths: List<String>,
         range: TimeRange,
     ): List<AccessPeriod> = parsing {
-        // The path comes from a file name chosen by some app, so it is
+        // A path comes from a file name chosen by some app, so each is
         // quoted: it must reach the daemon as one argument, whatever it holds.
-        val rows = JSONArray(
-            query("history --uid $uid --path=${path.shellQuoted()}" + range.argument()),
-        )
+        val args = paths.joinToString("") { " --path=${it.shellQuoted()}" }
+        val rows = JSONArray(query("history --uid $uid$args" + range.argument()))
         List(rows.length()) { i ->
             val row = rows.getJSONObject(i)
             val mode = row.getInt("mode")
@@ -228,6 +257,9 @@ internal class RootAccessRepository @Inject constructor(
     private companion object {
         const val MISSING_MARKER = "bbd-not-installed"
         const val COVERAGE_PREFIX = "coverage_"
+
+        /** How long an app's records are reused across its screens. */
+        const val CACHE_MS = 10_000L
 
         /** The daemon flushes every 5 s; allow several missed beats. */
         const val STALE_AFTER_SECONDS = 30

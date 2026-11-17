@@ -55,7 +55,7 @@ import li.mercury.bigbrother.core.ui.appDisplayName
 import li.mercury.bigbrother.core.ui.categoriesSummary
 import li.mercury.bigbrother.core.ui.categoryDetail
 import li.mercury.bigbrother.core.ui.dataCategories
-import li.mercury.bigbrother.core.ui.isHiddenByDefault
+import li.mercury.bigbrother.core.ui.isShown
 import li.mercury.bigbrother.core.ui.readFiles
 import li.mercury.bigbrother.core.ui.label
 import li.mercury.bigbrother.core.ui.shortTime
@@ -78,7 +78,7 @@ fun AppListScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     // Records keep accumulating in the background, so reload on return.
     LifecycleResumeEffect(Unit) {
-        viewModel.refresh()
+        viewModel.refreshIfStale()
         onPauseOrDispose {}
     }
     AppListScreen(
@@ -120,8 +120,7 @@ internal fun AppListScreen(
     val ownPackage = LocalContext.current.packageName
     val entries = remember(state.apps, state.appInfo, state.showSystemApps, ownPackage) {
         state.apps
-            ?.filter { it.packageName != ownPackage }
-            ?.filter { state.showSystemApps || !isHiddenByDefault(it, state.appInfo) }
+            ?.filter { isShown(it, state.appInfo, state.showSystemApps, ownPackage) }
             ?.map { Entry(it, it.dataCategories()) }
     }
     val hiddenApps = state.apps.orEmpty().count { it.packageName != ownPackage } - entries.orEmpty().size

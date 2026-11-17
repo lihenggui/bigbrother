@@ -108,7 +108,9 @@ internal fun RecordScreen(
                 }
                 val periods = state.periods
                 item(key = "history-header") { SectionHeader(stringResource(R.string.record_history)) }
-                if (periods == null) {
+                if (state.historyFailure != null) {
+                    item(key = "history-failure") { HistoryFailure(onRetry) }
+                } else if (periods == null) {
                     item(key = "history-loading") {
                         BigBrotherLoadingIndicator(Modifier.fillMaxWidth().padding(vertical = 24.dp))
                     }
@@ -129,6 +131,23 @@ internal fun RecordScreen(
                 }
             }
         }
+    }
+}
+
+/** The history could not be loaded, though the record itself could. */
+@Composable
+private fun HistoryFailure(onRetry: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = stringResource(UiR.string.error_title),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(onClick = onRetry) { Text(stringResource(UiR.string.retry)) }
     }
 }
 

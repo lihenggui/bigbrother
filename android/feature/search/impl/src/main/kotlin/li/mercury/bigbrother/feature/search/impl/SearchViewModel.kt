@@ -8,9 +8,11 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
@@ -28,7 +30,7 @@ import li.mercury.bigbrother.core.model.PathMatch
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.ui.DataCategory
 import li.mercury.bigbrother.core.ui.dataCategories
-import li.mercury.bigbrother.core.ui.isHiddenByDefault
+import li.mercury.bigbrother.core.ui.isShown
 import li.mercury.bigbrother.core.ui.topicCategory
 import li.mercury.bigbrother.core.ui.topicTitle
 
@@ -46,7 +48,10 @@ data class SearchResults(
     val files: List<PathMatch> = emptyList(),
     val data: List<DataMatch> = emptyList(),
     val appInfo: Map<String, AppInfo> = emptyMap(),
-    /** Whether the results are for the current text; false while it is being looked up. */
+    /**
+     * Whether the results are for the text in the field; false while a new
+     * text is being looked up, when they are still the previous text's.
+     */
     val complete: Boolean = true,
 )
 
@@ -63,7 +68,7 @@ class SearchViewModel @Inject constructor(
     /** Every app with records, loaded on the first search after the field was empty. */
     private var apps: List<AppSummary>? = null
 
-    val results: StateFlow<SearchResults> = query
+    private val found: Flow<SearchResults> = query
         .map { it.trim() }
         .distinctUntilChanged()
         .debounce(DEBOUNCE_MS)
@@ -76,7 +81,13 @@ class SearchViewModel @Inject constructor(
                 search(text)
             }
         }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SearchResults())
+
+    val results: StateFlow<SearchResults> = combine(query.map { it.trim() }, found) { text, results ->
+        when {
+            text.isEmpty() -> SearchResults()
+            else -> results.copy(complete = results.query == text)
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SearchResults())
 
     fun setQuery(text: String) {
         query.value = text
@@ -90,24 +101,28 @@ class SearchViewModel @Inject constructor(
         }
         val appInfo = appInfoRepository.getAppInfo(all.map { it.packageName }.filter { it.isNotEmpty() }.toSet())
         val showSystemApps = userDataRepository.userData.first().showSystemApps
-        val visible = all
-            .filter { it.packageName != context.packageName }
-            .filter { showSystemApps || !isHiddenByDefault(it, appInfo) }
+        val visible = all.filter { isShown(it, appInfo, showSystemApps, context.packageName) }
         val matchingApps = visible.filter { app ->
             app.packageName.contains(text, ignoreCase = true) ||
                 appInfo[app.packageName]?.label?.contains(text, ignoreCase = true) == true
         }
-        val visibleUids = visible.mapTo(HashSet()) { it.uid }
         // Only the user's files: other records are stored under identifiers
         // meant for the daemon, and are found by the name of their kind.
-        // A single character would match nearly every path, and each search
-        // scans the records through the one root shell the app shares.
+        // Only the apps shown are searched, so that the limit is spent on
+        // them. A single character would match nearly every path, and each
+        // search scans the records through the one root shell the app shares.
         val files = if (text.length < MIN_PATH_QUERY) emptyList() else try {
-            listOf(Category.STORAGE, Category.PROVIDER)
-                .flatMap { accessRepository.searchPaths(text, it, TimeRange.ALL, MAX_PATHS) }
-                .filter { it.uid in visibleUids }
+            accessRepository
+                .searchPaths(
+                    text = text,
+                    categories = PATH_CATEGORIES,
+                    uids = visible.map { it.uid },
+                    range = TimeRange.ALL,
+                    // One row per kind of access: a file read and listed
+                    // counts twice before the rows are merged below.
+                    limit = MAX_PATHS * 2,
+                )
                 .distinctBy { it.uid to it.access.path }
-                .sortedByDescending { it.access.lastSeen }
                 .take(MAX_PATHS)
         } catch (_: RecordsException) {
             emptyList()
@@ -145,5 +160,6 @@ class SearchViewModel @Inject constructor(
         const val DEBOUNCE_MS = 250L
         const val MAX_PATHS = 50
         const val MIN_PATH_QUERY = 2
+        val PATH_CATEGORIES = listOf(Category.STORAGE, Category.PROVIDER)
     }
 }

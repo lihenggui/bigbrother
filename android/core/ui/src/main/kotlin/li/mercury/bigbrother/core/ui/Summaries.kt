@@ -65,3 +65,10 @@ fun categoryDetail(app: AppSummary, category: DataCategory): String? {
  */
 fun isHiddenByDefault(app: AppSummary, appInfo: Map<String, AppInfo>): Boolean =
     appInfo[app.packageName]?.isSystem == true || app.isUnattributedIsolated
+
+/**
+ * Whether an app's records are shown: never this app's own ([ownPackage])
+ * lookups, and those of apps hidden by default only with [showSystemApps].
+ */
+fun isShown(app: AppSummary, appInfo: Map<String, AppInfo>, showSystemApps: Boolean, ownPackage: String): Boolean =
+    app.packageName != ownPackage && (showSystemApps || !isHiddenByDefault(app, appInfo))
