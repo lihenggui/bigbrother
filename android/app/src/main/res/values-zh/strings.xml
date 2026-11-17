@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="module_description">记录哪些应用通过媒体库和其他系统文件提供程序访问文件。</string>
+    <string name="nav_overview">概览</string>
+    <string name="nav_apps">应用</string>
+    <string name="nav_timeline">时间线</string>
 </resources>

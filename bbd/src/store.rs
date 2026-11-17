@@ -95,6 +95,15 @@ const HISTORY_LIMIT: u32 = 2000;
 /// How many of an app's folders the per-app summary names.
 const TOP_FOLDERS: usize = 3;
 
+/// Hours of records the timeline reads per query while it collects a page.
+const TIMELINE_WINDOW_HOURS: i64 = 24;
+
+/// Mode bits of accesses that only looked for a file rather than opened it.
+const NOT_FILE_OPEN: Mode = MODE_DIR | MODE_PROBE | MODE_WATCH;
+
+/// Mode bits of accesses that opened a file.
+const FILE_OPEN: Mode = MODE_READ | MODE_WRITE;
+
 /// `MIGRATIONS[n]` upgrades a database from version `n + 1` to `n + 2`.
 const MIGRATIONS: &[&str] = &[
     // 1 -> 2: number of entries a provider query returned.
@@ -453,6 +462,21 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
 
 // ---- read side -------------------------------------------------------------
 
+/// The top-level folder most of `paths` are in; a tie goes to the name that
+/// sorts first, so the result is stable.
+fn most_common_folder(paths: &std::collections::HashSet<String>) -> Option<String> {
+    let mut counts: HashMap<&str, u32> = HashMap::new();
+    for path in paths {
+        if let Some(folder) = crate::paths::top_level_folder(path) {
+            *counts.entry(folder).or_default() += 1;
+        }
+    }
+    counts
+        .into_iter()
+        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(a.0)))
+        .map(|(folder, _)| folder.to_string())
+}
+
 #[derive(Serialize)]
 pub struct AppRow {
     pub uid: u32,
@@ -517,6 +541,59 @@ pub struct HistoryRow {
     pub fail: i64,
 }
 
+/// One app's activity of one kind within one hour: what the timeline lists.
+#[derive(Serialize)]
+pub struct TimelineRow {
+    /// Start of the hour, as unix time.
+    pub hour_ts: i64,
+    pub uid: u32,
+    pub pkg: String,
+    pub cat: String,
+    /// What the records mean (see `rules::topic`); absent for user files and
+    /// provider URIs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub topic: Option<&'static str>,
+    /// Distinct paths touched.
+    pub paths: i64,
+    /// Distinct user files opened successfully; 0 for other categories.
+    pub files_read: i64,
+    pub ok: i64,
+    pub fail: i64,
+    /// The mode bits of every access, combined.
+    pub modes: Mode,
+    /// Most entries a single provider query returned.
+    pub items: i64,
+    /// For user files, the top-level folder most of them are in: of the
+    /// files read, or of everything touched if none was.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
+    pub first_ts: i64,
+    pub last_ts: i64,
+}
+
+/// A page of the timeline.
+#[derive(Serialize)]
+pub struct Timeline {
+    pub entries: Vec<TimelineRow>,
+    /// Pass as `before` to read the next page; absent when there is no more.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_before: Option<i64>,
+}
+
+/// A timeline entry while it is being collected.
+#[derive(Default)]
+struct TimelineAcc {
+    pkg: String,
+    paths: std::collections::HashSet<String>,
+    read: std::collections::HashSet<String>,
+    ok: i64,
+    fail: i64,
+    modes: Mode,
+    items: i64,
+    first_ts: i64,
+    last_ts: i64,
+}
+
 #[derive(Serialize)]
 pub struct Stats {
     pub rows: i64,
@@ -559,9 +636,7 @@ impl Reader {
         )?;
         // A read is a successful open of a file: not a directory listing, a
         // stat-style probe or a watch.
-        let not_file_open = MODE_DIR | MODE_PROBE | MODE_WATCH;
-        let read_or_write = MODE_READ | MODE_WRITE;
-        let rows = stmt.query_map(params![since, not_file_open, read_or_write], |r| {
+        let rows = stmt.query_map(params![since, NOT_FILE_OPEN, FILE_OPEN], |r| {
             Ok(AppRow {
                 uid: r.get(0)?,
                 pkg: r.get(1)?,
@@ -595,7 +670,7 @@ impl Reader {
              FROM access WHERE cat = 'storage' AND last_ts >= ?1
              GROUP BY uid, path",
         )?;
-        let mut paths = stmt.query(params![since, not_file_open, read_or_write])?;
+        let mut paths = stmt.query(params![since, NOT_FILE_OPEN, FILE_OPEN])?;
         while let Some(row) = paths.next()? {
             let (uid, path, was_read): (u32, String, bool) =
                 (row.get(0)?, row.get(1)?, row.get(2)?);
@@ -653,13 +728,16 @@ impl Reader {
         Ok(apps)
     }
 
-    /// Paths, aggregated across hours, most recent first. `uid`, `cat` and
-    /// `prefix` narrow the result when given.
+    /// Paths, aggregated across hours, most recent first. `uid`, `cat`,
+    /// `prefix` and `contains` (a substring, ignoring ASCII case) narrow the
+    /// result when given.
+    #[allow(clippy::too_many_arguments)]
     pub fn files(
         &self,
         uid: Option<u32>,
         cat: Option<Category>,
         prefix: Option<&str>,
+        contains: Option<&str>,
         since: i64,
         limit: u32,
         offset: u32,
@@ -672,27 +750,31 @@ impl Reader {
                AND (?2 IS NULL OR uid = ?2)
                AND (?3 IS NULL OR substr(path, 1, length(?3)) = ?3)
                AND (?6 IS NULL OR cat = ?6)
+               AND (?7 IS NULL OR instr(lower(path), lower(?7)) > 0)
              GROUP BY uid, path, mode
              ORDER BY max(last_ts) DESC, path, uid, mode
              LIMIT ?4 OFFSET ?5",
         )?;
         let cat = cat.map(Category::as_str);
-        let rows = stmt.query_map(params![since, uid, prefix, limit, offset, cat], |r| {
-            let path: String = r.get(3)?;
-            Ok(FileRow {
-                uid: r.get(0)?,
-                pkg: r.get(1)?,
-                cat: r.get(2)?,
-                topic: crate::rules::topic_of(&path),
-                path,
-                mode: r.get(4)?,
-                ok: r.get(5)?,
-                fail: r.get(6)?,
-                first_ts: r.get(7)?,
-                last_ts: r.get(8)?,
-                items: r.get(9)?,
-            })
-        })?;
+        let rows = stmt.query_map(
+            params![since, uid, prefix, limit, offset, cat, contains],
+            |r| {
+                let path: String = r.get(3)?;
+                Ok(FileRow {
+                    uid: r.get(0)?,
+                    pkg: r.get(1)?,
+                    cat: r.get(2)?,
+                    topic: crate::rules::topic_of(&path),
+                    path,
+                    mode: r.get(4)?,
+                    ok: r.get(5)?,
+                    fail: r.get(6)?,
+                    first_ts: r.get(7)?,
+                    last_ts: r.get(8)?,
+                    items: r.get(9)?,
+                })
+            },
+        )?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
@@ -740,6 +822,131 @@ impl Reader {
             rows.push(row?);
         }
         Ok(rows)
+    }
+
+    /// Each app's activity per hour and kind (category and topic), most
+    /// recent hour first, for hours that start before `before` and end after
+    /// `since`. Records are read a day at a time; reading stops after the
+    /// day in which `limit` entries are reached, so an hour is never split
+    /// across pages.
+    pub fn timeline(&self, since: i64, before: i64, limit: usize) -> anyhow::Result<Timeline> {
+        let oldest: Option<i64> = self.conn.query_row(
+            "SELECT min(hour) FROM access WHERE last_ts >= ?1",
+            params![since],
+            |r| r.get(0),
+        )?;
+        let Some(oldest) = oldest else {
+            return Ok(Timeline {
+                entries: Vec::new(),
+                next_before: None,
+            });
+        };
+        let floor = oldest.max(since.div_euclid(3600));
+        // Hours whose start is before `before`.
+        let mut end = (before - 1).div_euclid(3600) + 1;
+        let mut entries = Vec::new();
+        let mut stmt = self.conn.prepare(
+            "SELECT hour, uid, pkg, cat, path, mode, ok, fail, first_ts, last_ts, items
+             FROM access
+             WHERE hour >= ?1 AND hour < ?2 AND last_ts >= ?3",
+        )?;
+        while end > floor {
+            let start = (end - TIMELINE_WINDOW_HOURS).max(floor);
+            let mut found: HashMap<(i64, u32, String, Option<&'static str>), TimelineAcc> =
+                HashMap::new();
+            let mut rows = stmt.query(params![start, end, since])?;
+            while let Some(row) = rows.next()? {
+                let (hour, uid, pkg, cat, path): (i64, u32, String, String, String) = (
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                );
+                let (mode, ok, fail, first_ts, last_ts, items): (Mode, i64, i64, i64, i64, i64) = (
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                    row.get(9)?,
+                    row.get(10)?,
+                );
+                let topic = crate::rules::topic_of(&path);
+                let is_storage = cat == Category::Storage.as_str();
+                let acc = found
+                    .entry((hour, uid, cat, topic))
+                    .or_insert_with(|| TimelineAcc {
+                        first_ts,
+                        last_ts,
+                        ..TimelineAcc::default()
+                    });
+                if acc.pkg.is_empty() {
+                    acc.pkg = pkg;
+                }
+                if is_storage && ok > 0 && mode & NOT_FILE_OPEN == 0 && mode & FILE_OPEN != 0 {
+                    acc.read.insert(path.clone());
+                }
+                acc.paths.insert(path);
+                acc.ok += ok;
+                acc.fail += fail;
+                acc.modes |= mode;
+                acc.items = acc.items.max(items);
+                acc.first_ts = acc.first_ts.min(first_ts);
+                acc.last_ts = acc.last_ts.max(last_ts);
+            }
+            let mut window: Vec<TimelineRow> = found
+                .into_iter()
+                .map(|((hour, uid, cat, topic), acc)| {
+                    let folder = if cat == Category::Storage.as_str() {
+                        most_common_folder(if acc.read.is_empty() {
+                            &acc.paths
+                        } else {
+                            &acc.read
+                        })
+                    } else {
+                        None
+                    };
+                    TimelineRow {
+                        hour_ts: hour * 3600,
+                        uid,
+                        pkg: acc.pkg,
+                        cat,
+                        topic,
+                        paths: acc.paths.len() as i64,
+                        files_read: acc.read.len() as i64,
+                        ok: acc.ok,
+                        fail: acc.fail,
+                        modes: acc.modes,
+                        items: acc.items,
+                        folder,
+                        first_ts: acc.first_ts,
+                        last_ts: acc.last_ts,
+                    }
+                })
+                .collect();
+            // Most recent hour first; within it, most recent activity first,
+            // with a fixed order for ties so pages are stable.
+            window.sort_by(|a, b| {
+                b.hour_ts
+                    .cmp(&a.hour_ts)
+                    .then_with(|| b.last_ts.cmp(&a.last_ts))
+                    .then_with(|| a.uid.cmp(&b.uid))
+                    .then_with(|| a.cat.cmp(&b.cat))
+                    .then_with(|| a.topic.cmp(&b.topic))
+            });
+            entries.extend(window);
+            end = start;
+            if entries.len() >= limit && end > floor {
+                return Ok(Timeline {
+                    entries,
+                    next_before: Some(end * 3600),
+                });
+            }
+        }
+        Ok(Timeline {
+            entries,
+            next_before: None,
+        })
     }
 
     pub fn stats(&self) -> anyhow::Result<Stats> {
@@ -868,31 +1075,51 @@ mod tests {
         assert_eq!(apps[0].topics, ["cpu_model"]);
         assert!(apps[1].topics.is_empty());
 
-        assert_eq!(r.files(Some(10100), None, None, 0, 50, 0).unwrap().len(), 2);
-        let files = r.files(Some(10100), Some(st), None, 0, 50, 0).unwrap();
+        assert_eq!(
+            r.files(Some(10100), None, None, None, 0, 50, 0)
+                .unwrap()
+                .len(),
+            2
+        );
+        let files = r
+            .files(Some(10100), Some(st), None, None, 0, 50, 0)
+            .unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].cat, "storage");
         assert_eq!(files[0].topic, None);
         let system = r
-            .files(Some(10100), Some(Category::System), None, 0, 50, 0)
+            .files(Some(10100), Some(Category::System), None, None, 0, 50, 0)
             .unwrap();
         assert_eq!(system[0].topic, Some("cpu_model"));
         assert_eq!((files[0].ok, files[0].fail), (4, 1));
         assert_eq!((files[0].first_ts, files[0].last_ts), (t, t + 3600));
 
         assert_eq!(
-            r.files(None, None, Some("/storage/emulated/0/Download"), 0, 50, 0)
+            r.files(
+                None,
+                None,
+                Some("/storage/emulated/0/Download"),
+                None,
+                0,
+                50,
+                0
+            )
+            .unwrap()
+            .len(),
+            1
+        );
+        assert_eq!(
+            r.files(None, Some(Category::System), None, None, 0, 50, 0)
                 .unwrap()
                 .len(),
             1
         );
         assert_eq!(
-            r.files(None, Some(Category::System), None, 0, 50, 0)
+            r.files(None, None, None, None, t + 3600, 50, 0)
                 .unwrap()
                 .len(),
             1
         );
-        assert_eq!(r.files(None, None, None, t + 3600, 50, 0).unwrap().len(), 1);
 
         // Every access to the photo, most recent first.
         let history = r.history(10100, &photo, 0).unwrap();
@@ -958,14 +1185,14 @@ mod tests {
         w.flush(&Counters::default(), t + 1).unwrap();
         let files = Reader::open(&db)
             .unwrap()
-            .files(None, None, None, 0, 10, 0)
+            .files(None, None, None, None, 0, 10, 0)
             .unwrap();
         assert_eq!((files.len(), files[0].ok), (1, 1));
         // And they are not written a second time.
         w.flush(&Counters::default(), t + 2).unwrap();
         let files = Reader::open(&db)
             .unwrap()
-            .files(None, None, None, 0, 10, 0)
+            .files(None, None, None, None, 0, 10, 0)
             .unwrap();
         assert_eq!(files[0].ok, 1);
         std::fs::remove_dir_all(dir).unwrap();
@@ -1080,7 +1307,7 @@ mod tests {
 
         let r = Reader::open(&db).unwrap();
         let files = r
-            .files(Some(10100), Some(Category::Provider), None, 0, 10, 0)
+            .files(Some(10100), Some(Category::Provider), None, None, 0, 10, 0)
             .unwrap();
         assert_eq!((files.len(), files[0].ok, files[0].items), (1, 3, 3214));
         assert_eq!(r.apps(0).unwrap()[0].provider, 1);
@@ -1141,7 +1368,7 @@ mod tests {
             ]
         );
         let commands = r
-            .files(Some(10100), Some(Category::Command), None, 0, 10, 0)
+            .files(Some(10100), Some(Category::Command), None, None, 0, 10, 0)
             .unwrap();
         let su = commands.iter().find(|c| c.path == "exec:su").unwrap();
         assert_eq!((su.mode, su.ok, su.fail), (MODE_EXEC, 0, 1));
@@ -1174,7 +1401,7 @@ mod tests {
         // Opening migrates in place and keeps the existing rows.
         drop(Writer::open(&db).unwrap());
         let r = Reader::open(&db).unwrap();
-        let files = r.files(None, None, None, 0, 10, 0).unwrap();
+        let files = r.files(None, None, None, None, 0, 10, 0).unwrap();
         assert_eq!((files.len(), files[0].ok, files[0].items), (1, 2, 0));
         // Records from before individual accesses were kept show up in the
         // history as the hour they were aggregated into.
@@ -1194,6 +1421,178 @@ mod tests {
             .pragma_update(None, "user_version", 99)
             .unwrap();
         assert!(Writer::open(&db).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn timeline_groups_by_hour_app_and_kind() {
+        let dir = std::env::temp_dir().join(format!("bbd-timeline-{}", std::process::id()));
+        let db = dir.join("bb.db");
+        let mut w = Writer::open(&db).unwrap();
+        let t = 1_000_000 * 3600;
+        let st = Category::Storage;
+        // Hour 0: two photos read, one Download file only probed, and a
+        // look at the MAC address.
+        for (path, mode, ts) in [
+            ("/storage/emulated/0/DCIM/a.jpg", MODE_READ, t + 10),
+            ("/storage/emulated/0/DCIM/b.jpg", MODE_READ, t + 20),
+            ("/storage/emulated/0/Download/c.pdf", MODE_PROBE, t + 30),
+        ] {
+            w.record(10100, "com.a", st, path.into(), mode, true, ts, 0);
+        }
+        let mac = "/sys/class/net/wlan0/address".to_string();
+        w.record(
+            10100,
+            "com.a",
+            Category::Device,
+            mac.clone(),
+            MODE_READ,
+            false,
+            t + 40,
+            0,
+        );
+        // Hour 1: another app's probe only.
+        w.record(
+            10200,
+            "com.b",
+            st,
+            "/storage/emulated/0/Music".into(),
+            MODE_PROBE,
+            true,
+            t + 3600 + 5,
+            0,
+        );
+        w.flush(&Counters::default(), t + 3700).unwrap();
+        let r = Reader::open(&db).unwrap();
+
+        let page = r.timeline(0, t + 7200, 100).unwrap();
+        assert!(page.next_before.is_none());
+        let summary: Vec<_> = page
+            .entries
+            .iter()
+            .map(|e| {
+                (
+                    e.hour_ts,
+                    e.uid,
+                    e.cat.as_str(),
+                    e.topic,
+                    e.paths,
+                    e.files_read,
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                (t + 3600, 10200, "storage", None, 1, 0),
+                // Within an hour, most recent activity first.
+                (
+                    t,
+                    10100,
+                    "device",
+                    Some(crate::rules::topic::MAC_ADDRESS),
+                    1,
+                    0
+                ),
+                (t, 10100, "storage", None, 3, 2),
+            ]
+        );
+        let files = &page.entries[2];
+        // The folder of what was read, not of what was only probed.
+        assert_eq!(files.folder.as_deref(), Some("DCIM"));
+        assert_eq!(files.modes, MODE_READ | MODE_PROBE);
+        assert_eq!((page.entries[1].ok, page.entries[1].fail), (0, 1));
+
+        // `before` leaves out the hours that start at or after it.
+        let earlier = r.timeline(0, t + 3600, 100).unwrap();
+        assert_eq!(earlier.entries.len(), 2);
+        // `since` leaves out the hours that ended before it.
+        assert_eq!(
+            r.timeline(t + 3600, t + 7200, 100).unwrap().entries.len(),
+            1
+        );
+
+        // A page ends once the limit is reached, and says where to go on.
+        let mut w = Writer::open(&db).unwrap();
+        let old = t - 3 * 24 * 3600;
+        w.record(
+            10100,
+            "com.a",
+            st,
+            "/storage/emulated/0/DCIM/old.jpg".into(),
+            MODE_READ,
+            true,
+            old,
+            0,
+        );
+        w.flush(&Counters::default(), t + 3700).unwrap();
+        let first = r.timeline(0, t + 7200, 1).unwrap();
+        assert_eq!(first.entries.len(), 3);
+        let next = first.next_before.expect("an older page");
+        let second = r.timeline(0, next, 1).unwrap();
+        assert_eq!(second.entries.len(), 1);
+        assert_eq!(second.entries[0].hour_ts, old - old.rem_euclid(3600));
+        assert!(second.next_before.is_none());
+
+        // An empty range is an empty page.
+        assert!(
+            r.timeline(t + 7200, t + 9000, 10)
+                .unwrap()
+                .entries
+                .is_empty()
+        );
+        drop(r);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn files_filtered_by_text_across_apps() {
+        let dir = std::env::temp_dir().join(format!("bbd-contains-{}", std::process::id()));
+        let db = dir.join("bb.db");
+        let mut w = Writer::open(&db).unwrap();
+        let t = 1_000_000 * 3600;
+        let st = Category::Storage;
+        w.record(
+            10100,
+            "com.a",
+            st,
+            "/storage/emulated/0/DCIM/IMG_1.jpg".into(),
+            MODE_READ,
+            true,
+            t,
+            0,
+        );
+        w.record(
+            10200,
+            "com.b",
+            st,
+            "/storage/emulated/0/DCIM/IMG_1.jpg".into(),
+            MODE_READ,
+            true,
+            t,
+            0,
+        );
+        w.record(
+            10200,
+            "com.b",
+            st,
+            "/storage/emulated/0/Music/a.mp3".into(),
+            MODE_READ,
+            true,
+            t,
+            0,
+        );
+        w.flush(&Counters::default(), t + 10).unwrap();
+        let r = Reader::open(&db).unwrap();
+        let found = r.files(None, None, None, Some("img_1"), 0, 10, 0).unwrap();
+        let mut uids: Vec<u32> = found.iter().map(|f| f.uid).collect();
+        uids.sort_unstable();
+        assert_eq!(uids, vec![10100, 10200]);
+        assert!(
+            r.files(None, None, None, Some("nothing"), 0, 10, 0)
+                .unwrap()
+                .is_empty()
+        );
+        drop(r);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -1,359 +1,439 @@
 package li.mercury.bigbrother.feature.appdetail.impl
 
-import android.widget.Toast
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.calculateEndPadding
-import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyItemScope
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.outlined.AccountTree
+import androidx.compose.material.icons.outlined.PhotoLibrary
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LargeFlexibleTopAppBar
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.MotionScheme
-import androidx.compose.material3.PrimaryScrollableTabRow
+import androidx.compose.material3.MediumFlexibleTopAppBar
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.flow.drop
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlinx.coroutines.launch
 import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
 import li.mercury.bigbrother.core.model.Access
+import li.mercury.bigbrother.core.model.Action
+import li.mercury.bigbrother.core.model.Category
 import li.mercury.bigbrother.core.ui.AppIcon
 import li.mercury.bigbrother.core.ui.DataCategory
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
-import li.mercury.bigbrother.core.ui.OpenFileResult
+import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
+import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.R as UiR
-import li.mercury.bigbrother.core.ui.SearchTopBar
+import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.appDisplayName
 import li.mercury.bigbrother.core.ui.label
-import li.mercury.bigbrother.core.ui.openFile
+import li.mercury.bigbrother.core.ui.shortTime
 
+/**
+ * Everything one app accessed, on one page: its files first, then each kind
+ * of private data, then what the app is. Rows open the detail: the file
+ * browser, or the record of one kind of data.
+ */
 @Composable
 fun AppDetailScreen(
-    onBackClick: () -> Unit,
+    focusCategory: String?,
+    openRecord: String?,
+    onBack: () -> Unit,
+    onOpenFiles: (location: String?) -> Unit,
+    onOpenRecord: (topic: String, source: String) -> Unit,
     viewModel: AppDetailViewModel,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     AppDetailScreen(
         state = uiState,
-        onBack = onBackClick,
+        focusCategory = focusCategory,
+        openRecord = openRecord,
+        onBack = onBack,
         onRetry = viewModel::retry,
-        onSelectTab = viewModel::selectTab,
-        onFileDetails = viewModel::showFileDetails,
-        onDismissFileDetails = viewModel::dismissFileDetails,
-        onOpenFile = { path ->
-            scope.launch {
-                val result = if (viewModel.ensureFileAccess()) {
-                    openFile(context, path)
-                } else {
-                    OpenFileResult.NO_ACCESS
-                }
-                val message = when (result) {
-                    OpenFileResult.OPENED -> null
-                    OpenFileResult.MISSING -> R.string.open_file_missing
-                    OpenFileResult.NO_VIEWER -> R.string.open_file_no_viewer
-                    OpenFileResult.NO_ACCESS -> R.string.open_file_no_access
-                }
-                if (message != null) Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-            }
-        },
+        onOpenFiles = onOpenFiles,
+        onOpenRecord = onOpenRecord,
     )
 }
 
-/**
- * A tab of the detail screen: files first, then one per category of private
- * data with records, then the app's info. [id] is what the navigation key and
- * the view model store; for the data tabs it is the category's name, so the
- * home screen's category filter opens the matching tab.
- */
-internal sealed interface DetailTab {
-    val id: String
+/** One row of the page, in order. */
+private sealed interface Item {
+    val key: String
 
-    data object Files : DetailTab {
-        override val id: String = DataCategory.FILES.name
+    data class Header(val title: Int, val lastSeen: Long?, val category: DataCategory? = null) : Item {
+        override val key: String get() = "header:${category?.name ?: title}"
     }
 
-    data class Data(val category: DataCategory) : DetailTab {
-        override val id: String get() = category.name
+    data class Folder(val folder: FolderSummary, val index: Int, val count: Int) : Item {
+        override val key: String get() = "folder:${folder.path}"
     }
 
-    data object Info : DetailTab {
-        override val id: String = "INFO"
+    data class Collection(val access: Access, val index: Int, val count: Int) : Item {
+        override val key: String get() = "collection:$index:${access.path}"
+    }
+
+    data class BrowseFiles(val totals: FileTotals, val index: Int, val count: Int) : Item {
+        override val key: String get() = "browse"
+    }
+
+    data class Topic(val group: TopicGroup, val index: Int, val count: Int) : Item {
+        override val key: String get() = "topic:${group.key}"
+    }
+
+    data class Info(val label: Int, val value: String, val index: Int, val count: Int) : Item {
+        override val key: String get() = "info:$label"
+    }
+
+    data object Launch : Item {
+        override val key: String get() = "launch"
     }
 }
 
-/** Files are kept when nothing at all was recorded, as the place for the empty state. */
-private fun buildTabs(accesses: List<Access>, categories: Map<DataCategory, List<TopicGroup>>): List<DetailTab> =
-    buildList {
-        if (accesses.any { it.isFile() } || categories.isEmpty()) add(DetailTab.Files)
-        categories.keys.forEach { add(DetailTab.Data(it)) }
-        add(DetailTab.Info)
-    }
+/** Folders named before the rest of the files are left to the browser. */
+private const val FOLDERS_SHOWN = 3
 
-@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun buildItems(state: AppDetailUiState, accesses: List<Access>): List<Item> {
+    val files = remember(accesses) { accesses.filter { it.isFile() } }
+    val folders = remember(files) { topFolders(files, FOLDERS_SHOWN) }
+    val totals = remember(files) { fileTotals(files) }
+    val collections = remember(files) { files.filter { it.category == Category.PROVIDER } }
+    val categories = remember(accesses) { groupByCategory(accesses) }
+    val info = infoRows(state.app, state.packageDetails)
+    return buildList {
+        if (files.isNotEmpty()) {
+            add(Item.Header(DataCategory.FILES.title, files.maxOf { it.lastSeen }, DataCategory.FILES))
+            val count = folders.size + collections.size + 1
+            folders.forEachIndexed { i, folder -> add(Item.Folder(folder, i, count)) }
+            collections.forEachIndexed { i, access -> add(Item.Collection(access, folders.size + i, count)) }
+            add(Item.BrowseFiles(totals, count - 1, count))
+        }
+        for ((category, groups) in categories) {
+            add(Item.Header(category.title, groups.maxOf { it.lastSeen }, category))
+            groups.forEachIndexed { i, group -> add(Item.Topic(group, i, groups.size)) }
+        }
+        if (info.isNotEmpty()) {
+            add(Item.Header(R.string.tab_info, null))
+            info.forEachIndexed { i, (label, value) -> add(Item.Info(label, value, i, info.size)) }
+        }
+        if (state.packageDetails != null) add(Item.Launch)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 internal fun AppDetailScreen(
     state: AppDetailUiState,
+    focusCategory: String?,
+    openRecord: String?,
     onBack: () -> Unit,
     onRetry: () -> Unit,
-    onSelectTab: (String) -> Unit,
-    onFileDetails: (path: String) -> Unit,
-    onDismissFileDetails: () -> Unit,
-    onOpenFile: (path: String) -> Unit,
+    onOpenFiles: (location: String?) -> Unit,
+    onOpenRecord: (topic: String, source: String) -> Unit,
 ) {
-    state.fileDetails?.let { details ->
-        FileDetailsSheet(details, onOpen = { onOpenFile(details.path) }, onDismiss = onDismissFileDetails)
-    }
+    val context = LocalContext.current
     val app = state.app
     val name = appDisplayName(app, state.appInfo)
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
-
-    var searching by rememberSaveable { mutableStateOf(false) }
-    var query by rememberSaveable { mutableStateOf("") }
-    var location by rememberSaveable { mutableStateOf(Location.ROOT) }
-
-    val accesses = state.accesses
-    // The tabs come from every record, so that they stay put while a search
-    // narrows what is in them.
-    val allCategories = remember(accesses) { groupByCategory(accesses.orEmpty()) }
-    val tabs = remember(accesses, allCategories) { accesses?.let { buildTabs(it, allCategories) } }
-    val filtering = searching && query.isNotBlank()
-    val shown = remember(accesses, query, filtering) {
-        val needle = query.trim()
-        accesses?.filter { !filtering || it.path.contains(needle, ignoreCase = true) }.orEmpty()
-    }
-    // Without a search, what is shown is everything, already grouped.
-    val shownCategories = remember(shown, filtering, allCategories) {
-        if (filtering) groupByCategory(shown) else allCategories
-    }
-    // The counts follow the search, so they point to the tabs with matches.
-    val fileCount = remember(shown) { fileTabCount(shown) }
-
-    val closeSearch = {
-        searching = false
-        query = ""
-    }
-    BackHandler(enabled = searching, onBack = closeSearch)
-
-    // Segmented list items are surface-coloured and are meant to sit on a
-    // tonal background, which is what separates the groups visually.
+    // Grouped list items are surface-colored and sit on a tonal background,
+    // which is what separates the groups.
     val background = MaterialTheme.colorScheme.surfaceContainer
     Scaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         containerColor = background,
         topBar = {
-            if (searching) {
-                SearchTopBar(
-                    query = query,
-                    onQueryChange = { query = it },
-                    placeholder = stringResource(R.string.search_paths),
-                    onClose = closeSearch,
-                )
-            } else {
-                LargeFlexibleTopAppBar(
-                    title = {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            AppIcon(state.appInfo, name, size = 40.dp)
-                            Text(name, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        }
-                    },
-                    // The records cover the range chosen on the list; it is
-                    // stated here so the numbers below read correctly.
-                    subtitle = {
-                        // An isolated process's name already gives its uid.
-                        val range = stringResource(state.range.label)
-                        Text(
-                            text = if (app.packageName.isEmpty()) {
-                                range
-                            } else {
-                                stringResource(R.string.header_subtitle, app.packageName, range)
-                            },
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    },
-                    navigationIcon = {
+            MediumFlexibleTopAppBar(
+                title = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        AppIcon(state.appInfo, name, size = 40.dp)
+                        Text(name, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                },
+                // The records cover the range chosen on the list; it is
+                // stated here so the numbers below read correctly.
+                subtitle = {
+                    val range = stringResource(state.range.label)
+                    Text(
+                        text = if (app.packageName.isEmpty()) {
+                            range
+                        } else {
+                            stringResource(R.string.header_subtitle, app.packageName, range)
+                        },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                },
+                // Beside the list, the list itself is the way back.
+                navigationIcon = {
+                    if (!LocalShowsDetailBesideList.current) {
                         IconButton(onClick = onBack) {
                             Icon(
                                 Icons.AutoMirrored.Filled.ArrowBack,
                                 contentDescription = stringResource(UiR.string.back),
                             )
                         }
-                    },
-                    actions = {
-                        IconButton(onClick = { searching = true }) {
+                    }
+                },
+                actions = {
+                    if (state.packageDetails != null) {
+                        IconButton(onClick = { context.startActivity(appSettingsIntent(app.packageName)) }) {
                             Icon(
-                                Icons.Filled.Search,
-                                contentDescription = stringResource(UiR.string.search),
+                                Icons.Outlined.Info,
+                                contentDescription = stringResource(R.string.info_open_settings),
                             )
                         }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = background,
-                        scrolledContainerColor = background,
-                    ),
-                    scrollBehavior = scrollBehavior,
-                )
-            }
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = background,
+                    scrolledContainerColor = background,
+                ),
+                scrollBehavior = scrollBehavior,
+            )
         },
     ) { padding ->
-        // Only the top bar's space is reserved; lists scroll on behind the
-        // navigation bar and pad their end instead.
-        val layoutDirection = LocalLayoutDirection.current
-        Column(
-            Modifier
-                .fillMaxSize()
-                .padding(
-                    top = padding.calculateTopPadding(),
-                    start = padding.calculateStartPadding(layoutDirection),
-                    end = padding.calculateEndPadding(layoutDirection),
-                ),
-        ) {
-            when {
-                state.failure != null -> LoadFailureMessage(state.failure, onRetry)
-                tabs == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
-                else -> TabbedContent(
-                    tabs = tabs,
-                    selected = state.selectedTab,
-                    onSelect = onSelectTab,
-                    tabCount = { tab ->
-                        when (tab) {
-                            DetailTab.Files -> fileCount
-                            is DetailTab.Data -> shownCategories[tab.category].orEmpty().size
-                            DetailTab.Info -> null
-                        }
-                    },
-                ) { tab, isCurrent ->
-                    val listPadding = listContentPadding()
-                    when (tab) {
-                        DetailTab.Files -> FilesPage(
-                            accesses = shown,
-                            filtering = filtering,
-                            truncated = state.truncated,
-                            location = location,
-                            // Back goes up a folder only on the visible tab,
-                            // and only once search is closed.
-                            handleBack = isCurrent && !searching,
-                            onNavigate = { location = it },
-                            onFileDetails = onFileDetails,
-                        )
-                        is DetailTab.Data -> CategoryPage(shownCategories[tab.category].orEmpty(), listPadding)
-                        DetailTab.Info -> InfoPage(app, state.packageDetails, state.range, listPadding)
-                    }
-                }
+        val accesses = state.accesses
+        when {
+            state.failure != null -> LoadFailureMessage(state.failure, onRetry, Modifier.padding(padding))
+            accesses == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize().padding(padding))
+            else -> Summary(
+                items = buildItems(state, accesses),
+                empty = accesses.isEmpty(),
+                truncated = state.truncated,
+                padding = padding,
+                focusCategory = focusCategory,
+                openRecord = openRecord,
+                launchPackage = app.packageName,
+                onOpenFiles = onOpenFiles,
+                onOpenRecord = onOpenRecord,
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun Summary(
+    items: List<Item>,
+    empty: Boolean,
+    truncated: Boolean,
+    padding: PaddingValues,
+    focusCategory: String?,
+    openRecord: String?,
+    launchPackage: String,
+    onOpenFiles: (location: String?) -> Unit,
+    onOpenRecord: (topic: String, source: String) -> Unit,
+) {
+    val listState = rememberLazyListState()
+    // Opened for one kind of data, the page starts at it, once.
+    var focused by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(items, focusCategory) {
+        if (focused || focusCategory == null) return@LaunchedEffect
+        val index = items.indexOfFirst { it is Item.Header && it.category?.name == focusCategory }
+        if (index >= 0) listState.scrollToItem(index)
+        focused = true
+    }
+    val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val motion = MaterialTheme.motionScheme
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        state = listState,
+        contentPadding = PaddingValues(
+            start = 16.dp,
+            end = 16.dp,
+            top = padding.calculateTopPadding(),
+            bottom = 24.dp + bottomInset,
+        ),
+        verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
+    ) {
+        if (empty) {
+            item(key = "empty") {
+                Message(stringResource(UiR.string.empty_title), "", Modifier.fillParentMaxHeight(0.7f))
+            }
+        }
+        items(items, key = { it.key }) { item ->
+            val modifier = Modifier.animatedRow(this, motion)
+            when (item) {
+                is Item.Header -> SectionHeader(
+                    title = stringResource(item.title),
+                    trailing = item.lastSeen?.let { stringResource(R.string.last_access, shortTime(it)) },
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+                is Item.Folder -> FolderRow(item, modifier) { onOpenFiles(item.folder.path) }
+                is Item.Collection -> CollectionSummaryRow(item, modifier) { onOpenFiles(Location.MEDIA) }
+                is Item.BrowseFiles -> BrowseFilesRow(item, modifier) { onOpenFiles(null) }
+                is Item.Topic -> TopicRow(
+                    group = item.group,
+                    index = item.index,
+                    count = item.count,
+                    selected = openRecord == item.group.key,
+                    onOpen = { onOpenRecord(item.group.topic, item.group.source.name) },
+                    modifier = modifier,
+                )
+                is Item.Info -> InfoRow(item.label, item.value, item.index, item.count, modifier)
+                Item.Launch -> LaunchButton(launchPackage)
+            }
+        }
+        if (truncated) {
+            item(key = "truncated") {
+                Text(
+                    text = stringResource(R.string.results_truncated),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                )
             }
         }
     }
 }
 
-/**
- * A scrollable tab row over a pager, as in Blocker's app detail: tabs can be
- * tapped or swiped between, and each names how many items it holds.
- */
+/** "**Read** 23 files": the verb in bold, since reading is what matters most. */
 @Composable
-private fun TabbedContent(
-    tabs: List<DetailTab>,
-    selected: String?,
-    onSelect: (String) -> Unit,
-    tabCount: (DetailTab) -> Int?,
-    page: @Composable (tab: DetailTab, isCurrent: Boolean) -> Unit,
-) {
-    val initial = tabs.indexOfFirst { it.id == selected }.coerceAtLeast(0)
-    // A new set of tabs (records reloaded) starts a new pager on the tab
-    // that was selected.
-    val pagerState = key(tabs.map { it.id }) { rememberPagerState(initialPage = initial) { tabs.size } }
-    // Only a page the user moves to is recorded. A requested tab that is
-    // not there yet (records still loading) is kept, so a reload that adds
-    // it opens on it.
-    LaunchedEffect(pagerState, tabs) {
-        snapshotFlow { pagerState.currentPage }.drop(1).collect { onSelect(tabs[it].id) }
+private fun readFiles(count: Int) = buildAnnotatedString {
+    val text = pluralStringResource(R.plurals.files_read, count, count)
+    val verb = stringResource(R.string.action_read)
+    val start = text.indexOf(verb)
+    if (start < 0) {
+        append(text)
+    } else {
+        append(text.substring(0, start))
+        withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)) {
+            append(verb)
+        }
+        append(text.substring(start + verb.length))
     }
-    val scope = rememberCoroutineScope()
-    PrimaryScrollableTabRow(
-        selectedTabIndex = pagerState.currentPage,
-        containerColor = Color.Transparent,
-        edgePadding = 16.dp,
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun FolderRow(item: Item.Folder, modifier: Modifier, onClick: () -> Unit) {
+    ListItem(
+        onClick = onClick,
+        modifier = modifier,
+        shapes = ListItemDefaults.segmentedShapes(item.index, item.count),
+        colors = ListItemDefaults.segmentedColors(),
+        leadingContent = { Icon(Icons.Filled.Folder, contentDescription = null) },
+        supportingContent = { Text(readFiles(item.folder.filesRead)) },
+        trailingContent = { Text(shortTime(item.folder.lastSeen), style = MaterialTheme.typography.labelMedium) },
     ) {
-        tabs.forEachIndexed { index, tab ->
-            val title = stringResource(
-                when (tab) {
-                    DetailTab.Files -> R.string.tab_files
-                    is DetailTab.Data -> tab.category.title
-                    DetailTab.Info -> R.string.tab_info
-                },
-            )
-            val count = tabCount(tab)
-            Tab(
-                selected = index == pagerState.currentPage,
-                onClick = { scope.launch { pagerState.animateScrollToPage(index) } },
-                text = { Text(if (count != null) stringResource(R.string.tab_with_count, title, count) else title) },
-            )
+        Text(item.folder.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun CollectionSummaryRow(item: Item.Collection, modifier: Modifier, onClick: () -> Unit) {
+    val access = item.access
+    val label = collectionLabel(access.path)
+    ListItem(
+        onClick = onClick,
+        modifier = modifier,
+        shapes = ListItemDefaults.segmentedShapes(item.index, item.count),
+        colors = ListItemDefaults.segmentedColors(),
+        leadingContent = { Icon(Icons.Outlined.PhotoLibrary, contentDescription = null) },
+        supportingContent = {
+            when {
+                access.allowed == 0 -> DeniedText(
+                    pluralStringResource(R.plurals.total_blocked, access.denied, access.denied),
+                )
+                access.action == Action.QUERY -> Text(
+                    pluralStringResource(R.plurals.access_query, access.allowed, access.allowed, access.items),
+                )
+                else -> Text(pluralStringResource(R.plurals.opened_via_media, access.allowed, access.allowed))
+            }
+        },
+        trailingContent = { Text(shortTime(access.lastSeen), style = MaterialTheme.typography.labelMedium) },
+    ) {
+        Text(
+            text = stringResource(R.string.media_collection, label?.let { stringResource(it) } ?: access.path),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun BrowseFilesRow(item: Item.BrowseFiles, modifier: Modifier, onClick: () -> Unit) {
+    val totals = item.totals
+    val parts = buildList {
+        if (totals.read > 0) add(pluralStringResource(R.plurals.files_read, totals.read, totals.read))
+        if (totals.lookedFor > 0) {
+            add(pluralStringResource(R.plurals.paths_looked_for, totals.lookedFor, totals.lookedFor))
         }
     }
-    HorizontalPager(
-        state = pagerState,
-        modifier = Modifier.fillMaxSize(),
-        key = { tabs[it].id },
-        verticalAlignment = Alignment.Top,
-    ) { index ->
-        page(tabs[index], index == pagerState.currentPage)
+    ListItem(
+        onClick = onClick,
+        modifier = modifier,
+        shapes = ListItemDefaults.segmentedShapes(item.index, item.count),
+        colors = ListItemDefaults.segmentedColors(),
+        leadingContent = { Icon(Icons.Outlined.AccountTree, contentDescription = null) },
+        supportingContent = parts.takeIf { it.isNotEmpty() }?.let {
+            { Text(it.joinToString(stringResource(R.string.time_separator))) }
+        },
+        trailingContent = {
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        },
+    ) {
+        Text(stringResource(R.string.browse_files))
     }
 }
 
-/** Padding for a tab's list: the usual margins, and room for the navigation bar. */
+/** Opens the app, when it has a screen to open. */
 @Composable
-internal fun listContentPadding(): PaddingValues {
-    val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-    return PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp + bottom)
-}
-
-/** Animates a list row's appearance, movement and removal with the theme's motion. */
-internal fun Modifier.animatedRow(scope: LazyItemScope, motion: MotionScheme): Modifier = with(scope) {
-    animateItem(
-        fadeInSpec = motion.defaultEffectsSpec(),
-        placementSpec = motion.defaultSpatialSpec(),
-        fadeOutSpec = motion.fastEffectsSpec(),
-    )
+private fun LaunchButton(packageName: String) {
+    val context = LocalContext.current
+    val launch = remember(packageName) { context.packageManager.getLaunchIntentForPackage(packageName) }
+        ?: return
+    OutlinedButton(
+        onClick = { context.startActivity(launch) },
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp),
+    ) {
+        Text(stringResource(R.string.info_launch))
+    }
 }

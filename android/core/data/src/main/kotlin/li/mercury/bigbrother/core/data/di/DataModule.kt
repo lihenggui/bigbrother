@@ -12,6 +12,8 @@ import li.mercury.bigbrother.core.data.repository.PackageManagerAppInfoRepositor
 import li.mercury.bigbrother.core.data.repository.RootAccessRepository
 import li.mercury.bigbrother.core.data.repository.RootFileAccessRepository
 import li.mercury.bigbrother.core.data.repository.RootModuleRepository
+import li.mercury.bigbrother.core.data.repository.DataStoreUserDataRepository
+import li.mercury.bigbrother.core.data.repository.UserDataRepository
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -26,6 +28,11 @@ internal abstract class DataModule {
 
     @Binds
     abstract fun bindsModuleRepository(repository: RootModuleRepository): ModuleRepository
+
+    @Binds
+    abstract fun bindsUserDataRepository(
+        repository: DataStoreUserDataRepository,
+    ): UserDataRepository
 
     @Binds
     abstract fun bindsAppInfoRepository(

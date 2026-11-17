@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="all_data">All data</string>
+    <!-- Filter: reads and other access, or also apps looking for files without reading them. -->
+    <string name="records_access">Reads and access</string>
+    <string name="records_all">All records</string>
+    <string name="timeline_empty">No records</string>
+    <string name="today">Today</string>
+    <string name="yesterday">Yesterday</string>
+    <plurals name="read_files">
+        <item quantity="one">Read %d file</item>
+        <item quantity="other">Read %d files</item>
+    </plurals>
+    <plurals name="looked_for_paths">
+        <item quantity="one">Looked for %d path</item>
+        <item quantity="other">Looked for %d paths</item>
+    </plurals>
+    <string name="media_queried">Queried the media library</string>
+    <plurals name="media_opened">
+        <item quantity="one">Opened %d file via the media library</item>
+        <item quantity="other">Opened %d files via the media library</item>
+    </plurals>
+    <plurals name="media_denied">
+        <item quantity="one">Media library denied %d time</item>
+        <item quantity="other">Media library denied %d times</item>
+    </plurals>
+    <plurals name="times">
+        <item quantity="one">%d time</item>
+        <item quantity="other">%d times</item>
+    </plurals>
+    <plurals name="times_denied">
+        <item quantity="one">Denied %d time</item>
+        <item quantity="other">Denied %d times</item>
+    </plurals>
+</resources>

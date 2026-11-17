@@ -1,65 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Title of the app list, which is the app's home screen. -->
-    <string name="app_list_title" translatable="false">Big Brother</string>
-    <!-- Daemon status, shown under the title. -->
-    <string name="status_stopped">Recording stopped</string>
-    <!-- %s: a list of the feature_* names below. -->
-    <string name="status_unavailable">Not supported on this device: %s</string>
-    <string name="feature_exec">command execution</string>
-    <string name="feature_network">local network connections</string>
-    <string name="feature_process">process memory access</string>
-    <string name="feature_netlink">netlink queries</string>
-    <string name="feature_binder">system service calls</string>
-    <string name="feature_appops">permission usage</string>
-    <!-- Under the title: how many apps have records in the selected time range. -->
-    <plurals name="status_summary">
-        <item quantity="one">%d app accessed private data</item>
-        <item quantity="other">%d apps accessed private data</item>
-    </plurals>
-    <string name="status_none">No access recorded</string>
-    <!-- Category filter chip: a category name and how many apps accessed it. -->
-    <string name="category_chip">%1$s · %2$d</string>
-
-    <plurals name="summary_storage">
-        <item quantity="one">%d file</item>
-        <item quantity="other">%d files</item>
-    </plurals>
-    <string name="summary_separator">", "</string>
-    <!-- A shortened list: the first names, then how many are not named. -->
-    <plurals name="summary_more">
-        <item quantity="one">%1$s and %2$d more</item>
-        <item quantity="other">%1$s and %2$d more</item>
-    </plurals>
-    <string name="summary_media_library">Media library</string>
-    <!-- Folders an app listed or was denied, without reading any file. %s is a list of folder names. -->
-    <string name="summary_not_read">%s (not read)</string>
-
-    <string name="search_apps">Search apps</string>
-    <string name="menu_time_range">Time range</string>
-    <string name="sort">Sort by</string>
+    <string name="all_categories">All data</string>
     <string name="sort_sensitivity">Sensitivity</string>
     <string name="sort_recent">Last access</string>
     <string name="sort_name">Name</string>
-    <string name="show_system_apps_summary">Hidden by default, along with isolated processes not traced to an app: reading data is part of how system components work.</string>
     <string name="show_system_apps">Show system apps</string>
     <string name="only_system_apps">Records exist only for apps hidden by default</string>
-    <!-- An app's name followed by the Android user it runs as, for cloned apps
-         and work profiles: "WeChat (user 999)". -->
-    <string name="app_name_with_user">%1$s (user %2$d)</string>
-
-    <string name="daemon_stopped">The recording daemon is not running.</string>
-    <string name="daemon_starting">Starting the recording daemon…</string>
-    <string name="daemon_not_reporting">The daemon was started but is not recording. See /data/adb/big_brother/bbd.log.</string>
-    <string name="daemon_start_failed">Could not start the daemon: %s</string>
-    <string name="module_disabled">The module is disabled. Enable it in the root manager.</string>
-    <string name="start_daemon">Start</string>
-    <string name="install_module">Install module</string>
-    <string name="module_outdated">The installed module is older than this app.</string>
-    <string name="update_module">Update</string>
-    <string name="module_pending_reboot">Module update takes effect after restart.</string>
-    <string name="installing_module">Installing module…</string>
-    <string name="reboot_title">Restart required</string>
-    <string name="reboot_body">Recording starts after the device restarts.</string>
-    <string name="install_failed_title">Module installation failed</string>
+    <!-- Groups in sensitivity order. -->
+    <plurals name="list_group_read_files">
+        <item quantity="one">Read files · %d app</item>
+        <item quantity="other">Read files · %d apps</item>
+    </plurals>
+    <plurals name="list_group_other">
+        <item quantity="one">Other · %d app</item>
+        <item quantity="other">Other · %d apps</item>
+    </plurals>
 </resources>

@@ -1,7 +1,9 @@
 package li.mercury.bigbrother.core.ui
 
+import android.content.Context
 import android.text.format.DateUtils
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import java.time.Instant
 import java.time.ZoneId
@@ -36,6 +38,25 @@ fun exactDateTime(epochSeconds: Long): String = dateTimeFormat.format(localTime(
 
 /** Time of day to the second, in the device's locale and time zone. */
 fun exactTime(epochSeconds: Long): String = timeFormat.format(localTime(epochSeconds))
+
+/**
+ * When something happened, for the end of a list row: the time of day for
+ * today, otherwise the date, in the device's locale and time zone.
+ */
+fun shortTime(context: Context, epochSeconds: Long): String {
+    val millis = epochSeconds * 1000
+    val flags = if (DateUtils.isToday(millis)) {
+        DateUtils.FORMAT_SHOW_TIME
+    } else {
+        DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH or DateUtils.FORMAT_NO_YEAR
+    }
+    return DateUtils.formatDateTime(context, millis, flags)
+}
+
+/** [shortTime] in composition. */
+@Composable
+fun shortTime(epochSeconds: Long): String =
+    shortTime(LocalContext.current, epochSeconds)
 
 /**
  * How long ago, in as few characters as possible ("5m", "3h", "2d"), for

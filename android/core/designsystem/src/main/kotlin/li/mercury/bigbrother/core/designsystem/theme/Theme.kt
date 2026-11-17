@@ -9,17 +9,25 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 
 /**
- * Material 3 Expressive theme. Colors come from the system's dynamic palette
- * (always available: minSdk is 31), so the app follows the user's wallpaper
- * and light/dark setting like the rest of the system UI.
+ * Material 3 Expressive theme.
+ *
+ * By default colors come from the system's dynamic palette (always available:
+ * minSdk is 31), so the app follows the user's wallpaper and light/dark
+ * setting like the rest of the system UI. With [useDynamicColor] off it uses
+ * the app's own scheme, generated from its navy and amber brand colors.
  */
 @Composable
-fun BigBrotherTheme(content: @Composable () -> Unit) {
+fun BigBrotherTheme(
+    useDynamicColor: Boolean = true,
+    darkTheme: Boolean = isSystemInDarkTheme(),
+    content: @Composable () -> Unit,
+) {
     val context = LocalContext.current
-    val colorScheme = if (isSystemInDarkTheme()) {
-        dynamicDarkColorScheme(context)
-    } else {
-        dynamicLightColorScheme(context)
+    val colorScheme = when {
+        useDynamicColor && darkTheme -> dynamicDarkColorScheme(context)
+        useDynamicColor -> dynamicLightColorScheme(context)
+        darkTheme -> BrandDarkColorScheme
+        else -> BrandLightColorScheme
     }
     MaterialExpressiveTheme(
         colorScheme = colorScheme,

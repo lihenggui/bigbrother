@@ -26,18 +26,18 @@ import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material3.ButtonGroupDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.ToggleButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -50,6 +50,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -158,11 +161,11 @@ internal fun fileTabCount(accesses: List<Access>): Int {
 }
 
 /** A file counts as read when the system let the app open it. */
-private fun Access.isSuccessfulOpen(): Boolean =
+internal fun Access.isSuccessfulOpen(): Boolean =
     allowed > 0 && (action == Action.READ || action == Action.WRITE || action == Action.READ_WRITE)
 
 /** A storage volume's root: `/storage/emulated/<user>` or `/storage/<volume id>`. */
-private val VOLUME_ROOT = Regex("^/storage/(?:emulated/\\d+|[^/]+)")
+internal val VOLUME_ROOT = Regex("^/storage/(?:emulated/\\d+|[^/]+)")
 
 /**
  * One tree per storage volume, so that each starts at a root the user knows
@@ -262,20 +265,29 @@ internal fun FilesPage(
     }
 }
 
-/** Chooses between files that were read and every access to files. */
+/** Chooses between files that were read and every access to files, as a connected button group. */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun ActivityFilter(readOnly: Boolean, onReadOnly: (Boolean) -> Unit) {
     val options = listOf(true to R.string.filter_read, false to R.string.filter_all)
-    SingleChoiceSegmentedButtonRow(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween),
     ) {
         options.forEachIndexed { index, (value, label) ->
-            SegmentedButton(
-                selected = readOnly == value,
-                onClick = { onReadOnly(value) },
-                shape = SegmentedButtonDefaults.itemShape(index, options.size),
+            ToggleButton(
+                checked = readOnly == value,
+                onCheckedChange = { onReadOnly(value) },
+                modifier = Modifier
+                    .weight(1f)
+                    .semantics { role = Role.RadioButton },
+                shapes = if (index == 0) {
+                    ButtonGroupDefaults.connectedLeadingButtonShapes()
+                } else {
+                    ButtonGroupDefaults.connectedTrailingButtonShapes()
+                },
             ) {
                 Text(stringResource(label))
             }
@@ -339,7 +351,9 @@ private fun Listing(
         when (location) {
             Location.MEDIA -> itemsIndexed(
                 content.collections,
-                key = { _, access -> "collection:${access.path}:${access.action}" },
+                // Records of one collection can share an action (opened
+                // directly and through the provider), so the position is part of the key.
+                key = { index, access -> "collection:$index:${access.path}" },
             ) { index, access ->
                 CollectionRow(access, index, content.collections.size)
             }
@@ -546,15 +560,10 @@ private fun AccessLines(accesses: List<Access>) {
     }
     val lastSeen = accesses.maxOf { it.lastSeen }
     val time = remember(lastSeen) { relativeTime(lastSeen) }
-    val allBlocked = accesses.all { it.allowed == 0 }
     Column {
         Text(
             text = actions.joinToString(stringResource(R.string.access_separator)),
-            color = if (allBlocked) {
-                MaterialTheme.colorScheme.error
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            },
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(text = time, style = MaterialTheme.typography.bodySmall)
     }
@@ -564,7 +573,7 @@ private fun AccessLines(accesses: List<Access>) {
 private fun actionLabel(access: Access): String = actionLabel(access.action, access.viaProvider)
 
 @Composable
-private fun actionLabel(action: Action, viaProvider: Boolean): String = stringResource(
+internal fun actionLabel(action: Action, viaProvider: Boolean): String = stringResource(
     when (action) {
         Action.READ -> if (viaProvider) R.string.action_read_provider else R.string.action_read
         Action.WRITE -> if (viaProvider) R.string.action_write_provider else R.string.action_write
@@ -633,7 +642,6 @@ internal fun FileDetailsSheet(details: FileDetails, onOpen: () -> Unit, onDismis
 @Composable
 private fun PeriodRow(period: AccessPeriod) {
     val label = actionLabel(period.action, period.viaProvider)
-    val blocked = period.allowed == 0
     Column {
         Text(
             // A single time, or the span of an hour recorded only in aggregate.
@@ -650,7 +658,7 @@ private fun PeriodRow(period: AccessPeriod) {
         )
         Text(
             text = when {
-                blocked -> stringResource(R.string.access_blocked, label, period.denied)
+                period.allowed == 0 -> stringResource(R.string.access_blocked, label, period.denied)
                 period.denied > 0 -> stringResource(
                     R.string.access_partly_blocked,
                     label,
@@ -660,11 +668,7 @@ private fun PeriodRow(period: AccessPeriod) {
                 else -> stringResource(R.string.access_allowed, label, period.allowed)
             },
             style = MaterialTheme.typography.bodyMedium,
-            color = if (blocked) {
-                MaterialTheme.colorScheme.error
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            },
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
@@ -688,7 +692,7 @@ private fun LazyItemScope.CollectionRow(access: Access, index: Int, count: Int) 
 }
 
 /** A readable name for a content URI's collection, if it is a well-known one. */
-private fun collectionLabel(uri: String): Int? {
+internal fun collectionLabel(uri: String): Int? {
     val authority = uri.substringAfter("://").substringBefore('/')
     val path = uri.substringAfter("://").substringAfter('/', "")
     return when {

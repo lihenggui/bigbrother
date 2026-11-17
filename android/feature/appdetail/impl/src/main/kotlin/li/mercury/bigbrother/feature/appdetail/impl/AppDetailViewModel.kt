@@ -17,23 +17,13 @@ import kotlinx.coroutines.launch
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.AccessRepository
 import li.mercury.bigbrother.core.data.repository.AppInfoRepository
-import li.mercury.bigbrother.core.data.repository.FileAccessRepository
 import li.mercury.bigbrother.core.data.toLoadFailure
 import li.mercury.bigbrother.core.model.Access
-import li.mercury.bigbrother.core.model.AccessPeriod
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.PackageDetails
 import li.mercury.bigbrother.core.model.TimeRange
-
-/** The file whose access history is shown. */
-data class FileDetails(
-    val path: String,
-    /** Null while loading. */
-    val periods: List<AccessPeriod>? = null,
-    val failure: LoadFailure? = null,
-)
 
 data class AppDetailUiState(
     /** The app's totals. Until loaded, a placeholder that only carries the uid. */
@@ -44,35 +34,24 @@ data class AppDetailUiState(
     /** There were more records than are shown. */
     val truncated: Boolean = false,
     val failure: LoadFailure? = null,
-    /** Set while the details of one file are open. */
-    val fileDetails: FileDetails? = null,
     /** The time range the records cover. */
     val range: TimeRange = TimeRange.DAY,
     /** Version and install facts; null until loaded or when not installed. */
     val packageDetails: PackageDetails? = null,
-    /**
-     * Id of the selected tab, or null for the first tab with content. Kept
-     * here rather than in the screen so that it survives the tabs being
-     * rebuilt when records reload.
-     */
-    val selectedTab: String? = null,
 )
 
 @HiltViewModel(assistedFactory = AppDetailViewModel.Factory::class)
 class AppDetailViewModel @AssistedInject constructor(
     private val accessRepository: AccessRepository,
     private val appInfoRepository: AppInfoRepository,
-    private val fileAccessRepository: FileAccessRepository,
     @Assisted private val uid: Int,
-    @Assisted("packageName") packageName: String,
+    @Assisted packageName: String,
     @Assisted private val range: TimeRange,
-    @Assisted("tab") initialTab: String?,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(
         AppDetailUiState(
             app = AppSummary(uid, packageName, counts = emptyMap(), lastSeen = 0),
             range = range,
-            selectedTab = initialTab,
         ),
     )
     val uiState: StateFlow<AppDetailUiState> = _uiState.asStateFlow()
@@ -85,37 +64,12 @@ class AppDetailViewModel @AssistedInject constructor(
 
     fun retry() = load()
 
-    fun selectTab(id: String) {
-        _uiState.update { it.copy(selectedTab = id) }
-    }
-
-    /** Open the details of the file at [path] and load when it was accessed. */
-    fun showFileDetails(path: String) {
-        _uiState.update { it.copy(fileDetails = FileDetails(path)) }
-        viewModelScope.launch {
-            val details = try {
-                FileDetails(path, periods = accessRepository.getHistory(uid, path, range))
-            } catch (e: RecordsException) {
-                FileDetails(path, failure = e.toLoadFailure())
-            }
-            // Unless the user has closed it or opened another file meanwhile.
-            _uiState.update { if (it.fileDetails?.path == path) it.copy(fileDetails = details) else it }
-        }
-    }
-
-    fun dismissFileDetails() {
-        _uiState.update { it.copy(fileDetails = null) }
-    }
-
-    /** Whether this app can reach files on shared storage, obtaining access if it can. */
-    suspend fun ensureFileAccess(): Boolean = fileAccessRepository.ensureAllFilesAccess()
-
     private fun load() {
         loadSummary()
         loadAccesses()
     }
 
-    /** The app's totals, name, icon and package facts, for the header and the info tab. */
+    /** The app's totals, name, icon and package facts, for the header and the info section. */
     private fun loadSummary() {
         // Name and package facts come from the package manager, so they show
         // even if the records fail to load; the two are fetched side by side.
@@ -149,8 +103,6 @@ class AppDetailViewModel @AssistedInject constructor(
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
             try {
-                // One request for everything: the screen arranges the paths
-                // into a tree, which needs all of them at once.
                 val accesses = accessRepository.getAccesses(
                     uid = uid,
                     category = null,
@@ -173,16 +125,9 @@ class AppDetailViewModel @AssistedInject constructor(
 
     @AssistedFactory
     interface Factory {
-        fun create(
-            uid: Int,
-            @Assisted("packageName") packageName: String,
-            range: TimeRange,
-            @Assisted("tab") initialTab: String?,
-        ): AppDetailViewModel
-    }
-
-    private companion object {
-        /** Most recent paths loaded for one app. */
-        const val MAX_ACCESSES = 5000
+        fun create(uid: Int, packageName: String, range: TimeRange): AppDetailViewModel
     }
 }
+
+/** Most recent paths loaded for one app. */
+internal const val MAX_ACCESSES = 5000

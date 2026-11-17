@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <plurals name="readers_label">
+        <item quantity="other">个应用读取了文件</item>
+    </plurals>
+    <string name="no_reads">没有应用读取文件</string>
+    <plurals name="looked_only">
+        <item quantity="other">另有 %d 个应用查找过文件，但未读取</item>
+    </plurals>
+    <string name="more_count">+%d</string>
+    <string name="other_categories">其他数据类别</string>
+    <plurals name="category_count">
+        <item quantity="other">%d 类</item>
+    </plurals>
+
+    <plurals name="category_group_read_files">
+        <item quantity="other">%d 个应用读取了文件</item>
+    </plurals>
+    <plurals name="category_group_looked_only">
+        <item quantity="other">%d 个应用仅查找了文件</item>
+    </plurals>
+
+    <string name="status_stopped">记录已停止</string>
+    <string name="daemon_stopped">记录守护进程未运行，此期间的访问不会被记录。</string>
+    <string name="daemon_starting">正在启动记录守护进程…</string>
+    <string name="daemon_not_reporting">守护进程已启动但未开始记录，详见 /data/adb/big_brother/bbd.log。</string>
+    <string name="daemon_start_failed">守护进程启动失败：%s</string>
+    <string name="module_disabled">模块已停用，请在 root 管理器中启用。</string>
+    <string name="start_daemon">启动记录</string>
+    <string name="install_module">安装模块</string>
+    <string name="module_outdated">已安装的模块版本低于本应用</string>
+    <string name="update_module">更新模块</string>
+    <string name="module_pending_reboot">模块更新将在重启后生效</string>
+    <string name="installing_module">正在安装模块…</string>
+    <string name="reboot_title">需要重启</string>
+    <string name="reboot_body">设备重启后开始记录。</string>
+    <string name="install_failed_title">模块安装失败</string>
+</resources>

@@ -3,4 +3,8 @@
     <string name="app_name" translatable="false">Big Brother</string>
     <!-- Shown in the LSPosed manager as the module's description. -->
     <string name="module_description">Records which apps go through the media library and other system file providers.</string>
+    <!-- Navigation: what was accessed, by whom, and when. -->
+    <string name="nav_overview">Overview</string>
+    <string name="nav_apps">Apps</string>
+    <string name="nav_timeline">Timeline</string>
 </resources>
