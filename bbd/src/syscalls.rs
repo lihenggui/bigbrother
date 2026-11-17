@@ -79,6 +79,26 @@ pub const FEATURES: &[Feature] = &[
     },
 ];
 
+/// The sandbox's gate (see `sandbox::gate`): not a recorder, and attached
+/// apart from the others, once the sandbox is ready to answer it.
+pub const GATE: Feature = Feature {
+    name: "sandbox",
+    table: GATE_TABLE,
+    with_return: false,
+    offsets: &[],
+};
+
+/// `setresuid`, which zygote's child calls to become the app. On arm64,
+/// 32-bit processes reach the same function through `setresuid32`; the
+/// second is the 16-bit call of the old 32-bit table.
+#[cfg(target_arch = "aarch64")]
+const GATE_TABLE: Table = &[(
+    "gate_setresuid",
+    &["__arm64_sys_setresuid", "__arm64_sys_setresuid16"],
+)];
+#[cfg(target_arch = "x86_64")]
+const GATE_TABLE: Table = &[("gate_setresuid", &["__x64_sys_setresuid"])];
+
 /// Not a syscall but the security hook every netlink message passes, which
 /// has the same name on every architecture.
 const NETLINK_TABLE: Table = &[("enter_netlink", &["security_netlink_send"])];
@@ -235,7 +255,8 @@ pub fn kernel_symbols() -> anyhow::Result<HashSet<&'static str>> {
 
 /// Every function named in a table.
 fn wanted_symbols() -> HashSet<&'static str> {
-    std::iter::once(&FILES)
+    [&FILES, &GATE]
+        .into_iter()
         .chain(FEATURES)
         .flat_map(|feature| feature.table.iter())
         .flat_map(|(_, functions)| functions.iter().copied())
@@ -310,8 +331,11 @@ mod tests {
 
     #[test]
     fn every_table_entry_names_a_real_program() {
-        for (program, functions) in TABLE {
-            assert!(program.starts_with("enter_"), "{program}");
+        for (program, functions) in TABLE.iter().chain(GATE.table) {
+            assert!(
+                program.starts_with("enter_") || *program == "gate_setresuid",
+                "{program}"
+            );
             assert!(!functions.is_empty());
         }
         assert!(TABLE.iter().any(|(_, fs)| fs.contains(&REQUIRED)));

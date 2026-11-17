@@ -1,0 +1,196 @@
+// Copyright (C) 2026 Mercury Li
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License version 3 as
+// published by the Free Software Foundation.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+//! Ending the processes that are not as the sandbox says.
+//!
+//! A sandbox is given to a process when it starts, and cannot be given or
+//! taken afterwards. So when an app is put in the sandbox, the processes it
+//! already has are ended, and when it is taken out, those that have one. The
+//! system starts an app again when it is next wanted, and then it starts as
+//! it should.
+//!
+//! The same is done when the daemon starts, for what started while it was
+//! not there to hold it: early in boot, or between a crash and the restart.
+//!
+//! Processes are ended with a signal rather than through the activity
+//! manager's "force stop": that would start a Java runtime for each change,
+//! and leaves the app in the stopped state, where it gets no broadcasts
+//! until the user opens it.
+
+use std::{fs, os::unix::fs::MetadataExt as _};
+
+use super::{
+    Effect, Entry,
+    gate::Process,
+    mounts::{self, TMPFS_SOURCE},
+};
+
+/// Ends an app's processes as it enters or leaves the sandbox. The last of
+/// the effects: by then everything the next start will find is in place.
+pub struct Restart;
+
+impl Effect for Restart {
+    fn name(&self) -> &'static str {
+        "restarting the app"
+    }
+
+    fn enable(&mut self, entry: &mut Entry, _: &[String]) -> anyhow::Result<()> {
+        end(entry.uid, Which::Unsandboxed);
+        Ok(())
+    }
+
+    fn disable(&mut self, entry: &mut Entry, _: &[String]) -> anyhow::Result<()> {
+        end(entry.uid, Which::All);
+        Ok(())
+    }
+
+    fn resume(&mut self, entries: &[(Entry, Vec<String>)]) {
+        for (entry, _) in entries {
+            end(entry.uid, Which::Unsandboxed);
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Which {
+    All,
+    /// Those that started without the gate holding them.
+    Unsandboxed,
+}
+
+/// Most passes over the processes for one uid, and the pause between two.
+const PASSES: u32 = 4;
+const PASS_PAUSE: std::time::Duration = std::time::Duration::from_millis(20);
+
+/// End processes of `uid`, looking again until a pass finds none to end:
+/// one may fork while the others are being ended, or have been about to
+/// take the uid when it was looked for.
+fn end(uid: u32, which: Which) {
+    for pass in 0..PASSES {
+        if pass > 0 {
+            std::thread::sleep(PASS_PAUSE);
+        }
+        // Twice at least: what was just about to take the uid is not seen
+        // the first time.
+        if end_once(uid, which) == 0 && pass > 0 {
+            break;
+        }
+    }
+}
+
+/// One pass; returns how many were ended. A process that cannot be looked
+/// at has ended already.
+fn end_once(uid: u32, which: Which) -> u32 {
+    let Ok(processes) = fs::read_dir("/proc") else {
+        return 0;
+    };
+    let mut ended = 0;
+    for process in processes.flatten() {
+        let Some(pid) = process
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<i32>().ok())
+        else {
+            continue;
+        };
+        // The directory of a process belongs to the user it runs as.
+        let runs_as = |uid: u32| process.metadata().is_ok_and(|meta| meta.uid() == uid);
+        if !runs_as(uid) {
+            continue;
+        }
+        // Held open, so that the signal cannot reach another process given
+        // the pid in between; then looked at again, as it may have been
+        // given already.
+        let Ok(held) = Process::open(pid) else {
+            continue;
+        };
+        if !runs_as(uid) {
+            continue;
+        }
+        let sandboxed = fs::read_to_string(format!("/proc/{pid}/mountinfo"))
+            .is_ok_and(|mounts| has_sandbox(&mounts, uid));
+        if which == Which::All || !sandboxed {
+            held.signal(libc::SIGKILL);
+            ended += 1;
+        }
+    }
+    ended
+}
+
+/// Whether a process with these mounts (`/proc/<pid>/mountinfo`) was given
+/// the sandbox of `uid`: its shared storage is the sandbox directory, or
+/// the empty stand-in for one.
+///
+/// A line is `<id> <parent> <dev> <root> <mount point> <options> ... -
+/// <type> <source> ...`, where the root is the mounted directory's path in
+/// its own filesystem.
+fn has_sandbox(mountinfo: &str, uid: u32) -> bool {
+    let storage = mounts::storage_root_of(uid);
+    let directory = format!("/{}/{uid}", super::dirs::SANDBOXES);
+    mountinfo.lines().any(|line| {
+        let mut fields = line.split(' ');
+        let (Some(root), Some(mount_point)) = (fields.nth(3), fields.next()) else {
+            return false;
+        };
+        if mount_point != storage {
+            return false;
+        }
+        let mut after_separator = fields.skip_while(|field| *field != "-").skip(1);
+        let stand_in =
+            after_separator.next() == Some("tmpfs") && after_separator.next() == Some(TMPFS_SOURCE);
+        root.ends_with(&directory) || stand_in
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ZYGOTE_MOUNTS: &str = "\
+        2100 2099 0:57 / /storage rw,nosuid,nodev,noexec,relatime master:5 - tmpfs tmpfs rw,seclabel,mode=755,gid=1000\n\
+        2101 2100 0:96 / /storage/emulated rw,nosuid,nodev,noexec,noatime master:30 - fuse /dev/fuse rw,lazytime,user_id=0,group_id=0,allow_other\n\
+        2102 2101 254:48 /media/0/Android/data/com.app /storage/emulated/0/Android/data/com.app rw,nosuid,nodev,noatime master:1 - ext4 /dev/block/dm-48 rw,seclabel\n";
+
+    #[test]
+    fn a_process_with_the_sandbox_over_its_storage_is_sandboxed() {
+        let sandboxed = format!(
+            "{ZYGOTE_MOUNTS}2200 2101 254:48 /media/0/.bb_sandbox/10100 /storage/emulated/0 rw,nosuid,nodev,noatime - ext4 /dev/block/dm-48 rw,seclabel\n"
+        );
+        assert!(has_sandbox(&sandboxed, 10100));
+        // Another app's sandbox is not this one's, nor another user's.
+        assert!(!has_sandbox(&sandboxed, 10101));
+        assert!(!has_sandbox(&sandboxed, 1_010_100));
+        assert!(!has_sandbox(ZYGOTE_MOUNTS, 10100));
+        assert!(!has_sandbox("", 10100));
+        assert!(!has_sandbox("garbage\n1 2\n", 10100));
+    }
+
+    #[test]
+    fn the_empty_stand_in_counts_as_the_sandbox() {
+        let locked = format!(
+            "{ZYGOTE_MOUNTS}2200 2101 0:120 / /storage/emulated/0 ro,relatime - tmpfs bb_sandbox ro,seclabel,size=4k,mode=555\n"
+        );
+        assert!(has_sandbox(&locked, 10100));
+        // A tmpfs of the system's there is not.
+        let other = format!(
+            "{ZYGOTE_MOUNTS}2200 2101 0:120 / /storage/emulated/0 ro,relatime - tmpfs tmpfs ro,seclabel\n"
+        );
+        assert!(!has_sandbox(&other, 10100));
+        // Nor the stand-in over something else (a hidden volume).
+        let volume = format!(
+            "{ZYGOTE_MOUNTS}2200 2100 0:120 / /storage/1A2B-3C4D ro,relatime - tmpfs bb_sandbox ro\n"
+        );
+        assert!(!has_sandbox(&volume, 10100));
+    }
+}

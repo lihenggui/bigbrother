@@ -101,7 +101,7 @@ impl Category {
 
 /// Schema version stored in SQLite's `user_version`. Bump it and add a step
 /// to `MIGRATIONS` whenever the schema changes.
-const SCHEMA_VERSION: i32 = 4;
+const SCHEMA_VERSION: i32 = 5;
 
 /// Most entries returned for one path's history.
 const HISTORY_LIMIT: u32 = 2000;
@@ -134,7 +134,25 @@ const MIGRATIONS: &[&str] = &[
     EVENT_SCHEMA,
     // 3 -> 4: periods sensors were on.
     SENSOR_SCHEMA,
+    // 4 -> 5: apps the user put in the sandbox.
+    SANDBOX_SCHEMA,
 ];
+
+/// Apps the user put in the sandbox (see `sandbox`). The sandbox applies to
+/// a uid, not a package: every package sharing the uid is in it. A disabled
+/// entry is kept rather than deleted, so that the app gets the same
+/// identity back when it is enabled again.
+const SANDBOX_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS sandbox (
+    uid        INTEGER PRIMARY KEY,   -- user * 100000 + app id
+    package    TEXT    NOT NULL,      -- the package the user named, for display only
+    enabled    INTEGER NOT NULL,
+    android_id TEXT    NOT NULL,      -- 16 hex digits, drawn on the first enable
+    saved_ops  TEXT    NOT NULL,      -- the uid's app-op modes before it was enabled,
+                                      -- 'op=mode,...', restored when it is disabled
+    created    INTEGER NOT NULL
+) WITHOUT ROWID;
+";
 
 /// Periods during which an app had a sensor on (see `sensors`). A row is one
 /// sensor on one connection of one process, at one rate.
@@ -597,6 +615,96 @@ impl Writer {
         )?;
         Ok(())
     }
+
+    /// Write a sandbox entry over whatever was stored for its uid: enabling
+    /// and disabling both write the whole entry, since what the sandbox
+    /// does to the app may change more of it than `enabled`. Unlike the
+    /// records, it is written at once, and through to the disk: the sandbox
+    /// changes rarely, and the entry holds what the app's app ops were
+    /// before, which is nowhere else once they are changed. It must survive
+    /// the daemon stopping, and the power going, right after.
+    pub fn put_sandbox(&self, entry: &SandboxEntry) -> anyhow::Result<()> {
+        self.conn.execute(
+            "INSERT INTO sandbox (uid, package, enabled, android_id, saved_ops, created)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT (uid) DO UPDATE SET
+                 package = excluded.package, enabled = excluded.enabled,
+                 android_id = excluded.android_id, saved_ops = excluded.saved_ops,
+                 created = excluded.created",
+            params![
+                entry.uid,
+                entry.package,
+                entry.enabled,
+                entry.android_id,
+                entry.saved_ops,
+                entry.created
+            ],
+        )?;
+        self.sync()
+    }
+
+    /// Have what was written so far reach the disk now. The database
+    /// otherwise leaves that to the system (`synchronous = NORMAL`), which
+    /// is right for the records and not for the sandbox.
+    fn sync(&self) -> anyhow::Result<()> {
+        self.conn
+            .query_row("PRAGMA wal_checkpoint(FULL)", [], |_| Ok(()))?;
+        Ok(())
+    }
+
+    /// Forget the entry for `uid`. Only for undoing the first enable of an
+    /// app when it failed: a disabled entry is otherwise kept.
+    pub fn delete_sandbox(&self, uid: u32) -> anyhow::Result<()> {
+        self.conn
+            .execute("DELETE FROM sandbox WHERE uid = ?1", params![uid])?;
+        self.sync()
+    }
+
+    /// The entry for `uid`, enabled or not.
+    pub fn sandbox_entry(&self, uid: u32) -> anyhow::Result<Option<SandboxEntry>> {
+        Ok(self
+            .conn
+            .query_row(
+                &format!("{SANDBOX_SELECT} WHERE uid = ?1"),
+                params![uid],
+                sandbox_entry,
+            )
+            .optional()?)
+    }
+
+    /// Every entry, enabled or not, by uid.
+    pub fn sandbox_entries(&self) -> anyhow::Result<Vec<SandboxEntry>> {
+        let mut stmt = self
+            .conn
+            .prepare(&format!("{SANDBOX_SELECT} ORDER BY uid"))?;
+        let rows = stmt.query_map([], sandbox_entry)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+}
+
+/// One app in the sandbox: a `sandbox` row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SandboxEntry {
+    pub uid: u32,
+    pub package: String,
+    pub enabled: bool,
+    pub android_id: String,
+    pub saved_ops: String,
+    pub created: i64,
+}
+
+const SANDBOX_SELECT: &str =
+    "SELECT uid, package, enabled, android_id, saved_ops, created FROM sandbox";
+
+fn sandbox_entry(r: &rusqlite::Row<'_>) -> rusqlite::Result<SandboxEntry> {
+    Ok(SandboxEntry {
+        uid: r.get(0)?,
+        package: r.get(1)?,
+        enabled: r.get(2)?,
+        android_id: r.get(3)?,
+        saved_ops: r.get(4)?,
+        created: r.get(5)?,
+    })
 }
 
 /// Bring the database to `SCHEMA_VERSION`: create it if new, otherwise apply
@@ -617,6 +725,7 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
         conn.execute_batch(SCHEMA)?;
         conn.execute_batch(EVENT_SCHEMA)?;
         conn.execute_batch(SENSOR_SCHEMA)?;
+        conn.execute_batch(SANDBOX_SCHEMA)?;
         version = SCHEMA_VERSION;
     } else if version == 0 {
         // Databases created before versioning existed have the first layout.
@@ -1794,6 +1903,87 @@ mod tests {
         let r = Reader::open(&db).unwrap();
         assert_eq!(r.files(&[], &[], None, None, 0, 10, 0).unwrap().len(), 1);
         assert_eq!(r.sensor_sessions(10100, 0).unwrap().len(), 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn upgrades_a_version_4_database() {
+        let dir = std::env::temp_dir().join(format!("bbd-test-migrate-4-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("bb.db");
+        {
+            // Version 4: everything but the sandbox.
+            let conn = Connection::open(&db).unwrap();
+            conn.execute_batch(SCHEMA).unwrap();
+            conn.execute_batch(EVENT_SCHEMA).unwrap();
+            conn.execute_batch(SENSOR_SCHEMA).unwrap();
+            conn.execute_batch(
+                "INSERT INTO access VALUES (1, 10100, 'com.a', 'system', '/proc/cpuinfo', 1, 2, 0,
+                     3600, 3700, 0);
+                 INSERT INTO sensor_session VALUES (10100, 4242, 777, 9, 1,
+                     'android.sensor.gyroscope', 1, 0, 1000, 1600);
+                 INSERT INTO meta VALUES ('last_flush', 3700);",
+            )
+            .unwrap();
+            conn.pragma_update(None, "user_version", 4).unwrap();
+        }
+        let w = Writer::open(&db).unwrap();
+        let version: i32 = w
+            .conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+        // The old rows are kept, and the sandbox starts out empty.
+        assert_eq!(w.meta("last_flush").unwrap(), Some(3700));
+        assert!(w.sandbox_entries().unwrap().is_empty());
+        w.put_sandbox(&sandbox_entry_for(10100)).unwrap();
+        assert_eq!(w.sandbox_entries().unwrap(), [sandbox_entry_for(10100)]);
+        drop(w);
+        let r = Reader::open(&db).unwrap();
+        assert_eq!(r.files(&[], &[], None, None, 0, 10, 0).unwrap().len(), 1);
+        assert_eq!(r.sensor_sessions(10100, 0).unwrap().len(), 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn sandbox_entry_for(uid: u32) -> SandboxEntry {
+        SandboxEntry {
+            uid,
+            package: "com.a".into(),
+            enabled: true,
+            android_id: "0123456789abcdef".into(),
+            saved_ops: String::new(),
+            created: 1000,
+        }
+    }
+
+    #[test]
+    fn a_sandbox_entry_is_written_over_and_survives_reopening() {
+        let dir = std::env::temp_dir().join(format!("bbd-sandbox-{}", std::process::id()));
+        let db = dir.join("bb.db");
+        let w = Writer::open(&db).unwrap();
+        assert_eq!(w.sandbox_entry(10100).unwrap(), None);
+        w.put_sandbox(&sandbox_entry_for(10100)).unwrap();
+        w.put_sandbox(&sandbox_entry_for(1_010_100)).unwrap();
+        let disabled = SandboxEntry {
+            enabled: false,
+            ..sandbox_entry_for(10100)
+        };
+        w.put_sandbox(&disabled).unwrap();
+        assert_eq!(w.sandbox_entry(10100).unwrap(), Some(disabled));
+        // Enabling again writes over the same row.
+        w.put_sandbox(&sandbox_entry_for(10100)).unwrap();
+        assert_eq!(
+            w.sandbox_entries().unwrap(),
+            [sandbox_entry_for(10100), sandbox_entry_for(1_010_100)]
+        );
+        w.delete_sandbox(1_010_100).unwrap();
+        assert_eq!(w.sandbox_entries().unwrap(), [sandbox_entry_for(10100)]);
+        drop(w);
+        // It survives the daemon starting again.
+        assert_eq!(
+            Writer::open(&db).unwrap().sandbox_entry(10100).unwrap(),
+            Some(sandbox_entry_for(10100))
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 

@@ -304,3 +304,36 @@ pub struct BinderEvent {
     /// The parcel from the first argument on.
     pub args: [u8; BINDER_ARGS_CAP],
 }
+
+// ---- sandbox gate -----------------------------------------------------------
+//
+// Not a record: the gate holds a starting app until the daemon has replaced
+// what it sees (see `gate_setresuid` in bb-ebpf). It has a ring buffer of its
+// own, read by a thread that does nothing else.
+
+/// A process stopped as it was about to take a sandboxed uid.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct GateEvent {
+    pub pid: u32,
+    /// The uid it is taking.
+    pub uid: u32,
+    /// When it was stopped, `CLOCK_MONOTONIC` nanoseconds (`bpf_ktime_get_ns`),
+    /// low half first.
+    pub at_ns_low: u32,
+    pub at_ns_high: u32,
+}
+
+impl GateEvent {
+    pub fn at_ns(&self) -> u64 {
+        u64::from(self.at_ns_high) << 32 | u64::from(self.at_ns_low)
+    }
+}
+
+/// How long the daemon may leave a stopped process waiting before the kernel
+/// side takes it to be stuck, and stops holding further starts for it: they
+/// are killed instead (see `GATE_WAITING_SINCE` in bb-ebpf).
+pub const GATE_STALE_NS: u64 = 3_000_000_000;
+/// Stored in place of a time once the daemon's gate thread has ended: every
+/// start of a sandboxed app is killed from then on.
+pub const GATE_CLOSED: u64 = 1;

@@ -70,6 +70,17 @@ impl Packages {
         }
     }
 
+    /// Read the list again now, whatever its age: for a decision that must
+    /// not be taken on a package installed or removed since.
+    pub fn refresh(&mut self) {
+        self.reload();
+    }
+
+    /// Whether no package is known, as when the list could not be read.
+    pub fn is_empty(&self) -> bool {
+        self.by_app_id.is_empty()
+    }
+
     /// Packages installed under `uid`'s app_id. Empty for uids that aren't
     /// installed apps (isolated processes, or an app installed after the last
     /// load and still inside the reload interval).
@@ -91,8 +102,14 @@ impl Packages {
     /// the list be read again, at most once per reload interval, so that an
     /// app installed since the last load is found.
     pub fn is_installed(&mut self, package: &str) -> bool {
-        if self.app_id_by_name.contains_key(package) {
-            return true;
+        self.app_id_of(package).is_some()
+    }
+
+    /// The app id of `package`, if it is installed (for any user). Read
+    /// again like [`Self::is_installed`] when not found.
+    pub fn app_id_of(&mut self, package: &str) -> Option<u32> {
+        if let Some(app_id) = self.app_id_by_name.get(package) {
+            return Some(*app_id);
         }
         if self
             .loaded_at
@@ -100,7 +117,7 @@ impl Packages {
         {
             self.reload();
         }
-        self.app_id_by_name.contains_key(package)
+        self.app_id_by_name.get(package).copied()
     }
 
     /// Every other package that shares a uid with one of `packages`.

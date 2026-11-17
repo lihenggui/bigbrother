@@ -16,5 +16,34 @@
 
 # Runs when the module is removed: stop the daemon and delete its records.
 MODDIR=${0%/*}
+# Sandboxed apps are given their app ops back first; left as they are, the
+# apps would be refused their data for good. The daemon does it where it is
+# still running. Most root managers run this script at the next boot instead,
+# before anything of the module has started: then the helper program that
+# sets the ops is run by itself once the system is up, from a copy of its
+# own, and clears them for every uid still listed for the hook.
+LIST=/data/system/big_brother_sandbox
+if ! "$MODDIR/bin/bbd" sandbox disable --all >/dev/null 2>&1 && [ -s "$LIST" ]; then
+    uids=$(cut -d' ' -f1 "$LIST")
+    helper=/data/adb/big_brother_release.apk
+    if cp "$MODDIR/helper.apk" "$helper"; then
+        (
+            while [ "$(getprop sys.boot_completed)" != 1 ]; do
+                sleep 5
+            done
+            for uid in $uids; do
+                echo "restore $uid"
+            done | CLASSPATH=$helper /system/bin/app_process /system/bin \
+                li.mercury.bigbrother.catalog.AppOpsGuard >/dev/null 2>&1
+            rm -f "$helper"
+        ) &
+    fi
+fi
 . "$MODDIR/stop.sh"
 rm -rf /data/adb/big_brother
+# What the sandbox shares with the hook in system_server. Without the list
+# the hook, which stays for as long as the app does, sandboxes nothing.
+rm -rf /data/system/big_brother_sandbox /data/system/big_brother_sandbox.status \
+    /data/system/big_brother_sandbox.new /data/system/big_brother_hook
+# The sandbox directories (/data/media/<user>/.bb_sandbox) are kept: they
+# hold what sandboxed apps saved.

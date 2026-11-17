@@ -23,9 +23,10 @@ LOG=$DATA/bbd.log
 # A run shorter than this many seconds counts as a failed start.
 MIN_UPTIME=30
 MAX_FAILED_STARTS=5
-# Seconds before a daemon that died is started again: twice as long after
-# each restart, up to MAX_DELAY, and FIRST_DELAY again once a run has lasted
-# HEALTHY_UPTIME.
+# Seconds before a daemon that died is started again. The first time, at
+# once: while there is no daemon, apps in the sandbox start without it. Then
+# FIRST_DELAY, twice as long after each further restart, up to MAX_DELAY;
+# and at once again once a run has lasted HEALTHY_UPTIME.
 FIRST_DELAY=5
 MAX_DELAY=600
 HEALTHY_UPTIME=600
@@ -61,12 +62,12 @@ stop() {
 trap stop TERM INT
 
 failed=0
-delay=$FIRST_DELAY
+delay=0
 while :; do
     started=$(uptime_seconds)
     # Left by a daemon that crashed: the new one creates its own once its
     # probes are attached, which is what tells the app it is running.
-    rm -f "$DATA/bbd.sock"
+    rm -f "$DATA/bbd.sock" "$DATA/bbd.ctl"
     # Unquoted: a command with its arguments, or nothing.
     $priority "$MODDIR/bin/bbd" run >>"$LOG" 2>&1 &
     pid=$!
@@ -92,15 +93,19 @@ while :; do
         log "daemon exited with status $code after ${ran}s; giving up after $failed failed starts"
         break
     fi
-    [ "$ran" -ge "$HEALTHY_UPTIME" ] && delay=$FIRST_DELAY
+    [ "$ran" -ge "$HEALTHY_UPTIME" ] && delay=0
     log "daemon exited with status $code after ${ran}s; restarting in ${delay}s"
-    # In the background, so that a request to stop is acted on at once.
-    sleep "$delay" &
-    sleeping=$!
-    wait "$sleeping"
-    sleeping=
-    delay=$((delay * 2))
-    [ "$delay" -gt "$MAX_DELAY" ] && delay=$MAX_DELAY
+    if [ "$delay" -gt 0 ]; then
+        # In the background, so that a request to stop is acted on at once.
+        sleep "$delay" &
+        sleeping=$!
+        wait "$sleeping"
+        sleeping=
+        delay=$((delay * 2))
+        [ "$delay" -gt "$MAX_DELAY" ] && delay=$MAX_DELAY
+    else
+        delay=$FIRST_DELAY
+    fi
 done
 
 rm -f "$DATA/supervisor.pid" "$DATA/bbd.pid"
