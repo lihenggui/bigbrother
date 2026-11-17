@@ -74,9 +74,9 @@ enum Command {
         /// Only this uid.
         #[arg(long)]
         uid: Option<u32>,
-        /// Only this category.
+        /// Only these categories (repeat for several).
         #[arg(long, value_enum)]
-        cat: Option<store::Category>,
+        cat: Vec<store::Category>,
         /// Only paths starting with this prefix.
         #[arg(long)]
         prefix: Option<String>,
@@ -95,9 +95,9 @@ enum Command {
     History {
         #[arg(long)]
         uid: u32,
-        /// The path exactly as recorded.
-        #[arg(long)]
-        path: String,
+        /// The path exactly as recorded (repeat for several).
+        #[arg(long, required = true)]
+        path: Vec<String>,
         /// Only the last N hours (default: everything).
         #[arg(long)]
         hours: Option<u32>,
@@ -167,7 +167,7 @@ fn main() -> anyhow::Result<()> {
             offset,
         } => print_json(&store::Reader::open(&cli.db)?.files(
             uid,
-            cat,
+            &cat,
             prefix.as_deref(),
             contains.as_deref(),
             since(hours),
@@ -185,7 +185,7 @@ fn main() -> anyhow::Result<()> {
             limit,
         )?),
         Command::History { uid, path, hours } => {
-            print_json(&store::Reader::open(&cli.db)?.history(uid, &path, since(hours))?)
+            print_json(&store::Reader::open(&cli.db)?.history_of(uid, &path, since(hours))?)
         }
         Command::Stats => print_json(&store::Reader::open(&cli.db)?.stats()?),
     }

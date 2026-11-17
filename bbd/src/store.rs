@@ -728,14 +728,14 @@ impl Reader {
         Ok(apps)
     }
 
-    /// Paths, aggregated across hours, most recent first. `uid`, `cat`,
-    /// `prefix` and `contains` (a substring, ignoring ASCII case) narrow the
-    /// result when given.
+    /// Paths, aggregated across hours, most recent first. `uid`, `cats` (any
+    /// of them), `prefix` and `contains` (a substring, ignoring ASCII case)
+    /// narrow the result when given.
     #[allow(clippy::too_many_arguments)]
     pub fn files(
         &self,
         uid: Option<u32>,
-        cat: Option<Category>,
+        cats: &[Category],
         prefix: Option<&str>,
         contains: Option<&str>,
         since: i64,
@@ -749,15 +749,19 @@ impl Reader {
              WHERE last_ts >= ?1
                AND (?2 IS NULL OR uid = ?2)
                AND (?3 IS NULL OR substr(path, 1, length(?3)) = ?3)
-               AND (?6 IS NULL OR cat = ?6)
+               AND (?6 IS NULL OR instr(?6, ',' || cat || ',') > 0)
                AND (?7 IS NULL OR instr(lower(path), lower(?7)) > 0)
              GROUP BY uid, path, mode
              ORDER BY max(last_ts) DESC, path, uid, mode
              LIMIT ?4 OFFSET ?5",
         )?;
-        let cat = cat.map(Category::as_str);
+        // ",storage,provider," matches a category by name between commas.
+        let cats = (!cats.is_empty()).then(|| {
+            let names: Vec<&str> = cats.iter().map(|c| c.as_str()).collect();
+            format!(",{},", names.join(","))
+        });
         let rows = stmt.query_map(
-            params![since, uid, prefix, limit, offset, cat, contains],
+            params![since, uid, prefix, limit, offset, cats, contains],
             |r| {
                 let path: String = r.get(3)?;
                 Ok(FileRow {
@@ -821,6 +825,26 @@ impl Reader {
         for row in older {
             rows.push(row?);
         }
+        Ok(rows)
+    }
+
+    /// The histories of several paths of one app, merged, most recent first.
+    pub fn history_of(
+        &self,
+        uid: u32,
+        paths: &[String],
+        since: i64,
+    ) -> anyhow::Result<Vec<HistoryRow>> {
+        let mut rows = Vec::new();
+        for path in paths {
+            rows.extend(self.history(uid, path, since)?);
+        }
+        rows.sort_by(|a, b| {
+            b.last_ts
+                .cmp(&a.last_ts)
+                .then_with(|| b.first_ts.cmp(&a.first_ts))
+        });
+        rows.truncate(HISTORY_LIMIT as usize);
         Ok(rows)
     }
 
@@ -1076,19 +1100,17 @@ mod tests {
         assert!(apps[1].topics.is_empty());
 
         assert_eq!(
-            r.files(Some(10100), None, None, None, 0, 50, 0)
+            r.files(Some(10100), &[], None, None, 0, 50, 0)
                 .unwrap()
                 .len(),
             2
         );
-        let files = r
-            .files(Some(10100), Some(st), None, None, 0, 50, 0)
-            .unwrap();
+        let files = r.files(Some(10100), &[st], None, None, 0, 50, 0).unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].cat, "storage");
         assert_eq!(files[0].topic, None);
         let system = r
-            .files(Some(10100), Some(Category::System), None, None, 0, 50, 0)
+            .files(Some(10100), &[Category::System], None, None, 0, 50, 0)
             .unwrap();
         assert_eq!(system[0].topic, Some("cpu_model"));
         assert_eq!((files[0].ok, files[0].fail), (4, 1));
@@ -1097,7 +1119,7 @@ mod tests {
         assert_eq!(
             r.files(
                 None,
-                None,
+                &[],
                 Some("/storage/emulated/0/Download"),
                 None,
                 0,
@@ -1109,13 +1131,13 @@ mod tests {
             1
         );
         assert_eq!(
-            r.files(None, Some(Category::System), None, None, 0, 50, 0)
+            r.files(None, &[Category::System], None, None, 0, 50, 0)
                 .unwrap()
                 .len(),
             1
         );
         assert_eq!(
-            r.files(None, None, None, None, t + 3600, 50, 0)
+            r.files(None, &[], None, None, t + 3600, 50, 0)
                 .unwrap()
                 .len(),
             1
@@ -1185,14 +1207,14 @@ mod tests {
         w.flush(&Counters::default(), t + 1).unwrap();
         let files = Reader::open(&db)
             .unwrap()
-            .files(None, None, None, None, 0, 10, 0)
+            .files(None, &[], None, None, 0, 10, 0)
             .unwrap();
         assert_eq!((files.len(), files[0].ok), (1, 1));
         // And they are not written a second time.
         w.flush(&Counters::default(), t + 2).unwrap();
         let files = Reader::open(&db)
             .unwrap()
-            .files(None, None, None, None, 0, 10, 0)
+            .files(None, &[], None, None, 0, 10, 0)
             .unwrap();
         assert_eq!(files[0].ok, 1);
         std::fs::remove_dir_all(dir).unwrap();
@@ -1307,7 +1329,7 @@ mod tests {
 
         let r = Reader::open(&db).unwrap();
         let files = r
-            .files(Some(10100), Some(Category::Provider), None, None, 0, 10, 0)
+            .files(Some(10100), &[Category::Provider], None, None, 0, 10, 0)
             .unwrap();
         assert_eq!((files.len(), files[0].ok, files[0].items), (1, 3, 3214));
         assert_eq!(r.apps(0).unwrap()[0].provider, 1);
@@ -1368,7 +1390,7 @@ mod tests {
             ]
         );
         let commands = r
-            .files(Some(10100), Some(Category::Command), None, None, 0, 10, 0)
+            .files(Some(10100), &[Category::Command], None, None, 0, 10, 0)
             .unwrap();
         let su = commands.iter().find(|c| c.path == "exec:su").unwrap();
         assert_eq!((su.mode, su.ok, su.fail), (MODE_EXEC, 0, 1));
@@ -1401,7 +1423,7 @@ mod tests {
         // Opening migrates in place and keeps the existing rows.
         drop(Writer::open(&db).unwrap());
         let r = Reader::open(&db).unwrap();
-        let files = r.files(None, None, None, None, 0, 10, 0).unwrap();
+        let files = r.files(None, &[], None, None, 0, 10, 0).unwrap();
         assert_eq!((files.len(), files[0].ok, files[0].items), (1, 2, 0));
         // Records from before individual accesses were kept show up in the
         // history as the hour they were aggregated into.
@@ -1583,15 +1605,68 @@ mod tests {
         );
         w.flush(&Counters::default(), t + 10).unwrap();
         let r = Reader::open(&db).unwrap();
-        let found = r.files(None, None, None, Some("img_1"), 0, 10, 0).unwrap();
+        let found = r.files(None, &[], None, Some("img_1"), 0, 10, 0).unwrap();
         let mut uids: Vec<u32> = found.iter().map(|f| f.uid).collect();
         uids.sort_unstable();
         assert_eq!(uids, vec![10100, 10200]);
         assert!(
-            r.files(None, None, None, Some("nothing"), 0, 10, 0)
+            r.files(None, &[], None, Some("nothing"), 0, 10, 0)
                 .unwrap()
                 .is_empty()
         );
+
+        // Several categories at once, as the search asks for files and the
+        // media library together.
+        let mut w = Writer::open(&db).unwrap();
+        let images = "content://media/external/images/media".to_string();
+        w.record(
+            10100,
+            "com.a",
+            Category::Provider,
+            images,
+            MODE_QUERY,
+            true,
+            t,
+            40,
+        );
+        w.record(
+            10100,
+            "com.a",
+            Category::System,
+            "/proc/media".into(),
+            MODE_READ,
+            true,
+            t,
+            0,
+        );
+        w.flush(&Counters::default(), t + 20).unwrap();
+        let both = r
+            .files(
+                None,
+                &[Category::Storage, Category::Provider],
+                None,
+                Some("media"),
+                0,
+                10,
+                0,
+            )
+            .unwrap();
+        assert_eq!(both.len(), 1);
+        assert_eq!(both[0].cat, "provider");
+
+        // The histories of several paths come back as one, most recent first.
+        let history = r
+            .history_of(
+                10200,
+                &[
+                    "/storage/emulated/0/DCIM/IMG_1.jpg".to_string(),
+                    "/storage/emulated/0/Music/a.mp3".to_string(),
+                ],
+                0,
+            )
+            .unwrap();
+        assert_eq!(history.len(), 2);
+        assert!(history[0].last_ts >= history[1].last_ts);
         drop(r);
         std::fs::remove_dir_all(dir).unwrap();
     }
