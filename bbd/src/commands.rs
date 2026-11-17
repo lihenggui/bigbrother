@@ -289,7 +289,7 @@ mod tests {
     }
 
     #[test]
-    fn topics() {
+    fn topic_follows_the_program_even_through_a_shell() {
         for (command, want) in [
             ("exec:su", topic::ROOT_CHECK),
             ("exec:su -c id", topic::ROOT_CHECK),

@@ -19,7 +19,7 @@ class FilesSummaryTest {
     )
 
     @Test
-    fun folders_are_ranked_by_files_read_and_named_below_the_volume() {
+    fun givenReadsInSeveralFolders_whenSummarised_thenRankedByFilesReadAndNamedBelowVolume() {
         val folders = topFolders(
             listOf(
                 access("/storage/emulated/0/DCIM/Camera/a.jpg"),
@@ -38,7 +38,7 @@ class FilesSummaryTest {
     }
 
     @Test
-    fun totals_count_each_path_once() {
+    fun givenSeveralActionsOnOnePath_whenTotalled_thenPathCountsOnce() {
         val totals = fileTotals(
             listOf(
                 access("/storage/emulated/0/DCIM/a.jpg"),

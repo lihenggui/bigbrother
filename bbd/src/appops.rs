@@ -181,7 +181,7 @@ mod tests {
     }
 
     #[test]
-    fn topics() {
+    fn only_watched_ops_have_a_topic() {
         assert_eq!(topic_of("appop:android:camera"), Some(topic::CAMERA));
         assert_eq!(topic_of("appop:android:vibrate"), None);
         assert_eq!(topic_of("exec:su"), None);

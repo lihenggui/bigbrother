@@ -147,7 +147,7 @@ mod tests {
     }
 
     #[test]
-    fn packages_sharing_a_uid() {
+    fn finds_the_packages_sharing_a_uid() {
         let dir = std::env::temp_dir().join(format!("bbd-test-shared-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let list = dir.join("packages.list");

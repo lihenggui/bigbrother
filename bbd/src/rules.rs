@@ -404,7 +404,7 @@ mod tests {
     }
 
     #[test]
-    fn system_wide_proc_entries() {
+    fn system_wide_proc_entries_are_recorded_with_a_topic() {
         for (path, want) in [
             ("/proc/net/arp", topic::ARP_TABLE),
             ("/proc/net/route", topic::NETWORK_STATE),
@@ -516,7 +516,7 @@ mod tests {
     }
 
     #[test]
-    fn informative_device_nodes() {
+    fn informative_device_nodes_are_recorded_with_a_topic() {
         for (path, want) in [
             ("/dev/block/sda", topic::BLOCK_DEVICES),
             ("/dev/input/event0", topic::INPUT_DEVICES),
@@ -617,7 +617,7 @@ mod tests {
     }
 
     #[test]
-    fn direct_access_to_other_processes() {
+    fn direct_access_to_another_process_is_about_its_memory() {
         for how in [
             bb_common::PROCESS_TRACE,
             bb_common::PROCESS_READ,

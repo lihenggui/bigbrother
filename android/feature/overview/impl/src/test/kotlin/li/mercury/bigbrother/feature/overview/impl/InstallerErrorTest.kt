@@ -6,7 +6,7 @@ import kotlin.test.assertNull
 
 class InstallerErrorTest {
     @Test
-    fun keeps_the_lines_marked_as_errors() {
+    fun givenOutputWithErrorLines_whenTrimmed_thenKeepsOnlyErrorLines() {
         val output = """
             - Device is system-as-root
             *******************
@@ -19,7 +19,7 @@ class InstallerErrorTest {
     }
 
     @Test
-    fun falls_back_to_the_last_line() {
+    fun givenOutputWithoutErrorLines_whenTrimmed_thenFallsBackToLastLine() {
         assertEquals("No module installer found (KernelSU, Magisk or APatch).", installerError("\nNo module installer found (KernelSU, Magisk or APatch).\n"))
         assertNull(installerError("  \n"))
     }

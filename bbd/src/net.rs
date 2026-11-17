@@ -442,7 +442,7 @@ mod tests {
     }
 
     #[test]
-    fn netlink_requests() {
+    fn only_netlink_reads_of_network_state_are_recorded() {
         use bb_common::filter::netlink_matters;
 
         assert_eq!(
@@ -475,7 +475,7 @@ mod tests {
     }
 
     #[test]
-    fn socket_tables() {
+    fn listening_ports_are_read_from_socket_tables() {
         let tcp = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
    0: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000 10123        0 4242 1 0000000000000000 100 0 0 10 0
    1: 0100007F:9C40 0100007F:1F90 01 00000000:00000000 00:00000000 00000000 10200        0 4243 1 0000000000000000 20 4 30 10 -1

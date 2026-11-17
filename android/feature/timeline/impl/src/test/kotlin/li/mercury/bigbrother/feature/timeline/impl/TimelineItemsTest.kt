@@ -38,7 +38,7 @@ class TimelineItemsTest {
         timelineItems(entries, filter, emptyMap(), showSystemApps = false, ownPackage = "me") { it - it % day }
 
     @Test
-    fun entries_are_grouped_by_day_then_hour() {
+    fun givenEntriesOverSeveralDays_whenListed_thenGroupedByDayThenHour() {
         val keys = items(
             listOf(
                 entry(day + 7200),
@@ -51,7 +51,7 @@ class TimelineItemsTest {
     }
 
     @Test
-    fun an_apps_entries_in_an_hour_share_a_row_most_sensitive_first() {
+    fun givenAppEntriesInOneHour_whenListed_thenShareOneRowMostSensitiveFirst() {
         val rows = items(
             listOf(
                 entry(3600, category = Category.DEVICE, topic = "android_id"),
@@ -64,7 +64,7 @@ class TimelineItemsTest {
     }
 
     @Test
-    fun lookups_and_own_records_are_left_out_unless_asked_for() {
+    fun givenLookupsAndOwnRecords_whenListed_thenLookupsOnlyOnRequestAndOwnNever() {
         val entries = listOf(
             entry(3600, filesRead = 0),
             entry(3600, uid = 10200, pkg = "me"),
@@ -75,7 +75,7 @@ class TimelineItemsTest {
     }
 
     @Test
-    fun category_filter_matches_the_entries_data_category() {
+    fun givenCategoryFilter_whenListed_thenOnlyEntriesOfThatCategory() {
         val entries = listOf(
             entry(3600),
             entry(3600, uid = 10300, category = Category.DEVICE, topic = "android_id"),
@@ -85,7 +85,7 @@ class TimelineItemsTest {
     }
 
     @Test
-    fun the_range_opened_covers_the_entry() {
+    fun givenEntryAge_whenOpened_thenSmallestRangeCoversIt() {
         val now = 100 * day
         assertEquals(TimeRange.HOUR, rangeCovering(entry(now - 1800), now))
         assertEquals(TimeRange.DAY, rangeCovering(entry(now - 5 * 3600), now))
