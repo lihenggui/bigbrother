@@ -199,19 +199,21 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     let permission_uses = spawn_appops_reader();
     let mut appops = appops::Tracker::new(now());
 
-    // Calls to system services. The tracepoint is attached now and reports
-    // nothing until the device's transaction codes are known, which takes a
-    // running app_process and so a system that has come up; `coverage_binder`
-    // turns 1 at that point.
+    // Calls to system services. The tracepoint is attached now. Services
+    // with fixed transaction codes (the sensor service) are watched at once;
+    // the others once the device's codes are known, which takes a running
+    // app_process and so a system that has come up. `coverage_binder` turns
+    // 1 at that point.
     writer.set_meta("coverage_binder", COVERAGE_PENDING)?;
     let mut binder_watch = match attach_binder(&mut ebpf) {
-        Ok(map) => Some((map, spawn_catalog_loader())),
+        Ok(map) => Some(map),
         Err(e) => {
             eprintln!("bbd: warning: not recording service calls: {e:#}");
             writer.set_meta("coverage_binder", 0)?;
             None
         }
     };
+    let mut catalog_loader = binder_watch.as_ref().map(|_| spawn_catalog_loader());
 
     let dropped: PerCpuArray<MapData, u64> =
         PerCpuArray::try_from(ebpf.take_map("DROPPED").context("DROPPED map missing")?)?;
@@ -249,6 +251,16 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         explain_discards: opts.explain_discards,
         ingest_provider_events: opts.ingest_provider_events,
     };
+    if let Some(map) = &mut binder_watch {
+        let fixed = Catalog::parse("");
+        match watch(map, &fixed) {
+            Ok(()) => {
+                tracer.catalog = Some(fixed);
+                tracer.sensors.watching(Instant::now());
+            }
+            Err(e) => eprintln!("bbd: warning: not recording sensor use: {e:#}"),
+        }
+    }
     // Queries ask for what is held to be written first (see `control`).
     let requests = match control::listen(opts.db) {
         Ok(listener) => Some(listener),
@@ -271,6 +283,21 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
             _ = sigint.recv() => break,
             _ = sigterm.recv() => break,
             _ = flush_tick.tick() => None,
+            // The device's transaction codes are known: watch the services
+            // that need them now, not at the next write.
+            loaded = async { catalog_loader.as_mut().expect("guarded").await },
+                if catalog_loader.is_some() =>
+            {
+                catalog_loader = None;
+                let loaded = loaded.unwrap_or_else(|e| {
+                    eprintln!("bbd: warning: not recording service calls: {e:#}");
+                    None
+                });
+                if let Some(map) = &mut binder_watch {
+                    tracer.use_catalog(map, loaded);
+                }
+                continue;
+            }
             request = next_request(requests.as_ref()) => match request {
                 Some(stream) => Some(stream),
                 None => continue,
@@ -307,24 +334,6 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
             if let Some(entries) = reading {
                 tracer.record_permission_uses(appops.update(&entries));
             }
-        }
-        if let Some((map, loaded)) = &mut binder_watch
-            && let Ok(loaded) = loaded.try_recv()
-        {
-            let watching = loaded.and_then(|catalog| match watch(map, &catalog) {
-                Ok(()) => Some(catalog),
-                Err(e) => {
-                    eprintln!("bbd: warning: not recording service calls: {e:#}");
-                    None
-                }
-            });
-            if let Some(catalog) = &watching {
-                eprintln!("bbd: watching {} service methods", catalog.len());
-                tracer.sensors.watching(Instant::now());
-            }
-            let covered = i64::from(watching.is_some());
-            tracer.writer.set_meta("coverage_binder", covered).ok();
-            tracer.catalog = watching;
         }
         tracer.settle_sensors(SENSOR_LIST_WAIT);
         // A failed write (disk full, database busy) keeps the batch for the
@@ -646,18 +655,14 @@ const CATALOG_ATTEMPTS: u32 = 20;
 
 /// Look up the device's transaction codes on a thread of its own: starting
 /// the Java runtime that prints them takes about a second, and must not hold
-/// up recording. The catalog arrives on the returned channel, once; `None`
-/// if it could not be had.
-fn spawn_catalog_loader() -> std::sync::mpsc::Receiver<Option<Catalog>> {
-    let (sender, receiver) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
+/// up recording. The task ends with the catalog, or `None` if it could not
+/// be had; the event loop waits for it alongside everything else.
+fn spawn_catalog_loader() -> tokio::task::JoinHandle<Option<Catalog>> {
+    tokio::task::spawn_blocking(|| {
         let mut last_error = None;
         for _ in 0..CATALOG_ATTEMPTS {
             match binder::load() {
-                Ok(catalog) => {
-                    let _ = sender.send(Some(catalog));
-                    return;
-                }
+                Ok(catalog) => return Some(catalog),
                 Err(e) => last_error = Some(e),
             }
             std::thread::sleep(CATALOG_RETRY);
@@ -665,9 +670,8 @@ fn spawn_catalog_loader() -> std::sync::mpsc::Receiver<Option<Catalog>> {
         if let Some(e) = last_error {
             eprintln!("bbd: warning: not recording service calls: {e:#}");
         }
-        let _ = sender.send(None);
-    });
-    receiver
+        None
+    })
 }
 
 /// Per-program run counts and time, as measured by the kernel. This is the
@@ -807,6 +811,25 @@ struct Tracer {
 }
 
 impl Tracer {
+    /// Watch the services whose transaction codes the device's catalog gives,
+    /// besides the fixed ones already watched. Without a catalog only the
+    /// fixed ones stay watched, and service calls count as not recorded.
+    fn use_catalog(&mut self, map: &mut BinderWatch, loaded: Option<Catalog>) {
+        let watching = loaded.and_then(|catalog| match watch(map, &catalog) {
+            Ok(()) => Some(catalog),
+            Err(e) => {
+                eprintln!("bbd: warning: not recording service calls: {e:#}");
+                None
+            }
+        });
+        let covered = i64::from(watching.is_some());
+        if let Some(catalog) = watching {
+            eprintln!("bbd: watching {} service methods", catalog.len());
+            self.catalog = Some(catalog);
+        }
+        self.writer.set_meta("coverage_binder", covered).ok();
+    }
+
     /// Take in everything waiting in the ring buffer.
     fn drain(&mut self, ring: &mut RingBuf<MapData>) {
         let clock = EventClock::now();
