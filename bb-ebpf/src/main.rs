@@ -61,9 +61,9 @@
 use aya_ebpf::{
     Global,
     helpers::{
-        bpf_get_current_pid_tgid, bpf_get_current_uid_gid, bpf_ktime_get_ns, bpf_probe_read_kernel,
-        bpf_probe_read_kernel_str_bytes, bpf_probe_read_user, bpf_probe_read_user_buf,
-        bpf_probe_read_user_str_bytes,
+        bpf_get_current_pid_tgid, bpf_get_current_uid_gid, bpf_ktime_get_boot_ns, bpf_ktime_get_ns,
+        bpf_probe_read_kernel, bpf_probe_read_kernel_str_bytes, bpf_probe_read_user,
+        bpf_probe_read_user_buf, bpf_probe_read_user_str_bytes,
     },
     macros::{kprobe, kretprobe, map, raw_tracepoint},
     maps::{HashMap, LruHashMap, PerCpuArray, RingBuf},
@@ -180,8 +180,9 @@ const WAKE_THRESHOLD: u64 = 1024 * 1024;
 
 /// Flags for submitting an event. By default every submit wakes the reader,
 /// which on a busy device means waking the daemon hundreds of times a second
-/// for no benefit: it also polls on a timer. So events are queued silently,
-/// and the daemon is woken early only when the buffer is filling up.
+/// for no benefit: events carry the time they happened, and the daemon reads
+/// them on a timer. So events are queued silently, and the daemon is woken
+/// early only when the buffer is filling up.
 #[inline(always)]
 fn wakeup_flags() -> u64 {
     if EVENTS.query(BPF_RB_AVAIL_DATA) >= WAKE_THRESHOLD {
@@ -200,11 +201,14 @@ fn count_drop() {
 
 #[inline(always)]
 fn header(kind: u32, uid: u32, pid_tgid: u64) -> EventHeader {
+    let boot_ns = unsafe { bpf_ktime_get_boot_ns() };
     EventHeader {
         kind,
         uid,
         pid: (pid_tgid >> 32) as u32,
         tid: pid_tgid as u32,
+        boot_ns_low: boot_ns as u32,
+        boot_ns_high: (boot_ns >> 32) as u32,
     }
 }
 

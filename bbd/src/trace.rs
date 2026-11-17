@@ -70,14 +70,13 @@ const FIRST_APPLICATION_UID: u32 = 10_000;
 /// isolated uid is handed to another process, possibly another app's, once
 /// it is free.
 const ISOLATED_OWNER_TTL: Duration = Duration::from_secs(60);
-/// How often what was recorded is written. A write costs about the same
-/// whether it holds one record or a thousand, and the query commands ask for
-/// one before they read (see `control`), so this need not be often.
+/// How often what the kernel and the hook hold is taken in and written. A
+/// write costs about the same whether it holds one record or a thousand, and
+/// the query commands ask for one before they read (see `control`), so this
+/// need not be often. The kernel side wakes the daemon sooner if its buffer
+/// is filling up, and events carry the time they happened, so they can wait.
 const FLUSH_INTERVAL: Duration = Duration::from_secs(30);
 const PRUNE_INTERVAL: Duration = Duration::from_secs(6 * 3600);
-/// The kernel side only wakes us when the ring buffer is filling up; this
-/// timer bounds how long events otherwise sit in it.
-const DRAIN_INTERVAL: Duration = Duration::from_secs(1);
 /// How long an opened file waits for its syscall result before being
 /// recorded as successful anyway (the result event can be lost).
 const RESULT_TIMEOUT_SECS: i64 = 10;
@@ -242,8 +241,6 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     };
     let mut flush_tick = interval(FLUSH_INTERVAL);
     flush_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
-    let mut drain_tick = interval(DRAIN_INTERVAL);
-    drain_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
     let mut prune_tick = interval(PRUNE_INTERVAL);
     prune_tick.tick().await; // first tick fires immediately; already pruned above
     let mut sigint = signal(SignalKind::interrupt())?;
@@ -259,16 +256,13 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
                 Some(stream) => Some(stream),
                 None => continue,
             },
-            _ = drain_tick.tick() => {
-                tracer.drain(ring.get_mut());
-                continue;
-            }
             _ = prune_tick.tick() => {
                 if let Err(e) = tracer.writer.prune(opts.retention_days, now()) {
                     eprintln!("bbd: could not prune old records: {e:#}");
                 }
                 continue;
             }
+            // The kernel side's buffer is filling up.
             guard = ring.readable_mut() => {
                 let mut guard = guard?;
                 tracer.drain(guard.get_inner_mut());
@@ -600,6 +594,37 @@ fn now() -> i64 {
         .map_or(0, |d| d.as_secs() as i64)
 }
 
+/// Turns the times the kernel gives events, nanoseconds since boot, into
+/// unix time.
+struct EventClock {
+    /// Unix time at boot, in nanoseconds.
+    boot_unix_ns: i64,
+}
+
+impl EventClock {
+    /// Taken anew for each batch of events, so that the wall clock being set
+    /// carries over.
+    fn now() -> Self {
+        Self {
+            boot_unix_ns: clock_ns(libc::CLOCK_REALTIME) - clock_ns(libc::CLOCK_BOOTTIME),
+        }
+    }
+
+    fn unix_secs(&self, boot_ns: u64) -> i64 {
+        (self.boot_unix_ns + boot_ns as i64).div_euclid(1_000_000_000)
+    }
+}
+
+fn clock_ns(clock: libc::clockid_t) -> i64 {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // Cannot fail for these clocks and a valid pointer.
+    unsafe { libc::clock_gettime(clock, &mut ts) };
+    ts.tv_sec * 1_000_000_000 + ts.tv_nsec
+}
+
 /// Reinterpret ring buffer bytes as an event struct.
 fn cast<T: Copy>(bytes: &[u8]) -> Option<T> {
     // SAFETY: only used with the repr(C) plain-data event structs from
@@ -673,16 +698,17 @@ struct Tracer {
 impl Tracer {
     /// Take in everything waiting in the ring buffer.
     fn drain(&mut self, ring: &mut RingBuf<MapData>) {
-        let ts = now();
+        let clock = EventClock::now();
         while let Some(item) = ring.next() {
-            self.on_event(&item, ts);
+            self.on_event(&item, &clock);
         }
     }
 
-    fn on_event(&mut self, bytes: &[u8], ts: i64) {
+    fn on_event(&mut self, bytes: &[u8], clock: &EventClock) {
         let Some(hdr) = cast::<EventHeader>(bytes) else {
             return;
         };
+        let ts = clock.unix_secs(hdr.boot_ns());
         match hdr.kind {
             EV_FILE => {
                 let Some(ev) = cast::<FileEvent>(bytes) else {
@@ -1370,6 +1396,20 @@ mod tests {
         assert_eq!(join_components(b""), "");
         // Non-UTF-8 names don't abort; they are replaced lossily.
         assert_eq!(join_components(b"\xff\0d\0"), "d/\u{fffd}");
+    }
+
+    #[test]
+    fn events_are_dated_by_when_the_kernel_saw_them() {
+        let clock = EventClock {
+            boot_unix_ns: 1_700_000_000 * 1_000_000_000,
+        };
+        assert_eq!(clock.unix_secs(5_999_999_999), 1_700_000_005);
+        assert_eq!(clock.unix_secs(0), 1_700_000_000);
+
+        // An event from a moment ago, read now.
+        let boot_ns = clock_ns(libc::CLOCK_BOOTTIME) as u64 - 20_000_000_000;
+        let ts = EventClock::now().unix_secs(boot_ns);
+        assert!((now() - 21..=now() - 19).contains(&ts), "{ts}");
     }
 
     #[test]
