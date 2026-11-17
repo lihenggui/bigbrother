@@ -207,9 +207,10 @@ private fun SessionItem(session: SensorSession, now: Long, index: Int, count: In
 }
 
 /**
- * When a session was: "2:02 PM – 2:17 PM", or "Since 2:02 PM" while it goes
- * on. A day other than today is given with its date, as is an end on
- * another day than the start.
+ * When a session was: "2:02 PM – 2:17 PM", just "2:02 PM" when it began and
+ * ended within that minute (its duration says how long), or "Since 2:02 PM"
+ * while it goes on. A day other than today is given with its date, as is an
+ * end on another day than the start.
  */
 @Composable
 private fun sessionSpan(start: Long, end: Long?): String {
@@ -222,7 +223,8 @@ private fun sessionSpan(start: Long, end: Long?): String {
     }
     val from = format(start, withDate = !DateUtils.isToday(start * 1000))
     if (end == null) return stringResource(R.string.sensor_since, from)
-    return stringResource(R.string.session_span, from, format(end, withDate = day(end) != day(start)))
+    val to = format(end, withDate = day(end) != day(start))
+    return if (to == from) from else stringResource(R.string.session_span, from, to)
 }
 
 /** Under the sessions: the rates are those the app asked for. */
