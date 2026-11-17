@@ -36,8 +36,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.test.core.app.ApplicationProvider
-import com.google.android.apps.common.testing.accessibility.framework.AccessibilityCheckResultUtils.matchesCheck
-import com.google.android.apps.common.testing.accessibility.framework.checks.SpeakableTextPresentCheck
 import li.mercury.bigbrother.core.data.repository.AppInfoRepository
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.PackageDetails
@@ -102,13 +100,13 @@ class ListDetailScreenshotTests {
     @Test
     @Config(qualifiers = "en-rUS")
     fun givenAppOpenedFromList_whenShownOnTabletInEnglish_thenMatchesStoreScreenshot() {
-        composeTestRule.captureStoreScreenshot(StoreScreenshotType.TEN_INCH, "1_list_detail", searchBarFinding) { ListDetail() }
+        composeTestRule.captureStoreScreenshot(StoreScreenshotType.TEN_INCH, "1_list_detail") { ListDetail() }
     }
 
     @Test
     @Config(qualifiers = "zh-rCN")
     fun givenAppOpenedFromList_whenShownOnTabletInChinese_thenMatchesStoreScreenshot() {
-        composeTestRule.captureStoreScreenshot(StoreScreenshotType.TEN_INCH, "1_list_detail", searchBarFinding) { ListDetail() }
+        composeTestRule.captureStoreScreenshot(StoreScreenshotType.TEN_INCH, "1_list_detail") { ListDetail() }
     }
 
     @OptIn(ExperimentalMaterial3AdaptiveApi::class)
@@ -182,12 +180,6 @@ class ListDetailScreenshotTests {
         }
     }
 }
-
-/**
- * The search bar's collapsed field is tapped through a target laid over it,
- * which has no label of its own. Screens showing it skip that one check.
- */
-private val searchBarFinding = matchesCheck(SpeakableTextPresentCheck::class.java)
 
 /** The search bar the top-level screens have as their top bar, idle. */
 @Composable

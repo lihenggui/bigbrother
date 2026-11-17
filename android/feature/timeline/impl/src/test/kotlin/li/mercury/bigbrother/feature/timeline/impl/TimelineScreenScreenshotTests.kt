@@ -21,8 +21,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.test.core.app.ApplicationProvider
-import com.google.android.apps.common.testing.accessibility.framework.AccessibilityCheckResultUtils.matchesCheck
-import com.google.android.apps.common.testing.accessibility.framework.checks.SpeakableTextPresentCheck
 import li.mercury.bigbrother.core.screenshottesting.DefaultTestDevices
 import li.mercury.bigbrother.core.screenshottesting.DemoClockRule
 import li.mercury.bigbrother.core.screenshottesting.DemoRecords
@@ -55,13 +53,13 @@ class TimelineScreenScreenshotTests {
     @Test
     @Config(qualifiers = "en-rUS")
     fun givenDayOfRecords_whenShownInEnglish_thenMatchesStoreScreenshot() {
-        composeTestRule.captureStoreScreenshot(StoreScreenshotType.PHONE, "3_timeline", searchBarFinding) { Timeline() }
+        composeTestRule.captureStoreScreenshot(StoreScreenshotType.PHONE, "3_timeline") { Timeline() }
     }
 
     @Test
     @Config(qualifiers = "zh-rCN")
     fun givenDayOfRecords_whenShownInChinese_thenMatchesStoreScreenshot() {
-        composeTestRule.captureStoreScreenshot(StoreScreenshotType.PHONE, "3_timeline", searchBarFinding) { Timeline() }
+        composeTestRule.captureStoreScreenshot(StoreScreenshotType.PHONE, "3_timeline") { Timeline() }
     }
 
     @Test
@@ -70,7 +68,6 @@ class TimelineScreenScreenshotTests {
             deviceName = "phone_dark",
             deviceSpec = DefaultTestDevices.PHONE.spec,
             screenshotName = "Timeline",
-            accessibilitySuppressions = searchBarFinding,
             darkMode = true,
         ) {
             Timeline()
@@ -91,12 +88,6 @@ class TimelineScreenScreenshotTests {
         )
     }
 }
-
-/**
- * The search bar's collapsed field is tapped through a target laid over it,
- * which has no label of its own. Screens showing it skip that one check.
- */
-private val searchBarFinding = matchesCheck(SpeakableTextPresentCheck::class.java)
 
 /** The search bar the top-level screens have as their top bar, idle. */
 @Composable

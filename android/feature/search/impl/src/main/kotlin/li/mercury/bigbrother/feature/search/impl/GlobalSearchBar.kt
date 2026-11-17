@@ -60,6 +60,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -156,7 +157,10 @@ fun GlobalSearchBar(
                         .matchParentSize()
                         .clickable(role = Role.Button, onClickLabel = hint) {
                             scope.launch { searchBarState.animateToExpanded() }
-                        },
+                        }
+                        // The field below can't take focus while collapsed,
+                        // so this is what a screen reader announces.
+                        .semantics { contentDescription = hint },
                 )
             }
         }
