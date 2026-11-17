@@ -43,7 +43,8 @@ through the media library.
 
 ## Requirements
 
-- arm64 device with a GKI 2.0 kernel (5.10 or newer, with BTF).
+- arm64 or x86_64 device with a GKI 2.0 kernel (5.10 or newer, with BTF).
+  x86_64 covers the Android emulator.
 - Root with module support: [KernelSU](https://kernelsu.org),
   [Magisk](https://github.com/topjohnwu/Magisk) or
   [APatch](https://apatch.dev).
@@ -84,7 +85,8 @@ and the end of its log (Magisk 28 or newer).
 
 Prerequisites:
 
-- Rust stable and nightly with `rust-src`; target `aarch64-linux-android`
+- Rust stable and nightly with `rust-src`; targets `aarch64-linux-android`
+  and `x86_64-linux-android`
 - [bpf-linker](https://github.com/aya-rs/bpf-linker)
 - Android NDK and SDK (platform 37)
 - JDK 17 or newer
