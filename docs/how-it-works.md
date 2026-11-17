@@ -62,6 +62,11 @@ app      reads the daemon's JSON output as root
   running, the module disables itself on the next boot; if a hooked provider
   process keeps restarting, the hook stops installing itself.
 
+## The sandbox
+
+Besides recording, the daemon can give an app a view of the device with
+nothing of the user's in it. That is described in [sandbox.md](sandbox.md).
+
 ## Components
 
 | Path | Contents |
@@ -78,6 +83,7 @@ with increasing delays if it exits. Its database is
 `/data/adb/big_brother/bb.db` and its log `/data/adb/big_brother/bbd.log`.
 The app runs the same binary for its queries (`bbd apps`, `bbd files`,
 `bbd timeline`, `bbd sensors`, `bbd stats` and others), which print JSON.
+`bbd sandbox` sends commands to the running daemon instead.
 
 When the app is updated, it compares the installed module with the one it
 carries, by version code and, for the same version, by the daemon's SHA-256,

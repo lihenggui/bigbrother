@@ -119,7 +119,9 @@ apd module install big_brother-<version>.zip        # APatch
 
 ### 是否会拦截访问
 
-不会。Big Brother 只记录访问，不阻止访问。
+默认不会：Big Brother 只记录访问，不阻止访问。可在 root shell 中将应用放入沙箱，
+沙箱内的应用读到的是空的存储、空的个人数据和独立的设备标识，详见
+[docs/sandbox.md](docs/sandbox.md)（英文）。
 
 ### 对续航的影响
 
