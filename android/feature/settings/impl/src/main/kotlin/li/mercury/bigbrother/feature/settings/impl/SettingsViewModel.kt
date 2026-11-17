@@ -27,11 +27,25 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.AccessRepository
+import li.mercury.bigbrother.core.data.repository.DiagnosticsRepository
 import li.mercury.bigbrother.core.data.repository.ModuleRepository
 import li.mercury.bigbrother.core.data.repository.UserDataRepository
 import li.mercury.bigbrother.core.model.RecorderStatus
 import li.mercury.bigbrother.core.model.UserData
+import timber.log.Timber
+import java.io.File
+import java.io.IOException
 import javax.inject.Inject
+
+/** Collecting the logs for a bug report. */
+sealed interface LogExport {
+    data object Idle : LogExport
+    data object Collecting : LogExport
+
+    /** Collected, to be offered for sharing once. */
+    data class Ready(val file: File) : LogExport
+    data object Failed : LogExport
+}
 
 data class SettingsUiState(
     val userData: UserData = UserData(),
@@ -39,6 +53,7 @@ data class SettingsUiState(
     val status: RecorderStatus? = null,
     /** The installed module's version, if known. */
     val moduleVersion: String? = null,
+    val logExport: LogExport = LogExport.Idle,
 )
 
 @HiltViewModel
@@ -46,14 +61,17 @@ class SettingsViewModel @Inject constructor(
     private val accessRepository: AccessRepository,
     private val moduleRepository: ModuleRepository,
     private val userDataRepository: UserDataRepository,
+    private val diagnosticsRepository: DiagnosticsRepository,
 ) : ViewModel() {
     private val moduleVersion = MutableStateFlow<String?>(null)
+    private val logExport = MutableStateFlow<LogExport>(LogExport.Idle)
 
     val uiState: StateFlow<SettingsUiState> = combine(
         userDataRepository.userData,
         accessRepository.recorderStatus,
         moduleVersion,
-    ) { userData, status, version -> SettingsUiState(userData, status, version) }
+        logExport,
+    ) { userData, status, version, export -> SettingsUiState(userData, status, version, export) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
 
     fun refresh() {
@@ -65,6 +83,24 @@ class SettingsViewModel @Inject constructor(
                 // The status row says it is unknown.
             }
         }
+    }
+
+    fun exportLogs() {
+        if (logExport.value == LogExport.Collecting) return
+        logExport.value = LogExport.Collecting
+        viewModelScope.launch {
+            logExport.value = try {
+                LogExport.Ready(diagnosticsRepository.exportLogs())
+            } catch (e: IOException) {
+                Timber.w(e, "Logs not exported")
+                LogExport.Failed
+            }
+        }
+    }
+
+    /** The collected logs were offered for sharing: they are not offered again. */
+    fun dismissLogExport() {
+        logExport.value = LogExport.Idle
     }
 
     fun setShowSystemApps(show: Boolean) {

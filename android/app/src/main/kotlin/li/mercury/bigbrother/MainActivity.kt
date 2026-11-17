@@ -22,6 +22,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.runtime.getValue
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dagger.hilt.android.AndroidEntryPoint
 import li.mercury.bigbrother.core.designsystem.theme.BigBrotherTheme
@@ -32,6 +33,9 @@ class MainActivity : ComponentActivity() {
     private val viewModel: MainActivityViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // The splash screen stays until the settings are read, so that the
+        // first frame has the right colors instead of being blank.
+        installSplashScreen().setKeepOnScreenCondition { viewModel.userData.value == null }
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {

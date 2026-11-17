@@ -95,6 +95,8 @@ dependencies {
     implementation(libs.androidx.compose.material3.adaptive.navigationSuite)
     implementation(libs.androidx.lifecycle.runtimeCompose)
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.core.splashscreen)
+    implementation(libs.androidx.profileinstaller)
     implementation(libs.coil)
     implementation(libs.androidx.lifecycle.viewModel.navigation3)
     implementation(libs.androidx.navigation3.ui)

@@ -17,4 +17,8 @@
     <root-path
         name="storage"
         path="storage/" />
+    <!-- Logs exported for a bug report (DiagnosticsRepository). -->
+    <cache-path
+        name="exports"
+        path="exports/" />
 </paths>

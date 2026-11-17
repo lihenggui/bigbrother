@@ -40,4 +40,8 @@
     <string name="version">Version</string>
     <string name="source_code">Source code</string>
     <string name="license">License</string>
+    <string name="export_logs">Export logs</string>
+    <string name="export_logs_summary">The app\'s and the daemon\'s logs, for a bug report</string>
+    <string name="export_logs_collecting">Collecting logs…</string>
+    <string name="export_logs_failed">Could not collect the logs</string>
 </resources>

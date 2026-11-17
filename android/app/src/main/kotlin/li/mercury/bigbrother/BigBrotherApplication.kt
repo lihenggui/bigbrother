@@ -18,6 +18,7 @@ package li.mercury.bigbrother
 
 import android.app.Application
 import android.content.pm.ApplicationInfo
+import android.os.StrictMode
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
@@ -38,10 +39,51 @@ class BigBrotherApplication :
     @Inject
     lateinit var imageLoader: Lazy<ImageLoader>
 
+    @Inject
+    lateinit var profileVerifierLogger: ProfileVerifierLogger
+
     override fun onCreate() {
         super.onCreate()
-        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) Timber.plant(Timber.DebugTree())
+        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            Timber.plant(Timber.DebugTree())
+            enableStrictMode()
+        }
         Timber.plant(releaseTree)
+        logCrashes()
+        profileVerifierLogger()
+    }
+
+    /**
+     * Debug builds log disk and network access on the main thread, slow
+     * calls, and resources never closed, as Blocker's do.
+     */
+    private fun enableStrictMode() {
+        StrictMode.setThreadPolicy(
+            StrictMode.ThreadPolicy.Builder()
+                .detectDiskReads()
+                .detectDiskWrites()
+                .detectNetwork()
+                .detectCustomSlowCalls()
+                .detectUnbufferedIo()
+                .penaltyLog()
+                .build(),
+        )
+        StrictMode.setVmPolicy(
+            StrictMode.VmPolicy.Builder()
+                .detectLeakedClosableObjects()
+                .detectLeakedSqlLiteObjects()
+                .penaltyLog()
+                .build(),
+        )
+    }
+
+    /** A crash is written to the log before the process ends, then handled as before. */
+    private fun logCrashes() {
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+            releaseTree.logCrash(thread, error)
+            previous?.uncaughtException(thread, error)
+        }
     }
 
     override fun newImageLoader(context: PlatformContext): ImageLoader = imageLoader.get()
