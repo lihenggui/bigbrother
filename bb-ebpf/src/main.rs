@@ -114,6 +114,13 @@ static EVENTS: RingBuf = RingBuf::with_byte_size(8 * 1024 * 1024, 0);
 #[map]
 static DROPPED: PerCpuArray<u64> = PerCpuArray::with_max_entries(1, 0);
 
+/// Where `file_open` assembles its event. Most of what it sees is dropped
+/// once the path is known, and a record reserved in the ring buffer and then
+/// discarded would still take up space there until the daemon next reads it.
+/// So the event is copied to the ring buffer only once it is to be kept.
+#[map]
+static FILE_SCRATCH: PerCpuArray<FileEvent> = PerCpuArray::with_max_entries(1, 0);
+
 /// Destinations reported recently, with the time of the report. An app
 /// streaming to a device on the local network sends thousands of datagrams a
 /// second to the same address; one report a second says as much.
@@ -266,11 +273,9 @@ fn try_file_open(ctx: &ProbeContext) -> Result<(), i32> {
     }
 
     let pid_tgid = bpf_get_current_pid_tgid();
-    let Some(mut entry) = EVENTS.reserve::<FileEvent>(0) else {
-        count_drop();
-        return Err(-1);
-    };
-    let ev = entry.as_mut_ptr();
+    // Per CPU, and a kprobe program does not run nested on its own CPU, so
+    // nothing else writes to it meanwhile.
+    let ev = FILE_SCRATCH.get_ptr_mut(0).ok_or(-1)?;
 
     // Walk dentry -> d_parent up to the filesystem root, writing each name.
     // `top_name` and `second_name` point at the names of the two outermost
@@ -321,8 +326,8 @@ fn try_file_open(ctx: &ProbeContext) -> Result<(), i32> {
 
     // Most of what apps open under /proc and /sys is of no interest: their
     // own /proc/<pid> entries (where /proc/self resolves to), CPU and memory
-    // statistics, kernel tunables. Drop those here rather than wake the
-    // daemon for them.
+    // statistics, kernel tunables. Drop those here rather than pass them to
+    // the daemon.
     let mut top = [0u8; 8];
     let mut second = [0u8; 8];
     // If the outermost name can't be read (which includes the filesystem's
@@ -351,11 +356,9 @@ fn try_file_open(ctx: &ProbeContext) -> Result<(), i32> {
 
     if walked.is_err() {
         count_drop();
-        entry.discard(0);
         return Ok(());
     }
     if boring {
-        entry.discard(0);
         return Ok(());
     }
 
@@ -376,7 +379,13 @@ fn try_file_open(ctx: &ProbeContext) -> Result<(), i32> {
         (*ev).truncated = truncated;
         (*ev).data_len = len as u32;
     }
-    entry.submit(wakeup_flags());
+    if EVENTS
+        .output::<FileEvent>(unsafe { &*ev }, wakeup_flags())
+        .is_err()
+    {
+        count_drop();
+        return Err(-1);
+    }
     Ok(())
 }
 
