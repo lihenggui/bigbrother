@@ -397,7 +397,8 @@ const COVERAGE_PENDING: i64 = -1;
 /// How soon the program that reads the permission usage records is started
 /// again after it ends, and after how many times without a single reading
 /// the records are reported as unavailable (the attempts go on regardless).
-/// At boot the first attempts fail only because the system is not up yet.
+/// The helper itself waits for the system service at boot, so these are for
+/// a helper that fails or ends later.
 const APPOPS_RETRY: Duration = Duration::from_secs(30);
 const APPOPS_GIVE_UP: u32 = 10;
 

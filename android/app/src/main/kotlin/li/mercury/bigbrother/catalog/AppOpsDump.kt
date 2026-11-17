@@ -33,11 +33,14 @@ object AppOpsDump {
     private const val REPEAT = "--every"
     private const val END_OF_READING = "."
 
+    /** How often to look again for a system service not registered yet. */
+    private const val SERVICE_POLL_MS = 1000L
+
     @JvmStatic
     fun main(args: Array<String>) {
         try {
             if (args.firstOrNull() != REPEAT) {
-                print(dump(args))
+                print(dump(appOpsService(), args))
                 System.out.flush()
                 return
             }
@@ -47,8 +50,9 @@ object AppOpsDump {
                 while (System.`in`.read() >= 0) Unit
                 exitProcess(0)
             }
+            val service = appOpsService()
             while (true) {
-                print(dump(names))
+                print(dump(service, names))
                 println(END_OF_READING)
                 System.out.flush()
                 Thread.sleep(intervalMs)
@@ -59,7 +63,26 @@ object AppOpsDump {
         }
     }
 
-    private fun dump(names: Array<String>): String {
+    /**
+     * The system's app ops service. The daemon starts this program while the
+     * system is still booting, before the service is registered, so it waits
+     * for it rather than fail: the daemon would otherwise only try again much
+     * later.
+     */
+    private fun appOpsService(): Any {
+        val getService = Class.forName("android.os.ServiceManager")
+            .getMethod("getService", String::class.java)
+        var binder = getService.invoke(null, "appops") as IBinder?
+        while (binder == null) {
+            Thread.sleep(SERVICE_POLL_MS)
+            binder = getService.invoke(null, "appops") as IBinder?
+        }
+        return Class.forName("com.android.internal.app.IAppOpsService\$Stub")
+            .getMethod("asInterface", IBinder::class.java)
+            .invoke(null, binder)!!
+    }
+
+    private fun dump(service: Any, names: Array<String>): String {
         val manager = Class.forName("android.app.AppOpsManager")
         val toCode = manager.getMethod("strOpToOp", String::class.java)
         // A name this Android version doesn't know is left out.
@@ -71,12 +94,6 @@ object AppOpsDump {
             }
         }.toIntArray()
 
-        val binder = Class.forName("android.os.ServiceManager")
-            .getMethod("getService", String::class.java)
-            .invoke(null, "appops") as IBinder
-        val service = Class.forName("com.android.internal.app.IAppOpsService\$Stub")
-            .getMethod("asInterface", IBinder::class.java)
-            .invoke(null, binder)!!
         val packages = service.javaClass
             .getMethod("getPackagesForOps", IntArray::class.java)
             .invoke(service, codes) as List<*>? ?: return ""
