@@ -17,10 +17,12 @@
 plugins {
     alias(libs.plugins.bigbrother.android.feature.impl)
     alias(libs.plugins.bigbrother.android.library.compose)
+    alias(libs.plugins.roborazzi)
 }
 
 android {
     namespace = "li.mercury.bigbrother.feature.overview.impl"
+    testOptions.unitTests.isIncludeAndroidResources = true
 }
 
 dependencies {
@@ -32,5 +34,9 @@ dependencies {
     implementation(libs.androidx.compose.material3.adaptive)
     implementation(libs.androidx.compose.material3.adaptive.navigation3)
 
+    testImplementation(libs.robolectric)
+    testImplementation(projects.core.screenshotTesting)
     testImplementation(projects.core.testing)
+    // The overview's top bar, in the screenshots.
+    testImplementation(projects.feature.search.impl)
 }
