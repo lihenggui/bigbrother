@@ -9,7 +9,8 @@ package li.mercury.bigbrother.feature.appdetail.impl
  * `/proc/sys/kernel/random/boot_id`. The row's title already says what kind
  * of data it was ("Installed apps", "Boot ID"), so only what tells the
  * records of one row apart and means something to the user is kept: which
- * app was asked about, which command ran, which address was contacted.
+ * app was asked about (to count them), which command ran, which address was
+ * contacted.
  */
 internal sealed interface RecordDetail {
     /** Another app the app asked the system about. */
