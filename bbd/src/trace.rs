@@ -429,7 +429,7 @@ type BinderWatch = BpfHashMap<MapData, BinderKey, BinderValue>;
 /// Tell the kernel side which calls to report.
 fn watch(map: &mut BinderWatch, catalog: &Catalog) -> anyhow::Result<()> {
     for (key, value) in catalog.map_entries() {
-        map.insert(key, value, 0)?;
+        map.insert(&key, &value, 0)?;
     }
     Ok(())
 }
