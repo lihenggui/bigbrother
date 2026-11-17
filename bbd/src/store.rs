@@ -189,7 +189,7 @@ pub struct Agg {
 }
 
 /// Counters persisted in `meta` so `bbd stats` can report on a running daemon.
-#[derive(Default)]
+#[derive(Clone, Default, PartialEq)]
 pub struct Counters {
     /// Events received from the kernel.
     pub seen: u64,
@@ -210,11 +210,18 @@ struct EventKey {
     ts: i64,
 }
 
+/// The oldest `last_flush` a query may find. Apps from before `bbd stats`
+/// reported whether the daemon runs take a `last_flush` older than 30 s to
+/// mean that it does not.
+const LAST_FLUSH_MAX_AGE: i64 = 10;
+
 pub struct Writer {
     conn: Connection,
     pending: HashMap<Key, Agg>,
     /// Individual accesses not yet written: (allowed, refused) per key.
     events: HashMap<EventKey, (u32, u32)>,
+    /// The counters last written, and when.
+    written: Option<(Counters, i64)>,
 }
 
 impl Writer {
@@ -232,6 +239,7 @@ impl Writer {
             conn,
             pending: HashMap::new(),
             events: HashMap::new(),
+            written: None,
         })
     }
 
@@ -288,8 +296,34 @@ impl Writer {
         agg.last_ts = agg.last_ts.max(ts);
     }
 
-    /// Write buffered rows and counters in one transaction.
+    fn has_rows(&self) -> bool {
+        !self.pending.is_empty() || !self.events.is_empty()
+    }
+
+    /// Write buffered rows, with the counters, in one transaction. Without
+    /// rows nothing is written: a device on which nothing is recorded is
+    /// not written to.
     pub fn flush(&mut self, counters: &Counters, now: i64) -> anyhow::Result<()> {
+        if !self.has_rows() {
+            return Ok(());
+        }
+        self.write(counters, now)
+    }
+
+    /// Flush for a query that is about to read: the counters are written
+    /// too if they changed, and `last_flush` if it is getting old.
+    pub fn flush_for_query(&mut self, counters: &Counters, now: i64) -> anyhow::Result<()> {
+        let current = self
+            .written
+            .as_ref()
+            .is_some_and(|(written, at)| written == counters && now - at < LAST_FLUSH_MAX_AGE);
+        if current && !self.has_rows() {
+            return Ok(());
+        }
+        self.write(counters, now)
+    }
+
+    fn write(&mut self, counters: &Counters, now: i64) -> anyhow::Result<()> {
         let tx = self.conn.transaction()?;
         {
             let mut upsert = tx.prepare_cached(
@@ -361,6 +395,7 @@ impl Writer {
         // are written by the next flush.
         self.pending.clear();
         self.events.clear();
+        self.written = Some((counters.clone(), now));
         Ok(())
     }
 
@@ -1233,6 +1268,53 @@ mod tests {
             .files(&[], &[], None, None, 0, 10, 0)
             .unwrap();
         assert_eq!(files[0].ok, 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn nothing_is_written_while_nothing_is_recorded() {
+        let dir = std::env::temp_dir().join(format!("bbd-test-idle-{}", std::process::id()));
+        let db = dir.join("bb.db");
+        let mut w = Writer::open(&db).unwrap();
+        let last_flush = || {
+            Reader::open(&db)
+                .unwrap()
+                .stats()
+                .unwrap()
+                .meta
+                .get("last_flush")
+                .copied()
+        };
+        let t = 3_000_000 * 3600;
+        w.flush(&Counters::default(), t).unwrap();
+        assert_eq!(last_flush(), None);
+
+        w.record(
+            10100,
+            "com.a",
+            Category::System,
+            "/proc/cpuinfo".into(),
+            MODE_READ,
+            true,
+            t,
+            0,
+        );
+        w.flush(&Counters::default(), t + 1).unwrap();
+        assert_eq!(last_flush(), Some(t + 1));
+        w.flush(&Counters::default(), t + 31).unwrap();
+        assert_eq!(last_flush(), Some(t + 1));
+
+        // A query finds `last_flush` recent, and the counters current.
+        w.flush_for_query(&Counters::default(), t + 32).unwrap();
+        assert_eq!(last_flush(), Some(t + 32));
+        w.flush_for_query(&Counters::default(), t + 33).unwrap();
+        assert_eq!(last_flush(), Some(t + 32));
+        let counters = Counters {
+            seen: 1,
+            ..Counters::default()
+        };
+        w.flush_for_query(&counters, t + 34).unwrap();
+        assert_eq!(last_flush(), Some(t + 34));
         std::fs::remove_dir_all(dir).unwrap();
     }
 

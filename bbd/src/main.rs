@@ -144,6 +144,15 @@ fn since(hours: Option<u32>) -> i64 {
     hours.map_or(0, |h| now() - i64::from(h) * 3600)
 }
 
+#[derive(Serialize)]
+struct StatsOutput {
+    #[serde(flatten)]
+    stats: store::Stats,
+    /// Whether the daemon is running. Older versions leave this out, and
+    /// their `last_flush` in `meta`, renewed every 5 s, says it instead.
+    daemon_running: bool,
+}
+
 fn print_json(value: &impl Serialize) -> anyhow::Result<()> {
     println!("{}", serde_json::to_string(value)?);
     Ok(())
@@ -207,6 +216,9 @@ fn main() -> anyhow::Result<()> {
         Command::History { uid, path, hours } => {
             print_json(&store::Reader::open(&cli.db)?.history_of(uid, &path, since(hours))?)
         }
-        Command::Stats => print_json(&store::Reader::open(&cli.db)?.stats()?),
+        Command::Stats => print_json(&StatsOutput {
+            stats: store::Reader::open(&cli.db)?.stats()?,
+            daemon_running: control::daemon_running(&cli.db),
+        }),
     }
 }

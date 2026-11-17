@@ -179,6 +179,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
 
     // The system's own permission usage records, read periodically.
     writer.set_meta("coverage_appops", COVERAGE_PENDING)?;
+    let mut appops_coverage = COVERAGE_PENDING;
     let permission_uses = spawn_appops_reader();
     let mut appops = appops::Tracker::new(now());
 
@@ -282,9 +283,14 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         tracer.prune_isolated_owners();
         tracer.ingest_provider_events();
         while let Ok(reading) = permission_uses.try_recv() {
-            // A reading at all shows the records can be read here.
+            // A reading at all shows the records can be read here. Written
+            // when that changes, not with every reading.
             let covered = i64::from(reading.is_some());
-            tracer.writer.set_meta("coverage_appops", covered).ok();
+            if covered != appops_coverage
+                && tracer.writer.set_meta("coverage_appops", covered).is_ok()
+            {
+                appops_coverage = covered;
+            }
             if let Some(entries) = reading {
                 tracer.record_permission_uses(appops.update(&entries));
             }
@@ -308,7 +314,11 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         }
         // A failed write (disk full, database busy) keeps the batch for the
         // next attempt; it is not a reason to stop recording.
-        if let Err(e) = tracer.writer.flush(&tracer.counters, now()) {
+        let written = match request {
+            Some(_) => tracer.writer.flush_for_query(&tracer.counters, now()),
+            None => tracer.writer.flush(&tracer.counters, now()),
+        };
+        if let Err(e) = written {
             eprintln!("bbd: could not write records: {e:#}");
         }
         if let Some(stream) = request {

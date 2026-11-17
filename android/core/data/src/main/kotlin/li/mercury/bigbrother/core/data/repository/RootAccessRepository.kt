@@ -54,8 +54,7 @@ internal class RootAccessRepository @Inject constructor(
 
     /**
      * The overview, the app list, a category and an app's page each start
-     * from the list of apps; one read serves them all within a flush of the
-     * daemon, which writes every 5 s.
+     * from the list of apps; one read serves them all for 5 s.
      */
     private val recentApps = RecentRead<TimeRange, List<AppSummary>>(maxAgeMs = 5_000)
 
@@ -223,10 +222,15 @@ internal class RootAccessRepository @Inject constructor(
     }
 
     private suspend fun readRecorderStatus(): RecorderStatus = parsing {
-        val meta = JSONObject(query("stats")).optJSONObject("meta") ?: JSONObject()
-        val lastFlush = meta.optLong("last_flush")
+        val stats = JSONObject(query("stats"))
+        val meta = stats.optJSONObject("meta") ?: JSONObject()
         RecorderStatus(
-            recording = System.currentTimeMillis() / 1000 - lastFlush < STALE_AFTER_SECONDS,
+            recording = if (stats.has("daemon_running")) {
+                stats.getBoolean("daemon_running")
+            } else {
+                // An older module doesn't say; its daemon writes every 5 s.
+                System.currentTimeMillis() / 1000 - meta.optLong("last_flush") < STALE_AFTER_SECONDS
+            },
             // Per kind of activity the daemon stores 1 (recording), 0 (can't
             // on this device) or -1 (not known yet, shortly after it starts).
             // Only a definite 0 is worth telling the user about.
@@ -278,7 +282,7 @@ internal class RootAccessRepository @Inject constructor(
         )
         const val COVERAGE_PREFIX = "coverage_"
 
-        /** The daemon flushes every 5 s; allow several missed beats. */
+        /** An older daemon writes every 5 s; allow several missed beats. */
         const val STALE_AFTER_SECONDS = 30
     }
 }

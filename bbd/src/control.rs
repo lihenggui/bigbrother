@@ -37,6 +37,32 @@ fn socket_path(db: &Path) -> PathBuf {
     db.with_file_name("bbd.sock")
 }
 
+/// Written by the module's supervisor (module/supervise.sh).
+fn pid_file(db: &Path) -> PathBuf {
+    db.with_file_name("bbd.pid")
+}
+
+/// Whether the daemon recording into `db` is running: the process the
+/// supervisor started is still there. Unlike the time of the last write,
+/// this does not depend on anything having been recorded lately.
+pub fn daemon_running(db: &Path) -> bool {
+    let Some(pid) = fs::read_to_string(pid_file(db))
+        .ok()
+        .and_then(|text| text.trim().parse::<u32>().ok())
+    else {
+        return false;
+    };
+    let comm = fs::read_to_string(format!("/proc/{pid}/comm")).unwrap_or_default();
+    let cmdline = fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+    is_daemon(&comm, &cmdline)
+}
+
+/// A pid is handed to another process once its own has ended, possibly to a
+/// query command, which is `bbd` too: it counts only while it is `bbd run`.
+fn is_daemon(comm: &str, cmdline: &[u8]) -> bool {
+    comm.trim_end() == "bbd" && cmdline.split(|&b| b == 0).nth(1) == Some(b"run")
+}
+
 /// Ask the daemon recording into `db` to write what it holds, and wait until
 /// it has, or for [`FLUSH_WAIT`] at most.
 pub fn request_flush(db: &Path) {
@@ -176,6 +202,28 @@ mod tests {
         let waited = start.elapsed();
         assert!(waited >= Duration::from_millis(200) && waited < Duration::from_secs(2));
         daemon.join().unwrap();
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn only_the_recording_daemon_counts_as_running() {
+        assert!(is_daemon(
+            "bbd\n",
+            b"/data/adb/modules/big_brother/bin/bbd\0run\0"
+        ));
+        // A query command that was handed the daemon's old pid.
+        assert!(!is_daemon(
+            "bbd\n",
+            b"/data/adb/modules/big_brother/bin/bbd\0stats\0"
+        ));
+        assert!(!is_daemon("sh\n", b"sh\0run\0"));
+        assert!(!is_daemon("", b""));
+
+        let dir = test_dir("control-pid");
+        let db = dir.join("bb.db");
+        assert!(!daemon_running(&db));
+        fs::write(pid_file(&db), format!("{}\n", std::process::id())).unwrap();
+        assert!(!daemon_running(&db));
         fs::remove_dir_all(dir).unwrap();
     }
 }
