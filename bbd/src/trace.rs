@@ -782,10 +782,19 @@ impl Tracer {
                         self.packages.for_uid(uid),
                     )
                 });
-                let Some(subject) = subject else {
+                let Some(mut subject) = subject else {
                     self.explain("binder", "<about itself, or not watched>");
                     return;
                 };
+                // Whether the app asked about is there is known only now: by
+                // the time the records are read it may have been installed
+                // or removed.
+                if let Some(package) = binder::asked_package(&subject)
+                    && !self.packages.is_installed(package)
+                    && let Some(marked) = binder::mark_absent(&subject)
+                {
+                    subject = marked;
+                }
                 // Only the request is seen, not what came back.
                 self.store(
                     uid,

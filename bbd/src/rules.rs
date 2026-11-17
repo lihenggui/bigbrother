@@ -51,12 +51,15 @@ pub mod topic {
     pub const BATTERY: &str = "battery";
 
     // Commands (`commands.rs`).
-    /// Looked for the tools that only a rooted device has.
+    /// Looked for the tools and apps that only a rooted device has.
     pub const ROOT_CHECK: &str = "root_check";
     /// System properties: model, build, serial number and many more.
     pub const SYSTEM_PROPERTIES: &str = "system_properties";
     /// Which apps are installed.
     pub const INSTALLED_APPS: &str = "installed_apps";
+    /// Asked about apps that are not installed: going down a list of apps
+    /// to find out which of them the device has (`binder.rs`).
+    pub const APP_PROBE: &str = "app_probe";
     /// System settings, among them the device's Android ID.
     pub const SYSTEM_SETTINGS: &str = "system_settings";
     /// Any other system program.

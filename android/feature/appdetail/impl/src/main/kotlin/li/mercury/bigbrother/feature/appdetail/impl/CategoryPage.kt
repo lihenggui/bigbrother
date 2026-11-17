@@ -120,6 +120,12 @@ internal fun CategoryPage(groups: List<TopicGroup>, contentPadding: PaddingValue
     }
 }
 
+/** The topic of looking for root, among other ways by the apps that need it. */
+private const val ROOT_CHECK = "root_check"
+
+/** The topic of asking about apps that are not installed. */
+private const val APP_PROBE = "app_probe"
+
 /** At most this many details are listed before the rest are asked for. */
 private const val DETAILS_SHOWN = 5
 
@@ -137,8 +143,14 @@ private fun LazyItemScope.TopicRow(group: TopicGroup, index: Int, count: Int) {
     // every record names one; a call that lists them all would make the
     // count too low.
     val appsAsked = remember(group) {
-        val paths = group.accesses.map { it.path }
-        if (title != null && paths.all { recordDetail(it) is RecordDetail.App }) details.size else 0
+        val apps = details.count { it is RecordDetail.App }
+        when {
+            // Every root app looked for is in it; other records there, such
+            // as commands run, are listed below.
+            group.topic == ROOT_CHECK || group.topic == APP_PROBE -> apps
+            title != null && group.accesses.all { recordDetail(it.path) is RecordDetail.App } -> apps
+            else -> 0
+        }
     }
     val listed = details.filterIsInstance<RecordDetail.Plain>()
     val modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme)
@@ -244,7 +256,12 @@ private fun TopicSummary(group: TopicGroup, appsAsked: Int) {
                 else -> R.plurals.total_allowed
             }
             if (appsAsked > 0) {
-                pluralStringResource(R.plurals.apps_asked, appsAsked, appsAsked)
+                val asked = when (group.topic) {
+                    ROOT_CHECK -> R.plurals.root_apps_asked
+                    APP_PROBE -> R.plurals.absent_apps_asked
+                    else -> R.plurals.apps_asked
+                }
+                pluralStringResource(asked, appsAsked, appsAsked)
             } else {
                 pluralStringResource(done, allowed, allowed)
             }

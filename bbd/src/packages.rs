@@ -73,6 +73,22 @@ impl Packages {
 }
 
 impl Packages {
+    /// Whether `package` is installed (for any user). A name not found makes
+    /// the list be read again, at most once per reload interval, so that an
+    /// app installed since the last load is found.
+    pub fn is_installed(&mut self, package: &str) -> bool {
+        if self.app_id_by_name.contains_key(package) {
+            return true;
+        }
+        if self
+            .loaded_at
+            .is_none_or(|t| t.elapsed() >= RELOAD_INTERVAL)
+        {
+            self.reload();
+        }
+        self.app_id_by_name.contains_key(package)
+    }
+
     /// Every other package that shares a uid with one of `packages`.
     pub fn sharing_uid_with(&self, packages: &[&str]) -> Vec<String> {
         packages
