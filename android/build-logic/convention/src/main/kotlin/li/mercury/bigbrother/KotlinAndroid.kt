@@ -31,5 +31,8 @@ internal fun configureKotlinAndroid(commonExtension: CommonExtension) {
             sourceCompatibility = JavaVersion.VERSION_17
             targetCompatibility = JavaVersion.VERSION_17
         }
+        // Unit tests run on the JVM: Android calls such as SystemClock and
+        // Log return defaults there instead of failing.
+        testOptions.unitTests.isReturnDefaultValues = true
     }
 }

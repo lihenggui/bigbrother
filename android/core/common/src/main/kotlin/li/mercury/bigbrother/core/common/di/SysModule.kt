@@ -30,6 +30,11 @@ import javax.inject.Qualifier
 @Qualifier
 annotation class FilesDir
 
+/** This app's package name, to leave its own lookups out of what is shown. */
+@Retention(AnnotationRetention.RUNTIME)
+@Qualifier
+annotation class AppPackageName
+
 /** The app's cache directory. */
 @Retention(AnnotationRetention.RUNTIME)
 @Qualifier
@@ -41,6 +46,10 @@ internal object SysModule {
     @Provides
     @FilesDir
     fun providesFilesDir(@ApplicationContext context: Context): File = context.filesDir
+
+    @Provides
+    @AppPackageName
+    fun providesAppPackageName(@ApplicationContext context: Context): String = context.packageName
 
     @Provides
     @CacheDir
