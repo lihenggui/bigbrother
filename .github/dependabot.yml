@@ -1,4 +1,11 @@
 version: 2
+registries:
+  google:
+    type: maven-repository
+    url: https://dl.google.com/dl/android/maven2/
+  jitpack:
+    type: maven-repository
+    url: https://jitpack.io
 updates:
   # The workflows pin actions by commit; this keeps the pins current.
   - package-ecosystem: github-actions
@@ -10,3 +17,30 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+
+  # The app. Kotlin, its compiler plugins and KSP move together.
+  - package-ecosystem: gradle
+    directories:
+      - /android
+      - /android/build-logic
+    registries:
+      - google
+      - jitpack
+    schedule:
+      interval: weekly
+    groups:
+      kotlin:
+        patterns:
+          - "org.jetbrains.kotlin*"
+          - "com.google.devtools.ksp*"
+      agp:
+        patterns:
+          - "com.android.tools.build*"
+          - "com.android.application"
+          - "com.android.library"
+
+  # The daemon and the eBPF programs.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly

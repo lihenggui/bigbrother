@@ -21,6 +21,7 @@ plugins {
     alias(libs.plugins.bigbrother.android.application.compose)
     alias(libs.plugins.bigbrother.android.hilt)
     alias(libs.plugins.bigbrother.flashable.module)
+    alias(libs.plugins.dependencyGuard)
 }
 
 // Release signing is configured in keystore.properties (not in version
@@ -98,4 +99,10 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewModel.navigation3)
     implementation(libs.androidx.navigation3.ui)
     implementation(libs.androidx.compose.material3)
+}
+
+// Every library in the release APK, checked in (app/dependencies/): a new
+// one, direct or transitive, comes in with a reviewed change.
+dependencyGuard {
+    configuration("releaseRuntimeClasspath")
 }

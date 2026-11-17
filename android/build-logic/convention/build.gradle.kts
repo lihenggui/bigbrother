@@ -26,6 +26,7 @@ dependencies {
     compileOnly(libs.compose.gradlePlugin)
     compileOnly(libs.kotlin.gradlePlugin)
     compileOnly(libs.ksp.gradlePlugin)
+    compileOnly(libs.licensee.gradlePlugin)
     compileOnly(libs.spotless.gradlePlugin)
 }
 
@@ -69,6 +70,10 @@ gradlePlugin {
         register("androidFeatureImpl") {
             id = libs.plugins.bigbrother.android.feature.impl.get().pluginId
             implementationClass = "AndroidFeatureImplConventionPlugin"
+        }
+        register("androidLint") {
+            id = libs.plugins.bigbrother.android.lint.get().pluginId
+            implementationClass = "AndroidLintConventionPlugin"
         }
         register("androidHilt") {
             id = libs.plugins.bigbrother.android.hilt.get().pluginId

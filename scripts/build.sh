@@ -101,3 +101,9 @@ echo "built: $apk ($(du -h "$apk" | cut -f1))"
 zip="${apk%.apk}.zip"
 cp "$apk" "$zip"
 echo "built: $zip (same file, for flashing)"
+
+# R8's mapping for this build: what turns a stack trace from the app's log
+# back into class and method names.
+mapping="out/big_brother-$version-mapping.txt"
+cp android/app/build/outputs/mapping/release/mapping.txt "$mapping"
+echo "built: $mapping"

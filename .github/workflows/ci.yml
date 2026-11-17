@@ -63,6 +63,24 @@ jobs:
         working-directory: android
         run: ./gradlew test
 
+      # A new library, permission or license comes in with a reviewed change:
+      # the baselines are app/dependencies/ and app/release-badging.txt.
+      - name: Check the app's dependencies, permissions and licenses
+        working-directory: android
+        run: ./gradlew :app:dependencyGuard :app:checkReleaseBadging :app:licenseeAndroidRelease
+
+      - name: Lint the app
+        working-directory: android
+        run: ./gradlew :app:lintRelease
+
+      - name: Upload the lint report
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lint-report
+          path: android/app/build/reports/lint-results-release.html
+          if-no-files-found: ignore
+
       # Signed with the debug key; release builds come from release.yml.
       - name: Upload the APK
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

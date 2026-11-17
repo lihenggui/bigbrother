@@ -16,6 +16,7 @@
 
 package li.mercury.bigbrother.catalog
 
+import android.annotation.SuppressLint
 import android.os.IBinder
 import kotlin.concurrent.thread
 import kotlin.system.exitProcess
@@ -42,6 +43,7 @@ import kotlin.system.exitProcess
  * reflection, so that a device where it differs prints nothing instead of
  * failing to load.
  */
+@SuppressLint("PrivateApi")
 object AppOpsDump {
     /** `AppOpsManager.OP_FLAGS_ALL`: uses on the app's own behalf and on others'. */
     private const val ALL_FLAGS = 31
