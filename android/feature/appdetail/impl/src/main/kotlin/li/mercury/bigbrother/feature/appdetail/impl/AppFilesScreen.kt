@@ -1,3 +1,19 @@
+/*
+ * Copyright (C) 2026 Mercury Li
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 3 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package li.mercury.bigbrother.feature.appdetail.impl
 
 import android.widget.Toast
@@ -36,10 +52,10 @@ import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.OpenFileResult
-import li.mercury.bigbrother.core.ui.R as UiR
 import li.mercury.bigbrother.core.ui.SearchTopBar
 import li.mercury.bigbrother.core.ui.appDisplayName
 import li.mercury.bigbrother.core.ui.openFile
+import li.mercury.bigbrother.core.ui.R as UiR
 
 /** One app's files on shared storage and in the media library, browsed as folders. */
 @Composable
@@ -147,7 +163,9 @@ internal fun AppFilesScreen(
         Box(Modifier.padding(padding)) {
             when {
                 state.failure != null -> LoadFailureMessage(state.failure, onRetry)
+
                 shown == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
+
                 else -> FilesPage(
                     accesses = shown,
                     filtering = filtering,

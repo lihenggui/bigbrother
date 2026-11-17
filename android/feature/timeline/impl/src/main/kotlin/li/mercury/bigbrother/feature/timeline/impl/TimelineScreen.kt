@@ -1,3 +1,19 @@
+/*
+ * Copyright (C) 2026 Mercury Li
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 3 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package li.mercury.bigbrother.feature.timeline.impl
 
 import android.text.format.DateUtils
@@ -43,9 +59,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import java.time.Instant
-import java.time.LocalDate
-import java.time.ZoneId
 import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
 import li.mercury.bigbrother.core.model.Category
 import li.mercury.bigbrother.core.model.TimeRange
@@ -57,8 +70,11 @@ import li.mercury.bigbrother.core.ui.MenuFilterChip
 import li.mercury.bigbrother.core.ui.MenuOption
 import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.namedList
-import li.mercury.bigbrother.core.ui.R as UiR
 import li.mercury.bigbrother.core.ui.topicTitle
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import li.mercury.bigbrother.core.ui.R as UiR
 
 @Composable
 fun TimelineScreen(
@@ -107,7 +123,9 @@ internal fun TimelineScreen(
                 val entries = state.entries
                 when {
                     state.failure != null -> LoadFailureMessage(state.failure, onRetry = onRefresh)
+
                     entries == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
+
                     else -> Timeline(
                         state = state,
                         entries = entries,
@@ -207,12 +225,14 @@ private fun Timeline(
                         .padding(start = 16.dp, top = 16.dp, bottom = 4.dp)
                         .semantics { heading() },
                 )
+
                 is TimelineItem.Hour -> Text(
                     text = DateUtils.formatDateTime(context, item.hourStart * 1000, DateUtils.FORMAT_SHOW_TIME),
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 6.dp),
                 )
+
                 is TimelineItem.Row -> {
                     val first = item.first
                     AppListItem(
@@ -273,7 +293,9 @@ private fun dayLabel(dayStart: Long): String {
     val today = LocalDate.now(zone)
     return when (day) {
         today -> stringResource(R.string.today)
+
         today.minusDays(1) -> stringResource(R.string.yesterday)
+
         else -> DateUtils.formatDateTime(
             context,
             millis,
@@ -301,7 +323,9 @@ private fun entryName(entry: TimelineEntry): String = when (entry.category) {
     } else {
         pluralStringResource(R.plurals.looked_for_paths, entry.paths, entry.paths)
     }
+
     Category.PROVIDER -> stringResource(UiR.string.summary_media_library)
+
     else -> entry.topic?.let { topicTitle(it) }?.let { stringResource(it) } ?: stringResource(entry.dataCategory.title)
 }
 
@@ -318,11 +342,13 @@ private fun entrySummary(entry: TimelineEntry): String {
             }
             listOfNotNull(what, entry.folder).joinToString(separator)
         }
+
         Category.PROVIDER -> when {
             entry.allowed == 0 -> pluralStringResource(R.plurals.media_denied, entry.denied, entry.denied)
             entry.isQuery -> stringResource(R.string.media_queried)
             else -> pluralStringResource(R.plurals.media_opened, entry.paths, entry.paths)
         }
+
         else -> {
             val title = entry.topic?.let { topicTitle(it) }?.let { stringResource(it) }
                 ?: stringResource(entry.dataCategory.title)

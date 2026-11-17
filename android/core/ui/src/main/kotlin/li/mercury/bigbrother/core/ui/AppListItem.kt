@@ -1,3 +1,19 @@
+/*
+ * Copyright (C) 2026 Mercury Li
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 3 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package li.mercury.bigbrother.core.ui
 
 import androidx.compose.foundation.background
@@ -58,7 +74,7 @@ fun AppListItem(
         modifier = modifier,
         shapes = ListItemDefaults.segmentedShapes(index, count),
         colors = ListItemDefaults.segmentedColors(),
-        leadingContent = { BadgedAppIcon(app, info, name, badge) },
+        leadingContent = { BadgedAppIcon(app, info, name, badge = badge) },
         supportingContent = supporting?.let { { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
         trailingContent = trailing?.let { { Text(it, style = MaterialTheme.typography.labelMedium) } },
     ) {
@@ -72,17 +88,22 @@ fun AppListItem(
  * same. An isolated process's name already gives its uid.
  */
 @Composable
-fun appNameWithUser(app: AppSummary, name: String): String =
-    if (app.userId == 0 || app.isUnattributedIsolated) {
-        name
-    } else {
-        stringResource(R.string.app_name_with_user, name, app.userId)
-    }
+fun appNameWithUser(app: AppSummary, name: String): String = if (app.userId == 0 || app.isUnattributedIsolated) {
+    name
+} else {
+    stringResource(R.string.app_name_with_user, name, app.userId)
+}
 
 /** An app's icon, with a work badge for another Android user and an optional badge for a kind of data. */
 @Composable
-fun BadgedAppIcon(app: AppSummary, info: AppInfo?, name: String, badge: ImageVector? = null) {
-    Box {
+fun BadgedAppIcon(
+    app: AppSummary,
+    info: AppInfo?,
+    name: String,
+    modifier: Modifier = Modifier,
+    badge: ImageVector? = null,
+) {
+    Box(modifier) {
         AppIcon(info, name, size = 40.dp)
         val corner = badge ?: Icons.Filled.Work.takeIf { app.userId != 0 && !app.isUnattributedIsolated }
         if (corner != null) {

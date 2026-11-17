@@ -1,3 +1,17 @@
+# Copyright (C) 2026 Mercury Li
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License version 3 as
+# published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 # Run by the app, as root, to bring the installed module up to date with
 # the app without a reboot. The app stages the module files it carries in
 # $1 (the daemon for this device as bbd) and passes its APK as $2: the same

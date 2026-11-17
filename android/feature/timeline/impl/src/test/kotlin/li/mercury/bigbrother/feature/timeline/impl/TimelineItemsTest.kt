@@ -1,11 +1,27 @@
+/*
+ * Copyright (C) 2026 Mercury Li
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 3 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package li.mercury.bigbrother.feature.timeline.impl
 
-import kotlin.test.Test
-import kotlin.test.assertEquals
 import li.mercury.bigbrother.core.model.Category
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.model.TimelineEntry
 import li.mercury.bigbrother.core.ui.DataCategory
+import kotlin.test.Test
+import kotlin.test.assertEquals
 
 class TimelineItemsTest {
     private val day = 86_400L
@@ -34,8 +50,7 @@ class TimelineItemsTest {
         lastSeen = hour + 10,
     )
 
-    private fun items(entries: List<TimelineEntry>, filter: TimelineFilter = TimelineFilter()) =
-        timelineItems(entries, filter, emptyMap(), showSystemApps = false, ownPackage = "me") { it - it % day }
+    private fun items(entries: List<TimelineEntry>, filter: TimelineFilter = TimelineFilter()) = timelineItems(entries, filter, emptyMap(), showSystemApps = false, ownPackage = "me") { it - it % day }
 
     @Test
     fun givenEntriesOverSeveralDays_whenListed_thenGroupedByDayThenHour() {

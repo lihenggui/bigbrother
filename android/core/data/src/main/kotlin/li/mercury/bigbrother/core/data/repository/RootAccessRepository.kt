@@ -1,8 +1,22 @@
+/*
+ * Copyright (C) 2026 Mercury Li
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 3 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package li.mercury.bigbrother.core.data.repository
 
 import android.os.SystemClock
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -23,6 +37,8 @@ import li.mercury.bigbrother.core.model.TimelinePage
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /**
  * Reads records by running the daemon's query subcommands as root. The
@@ -57,8 +73,7 @@ internal class RootAccessRepository @Inject constructor(
         }
     }
 
-    private fun JSONArray?.toStringList(): List<String> =
-        if (this == null) emptyList() else List(length()) { getString(it) }
+    private fun JSONArray?.toStringList(): List<String> = if (this == null) emptyList() else List(length()) { getString(it) }
 
     /** The most recent [getAccesses] result, and when it was read. */
     private class CachedAccesses(val request: List<Any?>, val readAt: Long, val accesses: List<Access>)

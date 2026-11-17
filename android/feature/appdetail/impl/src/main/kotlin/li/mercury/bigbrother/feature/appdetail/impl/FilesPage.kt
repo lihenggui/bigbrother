@@ -1,3 +1,19 @@
+/*
+ * Copyright (C) 2026 Mercury Li
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 3 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package li.mercury.bigbrother.feature.appdetail.impl
 
 import androidx.activity.compose.BackHandler
@@ -64,13 +80,13 @@ import li.mercury.bigbrother.core.model.Category
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.VOLUME_ROOT
-import li.mercury.bigbrother.core.ui.R as UiR
 import li.mercury.bigbrother.core.ui.exactDateTime
 import li.mercury.bigbrother.core.ui.exactTime
 import li.mercury.bigbrother.core.ui.label
 import li.mercury.bigbrother.core.ui.relativeTime
 import li.mercury.bigbrother.feature.appdetail.impl.tree.FileNode
 import li.mercury.bigbrother.feature.appdetail.impl.tree.buildFileTree
+import li.mercury.bigbrother.core.ui.R as UiR
 
 /** The location shown in the files tab, navigated like a file browser. */
 internal object Location {
@@ -148,8 +164,7 @@ internal fun fileTreeOf(accesses: List<Access>, readOnly: Boolean): FileTree = F
 internal fun Access.isFile(): Boolean = category == Category.STORAGE || category == Category.PROVIDER
 
 /** Whether the app opened any file on shared storage. */
-private fun readAnyFile(accesses: List<Access>): Boolean =
-    accesses.any { it.category == Category.STORAGE && it.isSuccessfulOpen() }
+private fun readAnyFile(accesses: List<Access>): Boolean = accesses.any { it.category == Category.STORAGE && it.isSuccessfulOpen() }
 
 /**
  * The number for the files tab, matching what the tab opens on: the files
@@ -162,40 +177,38 @@ internal fun fileTabCount(accesses: List<Access>): Int {
 }
 
 /** A file counts as read when the system let the app open it. */
-internal fun Access.isSuccessfulOpen(): Boolean =
-    allowed > 0 && (action == Action.READ || action == Action.WRITE || action == Action.READ_WRITE)
+internal fun Access.isSuccessfulOpen(): Boolean = allowed > 0 && (action == Action.READ || action == Action.WRITE || action == Action.READ_WRITE)
 
 /**
  * One tree per storage volume, so that each starts at a root the user knows
  * ("Internal storage") instead of at `/storage`. Paths are arranged relative
  * to their volume.
  */
-private fun buildVolumeTrees(storage: List<Access>): List<FileNode> =
-    storage
-        .groupBy { VOLUME_ROOT.find(it.path)?.value.orEmpty() }
-        .toList()
-        // Internal storage first, by user number; then removable volumes.
-        .sortedWith(
-            compareBy(
-                { (volume, _) -> PRIMARY_VOLUME.matchEntire(volume) == null },
-                { (volume, _) -> PRIMARY_VOLUME.matchEntire(volume)?.groupValues?.get(1)?.toIntOrNull() ?: 0 },
-                { (volume, _) -> volume },
-            ),
+private fun buildVolumeTrees(storage: List<Access>): List<FileNode> = storage
+    .groupBy { VOLUME_ROOT.find(it.path)?.value.orEmpty() }
+    .toList()
+    // Internal storage first, by user number; then removable volumes.
+    .sortedWith(
+        compareBy(
+            { (volume, _) -> PRIMARY_VOLUME.matchEntire(volume) == null },
+            { (volume, _) -> PRIMARY_VOLUME.matchEntire(volume)?.groupValues?.get(1)?.toIntOrNull() ?: 0 },
+            { (volume, _) -> volume },
+        ),
+    )
+    .map { (volume, accesses) ->
+        val (atRoot, below) = accesses.partition { it.path == volume }
+        // Trim the volume prefix so the tree starts below it, then put
+        // the full paths back: they identify the nodes.
+        val children = buildFileTree(below.map { it.copy(path = it.path.removePrefix(volume)) })
+            .map { it.rebase(volume) }
+        FileNode(
+            name = volume,
+            path = volume,
+            accesses = atRoot,
+            children = children,
+            touchedCount = children.sumOf { it.touchedCount + if (it.accesses.isEmpty()) 0 else 1 },
         )
-        .map { (volume, accesses) ->
-            val (atRoot, below) = accesses.partition { it.path == volume }
-            // Trim the volume prefix so the tree starts below it, then put
-            // the full paths back: they identify the nodes.
-            val children = buildFileTree(below.map { it.copy(path = it.path.removePrefix(volume)) })
-                .map { it.rebase(volume) }
-            FileNode(
-                name = volume,
-                path = volume,
-                accesses = atRoot,
-                children = children,
-                touchedCount = children.sumOf { it.touchedCount + if (it.accesses.isEmpty()) 0 else 1 },
-            )
-        }
+    }
 
 /** Restore the volume prefix on a subtree built from volume-relative paths. */
 private fun FileNode.rebase(volume: String): FileNode = copy(
@@ -205,8 +218,7 @@ private fun FileNode.rebase(volume: String): FileNode = copy(
     children = children.map { it.rebaseBelow(volume) },
 )
 
-private fun FileNode.rebaseBelow(volume: String): FileNode =
-    copy(path = volume + path, children = children.map { it.rebaseBelow(volume) })
+private fun FileNode.rebaseBelow(volume: String): FileNode = copy(path = volume + path, children = children.map { it.rebaseBelow(volume) })
 
 /**
  * The files tab: shared storage browsed like a file manager, then the media
@@ -308,7 +320,9 @@ private fun Breadcrumb(content: FileTree, location: String, onNavigate: (String)
         }
         val trail: List<Pair<String, String>> = when (location) {
             Location.ROOT -> emptyList()
+
             Location.MEDIA -> listOf(location to stringResource(R.string.group_media))
+
             else -> content.trail(location).map { node ->
                 node.path to if (node in content.volumes) storageLabel(node) else node.name
             }
@@ -355,6 +369,7 @@ private fun Listing(
             ) { index, access ->
                 CollectionRow(access, index, content.collections.size)
             }
+
             else -> {
                 itemsIndexed(entries, key = { _, node -> node.path }) { index, node ->
                     EntryRow(
@@ -403,9 +418,10 @@ private fun Listing(
 
 /** Shown where the file list would be when there is nothing to list. */
 @Composable
-private fun NoFiles(readOnly: Boolean, filtering: Boolean, onShowAll: () -> Unit, modifier: Modifier) {
+private fun NoFiles(readOnly: Boolean, filtering: Boolean, onShowAll: () -> Unit, modifier: Modifier = Modifier) {
     when {
         filtering -> Message(stringResource(UiR.string.no_matches), "", modifier)
+
         // Nothing was read, but there may be checks and blocked attempts.
         readOnly -> Message(
             title = stringResource(R.string.no_files_read),
@@ -414,6 +430,7 @@ private fun NoFiles(readOnly: Boolean, filtering: Boolean, onShowAll: () -> Unit
             actionLabel = stringResource(R.string.filter_all),
             onAction = onShowAll,
         )
+
         else -> Message(stringResource(UiR.string.empty_title), "", modifier)
     }
 }
@@ -521,9 +538,12 @@ private fun storageLabel(node: FileNode): String {
     val user = PRIMARY_VOLUME.matchEntire(node.path)?.groupValues?.get(1)?.toIntOrNull()
     return when {
         user == 0 -> stringResource(R.string.internal_storage)
+
         user != null -> stringResource(R.string.internal_storage_user, user)
+
         node.path.startsWith("/storage/") ->
             stringResource(R.string.removable_storage, node.path.removePrefix("/storage/"))
+
         else -> node.name
     }
 }
@@ -545,14 +565,17 @@ private fun AccessLines(accesses: List<Access>) {
                 access.allowed,
                 access.items,
             )
+
             // An access the system refused every time is a failed attempt.
             access.allowed == 0 -> stringResource(R.string.access_blocked, label, access.denied)
+
             access.denied > 0 -> stringResource(
                 R.string.access_partly_blocked,
                 label,
                 access.allowed + access.denied,
                 access.denied,
             )
+
             else -> stringResource(R.string.access_allowed, label, access.allowed)
         }
     }
@@ -574,15 +597,24 @@ private fun actionLabel(access: Access): String = actionLabel(access.action, acc
 internal fun actionLabel(action: Action, viaProvider: Boolean): String = stringResource(
     when (action) {
         Action.READ -> if (viaProvider) R.string.action_read_provider else R.string.action_read
+
         Action.WRITE -> if (viaProvider) R.string.action_write_provider else R.string.action_write
+
         Action.READ_WRITE ->
             if (viaProvider) R.string.action_write_provider else R.string.action_read_write
+
         Action.LIST -> R.string.action_list
+
         Action.PROBE -> R.string.action_probe
+
         Action.WATCH -> R.string.action_watch
+
         Action.QUERY -> R.string.action_query
+
         Action.CONNECT -> R.string.action_connect
+
         Action.EXEC -> R.string.action_exec
+
         Action.CALL -> R.string.action_call
     },
 )
@@ -617,7 +649,9 @@ internal fun FileDetailsSheet(details: FileDetails, onOpen: () -> Unit, onDismis
                         ?: stringResource(UiR.string.error_title),
                     color = MaterialTheme.colorScheme.error,
                 )
+
                 periods == null -> BigBrotherLoadingIndicator(Modifier.padding(vertical = 24.dp))
+
                 else -> LazyColumn(
                     // Leaves room for the button below on a long history.
                     modifier = Modifier.weight(1f, fill = false),
@@ -657,12 +691,14 @@ private fun PeriodRow(period: AccessPeriod) {
         Text(
             text = when {
                 period.allowed == 0 -> stringResource(R.string.access_blocked, label, period.denied)
+
                 period.denied > 0 -> stringResource(
                     R.string.access_partly_blocked,
                     label,
                     period.allowed + period.denied,
                     period.denied,
                 )
+
                 else -> stringResource(R.string.access_allowed, label, period.allowed)
             },
             style = MaterialTheme.typography.bodyMedium,

@@ -1,3 +1,19 @@
+/*
+ * Copyright (C) 2026 Mercury Li
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 3 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package li.mercury.bigbrother.hook
 
 import android.annotation.SuppressLint
@@ -12,10 +28,10 @@ import android.util.Log
 import io.github.libxposed.api.XposedInterface
 import io.github.libxposed.api.XposedModule
 import io.github.libxposed.api.XposedModuleInterface.PackageReadyParam
+import org.lsposed.hiddenapibypass.HiddenApiBypass
 import java.io.File
 import java.lang.reflect.Method
 import java.util.concurrent.atomic.AtomicBoolean
-import org.lsposed.hiddenapibypass.HiddenApiBypass
 
 /**
  * LSPosed entry point, loaded into the system's content provider processes:
@@ -69,15 +85,18 @@ class ProviderHook : XposedModule() {
                 "query" -> RecordingHooker { args, result ->
                     record(args) { uid, uri -> spool.addQuery(uid, uri, rowCount(result)) }
                 }
+
                 "openFile", "openAssetFile" -> RecordingHooker { args, result ->
                     record(args) { uid, uri ->
                         spool.addOpen(uid, uri, openMode(args), filePath(result))
                     }
                 }
+
                 // Takes a MIME type where the others take a mode; always read-only.
                 "openTypedAssetFile" -> RecordingHooker { args, result ->
                     record(args) { uid, uri -> spool.addOpen(uid, uri, "r", filePath(result)) }
                 }
+
                 else -> continue
             }
             hook(method).intercept(hooker)

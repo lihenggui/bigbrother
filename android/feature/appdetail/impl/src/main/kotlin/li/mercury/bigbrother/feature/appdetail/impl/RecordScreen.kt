@@ -1,3 +1,19 @@
+/*
+ * Copyright (C) 2026 Mercury Li
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 3 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package li.mercury.bigbrother.feature.appdetail.impl
 
 import androidx.compose.foundation.layout.Arrangement
@@ -43,7 +59,6 @@ import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.Message
-import li.mercury.bigbrother.core.ui.R as UiR
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.appDisplayName
 import li.mercury.bigbrother.core.ui.exactDateTime
@@ -51,6 +66,7 @@ import li.mercury.bigbrother.core.ui.exactTime
 import li.mercury.bigbrother.core.ui.relativeTime
 import li.mercury.bigbrother.core.ui.topicIcon
 import li.mercury.bigbrother.core.ui.topicTitle
+import li.mercury.bigbrother.core.ui.R as UiR
 
 /**
  * One kind of data an app accessed: what exactly, when it last happened and
@@ -92,13 +108,16 @@ internal fun RecordScreen(
             state.failure != null -> item(key = "failure") {
                 LoadFailureMessage(state.failure, onRetry, Modifier.fillParentMaxHeight(0.5f))
             }
+
             !state.loaded -> item(key = "loading") {
                 BigBrotherLoadingIndicator(Modifier.fillMaxWidth().padding(vertical = 48.dp))
             }
+
             // Records age out of the range, so a link can outlive them.
             group == null -> item(key = "gone") {
                 Message(stringResource(UiR.string.empty_title), "", Modifier.fillParentMaxHeight(0.5f))
             }
+
             else -> {
                 val details = recordDetails(group.accesses.map { it.path }, titled = topicTitle(group.topic) != null)
                     .filterIsInstance<RecordDetail.Plain>()
@@ -234,6 +253,7 @@ private fun PeriodItem(period: AccessPeriod, fromPermissions: Boolean, index: In
         supportingContent = {
             when {
                 period.allowed == 0 -> DeniedText(stringResource(R.string.access_blocked, label, period.denied))
+
                 period.denied > 0 -> Text(
                     stringResource(
                         R.string.access_partly_blocked,
@@ -242,6 +262,7 @@ private fun PeriodItem(period: AccessPeriod, fromPermissions: Boolean, index: In
                         period.denied,
                     ),
                 )
+
                 else -> Text(stringResource(R.string.access_allowed, label, period.allowed))
             }
         },
