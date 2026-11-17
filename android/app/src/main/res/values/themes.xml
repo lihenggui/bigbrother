@@ -21,4 +21,9 @@
         <item name="android:windowActionBar">false</item>
         <item name="android:windowNoTitle">true</item>
     </style>
+
+    <!-- The system's splash screen, kept until the settings are read. -->
+    <style name="Theme.BigBrother.Starting" parent="Theme.SplashScreen">
+        <item name="postSplashScreenTheme">@style/Theme.BigBrother</item>
+    </style>
 </resources>

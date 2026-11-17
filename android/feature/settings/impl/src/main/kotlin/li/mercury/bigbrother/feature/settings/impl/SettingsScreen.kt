@@ -30,6 +30,7 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.outlined.BugReport
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Extension
@@ -52,6 +53,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -63,6 +65,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -76,7 +79,14 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel) {
         viewModel.refresh()
         onPauseOrDispose {}
     }
-    SettingsScreen(uiState, onBack, viewModel::setShowSystemApps, viewModel::setUseDynamicColor)
+    SettingsScreen(
+        state = uiState,
+        onBack = onBack,
+        onShowSystemApps = viewModel::setShowSystemApps,
+        onUseDynamicColor = viewModel::setUseDynamicColor,
+        onExportLogs = viewModel::exportLogs,
+        onDismissLogExport = viewModel::dismissLogExport,
+    )
 }
 
 /** Name of a kind of activity the daemon reports as `coverage_<id>`. */
@@ -99,8 +109,21 @@ internal fun SettingsScreen(
     onBack: () -> Unit,
     onShowSystemApps: (Boolean) -> Unit,
     onUseDynamicColor: (Boolean) -> Unit,
+    onExportLogs: () -> Unit,
+    onDismissLogExport: () -> Unit,
 ) {
     val context = LocalContext.current
+    val exported = state.logExport as? LogExport.Ready
+    LaunchedEffect(exported) {
+        if (exported == null) return@LaunchedEffect
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", exported.file)
+        val send = Intent(Intent.ACTION_SEND)
+            .setType("application/zip")
+            .putExtra(Intent.EXTRA_STREAM, uri)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        context.startActivity(Intent.createChooser(send, null))
+        onDismissLogExport()
+    }
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val background = MaterialTheme.colorScheme.surfaceContainer
     Scaffold(
@@ -200,15 +223,31 @@ internal fun SettingsScreen(
 
             item(key = "about") { SectionHeader(stringResource(R.string.section_about)) }
             item(key = "version") {
-                Row(icon = Icons.Outlined.Info, title = stringResource(R.string.version), summary = version, index = 0, count = 3)
+                Row(icon = Icons.Outlined.Info, title = stringResource(R.string.version), summary = version, index = 0, count = 4)
+            }
+            item(key = "export-logs") {
+                Row(
+                    icon = Icons.Outlined.BugReport,
+                    title = stringResource(R.string.export_logs),
+                    summary = stringResource(
+                        when (state.logExport) {
+                            LogExport.Collecting -> R.string.export_logs_collecting
+                            LogExport.Failed -> R.string.export_logs_failed
+                            else -> R.string.export_logs_summary
+                        },
+                    ),
+                    index = 1,
+                    count = 4,
+                    onClick = onExportLogs,
+                )
             }
             item(key = "source") {
                 Row(
                     icon = Icons.Outlined.Code,
                     title = stringResource(R.string.source_code),
                     summary = SOURCE_URL.removePrefix("https://"),
-                    index = 1,
-                    count = 3,
+                    index = 2,
+                    count = 4,
                     onClick = {
                         context.startActivity(
                             Intent(Intent.ACTION_VIEW, SOURCE_URL.toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
@@ -217,7 +256,7 @@ internal fun SettingsScreen(
                 )
             }
             item(key = "license") {
-                Row(icon = Icons.Outlined.Gavel, title = stringResource(R.string.license), summary = "GPL-3.0", index = 2, count = 3)
+                Row(icon = Icons.Outlined.Gavel, title = stringResource(R.string.license), summary = "GPL-3.0", index = 3, count = 4)
             }
         }
     }

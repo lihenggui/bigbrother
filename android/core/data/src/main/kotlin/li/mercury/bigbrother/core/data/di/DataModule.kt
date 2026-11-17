@@ -23,6 +23,7 @@ import dagger.hilt.components.SingletonComponent
 import li.mercury.bigbrother.core.data.repository.AccessRepository
 import li.mercury.bigbrother.core.data.repository.AppInfoRepository
 import li.mercury.bigbrother.core.data.repository.DataStoreUserDataRepository
+import li.mercury.bigbrother.core.data.repository.DiagnosticsRepository
 import li.mercury.bigbrother.core.data.repository.FileAccessRepository
 import li.mercury.bigbrother.core.data.repository.ModuleRepository
 import li.mercury.bigbrother.core.data.repository.PackageManagerAppInfoRepository
@@ -30,6 +31,7 @@ import li.mercury.bigbrother.core.data.repository.RootAccessRepository
 import li.mercury.bigbrother.core.data.repository.RootFileAccessRepository
 import li.mercury.bigbrother.core.data.repository.RootModuleRepository
 import li.mercury.bigbrother.core.data.repository.UserDataRepository
+import li.mercury.bigbrother.core.data.repository.ZipDiagnosticsRepository
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -44,6 +46,9 @@ internal abstract class DataModule {
 
     @Binds
     abstract fun bindsModuleRepository(repository: RootModuleRepository): ModuleRepository
+
+    @Binds
+    abstract fun bindsDiagnosticsRepository(repository: ZipDiagnosticsRepository): DiagnosticsRepository
 
     @Binds
     abstract fun bindsUserDataRepository(

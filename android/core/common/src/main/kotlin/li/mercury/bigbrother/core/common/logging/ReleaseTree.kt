@@ -17,14 +17,13 @@
 package li.mercury.bigbrother.core.common.logging
 
 import android.annotation.SuppressLint
-import android.content.Context
 import android.util.Log
-import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import li.mercury.bigbrother.core.common.di.ApplicationScope
+import li.mercury.bigbrother.core.common.di.FilesDir
 import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.IO
 import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import timber.log.Timber
@@ -42,22 +41,33 @@ const val LOG_DIR = "logs"
 /**
  * Keeps the app's log in files, one per day for the last [DAYS_KEPT] days,
  * so that a problem can be looked into after it happened. Lines are written
- * in the order they were logged, by one writer off the main thread. Verbose
- * lines are left out.
+ * in the order they were logged, by one writer off the main thread, except
+ * a crash, which is written before the process ends. Verbose lines are left
+ * out.
  *
  * What the app records (paths, package names, search text) must not be
  * logged: only what the app did, how long it took and how it ended.
  */
 @Singleton
-class ReleaseTree @Inject constructor(
-    @ApplicationContext context: Context,
-    @Dispatcher(IO) ioDispatcher: CoroutineDispatcher,
+class ReleaseTree internal constructor(
+    filesDir: File,
+    scope: CoroutineScope,
+    ioDispatcher: CoroutineDispatcher,
+    private val today: () -> LocalDate,
+    private val now: () -> LocalDateTime,
 ) : Timber.Tree() {
-    private val directory = File(context.filesDir, LOG_DIR)
+    @Inject
+    constructor(
+        @FilesDir filesDir: File,
+        @ApplicationScope scope: CoroutineScope,
+        @Dispatcher(IO) ioDispatcher: CoroutineDispatcher,
+    ) : this(filesDir, scope, ioDispatcher, LocalDate::now, LocalDateTime::now)
+
+    private val directory = File(filesDir, LOG_DIR)
     private val lines = Channel<String>(Channel.UNLIMITED)
 
     init {
-        CoroutineScope(SupervisorJob() + ioDispatcher).launch {
+        scope.launch(ioDispatcher) {
             directory.mkdirs()
             deleteOldFiles()
             for (line in lines) append(line)
@@ -67,6 +77,20 @@ class ReleaseTree @Inject constructor(
     override fun isLoggable(tag: String?, priority: Int): Boolean = priority > Log.VERBOSE
 
     override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+        // Timber has already appended the stack trace of t to the message.
+        lines.trySend(format(priority, tag, message))
+    }
+
+    /**
+     * Writes an uncaught exception at once, on the crashing thread, after
+     * what was logged before it: the process ends right after.
+     */
+    fun logCrash(thread: Thread, error: Throwable) {
+        while (true) append(lines.tryReceive().getOrNull() ?: break)
+        append(format(Log.ERROR, null, "Crash on thread ${thread.name}\n${error.stackTraceToString()}"))
+    }
+
+    private fun format(priority: Int, tag: String?, message: String): String {
         val level = when (priority) {
             Log.DEBUG -> 'D'
             Log.INFO -> 'I'
@@ -74,16 +98,17 @@ class ReleaseTree @Inject constructor(
             Log.ERROR -> 'E'
             else -> 'A'
         }
-        val time = LocalDateTime.now().format(TIME_FORMAT)
-        // Timber has already appended the stack trace of t to the message.
-        lines.trySend(if (tag == null) "$time $level $message" else "$time $level/$tag $message")
+        val time = now().format(TIME_FORMAT)
+        return if (tag == null) "$time $level $message" else "$time $level/$tag $message"
     }
 
     // The log can't report its own failure through itself.
     @SuppressLint("LogNotTimber")
+    @Synchronized
     private fun append(line: String) {
         try {
-            File(directory, "${LocalDate.now()}.log").appendText(line + "\n")
+            directory.mkdirs()
+            File(directory, "${today()}.log").appendText(line + "\n")
         } catch (e: IOException) {
             Log.e(LOG_TAG, "Could not write the log", e)
         }
@@ -95,9 +120,9 @@ class ReleaseTree @Inject constructor(
         files.sortedBy { it.name }.dropLast(DAYS_KEPT).forEach { it.delete() }
     }
 
-    private companion object {
+    internal companion object {
         const val DAYS_KEPT = 7
-        const val LOG_TAG = "ReleaseTree"
-        val TIME_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS")
+        private const val LOG_TAG = "ReleaseTree"
+        private val TIME_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS")
     }
 }
