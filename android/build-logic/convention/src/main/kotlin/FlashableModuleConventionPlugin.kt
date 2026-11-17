@@ -1,5 +1,6 @@
 import com.android.build.api.dsl.ApplicationExtension
 import com.android.build.api.variant.ApplicationAndroidComponentsExtension
+import java.io.File
 import java.util.Properties
 import javax.inject.Inject
 import org.gradle.api.DefaultTask
@@ -8,9 +9,12 @@ import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.FileSystemOperations
-import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.provider.ListProperty
+import org.gradle.api.provider.Provider
+import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.InputFiles
+import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
@@ -22,9 +26,13 @@ import org.gradle.kotlin.dsl.register
  * Makes the APK double as the root module (KernelSU, Magisk, APatch).
  *
  * An APK is a zip archive, and a module installer only needs to find the
- * module's files (`module.prop`, the scripts, `bin/bbd`) at the root of the
+ * module's files (`module.prop`, the scripts, the daemon) at the root of the
  * archive it is given. Java resources are packaged at the APK root, so the
  * module files are added as generated Java resources.
+ *
+ * The daemon is packaged once per architecture, as `bin/<arch>/bbd`, named
+ * like the `$ARCH` the installers set; `module/customize.sh` installs the
+ * one for the device as `bin/bbd`.
  *
  * `module/module.prop` is the single source of the version: the app takes its
  * version code and name from it.
@@ -48,7 +56,8 @@ class FlashableModuleConventionPlugin : Plugin<Project> {
 
                 val stageModule = tasks.register<StageModule>("stageModule") {
                     moduleFiles.set(moduleDir)
-                    daemon.set(repository.resolve("out/bbd"))
+                    daemonDir.set(repository.resolve("out"))
+                    architectures.set(ARCHITECTURES)
                 }
                 extensions.configure<ApplicationAndroidComponentsExtension> {
                     onVariants { variant ->
@@ -61,19 +70,34 @@ class FlashableModuleConventionPlugin : Plugin<Project> {
     }
 }
 
+/**
+ * The architectures the module supports, as installers name them in `$ARCH`:
+ * devices (arm64) and the Android emulator and Chromebooks (x64). GKI 2.0
+ * kernels are 64-bit only.
+ */
+private val ARCHITECTURES = listOf("arm64", "x64")
+
 /** Collects the module files into one directory for packaging. */
 abstract class StageModule : DefaultTask() {
     @get:InputDirectory
     abstract val moduleFiles: DirectoryProperty
 
+    /** Where scripts/build.sh puts the daemons, as `bbd-<arch>`, before Gradle runs. */
+    @get:Internal
+    abstract val daemonDir: DirectoryProperty
+
+    @get:Input
+    abstract val architectures: ListProperty<String>
+
     /**
-     * The daemon, built by scripts/build.sh before Gradle runs. Declared as
-     * a file collection so that its absence reaches the check in [stage]
-     * instead of failing input validation with a generic message.
+     * The daemons. Declared as a file collection so that a missing one
+     * reaches the check in [stage] instead of failing input validation with
+     * a generic message.
      */
     @get:InputFiles
-    @get:PathSensitive(PathSensitivity.NONE)
-    abstract val daemon: RegularFileProperty
+    @get:PathSensitive(PathSensitivity.NAME_ONLY)
+    val daemons: Provider<List<File>>
+        get() = architectures.map { list -> list.map { daemonDir.get().asFile.resolve("bbd-$it") } }
 
     @get:OutputDirectory
     abstract val outputDir: DirectoryProperty
@@ -83,13 +107,18 @@ abstract class StageModule : DefaultTask() {
 
     @TaskAction
     fun stage() {
-        val binary = daemon.get().asFile
-        if (!binary.isFile) {
-            throw GradleException("$binary not found. Build the daemon first: ./scripts/build.sh")
+        val missing = daemons.get().filterNot { it.isFile }
+        if (missing.isNotEmpty()) {
+            throw GradleException("${missing.joinToString()} not found. Build the daemons first: ./scripts/build.sh")
         }
         files.sync {
             from(moduleFiles)
-            from(daemon) { into("bin") }
+            for (arch in architectures.get()) {
+                from(daemonDir.file("bbd-$arch")) {
+                    into("bin/$arch")
+                    rename { "bbd" }
+                }
+            }
             into(outputDir)
         }
     }

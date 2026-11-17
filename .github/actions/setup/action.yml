@@ -13,7 +13,8 @@ runs:
       shell: bash
       run: |
         rustup toolchain install stable --profile minimal \
-          --component rustfmt,clippy --target aarch64-linux-android
+          --component rustfmt,clippy \
+          --target aarch64-linux-android --target x86_64-linux-android
         rustup default stable
         rustup toolchain install nightly --profile minimal --component rust-src
 
