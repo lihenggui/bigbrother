@@ -82,13 +82,18 @@ class OverviewScreenScreenshotTests {
         }
     }
 
-    /** The overview of the demo records, with the search bar it has in the app. */
+    @Test
+    fun givenNoRecords_whenShownOnEachDevice_thenSaysNothingIsRecorded() {
+        composeTestRule.captureMultiDevice("OverviewEmpty") { Overview(empty = true) }
+    }
+
+    /** The overview of the demo records, or of none, with the search bar it has in the app. */
     @Composable
-    private fun Overview() {
+    private fun Overview(empty: Boolean = false) {
         val records = remember { DemoRecords(clock) }
         val state = remember(records) {
             val shown = records.apps.filter { isShown(it, records.appInfo, showSystemApps = false, ownPackage = "") }
-            val (files, categories) = overviewOf(shown)
+            val (files, categories) = overviewOf(if (empty) emptyList() else shown)
             OverviewUiState(
                 range = TimeRange.DAY,
                 files = files,

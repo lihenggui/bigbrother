@@ -19,6 +19,7 @@ package li.mercury.bigbrother.core.ui
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -33,7 +34,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import li.mercury.bigbrother.core.model.LoadFailure
 
-/** A centered title and explanation, with an optional action, for empty and error states. */
+/** A centered title and explanation, with an optional action, for empty and error states that fill the screen. */
 @Composable
 fun Message(
     title: String,
@@ -42,11 +43,34 @@ fun Message(
     actionLabel: String? = null,
     onAction: () -> Unit = {},
 ) {
-    Column(
+    InlineMessage(
+        title = title,
+        body = body,
         modifier = modifier
             .fillMaxSize()
             // Scrollable so pull-to-refresh works on an otherwise empty screen.
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(rememberScrollState()),
+        actionLabel = actionLabel,
+        onAction = onAction,
+    )
+}
+
+/**
+ * A [Message] as tall as its text, for content that already scrolls: a
+ * scrolling container inside another one would be given unbounded height,
+ * which Compose rejects.
+ */
+@Composable
+fun InlineMessage(
+    title: String,
+    body: String,
+    modifier: Modifier = Modifier,
+    actionLabel: String? = null,
+    onAction: () -> Unit = {},
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
             .padding(horizontal = 32.dp, vertical = 48.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
         horizontalAlignment = Alignment.CenterHorizontally,
