@@ -10,9 +10,13 @@ stay `GPL`, which the GPL-only helpers require.
 - Target GKI kernels from 5.10 on arm64 and x86_64. Use only helpers and
   program types those kernels have. Struct offsets are not compiled in: the
   daemon reads them from BTF at startup (`bbd/src/btf.rs`) and passes them in.
-- Only the `security_file_open` probe is required. Every other probe must be
-  optional: the daemon attaches what the kernel allows and reports the rest
-  as unavailable (`coverage_*` in `bbd stats`).
+- Only the `file_open` probe (on the `file_open` security hook) is
+  required. Every other probe must be optional: the daemon attaches what
+  the kernel allows and reports the rest as unavailable (`coverage_*` in
+  `bbd stats`).
+- Probe security hooks at SELinux's hook function (`selinux_*`), not at the
+  `security_*` wrapper: link-time optimization can inline the wrapper, and
+  a probe on it then attaches but never fires (`bbd/src/syscalls.rs`).
 - The verifier allows 512 bytes of stack. Assemble large events in a per-CPU
   scratch map (as `file_open` does with `FILE_SCRATCH`), bound every loop, and
   read kernel and user memory only through the probe-read helpers.

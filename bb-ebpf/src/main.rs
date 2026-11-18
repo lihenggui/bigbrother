@@ -18,7 +18,9 @@
 //!
 //! Two groups of programs cooperate:
 //!
-//! * `file_open` — kprobe on `security_file_open(struct file *)`. This is
+//! * `file_open` — kprobe on the `file_open` security hook,
+//!   `selinux_file_open(struct file *)`, or `security_file_open` on a kernel
+//!   without SELinux's hook (the daemon picks the function). This is
 //!   where the kernel has finished resolving the path, so we see the file
 //!   that is really being opened no matter how the app spelled the path
 //!   (`..`, symlinks, `/proc/self/root/...`). It classifies by filesystem and
@@ -39,7 +41,8 @@
 //!
 //! * `enter_ptrace` / `enter_vm_read` / `enter_vm_write` — attempts to trace
 //!   another process or reach into its memory.
-//! * `enter_netlink` — kprobe on `security_netlink_send`, where the kernel
+//! * `enter_netlink` — kprobe on the `netlink_send` security hook
+//!   (`selinux_netlink_send` or `security_netlink_send`), where the kernel
 //!   decides whether a netlink request is allowed: requests for the
 //!   interfaces, addresses, routes, neighbours and sockets of the device.
 //!
@@ -281,7 +284,7 @@ fn leading_number<const N: usize>(bytes: &[u8; N]) -> Option<u32> {
     (i > 0).then_some(value)
 }
 
-// ---- security_file_open -----------------------------------------------------
+// ---- file_open security hook ------------------------------------------------
 
 #[inline(always)]
 unsafe fn read_at<T>(base: *const u8, offset: u32) -> Result<T, i32> {
@@ -976,7 +979,8 @@ pub fn enter_vm_write(ctx: ProbeContext) -> u32 {
 /// 32-bit length.
 const NLMSG_TYPE_OFFSET: u32 = 4;
 
-/// security_netlink_send(struct sock *sk, struct sk_buff *skb)
+/// selinux_netlink_send(struct sock *sk, struct sk_buff *skb), or
+/// security_netlink_send with the same arguments.
 ///
 /// The hook's return value is the verdict: Android's SELinux policy refuses
 /// most of these requests to apps, and the attempt is recorded either way.
@@ -1287,7 +1291,7 @@ fn kill() {
     unsafe { aya_ebpf::helpers::generated::bpf_send_signal(SIGKILL) };
 }
 
-/// Return of any tracked syscall, and of `security_netlink_send`.
+/// Return of any tracked syscall, and of the `netlink_send` security hook.
 #[kretprobe]
 pub fn sys_ret(ctx: RetProbeContext) -> u32 {
     let _ = try_sys_ret(&ctx);

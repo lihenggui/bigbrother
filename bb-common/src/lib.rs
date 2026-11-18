@@ -88,7 +88,7 @@ pub const SELINUX_MAGIC: u32 = 0xf97c_ff8c;
 
 // ---- events -----------------------------------------------------------------
 
-/// A file the kernel actually opened (from `security_file_open`).
+/// A file the kernel actually opened (from the `file_open` security hook).
 pub const EV_FILE: u32 = 1;
 /// Return value of the syscall that produced the preceding `EV_FILE` events
 /// on the same thread.

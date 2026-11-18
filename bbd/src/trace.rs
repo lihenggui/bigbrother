@@ -170,37 +170,41 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         )))
         .context("loading eBPF object (need root and a BPF-enabled kernel)")?;
 
-    let kprobe: &mut KProbe = ebpf
-        .program_mut("file_open")
-        .context("program file_open missing from object")?
-        .try_into()?;
-    kprobe.load().context("verifier rejected file_open")?;
-    kprobe
-        .attach("security_file_open", 0)
-        .context("attaching kprobe security_file_open")?;
-
-    // Syscall probes: one entry program per argument layout plus a shared
-    // return program, attached to each syscall function this kernel has.
     let symbols = syscalls::kernel_symbols().context("reading /proc/kallsyms")?;
     anyhow::ensure!(
         symbols.contains(syscalls::REQUIRED),
         "{} not in /proc/kallsyms (unsupported kernel, or kallsyms restricted)",
         syscalls::REQUIRED
     );
+
+    let kprobe: &mut KProbe = ebpf
+        .program_mut("file_open")
+        .context("program file_open missing from object")?
+        .try_into()?;
+    kprobe.load().context("verifier rejected file_open")?;
+    let selinux = syscalls::selinux_running();
+    let hook = syscalls::file_open_hook(&symbols, selinux);
+    kprobe
+        .attach(hook, 0)
+        .with_context(|| format!("attaching kprobe {hook}"))?;
+    eprintln!("bbd: file_open on {hook}");
+
+    // Syscall probes: one entry program per argument layout plus a shared
+    // return program, attached to each syscall function this kernel has.
     // The return program is shared by every feature that reports outcomes.
     let returns: &mut KProbe = ebpf
         .program_mut("sys_ret")
         .context("program sys_ret missing from object")?
         .try_into()?;
     returns.load().context("verifier rejected sys_ret")?;
-    let mut functions = attach_feature(&mut ebpf, &syscalls::FILES, &symbols, &offsets)
+    let mut functions = attach_feature(&mut ebpf, &syscalls::FILES, &symbols, selinux, &offsets)
         .context("setting up the file probes")?;
 
     // Everything else is recorded where the kernel allows it. A probe that
     // can't be set up costs its own records, not the daemon: what is and
     // isn't covered is stored for `bbd stats` to report.
     for feature in syscalls::FEATURES {
-        let attached = attach_feature(&mut ebpf, feature, &symbols, &offsets);
+        let attached = attach_feature(&mut ebpf, feature, &symbols, selinux, &offsets);
         match &attached {
             Ok(count) => functions += count,
             Err(e) => eprintln!("bbd: warning: not recording {}: {e:#}", feature.name),
@@ -284,7 +288,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     // The sandbox (see `sandbox`). Like the optional probes, it costs only
     // itself where it cannot work: the daemon records regardless.
     let mut sandbox = if opts.sandbox {
-        start_sandbox(&mut ebpf, &symbols, &offsets, &mut tracer, opts.db)
+        start_sandbox(&mut ebpf, &symbols, selinux, &offsets, &mut tracer, opts.db)
     } else {
         None
     };
@@ -501,6 +505,7 @@ async fn next_request(listener: Option<&UnixListener>) -> Option<UnixStream> {
 fn start_sandbox(
     ebpf: &mut aya::Ebpf,
     symbols: &std::collections::HashSet<&'static str>,
+    selinux: bool,
     offsets: &[u32],
     tracer: &mut Tracer,
     db: &Path,
@@ -517,7 +522,7 @@ fn start_sandbox(
     // Attached while no uid is listed for it, so it holds nothing yet. The
     // uids are listed next, and what started in between is ended last
     // (`sweep`): no start falls between the two.
-    let storage = attach_feature(ebpf, &syscalls::GATE, symbols, offsets)
+    let storage = attach_feature(ebpf, &syscalls::GATE, symbols, selinux, offsets)
         .and_then(|_| sandbox::gate::Storage::start(ebpf, &db.with_file_name("scratch")));
     let _ = tracer.writer.set_meta(
         &format!("coverage_{}", syscalls::GATE.name),
@@ -551,6 +556,7 @@ fn attach_feature(
     ebpf: &mut aya::Ebpf,
     feature: &syscalls::Feature,
     symbols: &std::collections::HashSet<&'static str>,
+    selinux: bool,
     offsets: &[u32],
 ) -> anyhow::Result<usize> {
     anyhow::ensure!(
@@ -560,7 +566,7 @@ fn attach_feature(
             .all(|&slot| offsets[slot] != OFF_MISSING),
         "this kernel's type information lacks a field it reads"
     );
-    let plan = syscalls::attach_plan(feature.table, symbols);
+    let plan = syscalls::attach_plan(feature, symbols, selinux);
     anyhow::ensure!(
         !plan.is_empty(),
         "this kernel has none of the functions it attaches to"
@@ -601,6 +607,12 @@ fn attach_feature(
             }
         }
         return Err(e);
+    }
+    // Which of the alternatives was taken depends on the kernel.
+    if feature.alternatives {
+        for (_, function) in &plan {
+            eprintln!("bbd: {} on {function}", feature.name);
+        }
     }
     Ok(plan.len())
 }
