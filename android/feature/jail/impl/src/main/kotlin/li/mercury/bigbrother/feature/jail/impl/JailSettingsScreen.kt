@@ -30,7 +30,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ErrorOutline
-import androidx.compose.material.icons.outlined.LockOpen
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
@@ -62,6 +61,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
 import li.mercury.bigbrother.core.designsystem.component.ShapedIcon
+import li.mercury.bigbrother.core.designsystem.icon.CageIcons
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxStatus
@@ -193,7 +193,7 @@ internal fun JailSettingsScreen(
                             onClick = { confirming = true },
                             index = 1,
                             count = 2,
-                            leading = { ShapedIcon(Icons.Outlined.LockOpen) },
+                            leading = { ShapedIcon(CageIcons.Open) },
                         )
                     }
                 }
