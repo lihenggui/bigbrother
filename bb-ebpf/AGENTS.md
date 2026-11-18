@@ -56,7 +56,10 @@ These programs run on every file open and many system calls of every process.
 
 ## Testing
 
-The programs cannot be unit tested. Load them on a device or emulator: build
+The programs cannot be unit tested. `scripts/check-kernels.sh` loads them
+on the kernel of each supported Android release in QEMU and checks that
+every probe fires; CI runs it on each change here. Then load them on a
+device or emulator: build
 with `./scripts/build.sh`, install the package, and open the app, which
 replaces the module with its own copy when the daemon differs. Then check that
 records arrive (`scripts/check-canary.sh` covers every kind), and that the

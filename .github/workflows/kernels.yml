@@ -1,0 +1,84 @@
+name: Kernels
+
+# Boots Android's kernels in QEMU and runs `bbd selftest` on each
+# (scripts/check-kernels.sh): whether the eBPF programs load, attach and
+# fire is up to the kernel, which the other checks do not have.
+#
+# On every push that changes them, to any branch, so that a branch is
+# checked before there is a pull request; and on pull requests from forks,
+# whose pushes run elsewhere.
+on:
+  push:
+    paths: &paths
+      - bb-ebpf/**
+      - bb-common/**
+      - bbd/**
+      - Cargo.lock
+      - Cargo.toml
+      - scripts/check-kernels.sh
+      - .github/workflows/kernels.yml
+  pull_request:
+    paths: *paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kernels-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    name: Self-test on each kernel
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+
+      # The runners have KVM, but only root may open it.
+      - name: Let the job use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+            sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install QEMU, busybox and musl
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends qemu-system-x86 busybox-static musl-tools
+          rustup target add x86_64-unknown-linux-musl
+
+      # The kernels are pinned by hash in the script's KERNELS list, so that
+      # list names the cache.
+      - name: Name the kernel cache
+        id: kernels
+        run: |
+          list="$(sed -n '/^KERNELS=(/,/^)/p' scripts/check-kernels.sh | sha256sum | cut -c1-16)"
+          echo "key=kernels-$list" >>"$GITHUB_OUTPUT"
+
+      - name: Restore the kernels
+        id: restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/big_brother/kernels
+          key: ${{ steps.kernels.outputs.key }}
+
+      - name: Run the self-test on each kernel
+        run: ./scripts/check-kernels.sh
+
+      # Also when a kernel fails: the downloads are as good either way.
+      - name: Save the kernels
+        if: always() && steps.restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/big_brother/kernels
+          key: ${{ steps.kernels.outputs.key }}
