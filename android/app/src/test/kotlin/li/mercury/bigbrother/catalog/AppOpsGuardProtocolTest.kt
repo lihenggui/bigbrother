@@ -30,17 +30,11 @@ class AppOpsGuardProtocolTest {
     }
 
     @Test
-    fun givenSetOrVerifyLine_whenParsed_thenCommandForUid() {
-        assertEquals(Command.Set(10123), AppOpsGuardProtocol.parseCommand("set 10123"))
-        assertEquals(Command.Verify(10123), AppOpsGuardProtocol.parseCommand("verify 10123"))
-        assertEquals(Command.Set(10123), AppOpsGuardProtocol.parseCommand("  set\t10123 \n"))
-    }
-
-    @Test
-    fun givenSetOrVerifyLineWithTargets_whenParsed_thenTargetsByOp() {
+    fun givenSetOrVerifyLine_whenParsed_thenTargetsByOp() {
         val targets = mapOf("android:camera" to 1, "android:read_contacts" to 2)
         assertEquals(Command.Set(10123, targets), AppOpsGuardProtocol.parseCommand("set 10123 android:camera=1,android:read_contacts=2"))
         assertEquals(Command.Verify(10123, targets), AppOpsGuardProtocol.parseCommand("verify 10123 android:camera=1,android:read_contacts=2"))
+        assertEquals(Command.Set(10123, mapOf("android:camera" to 1)), AppOpsGuardProtocol.parseCommand("  set\t10123 android:camera=1 \n"))
     }
 
     @Test
@@ -69,6 +63,8 @@ class AppOpsGuardProtocolTest {
             "set",
             "set abc",
             "set -1",
+            "set 10123",
+            "verify 10123",
             "set 10123 extra",
             "verify 10123 extra",
             "set 10123 android:camera=0",

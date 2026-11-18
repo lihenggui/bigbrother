@@ -130,11 +130,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     }
 
     let writer = Writer::open(opts.db)?;
-    // Besides expiring old rows, drop what earlier versions recorded but the
-    // current rules exclude.
-    let pruned = writer.prune(opts.retention_days, now())?
-        + writer.delete_packages(spool::PROVIDER_PACKAGES)?
-        + writer.delete_untopical()?;
+    let pruned = writer.prune(opts.retention_days, now())?;
     // Sensors the previous run saw turned on and not off. When it was last
     // up: when it stopped or, if it did not get to say so, last wrote.
     let mut sensors = sensors::Sensors::new(sensors::dumpsys);

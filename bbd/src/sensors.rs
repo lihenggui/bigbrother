@@ -27,7 +27,7 @@
 //!   [`HIGH_RATE_PERIOD_NS`]). `<type>` is the sensor type's name, such as
 //!   `android.sensor.accelerometer`. A sensor that could not be identified
 //!   has no `@<type>`. The `@` keeps the type from being read as the
-//!   `#<package>` of other calls, which older apps would count as apps;
+//!   `#<package>` of other calls, which the app reads as another app;
 //! - each period a sensor was on, as a session (`store::SensorSession`):
 //!   from the call that turned it on to the one that turned it off, the
 //!   connection closing, or the app's process ending.

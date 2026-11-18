@@ -22,9 +22,7 @@
 //!   app the hook answers for, and for one that has only one of the hook's
 //!   items on (`device_ids`, `installed_apps`), an `items <uid> <item>`
 //!   line naming it. The hook reads the list again when it changes, so an
-//!   app enters and leaves the sandbox without a restart of the system. A
-//!   hook from before the items line skips it, and answers for the uid in
-//!   both ways.
+//!   app enters and leaves the sandbox without a restart of the system.
 //! - The status, written by the hook when system_server starts: which of
 //!   its hooks are in place, and the boot it wrote that in.
 //!

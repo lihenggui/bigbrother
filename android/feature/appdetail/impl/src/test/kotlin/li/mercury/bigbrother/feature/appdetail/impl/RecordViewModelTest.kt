@@ -47,7 +47,7 @@ class RecordViewModelTest {
         start = 100,
         end = 200,
     )
-    private val period = AccessPeriod(Action.CALL, viaProvider = false, allowed = 1, denied = 0, firstSeen = 100, lastSeen = 100)
+    private val period = AccessPeriod(Action.CALL, viaProvider = false, allowed = 1, denied = 0, time = 100)
     private val accessRepository = TestAccessRepository(
         accesses = listOf(
             call("binder:android.gui.SensorEventConnection/enableDisable@android.sensor.accelerometer", "sensors"),
@@ -89,8 +89,8 @@ class RecordViewModelTest {
     }
 
     @Test
-    fun givenModuleWithoutSessions_whenSensorRecordLoaded_thenSessionsLeftOutAndHistoryShown() = runTest {
-        accessRepository.sensorSessionsFailure = RecordsException.ModuleOutdated()
+    fun givenSessionsNotRead_whenSensorRecordLoaded_thenSessionsLeftOutAndHistoryShown() = runTest {
+        accessRepository.sensorSessionsFailure = RecordsException.CommandFailed("failed")
         val viewModel = viewModel("sensors")
         advanceUntilIdle()
 

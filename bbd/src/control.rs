@@ -17,15 +17,14 @@
 //! The daemon holds what it records for a while before writing it, so a
 //! query first asks it to write, over a Unix socket next to the database.
 //! The daemon takes in what the kernel and the hook have for it, writes, and
-//! answers with one byte. A daemon that is not there, or is too old to have
-//! the socket, is not waited for, and one that does not answer in time is
-//! waited for only that long: the query then reads what has been written.
+//! answers with one byte. A daemon that is not there is not waited for, and
+//! one that does not answer in time is waited for only that long: the query
+//! then reads what has been written.
 //!
 //! Commands that change what the daemon does (the sandbox) go over a second
 //! socket, `bbd.ctl`, as one line of JSON each way. It is separate so that
-//! the flush socket keeps its one-byte protocol, which apps and daemons of
-//! every version rely on: a client that sends nothing there still gets its
-//! byte.
+//! the flush socket keeps its one-byte protocol: a client that sends nothing
+//! there still gets its byte.
 
 use std::{
     collections::BTreeMap,
@@ -161,8 +160,7 @@ pub fn answer(stream: &UnixStream) {
 
 // ---- commands --------------------------------------------------------------
 
-/// A command, as sent over `bbd.ctl`: `{"cmd":"sandbox.enable",...}`. Fields
-/// a daemon does not know are ignored, so that a newer client can add some.
+/// A command, as sent over `bbd.ctl`: `{"cmd":"sandbox.enable",...}`.
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "cmd")]
 // Named after their `cmd`; commands of other kinds will follow.
@@ -354,9 +352,6 @@ pub fn command(db: &Path, request: &Request) -> anyhow::Result<serde_json::Value
             anyhow::bail!("not allowed to reach the daemon; run as root")
         }
         // No socket, or one left by a daemon that has gone.
-        Err(_) if daemon_running(db) => {
-            anyhow::bail!("the running daemon does not take commands; update the module")
-        }
         Err(_) => anyhow::bail!("the daemon is not running"),
     };
     stream.set_read_timeout(Some(COMMAND_WAIT))?;
@@ -601,7 +596,7 @@ mod tests {
             })
         );
         assert_eq!(
-            Request::parse(r#"{"cmd":"sandbox.disable","package":"p","user":10,"new":1}"#),
+            Request::parse(r#"{"cmd":"sandbox.disable","package":"p","user":10}"#),
             Ok(Request::SandboxDisable {
                 package: "p".into(),
                 user: 10

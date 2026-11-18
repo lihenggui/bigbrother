@@ -109,7 +109,6 @@
     <!-- File details: opens the file in a viewer app. -->
     <string name="open_file">Open</string>
     <!-- Several accesses within an hour: first time, then the last. -->
-    <string name="time_span">%1$s – %2$s</string>
     <string name="show_all_details">Show all %d</string>
     <!-- How many other apps an app asked the system about. -->
     <plurals name="apps_asked">

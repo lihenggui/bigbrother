@@ -208,19 +208,17 @@ data class Access(
 )
 
 /**
- * One entry in a path's history. Normally a single access, with [firstSeen]
- * equal to [lastSeen]; accesses within the same second are counted together.
- * Records made before individual accesses were kept cover an hour, of which
- * only the first and last time are known.
+ * One entry in a path's history: an access, or several within the same
+ * second, which are counted together.
  */
 data class AccessPeriod(
     val action: Action,
     val viaProvider: Boolean,
     val allowed: Int,
     val denied: Int,
-    val firstSeen: Long,
-    val lastSeen: Long,
-    /** The record it is of; null when an older module merged the histories of several without saying. */
+    /** When, as Unix time. */
+    val time: Long,
+    /** The record it is of, among those whose histories were read together. */
     val subject: String? = null,
 )
 
@@ -254,7 +252,7 @@ data class TimelineEntry(
     /**
      * Each record of the entry, for the kinds whose records differ in what
      * they say (the clipboard read or written, which sensor). Empty for the
-     * other kinds, and from a daemon that does not report them.
+     * other kinds.
      */
     val subjects: List<SubjectCount> = emptyList(),
 ) {

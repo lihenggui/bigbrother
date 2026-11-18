@@ -99,8 +99,8 @@ impl Category {
     }
 }
 
-/// Schema version stored in SQLite's `user_version`. Bump it and add a step
-/// to `MIGRATIONS` whenever the schema changes.
+/// Schema version stored in SQLite's `user_version`. A database at any
+/// other version is refused: bump it whenever `SCHEMA` changes.
 const SCHEMA_VERSION: i32 = 6;
 
 /// Most entries returned for one path's history.
@@ -126,51 +126,58 @@ const NOT_FILE_OPEN: Mode = MODE_DIR | MODE_PROBE | MODE_WATCH;
 /// Mode bits of accesses that opened a file.
 const FILE_OPEN: Mode = MODE_READ | MODE_WRITE;
 
-/// `MIGRATIONS[n]` upgrades a database from version `n + 1` to `n + 2`.
-const MIGRATIONS: &[&str] = &[
-    // 1 -> 2: number of entries a provider query returned.
-    "ALTER TABLE access ADD COLUMN items INTEGER NOT NULL DEFAULT 0;",
-    // 2 -> 3: individual accesses, next to the hourly aggregates.
-    EVENT_SCHEMA,
-    // 3 -> 4: periods sensors were on.
-    SENSOR_SCHEMA,
-    // 4 -> 5: apps the user put in the sandbox.
-    SANDBOX_SCHEMA,
-    // 5 -> 6: what the sandbox does to each app, item by item.
-    SANDBOX_SETTINGS_SCHEMA,
-];
-
-/// Apps the user put in the sandbox (see `sandbox`). The sandbox applies to
-/// a uid, not a package: every package sharing the uid is in it. A disabled
-/// entry is kept rather than deleted, so that the app gets the same
-/// identity back when it is enabled again.
-const SANDBOX_SCHEMA: &str = "
-CREATE TABLE IF NOT EXISTS sandbox (
-    uid        INTEGER PRIMARY KEY,   -- user * 100000 + app id
-    package    TEXT    NOT NULL,      -- the package the user named, for display only
-    enabled    INTEGER NOT NULL,
-    android_id TEXT    NOT NULL,      -- 16 hex digits, drawn on the first enable
-    saved_ops  TEXT    NOT NULL,      -- the uid's app-op modes before it was enabled,
-                                      -- 'op=mode,...', restored when it is disabled
-    created    INTEGER NOT NULL
+/// The schema at `SCHEMA_VERSION`, created in a new database.
+///
+/// `access` answers "what did this app touch" cheaply, an hour at a time;
+/// `event` answers "when exactly": a row is one second in which an app
+/// touched a path in one way, and several accesses within the same second
+/// share it and are counted. Paths of events are stored once, in `path`, and
+/// referenced by id, since the same path recurs in many rows.
+///
+/// A `sensor_session` row is one period during which an app had a sensor on:
+/// one sensor on one connection of one process, at one rate (see `sensors`).
+///
+/// `sandbox` holds the apps the user put in the sandbox (see `sandbox`). It
+/// applies to a uid, not a package: every package sharing the uid is in it.
+/// A disabled entry is kept rather than deleted, so that the app gets the
+/// same identity back when it is enabled again. Its `settings` are the items
+/// the app has a mode of its own for; `sandbox_global` holds the settings
+/// every other item follows (see `sandbox::items`). An item named in neither
+/// is on.
+const SCHEMA: &str = "
+CREATE TABLE access (
+    hour     INTEGER NOT NULL,   -- unix time / 3600
+    uid      INTEGER NOT NULL,
+    pkg      TEXT    NOT NULL,   -- package name at record time ('' if unknown)
+    cat      TEXT    NOT NULL,   -- Category::as_str()
+    path     TEXT    NOT NULL,   -- what was accessed: a canonical path, a content
+                                 -- URI, 'net://...' or 'exec:...', by category
+    mode     INTEGER NOT NULL,   -- MODE_* bits
+    ok       INTEGER NOT NULL,   -- opens that succeeded
+    fail     INTEGER NOT NULL,   -- opens that failed (denied, missing...)
+    first_ts INTEGER NOT NULL,
+    last_ts  INTEGER NOT NULL,
+    items    INTEGER NOT NULL,   -- most entries one provider query returned
+    PRIMARY KEY (hour, uid, path, mode)
 ) WITHOUT ROWID;
-";
-
-/// What the sandbox does to apps, item by item (see `sandbox::items`): the
-/// items an app has a mode of its own for, in its row, and the global
-/// settings every other item follows. An item named in neither is on.
-const SANDBOX_SETTINGS_SCHEMA: &str = "
-ALTER TABLE sandbox ADD COLUMN settings TEXT NOT NULL DEFAULT '';  -- 'item=mode,...'
-CREATE TABLE IF NOT EXISTS sandbox_global (
-    item TEXT PRIMARY KEY,
-    mode TEXT NOT NULL
+CREATE INDEX access_uid_last ON access (uid, last_ts);
+CREATE INDEX access_last ON access (last_ts);
+CREATE TABLE meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL) WITHOUT ROWID;
+CREATE TABLE path (
+    id   INTEGER PRIMARY KEY,
+    path TEXT NOT NULL UNIQUE
+);
+CREATE TABLE event (
+    uid     INTEGER NOT NULL,
+    path_id INTEGER NOT NULL REFERENCES path (id),
+    mode    INTEGER NOT NULL,   -- MODE_* bits
+    ts      INTEGER NOT NULL,   -- unix time
+    ok      INTEGER NOT NULL,
+    fail    INTEGER NOT NULL,
+    PRIMARY KEY (uid, path_id, mode, ts)
 ) WITHOUT ROWID;
-";
-
-/// Periods during which an app had a sensor on (see `sensors`). A row is one
-/// sensor on one connection of one process, at one rate.
-const SENSOR_SCHEMA: &str = "
-CREATE TABLE IF NOT EXISTS sensor_session (
+CREATE INDEX event_ts ON event (ts);
+CREATE TABLE sensor_session (
     uid        INTEGER NOT NULL,
     pid        INTEGER NOT NULL,
     proc_start INTEGER NOT NULL,  -- the process's start, in clock ticks after boot:
@@ -185,51 +192,21 @@ CREATE TABLE IF NOT EXISTS sensor_session (
     end_ts     INTEGER,           -- NULL while it is on
     PRIMARY KEY (uid, pid, connection, handle, start_ts)
 ) WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS sensor_session_end ON sensor_session (end_ts);
-";
-
-/// Individual accesses. `access` answers "what did this app touch" cheaply;
-/// `event` answers "when exactly". A row is one second in which an app
-/// touched a path in one way; several accesses within the same second share
-/// it and are counted. Paths are stored once, in `path`, and referenced by
-/// id, since the same path recurs in many rows.
-const EVENT_SCHEMA: &str = "
-CREATE TABLE IF NOT EXISTS path (
-    id   INTEGER PRIMARY KEY,
-    path TEXT NOT NULL UNIQUE
-);
-CREATE TABLE IF NOT EXISTS event (
-    uid     INTEGER NOT NULL,
-    path_id INTEGER NOT NULL REFERENCES path (id),
-    mode    INTEGER NOT NULL,   -- MODE_* bits
-    ts      INTEGER NOT NULL,   -- unix time
-    ok      INTEGER NOT NULL,
-    fail    INTEGER NOT NULL,
-    PRIMARY KEY (uid, path_id, mode, ts)
+CREATE INDEX sensor_session_end ON sensor_session (end_ts);
+CREATE TABLE sandbox (
+    uid        INTEGER PRIMARY KEY,   -- user * 100000 + app id
+    package    TEXT    NOT NULL,      -- the package the user named, for display only
+    enabled    INTEGER NOT NULL,
+    android_id TEXT    NOT NULL,      -- 16 hex digits, drawn on the first enable
+    saved_ops  TEXT    NOT NULL,      -- the uid's app-op modes before it was enabled,
+                                      -- 'op=mode,...', restored when it is disabled
+    created    INTEGER NOT NULL,
+    settings   TEXT    NOT NULL       -- 'item=mode,...'
 ) WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS event_ts ON event (ts);
-";
-
-/// The schema at `SCHEMA_VERSION`, for new databases.
-const SCHEMA: &str = "
-CREATE TABLE IF NOT EXISTS access (
-    hour     INTEGER NOT NULL,   -- unix time / 3600
-    uid      INTEGER NOT NULL,
-    pkg      TEXT    NOT NULL,   -- package name at record time ('' if unknown)
-    cat      TEXT    NOT NULL,   -- Category::as_str()
-    path     TEXT    NOT NULL,   -- what was accessed: a canonical path, a content
-                                 -- URI, 'net://...' or 'exec:...', by category
-    mode     INTEGER NOT NULL,   -- MODE_* bits
-    ok       INTEGER NOT NULL,   -- opens that succeeded
-    fail     INTEGER NOT NULL,   -- opens that failed (denied, missing...)
-    first_ts INTEGER NOT NULL,
-    last_ts  INTEGER NOT NULL,
-    items    INTEGER NOT NULL DEFAULT 0,  -- most entries one provider query returned
-    PRIMARY KEY (hour, uid, path, mode)
+CREATE TABLE sandbox_global (
+    item TEXT PRIMARY KEY,
+    mode TEXT NOT NULL
 ) WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS access_uid_last ON access (uid, last_ts);
-CREATE INDEX IF NOT EXISTS access_last ON access (last_ts);
-CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL) WITHOUT ROWID;
 ";
 
 #[derive(Hash, PartialEq, Eq)]
@@ -287,11 +264,6 @@ struct EventKey {
     ts: i64,
 }
 
-/// The oldest `last_flush` a query may find. Apps from before `bbd stats`
-/// reported whether the daemon runs take a `last_flush` older than 30 s to
-/// mean that it does not.
-const LAST_FLUSH_MAX_AGE: i64 = 10;
-
 pub struct Writer {
     conn: Connection,
     pending: HashMap<Key, Agg>,
@@ -299,8 +271,8 @@ pub struct Writer {
     events: HashMap<EventKey, (u32, u32)>,
     /// Sensor sessions started, changed or ended, not yet written.
     sessions: Vec<SensorSession>,
-    /// The counters last written, and when.
-    written: Option<(Counters, i64)>,
+    /// The counters last written.
+    written: Option<Counters>,
 }
 
 impl Writer {
@@ -313,7 +285,7 @@ impl Writer {
         // WAL lets `bbd` query commands read while the daemon writes.
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
-        migrate(&mut conn)?;
+        create_schema(&mut conn)?;
         Ok(Self {
             conn,
             pending: HashMap::new(),
@@ -431,13 +403,9 @@ impl Writer {
     }
 
     /// Flush for a query that is about to read: the counters are written
-    /// too if they changed, and `last_flush` if it is getting old.
+    /// too if they changed.
     pub fn flush_for_query(&mut self, counters: &Counters, now: i64) -> anyhow::Result<()> {
-        let current = self
-            .written
-            .as_ref()
-            .is_some_and(|(written, at)| written == counters && now - at < LAST_FLUSH_MAX_AGE);
-        if current && !self.has_rows() {
+        if self.written.as_ref() == Some(counters) && !self.has_rows() {
             return Ok(());
         }
         self.write(counters, now)
@@ -542,7 +510,7 @@ impl Writer {
         self.pending.clear();
         self.events.clear();
         self.sessions.clear();
-        self.written = Some((counters.clone(), now));
+        self.written = Some(counters.clone());
         Ok(())
     }
 
@@ -553,56 +521,6 @@ impl Writer {
             params![key, value],
         )?;
         Ok(())
-    }
-
-    /// Delete every row recorded for the given packages. Returns the number
-    /// removed. Used to drop records that an earlier version kept but the
-    /// current rules exclude.
-    pub fn delete_packages(&self, packages: &[&str]) -> anyhow::Result<usize> {
-        let mut removed = 0;
-        for package in packages {
-            self.conn.execute(
-                "DELETE FROM event WHERE uid IN (SELECT uid FROM access WHERE pkg = ?1)",
-                params![package],
-            )?;
-            self.conn.execute(
-                "DELETE FROM sensor_session WHERE uid IN (SELECT uid FROM access WHERE pkg = ?1)",
-                params![package],
-            )?;
-            removed += self
-                .conn
-                .execute("DELETE FROM access WHERE pkg = ?1", params![package])?;
-        }
-        Ok(removed)
-    }
-
-    /// Delete device, system and process rows whose path the current rules no
-    /// longer consider worth recording. Returns the number removed.
-    pub fn delete_untopical(&self) -> anyhow::Result<usize> {
-        let stale: Vec<String> = self
-            .conn
-            .prepare(
-                "SELECT DISTINCT path FROM access WHERE cat IN ('device', 'system', 'process')",
-            )?
-            .query_map([], |r| r.get::<_, String>(0))?
-            .filter_map(Result::ok)
-            .filter(|path| crate::rules::topic_of(path).is_none())
-            .collect();
-        let mut removed = 0;
-        for path in &stale {
-            removed += self.conn.execute(
-                "DELETE FROM access WHERE path = ?1 AND cat IN ('device', 'system', 'process')",
-                params![path],
-            )?;
-        }
-        for path in &stale {
-            self.conn.execute(
-                "DELETE FROM event WHERE path_id IN (SELECT id FROM path WHERE path = ?1)",
-                params![path],
-            )?;
-        }
-        self.delete_unused_paths()?;
-        Ok(removed)
     }
 
     /// Delete rows older than `days`. Returns the number removed.
@@ -756,38 +674,26 @@ fn sandbox_entry(r: &rusqlite::Row<'_>) -> rusqlite::Result<SandboxEntry> {
     })
 }
 
-/// Bring the database to `SCHEMA_VERSION`: create it if new, otherwise apply
-/// the migration steps it is missing. Refuses a database written by a newer
-/// build rather than guess at its layout.
-fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
-    // One transaction for the schema change and the version that records it:
-    // if the process dies half way, neither is applied and the next start
-    // repeats the whole step.
+/// Create the schema in a new database. A database at any other version
+/// than `SCHEMA_VERSION` is refused: it is not upgraded or replaced.
+fn create_schema(conn: &mut Connection) -> anyhow::Result<()> {
+    // One transaction for the tables and the version that records them: if
+    // the process dies half way, the next start finds an empty database.
     let conn = conn.transaction()?;
     let has_tables: bool = conn.query_row(
-        "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE name = 'access')",
+        "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table')",
         [],
         |r| r.get(0),
     )?;
-    let mut version: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-    if !has_tables {
-        conn.execute_batch(SCHEMA)?;
-        conn.execute_batch(EVENT_SCHEMA)?;
-        conn.execute_batch(SENSOR_SCHEMA)?;
-        conn.execute_batch(SANDBOX_SCHEMA)?;
-        conn.execute_batch(SANDBOX_SETTINGS_SCHEMA)?;
-        version = SCHEMA_VERSION;
-    } else if version == 0 {
-        // Databases created before versioning existed have the first layout.
-        version = 1;
+    if has_tables {
+        let version: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+        anyhow::ensure!(
+            version == SCHEMA_VERSION,
+            "database is version {version}, this build reads version {SCHEMA_VERSION}"
+        );
+        return Ok(());
     }
-    anyhow::ensure!(
-        version <= SCHEMA_VERSION,
-        "database is version {version}, newer than this build supports ({SCHEMA_VERSION})"
-    );
-    for step in &MIGRATIONS[(version - 1) as usize..] {
-        conn.execute_batch(step)?;
-    }
+    conn.execute_batch(SCHEMA)?;
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     conn.commit()?;
     Ok(())
@@ -861,14 +767,10 @@ pub struct FileRow {
     pub topic: Option<&'static str>,
 }
 
-/// One entry in a path's history: an access (or several in the same second),
-/// or, for records made before individual accesses were kept, an hour's worth
-/// of them with only the first and last time known.
+/// One entry in a path's history: an access, or several in the same second.
 #[derive(Serialize)]
 pub struct HistoryRow {
-    pub first_ts: i64,
-    /// Equal to `first_ts` for an individual access.
-    pub last_ts: i64,
+    pub ts: i64,
     pub mode: Mode,
     pub ok: i64,
     pub fail: i64,
@@ -1158,50 +1060,24 @@ impl Reader {
     }
 
     /// When one app touched one path, most recent first.
-    ///
-    /// Individual accesses come first. Hours recorded before those were kept
-    /// only have aggregates, which follow as one entry per hour and mode.
     pub fn history(&self, uid: u32, path: &str, since: i64) -> anyhow::Result<Vec<HistoryRow>> {
         let mut stmt = self.conn.prepare(
-            "SELECT e.ts, e.ts, e.mode, e.ok, e.fail
+            "SELECT e.ts, e.mode, e.ok, e.fail
              FROM event e JOIN path p ON p.id = e.path_id
              WHERE e.uid = ?1 AND p.path = ?2 AND e.ts >= ?3
              ORDER BY e.ts DESC, e.mode
              LIMIT ?4",
         )?;
-        let to_row = |r: &rusqlite::Row<'_>| {
+        let rows = stmt.query_map(params![uid, path, since, HISTORY_LIMIT], |r| {
             Ok(HistoryRow {
-                first_ts: r.get(0)?,
-                last_ts: r.get(1)?,
-                mode: r.get(2)?,
-                ok: r.get(3)?,
-                fail: r.get(4)?,
+                ts: r.get(0)?,
+                mode: r.get(1)?,
+                ok: r.get(2)?,
+                fail: r.get(3)?,
                 path: None,
             })
-        };
-        let mut rows: Vec<HistoryRow> = stmt
-            .query_map(params![uid, path, since, HISTORY_LIMIT], to_row)?
-            .collect::<Result<_, _>>()?;
-
-        // Aggregates for the hours before the first individual access. The
-        // hour that access falls in is covered by the events.
-        let first_event_hour = rows.last().map_or(i64::MAX, |row| row.first_ts / 3600);
-        let mut stmt = self.conn.prepare(
-            "SELECT first_ts, last_ts, mode, ok, fail
-             FROM access
-             WHERE uid = ?1 AND path = ?2 AND last_ts >= ?3 AND hour < ?4
-             ORDER BY hour DESC, mode
-             LIMIT ?5",
-        )?;
-        let remaining = HISTORY_LIMIT.saturating_sub(rows.len() as u32);
-        let older = stmt.query_map(
-            params![uid, path, since, first_event_hour, remaining],
-            to_row,
-        )?;
-        for row in older {
-            rows.push(row?);
-        }
-        Ok(rows)
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
     }
 
     /// The histories of several paths of one app, merged, most recent first.
@@ -1223,11 +1099,7 @@ impl Reader {
                     }),
             );
         }
-        rows.sort_by(|a, b| {
-            b.last_ts
-                .cmp(&a.last_ts)
-                .then_with(|| b.first_ts.cmp(&a.first_ts))
-        });
+        rows.sort_by_key(|row| std::cmp::Reverse(row.ts));
         rows.truncate(HISTORY_LIMIT as usize);
         Ok(rows)
     }
@@ -1574,10 +1446,9 @@ mod tests {
 
         // Every access to the photo, most recent first.
         let history = r.history(10100, &photo, 0).unwrap();
-        assert_eq!(history[0].first_ts, t + 3600);
-        assert_eq!(history.last().unwrap().first_ts, t);
-        assert!(history.iter().all(|h| h.first_ts == h.last_ts));
-        assert!(history.windows(2).all(|w| w[0].first_ts >= w[1].first_ts));
+        assert_eq!(history[0].ts, t + 3600);
+        assert_eq!(history.last().unwrap().ts, t);
+        assert!(history.windows(2).all(|w| w[0].ts >= w[1].ts));
         let total = |f: fn(&HistoryRow) -> i64| history.iter().map(f).sum::<i64>();
         assert_eq!((total(|h| h.ok), total(|h| h.fail)), (4, 1));
         assert_eq!(r.history(10100, &photo, t + 3600).unwrap().len(), 1);
@@ -1588,22 +1459,7 @@ mod tests {
         assert_eq!(stats.meta["events_seen"], 10);
         assert_eq!(stats.meta["events_dropped"], 2);
 
-        assert_eq!(w.delete_packages(&["com.b", "com.none"]).unwrap(), 1);
-        // A path the rules don't (or no longer) record is dropped; others stay.
-        w.record(
-            10100,
-            "com.a",
-            Category::System,
-            "/proc/meminfo".into(),
-            MODE_READ,
-            true,
-            t,
-            0,
-        );
-        w.flush(&Counters::default(), t).unwrap();
-        assert_eq!(w.delete_untopical().unwrap(), 1);
-        assert_eq!(w.delete_untopical().unwrap(), 0);
-        assert_eq!(w.prune(1, t + 3 * 86_400).unwrap(), 3);
+        assert_eq!(w.prune(1, t + 3 * 86_400).unwrap(), 4);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1682,11 +1538,9 @@ mod tests {
         w.flush(&Counters::default(), t + 31).unwrap();
         assert_eq!(last_flush(), Some(t + 1));
 
-        // A query finds `last_flush` recent, and the counters current.
+        // A query writes only counters that changed.
         w.flush_for_query(&Counters::default(), t + 32).unwrap();
-        assert_eq!(last_flush(), Some(t + 32));
-        w.flush_for_query(&Counters::default(), t + 33).unwrap();
-        assert_eq!(last_flush(), Some(t + 32));
+        assert_eq!(last_flush(), Some(t + 1));
         let counters = Counters {
             seen: 1,
             ..Counters::default()
@@ -1871,157 +1725,45 @@ mod tests {
         let su = commands.iter().find(|c| c.path == "exec:su").unwrap();
         assert_eq!((su.mode, su.ok, su.fail), (MODE_EXEC, 0, 1));
         assert_eq!(su.topic, Some("root_check"));
-        // The cleanup of records the rules no longer keep leaves them alone.
-        assert_eq!(w.delete_untopical().unwrap(), 0);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
-    fn upgrades_a_version_1_database() {
-        let dir = std::env::temp_dir().join(format!("bbd-test-migrate-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let db = dir.join("bb.db");
-        {
-            // The layout before versioning: no `items` column, user_version 0.
-            let conn = Connection::open(&db).unwrap();
-            conn.execute_batch(
-                "CREATE TABLE access (
-                     hour INTEGER NOT NULL, uid INTEGER NOT NULL, pkg TEXT NOT NULL,
-                     cat TEXT NOT NULL, path TEXT NOT NULL, mode INTEGER NOT NULL,
-                     ok INTEGER NOT NULL, fail INTEGER NOT NULL,
-                     first_ts INTEGER NOT NULL, last_ts INTEGER NOT NULL,
-                     PRIMARY KEY (hour, uid, path, mode)) WITHOUT ROWID;
-                 CREATE TABLE meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL) WITHOUT ROWID;
-                 INSERT INTO access VALUES (1, 10100, 'com.a', 'system', '/proc/cpuinfo', 1, 2, 0, 3600, 3700);",
-            )
-            .unwrap();
-        }
-        // Opening migrates in place and keeps the existing rows.
-        drop(Writer::open(&db).unwrap());
-        let r = Reader::open(&db).unwrap();
-        let files = r.files(&[], &[], None, None, 0, 10, 0).unwrap();
-        assert_eq!((files.len(), files[0].ok, files[0].items), (1, 2, 0));
-        // Records from before individual accesses were kept show up in the
-        // history as the hour they were aggregated into.
-        let history = r.history(10100, "/proc/cpuinfo", 0).unwrap();
-        assert_eq!(history.len(), 1);
-        assert_eq!(
-            (history[0].first_ts, history[0].last_ts, history[0].ok),
-            (3600, 3700, 2)
-        );
-        drop(r);
-        // Opening again is a no-op.
-        drop(Writer::open(&db).unwrap());
-
-        // A database from a newer build is refused, not misread.
-        Connection::open(&db)
-            .unwrap()
-            .pragma_update(None, "user_version", 99)
-            .unwrap();
-        assert!(Writer::open(&db).is_err());
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-    #[test]
-    fn upgrades_a_version_3_database() {
-        let dir = std::env::temp_dir().join(format!("bbd-test-migrate-3-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let db = dir.join("bb.db");
-        {
-            // Version 3: hourly aggregates and individual accesses, no sensor
-            // sessions.
-            let conn = Connection::open(&db).unwrap();
-            conn.execute_batch(SCHEMA).unwrap();
-            conn.execute_batch(EVENT_SCHEMA).unwrap();
-            conn.execute_batch(
-                "INSERT INTO access VALUES (1, 10100, 'com.a', 'service',
-                     'binder:android.gui.SensorServer/createSensorEventConnection', 512, 2, 0,
-                     3600, 3700, 0);",
-            )
-            .unwrap();
-            conn.pragma_update(None, "user_version", 3).unwrap();
-        }
-        let mut w = Writer::open(&db).unwrap();
-        let version: i32 = w
-            .conn
-            .pragma_query_value(None, "user_version", |r| r.get(0))
-            .unwrap();
-        assert_eq!(version, SCHEMA_VERSION);
-        // The old rows are kept, and sessions can be written.
-        w.sensor_session(session(1000, None));
-        w.flush(&Counters::default(), 1100).unwrap();
-        drop(w);
-        let r = Reader::open(&db).unwrap();
-        assert_eq!(r.files(&[], &[], None, None, 0, 10, 0).unwrap().len(), 1);
-        assert_eq!(r.sensor_sessions(10100, 0).unwrap().len(), 1);
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn upgrades_a_version_4_database() {
-        let dir = std::env::temp_dir().join(format!("bbd-test-migrate-4-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let db = dir.join("bb.db");
-        {
-            // Version 4: everything but the sandbox.
-            let conn = Connection::open(&db).unwrap();
-            conn.execute_batch(SCHEMA).unwrap();
-            conn.execute_batch(EVENT_SCHEMA).unwrap();
-            conn.execute_batch(SENSOR_SCHEMA).unwrap();
-            conn.execute_batch(
-                "INSERT INTO access VALUES (1, 10100, 'com.a', 'system', '/proc/cpuinfo', 1, 2, 0,
-                     3600, 3700, 0);
-                 INSERT INTO sensor_session VALUES (10100, 4242, 777, 9, 1,
-                     'android.sensor.gyroscope', 1, 0, 1000, 1600);
-                 INSERT INTO meta VALUES ('last_flush', 3700);",
-            )
-            .unwrap();
-            conn.pragma_update(None, "user_version", 4).unwrap();
-        }
-        let w = Writer::open(&db).unwrap();
-        let version: i32 = w
-            .conn
-            .pragma_query_value(None, "user_version", |r| r.get(0))
-            .unwrap();
-        assert_eq!(version, SCHEMA_VERSION);
-        // The old rows are kept, and the sandbox starts out empty.
-        assert_eq!(w.meta("last_flush").unwrap(), Some(3700));
-        assert!(w.sandbox_entries().unwrap().is_empty());
-        w.put_sandbox(&sandbox_entry_for(10100)).unwrap();
-        assert_eq!(w.sandbox_entries().unwrap(), [sandbox_entry_for(10100)]);
-        drop(w);
-        let r = Reader::open(&db).unwrap();
-        assert_eq!(r.files(&[], &[], None, None, 0, 10, 0).unwrap().len(), 1);
-        assert_eq!(r.sensor_sessions(10100, 0).unwrap().len(), 1);
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn upgrades_a_version_5_database() {
-        let dir = std::env::temp_dir().join(format!("bbd-migrate5-{}", std::process::id()));
+    fn a_database_at_another_version_is_refused() {
+        let dir = std::env::temp_dir().join(format!("bbd-test-version-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
         let db = dir.join("bb.db");
-        {
-            // Version 5: an entry from before apps had settings of their own.
-            let conn = Connection::open(&db).unwrap();
-            conn.execute_batch(SCHEMA).unwrap();
-            conn.execute_batch(EVENT_SCHEMA).unwrap();
-            conn.execute_batch(SENSOR_SCHEMA).unwrap();
-            conn.execute_batch(SANDBOX_SCHEMA).unwrap();
-            conn.execute_batch(
-                "INSERT INTO sandbox VALUES (10100, 'com.a', 1, '0123456789abcdef', '', 1000);",
-            )
-            .unwrap();
-            conn.pragma_update(None, "user_version", 5).unwrap();
+        let version = || -> i32 {
+            Connection::open(&db)
+                .unwrap()
+                .pragma_query_value(None, "user_version", |r| r.get(0))
+                .unwrap()
+        };
+        // A new database is created at the current version; opening it again
+        // keeps it.
+        drop(Writer::open(&db).unwrap());
+        assert_eq!(version(), SCHEMA_VERSION);
+        drop(Writer::open(&db).unwrap());
+        assert_eq!(version(), SCHEMA_VERSION);
+
+        // Neither upgraded nor misread: an older database and a newer one
+        // are refused, and left as they are.
+        for other in [SCHEMA_VERSION - 1, SCHEMA_VERSION + 1] {
+            Connection::open(&db)
+                .unwrap()
+                .pragma_update(None, "user_version", other)
+                .unwrap();
+            assert!(Writer::open(&db).is_err());
+            assert_eq!(version(), other);
         }
-        let w = Writer::open(&db).unwrap();
-        let version: i32 = w
-            .conn
-            .pragma_query_value(None, "user_version", |r| r.get(0))
-            .unwrap();
-        assert_eq!(version, SCHEMA_VERSION);
-        // It follows the global settings, which name nothing yet.
-        assert_eq!(w.sandbox_entries().unwrap(), [sandbox_entry_for(10100)]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_global_settings_are_written_over() {
+        let dir = std::env::temp_dir().join(format!("bbd-test-global-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let w = Writer::open(&dir.join("bb.db")).unwrap();
         assert_eq!(w.sandbox_global().unwrap(), "");
         w.put_sandbox_global(&[("camera", "off"), ("location", "coarse")])
             .unwrap();
@@ -2484,7 +2226,7 @@ mod tests {
             .history_of(10200, &[photo.to_string(), song.to_string()], 0)
             .unwrap();
         assert_eq!(
-            history.iter().map(|h| h.last_ts).collect::<Vec<_>>(),
+            history.iter().map(|h| h.ts).collect::<Vec<_>>(),
             [t + 3600, t]
         );
         // Each says which path it is of; one path's alone need not.

@@ -93,8 +93,8 @@ data class SensorUse(
 /**
  * The sensor a record turned on, from `...enableDisable@<type>[:fast]`;
  * null if the record is not of a sensor being turned on. The type follows
- * an `@` rather than the `#` of calls about another app: older builds of
- * this app read anything after `#` as a package name.
+ * an `@` rather than the `#` of calls about another app, after which the
+ * app reads a package name.
  */
 fun sensorUse(subject: String): SensorUse? {
     val rest = subject.removePrefix(SENSOR_ENABLE).takeIf { it.length < subject.length } ?: return null

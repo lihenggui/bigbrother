@@ -79,14 +79,14 @@ internal object AppOpsGuardProtocol {
     sealed interface Command {
         val uid: Int
 
-        /** [targets] maps the ops to hold the uid to to their modes; `null` for every op ignored. */
-        data class Set(override val uid: Int, val targets: Map<String, Int>? = null) : Command
+        /** [targets] maps the ops to hold the uid to to their modes. */
+        data class Set(override val uid: Int, val targets: Map<String, Int>) : Command
 
         /** [modes] maps op names to uid modes, `null` for none. */
         data class Restore(override val uid: Int, val modes: List<Pair<String, Int?>>) : Command
 
-        /** As [Set] for [targets]; null keeps the targets the uid has. */
-        data class Verify(override val uid: Int, val targets: Map<String, Int>? = null) : Command
+        /** As [Set]. */
+        data class Verify(override val uid: Int, val targets: Map<String, Int>) : Command
 
         data class Release(override val uid: Int) : Command
 
@@ -108,17 +108,9 @@ internal object AppOpsGuardProtocol {
         val words = line.trim().split(' ', '\t').filter { it.isNotEmpty() }
         val uid = words.getOrNull(1)?.toIntOrNull()?.takeIf { it >= 0 } ?: return null
         return when (words[0]) {
-            "set" -> when (words.size) {
-                2 -> Command.Set(uid)
-                3 -> decodeTargets(words[2])?.let { Command.Set(uid, it) }
-                else -> null
-            }
+            "set" -> if (words.size == 3) decodeTargets(words[2])?.let { Command.Set(uid, it) } else null
 
-            "verify" -> when (words.size) {
-                2 -> Command.Verify(uid)
-                3 -> decodeTargets(words[2])?.let { Command.Verify(uid, it) }
-                else -> null
-            }
+            "verify" -> if (words.size == 3) decodeTargets(words[2])?.let { Command.Verify(uid, it) } else null
 
             "apply" -> {
                 if (words.size != 4) return null

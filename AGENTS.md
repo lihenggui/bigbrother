@@ -35,11 +35,12 @@ once before `:app` tasks that assemble the APK.
 
 ## Contracts between components
 
-- The app and the module are updated separately, so the app must work with an
-  older daemon and the daemon with an older app. Add JSON fields to `bbd`
-  output; never rename, remove or change the meaning of one. The app maps a
-  daemon that rejects a command or option to "module update needed"
-  (`RootAccessRepository`).
+- No compatibility with earlier versions is kept. `bbd` output and the
+  database schema change as needed, with the app in the same commit; a
+  database at another schema version is refused (uninstalling the module
+  removes it). The app updates the module when the installed one is older
+  or built differently, and maps a daemon that rejects a command or option
+  to "module update needed" (`RootAccessRepository`).
 - Structs in `bb-common` are read by both sides byte for byte: `#[repr(C)]`,
   4-byte fields, no padding. Change both sides in the same commit.
 - `module/module.prop` is the single source of the version (`version`,

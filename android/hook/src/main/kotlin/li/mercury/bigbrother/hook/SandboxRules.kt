@@ -45,8 +45,7 @@ internal data class SandboxedUid(
  * separated by white space, the id being 16 hexadecimal digits, and for a
  * uid that has only some of the hook's items, a line
  * `items <uid> <item>[,<item>]` naming those (`device_ids`,
- * `installed_apps`). A uid without such a line has them all, which is
- * also what a hook from before the line existed makes of it.
+ * `installed_apps`). A uid without such a line has them all.
  *
  * Lines that do not have this shape are skipped rather than failing the
  * whole list, and so are uids of system components, which the daemon never

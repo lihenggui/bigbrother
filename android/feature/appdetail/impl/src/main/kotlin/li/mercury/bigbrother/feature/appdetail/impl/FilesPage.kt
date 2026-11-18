@@ -81,7 +81,6 @@ import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.VOLUME_ROOT
 import li.mercury.bigbrother.core.ui.exactDateTime
-import li.mercury.bigbrother.core.ui.exactTime
 import li.mercury.bigbrother.core.ui.label
 import li.mercury.bigbrother.core.ui.relativeTime
 import li.mercury.bigbrother.feature.appdetail.impl.tree.FileNode
@@ -675,19 +674,7 @@ internal fun FileDetailsSheet(details: FileDetails, onOpen: () -> Unit, onDismis
 private fun PeriodRow(period: AccessPeriod) {
     val label = actionLabel(period.action, period.viaProvider)
     Column {
-        Text(
-            // A single time, or the span of an hour recorded only in aggregate.
-            text = if (period.firstSeen == period.lastSeen) {
-                exactDateTime(period.firstSeen)
-            } else {
-                stringResource(
-                    R.string.time_span,
-                    exactDateTime(period.firstSeen),
-                    exactTime(period.lastSeen),
-                )
-            },
-            style = MaterialTheme.typography.bodyLarge,
-        )
+        Text(text = exactDateTime(period.time), style = MaterialTheme.typography.bodyLarge)
         Text(
             text = when {
                 period.allowed == 0 -> stringResource(R.string.access_blocked, label, period.denied)

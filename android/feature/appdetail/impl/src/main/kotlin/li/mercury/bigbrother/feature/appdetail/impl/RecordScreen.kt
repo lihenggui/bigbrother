@@ -64,7 +64,6 @@ import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.appDisplayName
 import li.mercury.bigbrother.core.ui.exactDateTime
-import li.mercury.bigbrother.core.ui.exactTime
 import li.mercury.bigbrother.core.ui.relativeTime
 import li.mercury.bigbrother.core.ui.topicIcon
 import li.mercury.bigbrother.core.ui.topicRecordsSummary
@@ -272,7 +271,7 @@ private val ClipboardUse.label: Int
         ClipboardUse.WRITE -> R.string.action_clipboard_write
     }
 
-/** One access, or several in the same second, or an hour recorded only in aggregate. */
+/** One access, or several in the same second. */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun PeriodItem(period: AccessPeriod, fromPermissions: Boolean, index: Int, count: Int) {
@@ -304,12 +303,6 @@ private fun PeriodItem(period: AccessPeriod, fromPermissions: Boolean, index: In
             }
         },
     ) {
-        Text(
-            text = if (period.firstSeen == period.lastSeen) {
-                exactDateTime(period.firstSeen)
-            } else {
-                stringResource(R.string.time_span, exactDateTime(period.firstSeen), exactTime(period.lastSeen))
-            },
-        )
+        Text(exactDateTime(period.time))
     }
 }
