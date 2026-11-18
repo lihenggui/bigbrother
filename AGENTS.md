@@ -14,9 +14,13 @@ building, checks and releasing in CONTRIBUTING.md.
 - `module/`: root module scripts, packaged into the app. See `module/AGENTS.md`.
 - `android/`: the app, the LSPosed hook and the canary test app. See `android/AGENTS.md`.
 - `scripts/`: `build.sh` (full build), `check-kernels.sh` (`bbd selftest` on
-  Android kernels in QEMU), `check-canary.sh` and `check-sandbox.sh`
-  (on-device checks of the records and of the sandbox), and
+  Android kernels in QEMU), `check-canary.sh`, `check-sandbox.sh` and
+  `check-permissions.sh` (on-device checks of the records, of the sandbox
+  and of the permissions an app leaves it with), and
   `install-on-emulator.sh` (the module on an emulator without a root manager).
+- `testdata/permissions/matrix.tsv`: the permission states an app ends in
+  after the sandbox, played by `check-permissions.sh` and on the JVM by
+  `PermissionMatrixTest`.
 
 The sandbox (`bbd sandbox`, `bbd/src/sandbox/`, `SandboxHook` in the hook,
 `AppOpsGuard` in the app) is described in docs/sandbox.md.

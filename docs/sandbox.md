@@ -419,3 +419,14 @@ file goes through the system's file picker, driven with `uiautomator`:
 (cd android && ./gradlew :canary:assembleDebug)
 ./scripts/check-sandbox.sh              # add --stress 200 for cold starts
 ```
+
+What an app's permissions and their app ops end as is set out case by case
+in `testdata/permissions/matrix.tsv`: the permission's state as the app
+enters the sandbox, what the user or the sandbox's items change while it is
+in, and how it leaves. `scripts/check-permissions.sh` plays every case on a
+device with a fresh install of the canary, and `PermissionMatrixTest` plays
+them on the JVM, with the helper's own code on a model of Android:
+
+```sh
+./scripts/check-permissions.sh          # or the names of some cases
+```
