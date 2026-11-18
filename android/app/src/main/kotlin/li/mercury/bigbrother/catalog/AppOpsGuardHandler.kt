@@ -132,20 +132,22 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
     /**
      * What a guarded uid is held to, the modes saved for it when known with
      * the grants they were saved at, and the states of the permissions this
-     * program took from it itself, of which those [regranted] were found
-     * granted again since. [reported] has the state last reported for each
-     * permission found so.
+     * program took from it itself, of which those [chosen] were found
+     * changed by the user since. [held] are the permissions it is known
+     * to have held revoked and fixed, and not given back since. [reported]
+     * has the state last reported for each permission found changed.
      */
     private data class Guard(
         val saved: List<Pair<String, Int?>>?,
         val targets: Targets,
         val tookPermissions: Map<String, PermissionState> = emptyMap(),
         val savedGrants: Map<String, Int> = emptyMap(),
-        val regranted: Set<String> = emptySet(),
+        val chosen: Set<String> = emptySet(),
+        val held: Set<String> = emptySet(),
         val reported: Map<String, PermissionState> = emptyMap(),
     ) {
         /** What to give [permission] back as, the daemon having sent [sent]. */
-        fun toGiveBack(permission: String, sent: PermissionState?): PermissionState? = AppOpsGuardProtocol.stateToGiveBack(sent, tookPermissions[permission], permission in regranted)
+        fun toGiveBack(permission: String, sent: PermissionState?): PermissionState? = AppOpsGuardProtocol.stateToGiveBack(sent, tookPermissions[permission], permission in chosen)
     }
 
     /** The guarded uids. */
@@ -172,7 +174,7 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
         val uid = command.uid
         // What the check would find, had it run since the user's last
         // change: a command may come first.
-        val regranted = if (command is Command.Verify) emptySet() else takeRegranted(uid)
+        val chosen = if (command is Command.Verify) emptySet() else takeChosen(uid)
         when (command) {
             is Command.Set -> {
                 val guard = guarded[uid]
@@ -189,13 +191,13 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
                 val found = statesBefore(uid, targets.permissions, guard?.tookPermissions.orEmpty())
                 // Written down first, so that a `release` after a failure
                 // below puts back whatever was done.
-                guarded[uid] = Guard(saved, targets, found, grants, regranted = guard?.regranted.orEmpty(), reported = guard?.reported.orEmpty())
+                guarded[uid] = Guard(saved, targets, found, grants, guard?.chosen.orEmpty(), guard?.held.orEmpty() intersect targets.permissions, guard?.reported.orEmpty())
                 val taken = targets.ops.count { (name, mode) -> setKnown(name, uid, mode) }
                 // Ops this Android version doesn't have are nothing to hold.
                 if (targets.ops.keys.any(::isKnown) && taken == 0) error("the system took none of the modes")
                 // Reported first, as the check does: holding can fail.
-                reportRegranted(uid, regranted)
-                for (permission in targets.permissions) taking(permission).hold(uid, permission)
+                reportChosen(uid, chosen)
+                for (permission in targets.permissions) holdKnown(uid, permission)
                 reportUnheld(uid, verify(uid), always = true)
                 system.emit(AppOpsGuardProtocol.savedLine(uid, Values(saved, found.toList(), grants)))
             }
@@ -216,18 +218,20 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
                 // Found before they are taken; one held already was taken
                 // by this program, and is as it left it.
                 val found = statesBefore(uid, targets.permissions - guard.targets.permissions, emptyMap())
+                val givenBack = command.resets.permissions.map { it.first }.toSet()
                 guarded[uid] = guard.copy(
                     targets = targets,
-                    tookPermissions = guard.tookPermissions - command.resets.permissions.map { it.first }.toSet() + found,
-                    regranted = guard.regranted - command.resets.permissions.map { it.first }.toSet() - found.keys,
-                    reported = guard.reported - command.resets.permissions.map { it.first }.toSet(),
+                    tookPermissions = guard.tookPermissions - givenBack + found,
+                    chosen = guard.chosen - givenBack - found.keys,
+                    held = guard.held - givenBack,
+                    reported = guard.reported - givenBack,
                 )
                 taken += targets.ops.count { (name, mode) -> setKnown(name, uid, mode) }
                 val known = command.resets.ops.any { (name, _) -> isKnown(name) } || targets.ops.keys.any(::isKnown)
                 if (known && taken == 0) error("the system took none of the modes")
                 // Reported first, as the check does: holding can fail.
-                reportRegranted(uid, regranted)
-                for (permission in targets.permissions) taking(permission).hold(uid, permission)
+                reportChosen(uid, chosen)
+                for (permission in targets.permissions) holdKnown(uid, permission)
                 reportUnheld(uid, verify(uid), always = true)
                 system.emit(AppOpsGuardProtocol.appliedLine(uid, found.toList()))
             }
@@ -308,36 +312,44 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
     }
 
     /**
-     * Find the permissions held revoked for [uid] that were granted again
+     * Find the permissions held revoked for [uid] that the user changed
      * since the last check, and keep the state each was found in as the
      * one to give back, as the check does ([verify]). The system reports
-     * the grant, but the check waits for the burst of changes to settle,
+     * the change, but the check waits for the burst of changes to settle,
      * and a command that comes first would otherwise give the permission
      * back, or take it again, as if the user had not chosen. Returns
      * their names.
      */
-    private fun takeRegranted(uid: Int): Set<String> {
+    private fun takeChosen(uid: Int): Set<String> {
         val guard = guarded[uid] ?: return emptySet()
         val found = guard.targets.permissions.mapNotNull { permission ->
             try {
-                AppOpsGuardProtocol.regranted(taking(permission).state(uid, permission))?.let { permission to AppOpsGuardProtocol.regrantedToKeep(guard.tookPermissions[permission], it) }
+                AppOpsGuardProtocol.chosenWhileHeld(taking(permission).state(uid, permission), permission in guard.held && !AppOpsGuardProtocol.isSpecialAccess(permission))
+                    ?.let { permission to kept(guard.tookPermissions[permission], it) }
             } catch (e: Throwable) {
                 system.warn("looking at $permission for $uid: ${system.describe(e)}")
                 null
             }
         }.toMap()
-        if (found.isNotEmpty()) guarded[uid] = guard.copy(tookPermissions = guard.tookPermissions + found, regranted = guard.regranted + found.keys)
+        if (found.isNotEmpty()) guarded[uid] = guard.copy(tookPermissions = guard.tookPermissions + found, chosen = guard.chosen + found.keys)
         return found.keys
     }
 
     /**
-     * Report each of [regranted] that [uid] is still held to, and is to be
+     * What to keep of a permission found changed by the user ([found]),
+     * [kept] being what was kept before: a special access given again to
+     * one service was not taken from the others that had it.
+     */
+    private fun kept(kept: PermissionState?, found: PermissionState): PermissionState = if (found.granted) AppOpsGuardProtocol.regrantedToKeep(kept, found) else found
+
+    /**
+     * Report each of [chosen] that [uid] is still held to, and is to be
      * taken back once more, with the state it was found in, as the check
      * does: the daemon keeps that state to give back.
      */
-    private fun reportRegranted(uid: Int, regranted: Set<String>) {
+    private fun reportChosen(uid: Int, chosen: Set<String>) {
         val guard = guarded[uid] ?: return
-        for (permission in regranted intersect guard.targets.permissions) {
+        for (permission in chosen intersect guard.targets.permissions) {
             guard.tookPermissions[permission]?.let { reportFound(uid, permission, it) }
         }
     }
@@ -433,17 +445,19 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
         val unheld = if (again.isEmpty()) mutableListOf() else AppOpsGuardProtocol.opsToSetAgain(states(uid), targets.ops).toMutableList()
         for (permission in targets.permissions) {
             try {
-                // Granted again while held: the user's choice since it was
+                // Changed by the user while held: their choice since it was
                 // taken, which is what to give back from now on. Kept and
                 // reported before it is taken again: holding it can revoke
                 // it and then fail on its flags.
-                val regranted = AppOpsGuardProtocol.regranted(taking(permission).state(uid, permission))
-                    ?.let { AppOpsGuardProtocol.regrantedToKeep(guarded[uid]?.tookPermissions?.get(permission), it) }
-                if (regranted != null) {
-                    guarded[uid]?.let { guarded[uid] = it.copy(tookPermissions = it.tookPermissions + (permission to regranted), regranted = it.regranted + permission) }
-                    reportFound(uid, permission, regranted)
+                // A special access has no mark of its own to lose.
+                val wasHeld = guarded[uid]?.held.orEmpty().contains(permission) && !AppOpsGuardProtocol.isSpecialAccess(permission)
+                val chosen = AppOpsGuardProtocol.chosenWhileHeld(taking(permission).state(uid, permission), wasHeld)
+                    ?.let { kept(guarded[uid]?.tookPermissions?.get(permission), it) }
+                if (chosen != null) {
+                    guarded[uid]?.let { guarded[uid] = it.copy(tookPermissions = it.tookPermissions + (permission to chosen), chosen = it.chosen + permission) }
+                    reportFound(uid, permission, chosen)
                 }
-                if (taking(permission).hold(uid, permission) && regranted == null) system.emit(AppOpsGuardProtocol.revertedLine(uid, permission))
+                if (holdKnown(uid, permission) && chosen == null) system.emit(AppOpsGuardProtocol.revertedLine(uid, permission))
             } catch (e: Throwable) {
                 system.warn("holding $permission for $uid: ${system.describe(e)}")
                 unheld += permission
@@ -501,6 +515,22 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
         val connected = permissions()
         val first = connected.requesting(uid, permission).firstOrNull() ?: return null
         return PermissionState(connected.isGranted(uid, permission), connected.flags(first, permission, uid) and USER_FLAGS)
+    }
+
+    /**
+     * [hold], and note whether [uid] has [permission] held: from then on,
+     * the permission found no longer fixed was changed by the user. One
+     * the system would not hold says nothing of the user.
+     */
+    private fun holdKnown(uid: Int, permission: String): Boolean {
+        val changed = try {
+            taking(permission).hold(uid, permission)
+        } catch (e: Throwable) {
+            guarded[uid]?.let { guarded[uid] = it.copy(held = it.held - permission) }
+            throw e
+        }
+        guarded[uid]?.let { guarded[uid] = it.copy(held = it.held + permission) }
+        return changed
     }
 
     /**

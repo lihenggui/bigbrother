@@ -52,8 +52,9 @@
 //! as it holds the ops (`items::Settings::taken_permissions`). What the
 //! permission was before, granted or not and with the user's flags, is
 //! kept in the entry (`saved_permissions`) and put back when the app leaves
-//! coarse. If the user grants it again in the meantime, the helper takes it
-//! back and reports the state it found (`reverted <uid>
+//! coarse. If the user grants it again in the meantime, or revokes it as
+//! the settings do, unfixed, the helper takes it back and reports the
+//! state it found (`reverted <uid>
 //! <permission>=<state>`): the user's latest choice, kept in the entry in
 //! place of the one before (`Effect::found`) and given back instead. No mode of the items covers both the ops of one mode and the
 //! permission of another (`items::Settings::covering`), so a permission is
@@ -162,8 +163,8 @@ fn parse_unheld(line: &str) -> Option<(u32, BTreeSet<String>)> {
     Some((uid, ops))
 }
 
-/// What a `reverted` line reports of a permission the helper found granted
-/// again while it held it revoked, and took back: the uid, and
+/// What a `reverted` line reports of a permission the helper found changed
+/// by the user while it held it revoked, and took back: the uid, and
 /// `<permission>=<state>`, the state it was found in.
 fn found_in(line: &str) -> Option<(u32, String)> {
     let mut words = line.split_ascii_whitespace();
@@ -209,7 +210,7 @@ struct State {
     /// The ops of guarded uids that the running helper last found it could
     /// not hold. A uid it has not reported on yet is not known to be held.
     unheld: BTreeMap<u32, BTreeSet<String>>,
-    /// The permissions the helper found granted again, by uid, as
+    /// The permissions the helper found changed by the user, by uid, as
     /// [`found_in`] reads them, not yet kept in the entries.
     found: Vec<(u32, String)>,
 }
@@ -589,8 +590,8 @@ fn keep_found(entry: &mut Entry, found: &str) {
 }
 
 /// Give the permissions `entry` names the states in `found`
-/// (`<permission>=<state>`) in place of the ones saved: each was granted
-/// again while the app was held to it revoked, the user's choice since it
+/// (`<permission>=<state>`) in place of the ones saved: each was changed
+/// by the user while the app was held to it revoked, their choice since it
 /// was taken, and what to give back now. One `entry` does not name was not
 /// taken from it. Whether anything changed.
 fn keep_regranted(entry: &mut Entry, found: &[String]) -> bool {

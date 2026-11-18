@@ -79,12 +79,13 @@ import kotlin.system.exitProcess
  *   revoked, printing `reverted <uid> <name>` for each, then `verified
  *   <uid>`. A uid not guarded yet is guarded from then on, so that the
  *   daemon can resume after this program was restarted without saving what
- *   it set itself. A permission found granted again, which only the user
- *   or the system does, is printed as `reverted <uid> <permission>=<state>`
- *   with the state it was found in: from then on the state to give back,
- *   here and in what the daemon keeps. Every other command looks for such
- *   a grant first, and prints the same line for a permission it holds
- *   revoked still.
+ *   it set itself. A permission found changed by the user, granted again
+ *   or, once held, no longer fixed (as the settings leave one the user
+ *   revokes), is printed as `reverted <uid> <permission>=<state>` with the
+ *   state it was found in: from then on the state to give back, here and
+ *   in what the daemon keeps. Every other command looks for such a change
+ *   first, and prints the same line for a permission it holds revoked
+ *   still.
  * - `kind <uid> <request> <package>`: prints `library <uid> <request>` for
  *   a static shared library or SDK library, `app <uid> <request>` for
  *   another package of the uid, and `unknown <uid> <request>` if it cannot

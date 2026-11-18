@@ -243,8 +243,9 @@ the app that requests it, keeps the approximate one, and marks it as the
 user's choice not to be asked again, as Android's settings do; it revokes
 it again if the system or the user grants it while location is coarse,
 and then gives it back granted when location is no longer coarse: the
-user's latest choice. The app's settings show precise location as turned
-off.
+user's latest choice. So it does when the user revokes it, which leaves
+it no longer marked so: it goes back revoked. The app's settings show
+precise location as turned off.
 
 What the ops were, and whether the precise location permission was granted
 and with which of the user's choices, is kept in the database and put back

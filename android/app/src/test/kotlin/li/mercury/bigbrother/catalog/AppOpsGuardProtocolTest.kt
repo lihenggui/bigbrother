@@ -419,11 +419,11 @@ class AppOpsGuardProtocolTest {
     }
 
     @Test
-    fun givenHeldPermissionFoundGrantedAgain_whenReverted_thenItsStateIsReported() {
+    fun givenHeldPermissionFoundGrantedAgain_whenChecked_thenItsStateIsReported() {
         val found = PermissionState(granted = true, flags = FLAG_USER_SET)
-        assertEquals(found, AppOpsGuardProtocol.regranted(found))
-        assertNull(AppOpsGuardProtocol.regranted(PermissionState(granted = false, flags = 0)))
-        assertNull(AppOpsGuardProtocol.regranted(null))
+        assertEquals(found, AppOpsGuardProtocol.chosenWhileHeld(found, wasHeld = false))
+        assertEquals(found, AppOpsGuardProtocol.chosenWhileHeld(found, wasHeld = true))
+        assertNull(AppOpsGuardProtocol.chosenWhileHeld(null, wasHeld = true))
         assertEquals("reverted 10123 $fine=granted+user_set", AppOpsGuardProtocol.revertedLine(10123, fine, found))
         assertEquals("reverted 10123 $fine", AppOpsGuardProtocol.revertedLine(10123, fine))
         assertEquals("reverted 10123 android:camera", AppOpsGuardProtocol.revertedLine(10123, "android:camera"))
@@ -445,20 +445,31 @@ class AppOpsGuardProtocolTest {
     }
 
     @Test
-    fun givenPermissionGrantedAgainWhileHeld_whenGivenBack_thenAsFoundWhateverTheDaemonSent() {
-        val before = PermissionState(granted = false, flags = FLAG_USER_SET)
-        val found = PermissionState(granted = true, flags = FLAG_USER_SET)
-        assertEquals(found, AppOpsGuardProtocol.stateToGiveBack(sent = before, kept = found, regranted = true))
-        assertEquals(found, AppOpsGuardProtocol.stateToGiveBack(sent = null, kept = found, regranted = true))
+    fun givenHeldPermissionNoLongerFixed_whenChecked_thenTheUsersChoiceOnceItWasHeld() {
+        // Revoked by the user in the settings, which may ask again.
+        val revoked = PermissionState(granted = false, flags = FLAG_USER_SET)
+        assertEquals(revoked, AppOpsGuardProtocol.chosenWhileHeld(revoked, wasHeld = true))
+        // Not held yet: the flag is this program's to set.
+        assertNull(AppOpsGuardProtocol.chosenWhileHeld(revoked, wasHeld = false))
+        // As this program holds it.
+        assertNull(AppOpsGuardProtocol.chosenWhileHeld(PermissionState(granted = false, flags = FLAG_USER_FIXED), wasHeld = true))
     }
 
     @Test
-    fun givenPermissionNotGrantedAgain_whenGivenBack_thenAsTheDaemonSentOrAsKept() {
+    fun givenPermissionChangedWhileHeld_whenGivenBack_thenAsFoundWhateverTheDaemonSent() {
+        val before = PermissionState(granted = false, flags = FLAG_USER_SET)
+        val found = PermissionState(granted = true, flags = FLAG_USER_SET)
+        assertEquals(found, AppOpsGuardProtocol.stateToGiveBack(sent = before, kept = found, chosen = true))
+        assertEquals(found, AppOpsGuardProtocol.stateToGiveBack(sent = null, kept = found, chosen = true))
+    }
+
+    @Test
+    fun givenPermissionNotChangedWhileHeld_whenGivenBack_thenAsTheDaemonSentOrAsKept() {
         val before = PermissionState(granted = false, flags = FLAG_USER_SET)
         val kept = PermissionState(granted = true, flags = 0)
-        assertEquals(before, AppOpsGuardProtocol.stateToGiveBack(sent = before, kept = kept, regranted = false))
-        assertEquals(kept, AppOpsGuardProtocol.stateToGiveBack(sent = null, kept = kept, regranted = false))
-        assertEquals(before, AppOpsGuardProtocol.stateToGiveBack(sent = before, kept = null, regranted = true))
-        assertNull(AppOpsGuardProtocol.stateToGiveBack(sent = null, kept = null, regranted = false))
+        assertEquals(before, AppOpsGuardProtocol.stateToGiveBack(sent = before, kept = kept, chosen = false))
+        assertEquals(kept, AppOpsGuardProtocol.stateToGiveBack(sent = null, kept = kept, chosen = false))
+        assertEquals(before, AppOpsGuardProtocol.stateToGiveBack(sent = before, kept = null, chosen = true))
+        assertNull(AppOpsGuardProtocol.stateToGiveBack(sent = null, kept = null, chosen = false))
     }
 }

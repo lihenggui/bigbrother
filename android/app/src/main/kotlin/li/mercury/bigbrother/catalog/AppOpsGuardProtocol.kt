@@ -431,19 +431,21 @@ internal object AppOpsGuardProtocol {
     fun appliedLine(uid: Int, found: List<Pair<String, PermissionState>>): String = if (found.isEmpty()) "applied $uid" else "applied $uid ${encodeValues(Values(emptyList(), found))}"
 
     /**
-     * [name] is an op's or a permission's. A permission found granted
-     * again ([regranted]) is followed by the state it was found in, in the
+     * [name] is an op's or a permission's. A permission found changed by
+     * the user ([chosen]) is followed by the state it was found in, in the
      * form [encodeValues] writes: the state to give back from now on.
      */
-    fun revertedLine(uid: Int, name: String, regranted: PermissionState? = null): String = if (regranted == null) "reverted $uid $name" else "reverted $uid $name=${encodeState(regranted)}"
+    fun revertedLine(uid: Int, name: String, chosen: PermissionState? = null): String = if (chosen == null) "reverted $uid $name" else "reverted $uid $name=${encodeState(chosen)}"
 
     /**
-     * The state of a permission held revoked, as found ([found]), if it was
-     * granted again: then by the user, who chose so while the app was held,
-     * and that is the state to give back. `null` for one still revoked, or
-     * not requested.
+     * The state of a permission held revoked, as found ([found]), if the
+     * user changed it while the app was held, and that is the state to
+     * give back: granted again; or, for one this program had held
+     * ([wasHeld]), no longer fixed, as the settings leave a permission
+     * the user revokes. `null` for one as this program holds it, or not
+     * requested.
      */
-    fun regranted(found: PermissionState?): PermissionState? = found?.takeIf { it.granted }
+    fun chosenWhileHeld(found: PermissionState?, wasHeld: Boolean): PermissionState? = found?.takeIf { it.granted || (wasHeld && it.flags and FLAG_USER_FIXED == 0) }
 
     /**
      * What to keep for a permission taken back after it was found granted
@@ -460,11 +462,11 @@ internal object AppOpsGuardProtocol {
 
     /**
      * What to give a permission back as: what the daemon [sent], or, where
-     * it does not know, the state [kept] here. A permission found granted
-     * again ([regranted]) goes back as found, which the daemon may not have
-     * written down by the time it sends the command.
+     * it does not know, the state [kept] here. A permission found changed
+     * by the user ([chosen]) goes back as found, which the daemon may not
+     * have written down by the time it sends the command.
      */
-    fun stateToGiveBack(sent: PermissionState?, kept: PermissionState?, regranted: Boolean): PermissionState? = if (regranted && kept != null) kept else sent ?: kept
+    fun stateToGiveBack(sent: PermissionState?, kept: PermissionState?, chosen: Boolean): PermissionState? = if (chosen && kept != null) kept else sent ?: kept
 
     fun verifiedLine(uid: Int): String = "verified $uid"
 
