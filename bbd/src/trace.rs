@@ -102,6 +102,10 @@ const MAX_PENDING_COMMANDS: usize = 8;
 /// One look at the package list deals with all of them; a uid that finds no
 /// room is reported again by its next start.
 const NEW_STARTS_QUEUE: usize = 16;
+/// Where every user's apps keep the data they can reach before the user
+/// unlocks the device, a directory per user and package: there for every
+/// installed app from the start.
+const USER_DATA: &str = "/data/user_de";
 
 pub struct Options<'a> {
     pub db: &'a Path,
@@ -334,7 +338,11 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     loop {
         sensor_check.arm(tracer.sensors.any_on());
         if let Some(sandbox) = sandbox.as_mut()
-            && package_watch.arm(sandbox.auto_on(), Path::new(sandbox::auto::PACKAGE_DIR))
+            && package_watch.arm(
+                sandbox.auto_on(),
+                Path::new(sandbox::auto::PACKAGE_DIR),
+                Path::new(USER_DATA),
+            )
         {
             // What was installed before the watch began.
             sandbox.isolate_new(&tracer.writer, &mut tracer.packages);
@@ -548,10 +556,7 @@ fn start_sandbox(
     db: &Path,
     new_starts: tokio::sync::mpsc::Sender<u32>,
 ) -> Option<Sandbox> {
-    // Where every user's apps keep the data they can reach before the user
-    // unlocks the device: there for every installed app from the start.
-    let user_data = Path::new("/data/user_de");
-    let mut sandbox = match Sandbox::load(&tracer.writer, Vec::new(), Some(user_data)) {
+    let mut sandbox = match Sandbox::load(&tracer.writer, Vec::new(), Some(Path::new(USER_DATA))) {
         Ok(sandbox) => sandbox,
         Err(e) => {
             eprintln!("bbd: warning: the sandbox is off: {e:#}");

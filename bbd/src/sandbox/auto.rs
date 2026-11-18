@@ -34,9 +34,10 @@
 //!   that an app id or uid Android gives to another app later is new.
 //!
 //! Android writes its package list (`/data/system/packages.list`) again on
-//! every install, update and removal. While this is on, the daemon watches
-//! for that ([`Watch`]) and looks at the list each time; while it is off,
-//! nothing is watched.
+//! every install, update and removal, and makes an app's data directory for
+//! each user it is installed for (`/data/user_de/<user>/<package>`). While
+//! this is on, the daemon watches for both ([`Watch`]) and looks at the list
+//! each time; while it is off, nothing is watched.
 //!
 //! An app can start before the daemon has looked: an installer may open it
 //! at once. So that none of its code runs outside the sandbox, the kernel
@@ -55,7 +56,7 @@ use std::{
         fd::{AsRawFd, FromRawFd, OwnedFd},
         unix::ffi::OsStrExt as _,
     },
-    path::Path,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -377,6 +378,7 @@ impl Sandbox {
         if !self.auto.on {
             return;
         }
+        let started = Instant::now();
         packages.refresh();
         let users = self.users();
         // Without the package list, or the users, nothing can be told, and
@@ -404,10 +406,13 @@ impl Sandbox {
             }
         }
         if !isolated.is_empty() {
+            // How long it took: putting an app in can wait for the app ops
+            // helper to start, and for the database to reach the disk.
             let uids: Vec<String> = isolated.iter().map(u32::to_string).collect();
             eprintln!(
-                "bbd: sandbox: newly installed, put in the sandbox: uid {}",
-                uids.join(", ")
+                "bbd: sandbox: newly installed, put in the sandbox: uid {} ({} ms)",
+                uids.join(", "),
+                started.elapsed().as_millis()
             );
         }
         if known != self.auto.known {
@@ -502,26 +507,51 @@ impl FailureLog {
 /// Bytes read from the watch at a time: room for a dozen events.
 const EVENTS_SIZE: usize = 4096;
 
-/// Watches for the package list being written, while newly installed apps
-/// are put in the sandbox.
+/// What is watched in the package list's directory: renamed into it, which
+/// is how Android writes the list, and written in place, which it may do.
+const LIST_MASK: u32 = libc::IN_MOVED_TO | libc::IN_CLOSE_WRITE;
+/// What is watched in the directory of all users' data: a user added.
+const USERS_MASK: u32 = libc::IN_CREATE | libc::IN_MOVED_TO | libc::IN_ONLYDIR;
+/// What is watched in a user's data directory: an app's directory made, or
+/// given its owner, which installd does right after.
+const USER_MASK: u32 = libc::IN_CREATE | libc::IN_MOVED_TO | libc::IN_ATTRIB | libc::IN_ONLYDIR;
+
+/// Watches for apps being installed, while newly installed apps are put in
+/// the sandbox.
 ///
-/// Android writes the list to a new file and renames that over the old one,
-/// so it is the directory that is watched: every file renamed or written into
-/// it is reported, and only the package list counts. The others there change
-/// now and then, and each such change costs a read of the event.
+/// Android writes its package list to a new file and renames that over the
+/// old one, so the list's directory is watched, and only the list counts
+/// there; the other files in it change now and then, and each change costs
+/// a read of the event. The list is written before the app's data
+/// directories are made, which is how an app is known to be installed for a
+/// user, and need not be written again after. So each user's data directory
+/// is watched for new entries too, and the directory of all users for new
+/// users. Those change only when apps are installed and users added.
 #[derive(Default)]
 pub struct Watch {
-    inotify: Option<AsyncFd<OwnedFd>>,
+    inotify: Option<Inotify>,
     /// Watching failed, which was logged: it is not tried again until this
     /// is turned off and on, or the daemon starts again.
     failed: bool,
 }
 
+struct Inotify {
+    fd: AsyncFd<OwnedFd>,
+    /// The watch of the package list's directory.
+    list: i32,
+    /// The watch of the directory of all users' data, and that directory.
+    users: i32,
+    users_dir: PathBuf,
+    /// The watches of each user's data directory.
+    user_dirs: BTreeSet<i32>,
+}
+
 impl Watch {
-    /// Watch `dir` while `on`, and stop when not. True when the watch has
-    /// just begun: what changed before it did was not seen, and the list is
+    /// Watch `list_dir`, the package list's directory, and `users_dir`, the
+    /// users' data directories, while `on`, and stop when not. True when the
+    /// watch has just begun: what changed before it did was not seen, and is
     /// to be looked at.
-    pub fn arm(&mut self, on: bool, dir: &Path) -> bool {
+    pub fn arm(&mut self, on: bool, list_dir: &Path, users_dir: &Path) -> bool {
         if !on {
             self.inotify = None;
             self.failed = false;
@@ -530,7 +560,7 @@ impl Watch {
         if self.inotify.is_some() || self.failed {
             return false;
         }
-        match watch(dir) {
+        match Inotify::new(list_dir, users_dir) {
             Ok(inotify) => {
                 self.inotify = Some(inotify);
                 true
@@ -546,27 +576,28 @@ impl Watch {
         self.inotify.is_some()
     }
 
-    /// Wait until the package list has been written. Never, while not
-    /// armed. Every event there is is read, so that one change is reported
-    /// once.
-    pub async fn changed(&self) -> io::Result<()> {
-        let Some(inotify) = &self.inotify else {
+    /// Wait until an app may have been installed. Never, while not armed.
+    /// Every event there is is read, so that one change is reported once.
+    pub async fn changed(&mut self) -> io::Result<()> {
+        let Some(inotify) = &mut self.inotify else {
             return std::future::pending().await;
         };
-        let mut events = [0; EVENTS_SIZE];
-        let mut written = false;
+        let mut buffer = [0; EVENTS_SIZE];
         loop {
-            let mut ready = inotify.readable().await?;
-            loop {
-                match ready.try_io(|fd| read(fd.get_ref(), &mut events)) {
-                    Ok(Ok(n)) => written |= names_package_list(&events[..n]),
-                    Ok(Err(e)) if e.kind() == io::ErrorKind::Interrupted => {}
-                    Ok(Err(e)) => return Err(e),
-                    // Nothing more to read.
-                    Err(_) => break,
+            let mut events = Vec::new();
+            {
+                let mut ready = inotify.fd.readable().await?;
+                loop {
+                    match ready.try_io(|fd| read(fd.get_ref(), &mut buffer)) {
+                        Ok(Ok(n)) => events.extend(parse_events(&buffer[..n])),
+                        Ok(Err(e)) if e.kind() == io::ErrorKind::Interrupted => {}
+                        Ok(Err(e)) => return Err(e),
+                        // Nothing more to read.
+                        Err(_) => break,
+                    }
                 }
             }
-            if written {
+            if inotify.note(&events) {
                 return Ok(());
             }
         }
@@ -582,23 +613,89 @@ impl Watch {
     }
 }
 
-fn watch(dir: &Path) -> io::Result<AsyncFd<OwnedFd>> {
-    let fd = unsafe { libc::inotify_init1(libc::IN_NONBLOCK | libc::IN_CLOEXEC) };
-    if fd < 0 {
-        return Err(io::Error::last_os_error());
+impl Inotify {
+    fn new(list_dir: &Path, users_dir: &Path) -> io::Result<Self> {
+        let fd = unsafe { libc::inotify_init1(libc::IN_NONBLOCK | libc::IN_CLOEXEC) };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: just opened, and owned by nothing else.
+        let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+        let list = add_watch(&fd, list_dir, LIST_MASK)?;
+        let users = add_watch(&fd, users_dir, USERS_MASK)?;
+        // SAFETY: the OwnedFd owns its fd, which stays open and unchanged
+        // for as long as the AsyncFd owns the OwnedFd.
+        let fd = unsafe { AsyncFd::register_with_interest(fd, Interest::READABLE) }
+            .map_err(|e| e.into_parts().1)?;
+        let mut inotify = Self {
+            fd,
+            list,
+            users,
+            users_dir: users_dir.to_path_buf(),
+            user_dirs: BTreeSet::new(),
+        };
+        inotify.watch_users();
+        Ok(inotify)
     }
-    // SAFETY: just opened, and owned by nothing else.
-    let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+
+    /// Watch the data directory of every user there is. One that cannot be
+    /// watched is still covered by the package list and the gate.
+    fn watch_users(&mut self) {
+        let users: Vec<Vec<u8>> = std::fs::read_dir(&self.users_dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.file_name().as_bytes().to_vec())
+            .collect();
+        for user in users {
+            self.watch_user(&user);
+        }
+    }
+
+    fn watch_user(&mut self, name: &[u8]) {
+        let is_user = !name.is_empty() && name.iter().all(u8::is_ascii_digit);
+        if !is_user {
+            return;
+        }
+        let dir = self.users_dir.join(std::ffi::OsStr::from_bytes(name));
+        if let Ok(wd) = add_watch(self.fd.get_ref(), &dir, USER_MASK) {
+            self.user_dirs.insert(wd);
+        }
+    }
+
+    /// Take in `events`, and say whether an app may have been installed.
+    fn note(&mut self, events: &[Event]) -> bool {
+        let mut installed = false;
+        for event in events {
+            if event.mask & libc::IN_Q_OVERFLOW != 0 {
+                // Any of what was lost may have been an install, or a new
+                // user.
+                self.watch_users();
+                installed = true;
+            } else if event.mask & libc::IN_IGNORED != 0 {
+                // A user removed: the kernel dropped the watch.
+                self.user_dirs.remove(&event.wd);
+            } else if event.wd == self.list {
+                installed |= event.name == PACKAGE_LIST;
+            } else if event.wd == self.users {
+                self.watch_user(&event.name);
+                installed = true;
+            } else if self.user_dirs.contains(&event.wd) {
+                // The directory itself changing says nothing.
+                installed |= !event.name.is_empty();
+            }
+        }
+        installed
+    }
+}
+
+fn add_watch(fd: &OwnedFd, dir: &Path, mask: u32) -> io::Result<i32> {
     let dir = CString::new(dir.as_os_str().as_bytes())?;
-    // Renamed into it, which is how Android writes the list; written in
-    // place, which it may do too.
-    let mask = libc::IN_MOVED_TO | libc::IN_CLOSE_WRITE;
-    if unsafe { libc::inotify_add_watch(fd.as_raw_fd(), dir.as_ptr(), mask) } < 0 {
+    let wd = unsafe { libc::inotify_add_watch(fd.as_raw_fd(), dir.as_ptr(), mask) };
+    if wd < 0 {
         return Err(io::Error::last_os_error());
     }
-    // SAFETY: the OwnedFd owns its fd, which stays open and unchanged for as
-    // long as the AsyncFd owns the OwnedFd.
-    unsafe { AsyncFd::register_with_interest(fd, Interest::READABLE) }.map_err(|e| e.into_parts().1)
+    Ok(wd)
 }
 
 fn read(fd: &OwnedFd, into: &mut [u8]) -> io::Result<usize> {
@@ -606,23 +703,35 @@ fn read(fd: &OwnedFd, into: &mut [u8]) -> io::Result<usize> {
     usize::try_from(n).map_err(|_| io::Error::last_os_error())
 }
 
-/// Whether `events`, as read from an inotify descriptor, name the package
-/// list, or say that events were lost, any of which may have.
-fn names_package_list(events: &[u8]) -> bool {
+/// An event read from the watch.
+#[derive(Debug, PartialEq, Eq)]
+struct Event {
+    wd: i32,
+    mask: u32,
+    /// The entry of the watched directory it is about; empty for the
+    /// directory itself.
+    name: Vec<u8>,
+}
+
+/// The events in `bytes`, as read from an inotify descriptor.
+fn parse_events(bytes: &[u8]) -> Vec<Event> {
     let header = size_of::<libc::inotify_event>();
-    let mut rest = events;
+    let mut events = Vec::new();
+    let mut rest = bytes;
     while rest.len() >= header {
         // SAFETY: a header's bytes, read unaligned; any bytes are one.
         let event = unsafe { rest.as_ptr().cast::<libc::inotify_event>().read_unaligned() };
         let end = rest.len().min(header + event.len as usize);
         // The name is padded with NULs.
         let name = rest[header..end].split(|&b| b == 0).next().unwrap_or(&[]);
-        if event.mask & libc::IN_Q_OVERFLOW != 0 || name == PACKAGE_LIST {
-            return true;
-        }
+        events.push(Event {
+            wd: event.wd,
+            mask: event.mask,
+            name: name.to_vec(),
+        });
         rest = &rest[end..];
     }
-    false
+    events
 }
 
 #[cfg(test)]
@@ -917,11 +1026,16 @@ mod tests {
         );
     }
 
-    fn event(mask: u32, name: &str) -> Vec<u8> {
+    /// An event as the kernel writes it.
+    fn event(wd: i32, mask: u32, name: &str) -> Vec<u8> {
         // Names are padded to a multiple of the header's alignment.
-        let len = (name.len() + 1).next_multiple_of(4);
+        let len = if name.is_empty() {
+            0
+        } else {
+            (name.len() + 1).next_multiple_of(4)
+        };
         let header = libc::inotify_event {
-            wd: 1,
+            wd,
             mask,
             cookie: 0,
             len: len as u32,
@@ -939,49 +1053,204 @@ mod tests {
     }
 
     #[test]
-    fn only_events_naming_the_package_list_count() {
-        let tmp = event(libc::IN_CLOSE_WRITE, "packages.list.tmp");
-        let other = event(libc::IN_MOVED_TO, "appops.xml");
-        let list = event(libc::IN_MOVED_TO, "packages.list");
-        assert!(!names_package_list(&[tmp.clone(), other.clone()].concat()));
-        assert!(names_package_list(&[tmp, other, list].concat()));
-        // Events were lost: any of them may have been the list.
-        assert!(names_package_list(&event(libc::IN_Q_OVERFLOW, "")));
-        assert!(!names_package_list(&[]));
-        assert!(!names_package_list(&[0; 5]));
+    fn events_are_read_with_their_names() {
+        let bytes = [
+            event(1, libc::IN_MOVED_TO, "packages.list"),
+            event(3, libc::IN_ATTRIB, ""),
+            event(3, libc::IN_CREATE | libc::IN_ISDIR, "com.example.new"),
+        ]
+        .concat();
+        assert_eq!(
+            parse_events(&bytes),
+            [
+                Event {
+                    wd: 1,
+                    mask: libc::IN_MOVED_TO,
+                    name: b"packages.list".to_vec()
+                },
+                Event {
+                    wd: 3,
+                    mask: libc::IN_ATTRIB,
+                    name: vec![]
+                },
+                Event {
+                    wd: 3,
+                    mask: libc::IN_CREATE | libc::IN_ISDIR,
+                    name: b"com.example.new".to_vec()
+                },
+            ]
+        );
+        assert!(parse_events(&[]).is_empty());
+        assert!(parse_events(&[0; 5]).is_empty());
+    }
+
+    /// A package list's directory and a users' data directory with user 0,
+    /// as Android has them.
+    fn layout(f: &Fixture) -> (PathBuf, PathBuf) {
+        let system = f.dir.join("system");
+        let users = f.dir.join("user_de");
+        std::fs::create_dir_all(&system).unwrap();
+        std::fs::create_dir_all(users.join("0")).unwrap();
+        (system, users)
+    }
+
+    /// Whether the watch reports a change within a short while.
+    async fn reports(watch: &mut Watch) -> bool {
+        match tokio::time::timeout(Duration::from_millis(200), watch.changed()).await {
+            Ok(changed) => {
+                changed.unwrap();
+                true
+            }
+            Err(_) => false,
+        }
     }
 
     #[tokio::test]
-    async fn the_list_replaced_is_seen_and_other_files_are_not() {
+    async fn installs_are_seen_in_the_list_and_the_data_directories() {
         let f = Fixture::new("auto-watch");
-        let dir = f.dir.join("system");
-        std::fs::create_dir_all(&dir).unwrap();
+        let (system, users) = layout(&f);
         let mut watch = Watch::default();
-        assert!(!watch.arm(false, &dir));
-        assert!(watch.arm(true, &dir));
-        assert!(!watch.arm(true, &dir));
+        assert!(!watch.arm(false, &system, &users));
+        assert!(watch.arm(true, &system, &users));
+        assert!(!watch.arm(true, &system, &users));
         assert!(watch.armed());
 
-        let soon = Duration::from_millis(200);
-        std::fs::write(dir.join("appops.xml"), "x").unwrap();
-        assert!(tokio::time::timeout(soon, watch.changed()).await.is_err());
-        // As Android writes it: a new file renamed over the old one.
-        std::fs::write(dir.join("packages.list.tmp"), "x").unwrap();
-        std::fs::rename(dir.join("packages.list.tmp"), dir.join("packages.list")).unwrap();
-        tokio::time::timeout(soon, watch.changed())
-            .await
-            .unwrap()
-            .unwrap();
+        // As Android writes the list: a new file renamed over the old one.
+        std::fs::write(system.join("appops.xml"), "x").unwrap();
+        assert!(!reports(&mut watch).await);
+        std::fs::write(system.join("packages.list.tmp"), "x").unwrap();
+        std::fs::rename(
+            system.join("packages.list.tmp"),
+            system.join("packages.list"),
+        )
+        .unwrap();
+        assert!(reports(&mut watch).await);
         // Reported once.
-        assert!(tokio::time::timeout(soon, watch.changed()).await.is_err());
+        assert!(!reports(&mut watch).await);
 
-        assert!(!watch.arm(false, &dir));
+        // An app's data directory made, then given its owner.
+        let app = users.join("0/com.example.new");
+        std::fs::create_dir(&app).unwrap();
+        assert!(reports(&mut watch).await);
+        std::fs::set_permissions(&app, std::os::unix::fs::PermissionsExt::from_mode(0o700))
+            .unwrap();
+        assert!(reports(&mut watch).await);
+        // What the app keeps there is its own business.
+        std::fs::write(app.join("prefs.xml"), "x").unwrap();
+        assert!(!reports(&mut watch).await);
+
+        // A user added, and an app installed for it.
+        std::fs::create_dir(users.join("10")).unwrap();
+        assert!(reports(&mut watch).await);
+        std::fs::create_dir(users.join("10/com.example.new")).unwrap();
+        assert!(reports(&mut watch).await);
+        // And removed again.
+        std::fs::remove_dir_all(users.join("10")).unwrap();
+        assert!(!reports(&mut watch).await);
+
+        assert!(!watch.arm(false, &system, &users));
         assert!(!watch.armed());
-        // A directory that cannot be watched is given up on until turned
-        // off and on.
-        assert!(!watch.arm(true, &f.dir.join("absent")));
-        assert!(!watch.arm(true, &dir));
-        watch.arm(false, &dir);
-        assert!(watch.arm(true, &dir));
+        // What cannot be watched is given up on until turned off and on.
+        assert!(!watch.arm(true, &f.dir.join("absent"), &users));
+        assert!(!watch.arm(true, &system, &users));
+        watch.arm(false, &system, &users);
+        assert!(watch.arm(true, &system, &users));
+    }
+
+    #[test]
+    fn an_idle_loop_is_woken_by_each_change() {
+        let f = Fixture::new("auto-wake");
+        let (system, users) = layout(&f);
+        // As the daemon runs its main loop.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (renamed, seen) = runtime.block_on(async {
+            let mut watch = Watch::default();
+            assert!(watch.arm(true, &system, &users));
+            // Two writes of the list, the second while the first is being
+            // looked at.
+            let writer = {
+                let system = system.clone();
+                std::thread::spawn(move || {
+                    let mut renamed = Vec::new();
+                    for pause in [100, 10] {
+                        std::thread::sleep(Duration::from_millis(pause));
+                        renamed.push(Instant::now());
+                        std::fs::write(system.join("packages.list.tmp"), "x").unwrap();
+                        std::fs::rename(
+                            system.join("packages.list.tmp"),
+                            system.join("packages.list"),
+                        )
+                        .unwrap();
+                    }
+                    renamed
+                })
+            };
+            let (_commands, mut command) = tokio::sync::mpsc::channel::<()>(1);
+            let mut flush = tokio::time::interval(Duration::from_secs(30));
+            flush.tick().await;
+            let until = tokio::time::Instant::now() + Duration::from_secs(2);
+            let mut seen = Vec::new();
+            while seen.len() < 2 {
+                tokio::select! {
+                    _ = flush.tick() => {}
+                    _ = command.recv() => {}
+                    changed = watch.changed(), if watch.armed() => {
+                        changed.unwrap();
+                        seen.push(Instant::now());
+                        // A look at the list takes a while.
+                        std::thread::sleep(Duration::from_millis(30));
+                    }
+                    _ = tokio::time::sleep_until(until) => break,
+                }
+            }
+            (writer.join().unwrap(), seen)
+        });
+        // Each write is seen soon after it was made.
+        for at in renamed {
+            assert!(
+                seen.iter()
+                    .any(|seen| *seen >= at && *seen - at < Duration::from_millis(200)),
+                "a write was not seen in time"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn an_app_whose_data_directory_comes_after_the_list_is_put_in() {
+        let mut f = Fixture::new("auto-late-data");
+        let mut sandbox = f.sandbox();
+        sandbox.set_auto(&f.writer, &mut f.packages, true).unwrap();
+        let mut watch = Watch::default();
+        assert!(watch.arm(true, &f.dir, &f.user_data()));
+        let new_two = "com.example.two 10231 0 /d default:targetSdkVersion=35 none 0 1 1 @null";
+
+        // The list first: the app is installed for no user yet.
+        f.list(&[
+            "com.android.chrome 10150 0 /d default:partition=product none 0 1 1 @system",
+            "com.example.old 10200 0 /d default none 0 1 1 com.android.vending",
+            NEW,
+            new_two,
+        ]);
+        assert!(reports(&mut watch).await);
+        sandbox.isolate_new(&f.writer, &mut f.packages);
+        assert!(sandboxed(&sandbox).is_empty());
+
+        // Then its data directory, and the list is not written again.
+        f.install(0, "com.example.new");
+        assert!(reports(&mut watch).await);
+        sandbox.isolate_new(&f.writer, &mut f.packages);
+        assert_eq!(sandboxed(&sandbox), [10230]);
+
+        // A user added later, and an app installed for it.
+        std::fs::create_dir(f.user_data().join("10")).unwrap();
+        assert!(reports(&mut watch).await);
+        sandbox.isolate_new(&f.writer, &mut f.packages);
+        f.install(10, "com.example.two");
+        assert!(reports(&mut watch).await);
+        sandbox.isolate_new(&f.writer, &mut f.packages);
+        assert_eq!(sandboxed(&sandbox), [10230, 1_010_231]);
     }
 }
