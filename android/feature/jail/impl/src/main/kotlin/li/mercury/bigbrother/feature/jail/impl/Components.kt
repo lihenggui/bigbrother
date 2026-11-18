@@ -43,7 +43,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
@@ -69,6 +68,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import li.mercury.bigbrother.core.designsystem.component.ShapedIcon
+import li.mercury.bigbrother.core.designsystem.icon.CageIcons
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
@@ -114,7 +114,7 @@ internal fun LinkRow(
     ) { Text(title) }
 }
 
-/** An app's icon, with the lock that marks it as isolated. */
+/** An app's icon, with the cage that marks it as isolated. */
 @Composable
 internal fun IsolatedAppIcon(info: AppInfo?, name: String, modifier: Modifier = Modifier, size: Int = 40) {
     Box(modifier) {
@@ -128,7 +128,7 @@ internal fun IsolatedAppIcon(info: AppInfo?, name: String, modifier: Modifier = 
             contentColor = MaterialTheme.colorScheme.onTertiary,
             border = androidx.compose.foundation.BorderStroke(1.5.dp, MaterialTheme.colorScheme.surfaceBright),
         ) {
-            Icon(Icons.Filled.Lock, contentDescription = null, modifier = Modifier.padding((size * 0.09f).dp))
+            Icon(CageIcons.Badge, contentDescription = null, modifier = Modifier.padding((size * 0.09f).dp))
         }
     }
 }

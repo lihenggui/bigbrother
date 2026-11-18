@@ -27,11 +27,9 @@ import androidx.compose.foundation.background
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.SpaceDashboard
 import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.History
-import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.SpaceDashboard
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Icon
@@ -63,6 +61,7 @@ import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.ui.NavDisplay
 import androidx.window.core.layout.WindowSizeClass
 import li.mercury.bigbrother.R
+import li.mercury.bigbrother.core.designsystem.icon.CageIcons
 import li.mercury.bigbrother.core.navigation.BottomSheetSceneStrategy
 import li.mercury.bigbrother.core.navigation.Navigator
 import li.mercury.bigbrother.core.navigation.rememberNavigationState
@@ -101,7 +100,7 @@ internal val TOP_LEVEL_DESTINATIONS = listOf(
     TopLevelDestination(OverviewNavKey, R.string.nav_overview, Icons.Outlined.SpaceDashboard, Icons.Filled.SpaceDashboard),
     TopLevelDestination(AppListNavKey, R.string.nav_apps, Icons.Outlined.Apps, Icons.Filled.Apps),
     TopLevelDestination(TimelineNavKey, R.string.nav_timeline, Icons.Outlined.History, Icons.Filled.History),
-    TopLevelDestination(JailNavKey, R.string.nav_jail, Icons.Outlined.Lock, Icons.Filled.Lock),
+    TopLevelDestination(JailNavKey, R.string.nav_jail, CageIcons.Outlined, CageIcons.Filled),
 )
 
 /** Destinations shown as the list pane of a list-detail layout. */
