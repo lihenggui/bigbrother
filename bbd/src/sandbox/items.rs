@@ -200,8 +200,9 @@ const SWITCHED_WITH_ANOTHER: &[&str] = &["android:wifi_scan"];
 pub struct Settings(BTreeMap<Item, Mode>);
 
 /// What carries out an item. Most items are only app ops; storage is app
-/// ops and mounts, the device identifiers and the installed apps are app
-/// ops and an answer of the system server hook.
+/// ops, mounts, and the system server hook withholding the file grants
+/// the app kept from before; the device identifiers and the installed
+/// apps are app ops and an answer of the hook.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Part {
@@ -209,6 +210,7 @@ pub enum Part {
     AppOps,
     AndroidIdHook,
     AppListHook,
+    UriGrantsHook,
 }
 
 impl Part {
@@ -218,6 +220,7 @@ impl Part {
             Part::AppOps => "app_ops",
             Part::AndroidIdHook => "android_id_hook",
             Part::AppListHook => "app_list_hook",
+            Part::UriGrantsHook => "uri_grants_hook",
         }
     }
 }
@@ -229,6 +232,7 @@ pub struct InPlace {
     pub mounts: bool,
     pub android_id_hook: bool,
     pub app_list_hook: bool,
+    pub uri_grants_hook: bool,
 }
 
 /// What the sandbox mounts in an app's namespace as it starts.
@@ -402,6 +406,9 @@ impl Settings {
             if self.held_for(item).into_iter().any(|name| !held(name)) {
                 missing.push(Part::AppOps);
             }
+            if item == Item::Storage && !parts.uri_grants_hook {
+                missing.push(Part::UriGrantsHook);
+            }
             if item == Item::DeviceIds && !parts.android_id_hook {
                 missing.push(Part::AndroidIdHook);
             }
@@ -540,6 +547,7 @@ mod tests {
             mounts: true,
             android_id_hook: true,
             app_list_hook: true,
+            uri_grants_hook: true,
         };
         let items = Settings::all_on();
         assert!(items.unmet(&all, |_| true).is_empty());
@@ -552,7 +560,10 @@ mod tests {
 
         let none = InPlace::default();
         let unmet = items.unmet(&none, |_| false);
-        assert_eq!(unmet[&Item::Storage], [Part::Mounts, Part::AppOps]);
+        assert_eq!(
+            unmet[&Item::Storage],
+            [Part::Mounts, Part::AppOps, Part::UriGrantsHook]
+        );
         assert_eq!(unmet[&Item::CpuInfo], [Part::Mounts]);
         assert_eq!(unmet[&Item::DeviceIds], [Part::AppOps, Part::AndroidIdHook]);
         assert_eq!(

@@ -311,6 +311,10 @@ pub struct Status {
 pub struct HookStatus {
     pub android_id: bool,
     pub app_list: bool,
+    /// Whether file grants an app kept from before its storage was
+    /// isolated are withheld from it.
+    #[serde(default)]
+    pub uri_grants: bool,
 }
 
 pub struct Sandbox {
@@ -690,6 +694,7 @@ impl Sandbox {
             mounts: status.gate,
             android_id_hook: status.hook.android_id,
             app_list_hook: status.hook.app_list,
+            uri_grants_hook: status.hook.uri_grants,
         };
         let apps = writer
             .sandbox_entries()?
@@ -1143,6 +1148,7 @@ fn print_status(out: &mut impl std::io::Write, status: &Status) -> std::io::Resu
     writeln!(out, "App ops:           {}", on(status.appops))?;
     writeln!(out, "ANDROID_ID hook:   {}", on(status.hook.android_id))?;
     writeln!(out, "App list hook:     {}", on(status.hook.app_list))?;
+    writeln!(out, "File grants hook:  {}", on(status.hook.uri_grants))?;
     writeln!(out, "Starts admitted:   {}", status.admitted)?;
     writeln!(out, "Starts failed:     {}", status.failed)?;
     writeln!(out, "Hold time p95:     {} us", status.hold_p95_us)
@@ -2346,7 +2352,7 @@ mod tests {
             ask(r#"{"cmd":"sandbox.status"}"#),
             serde_json::json!({
                 "ok": true, "gate": false, "appops": false,
-                "hook": {"android_id": false, "app_list": false},
+                "hook": {"android_id": false, "app_list": false, "uri_grants": false},
                 "admitted": 0, "failed": 0, "hold_p95_us": 0,
             })
         );

@@ -125,7 +125,7 @@
     <!-- The items: a title, what the app gets with the item on, and what that means. -->
     <string name="jail_item_storage">Files and media</string>
     <string name="jail_item_storage_on">Isolated storage</string>
-    <string name="jail_item_storage_on_detail">A separate, empty storage of its own, where what it saves stays. Real photos, downloads and documents are not visible.</string>
+    <string name="jail_item_storage_on_detail">A separate, empty storage of its own, where what it saves stays. Real photos, downloads and documents are not visible; a file chosen for it in the system\'s file picker is open to it for that use only.</string>
     <string name="jail_item_cpu_info">Processor information</string>
     <string name="jail_item_cpu_info_on">Chip model hidden</string>
     <string name="jail_item_cpu_info_on_detail">The core count and instruction set stay; the chip model and other identifiers are removed.</string>

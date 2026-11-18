@@ -66,6 +66,9 @@ internal class SandboxList(
     /** Whether [uid] is to see no installed app but itself and the system's. */
     fun hidesAppsFrom(uid: Int): Boolean = entryOf(uid)?.hidesApps == true
 
+    /** Whether [uid] is held to the file grants of the moment. */
+    fun isolatesStorageOf(uid: Int): Boolean = entryOf(uid)?.isolatesStorage == true
+
     private fun entryOf(uid: Int): SandboxedUid? {
         refresh()
         return entries[uid]

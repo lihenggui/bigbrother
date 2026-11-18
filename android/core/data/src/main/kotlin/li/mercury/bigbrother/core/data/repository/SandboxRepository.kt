@@ -97,6 +97,7 @@ internal class RootSandboxRepository @Inject constructor(
             appOps = status.optBoolean("appops"),
             androidIdHook = hook.optBoolean("android_id"),
             appListHook = hook.optBoolean("app_list"),
+            uriGrantsHook = hook.optBoolean("uri_grants"),
         )
     }
 

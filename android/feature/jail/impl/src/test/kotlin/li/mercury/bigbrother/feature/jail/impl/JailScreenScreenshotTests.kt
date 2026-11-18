@@ -88,7 +88,7 @@ class JailScreenScreenshotTests {
     @Test
     fun givenHookNotActive_whenShown_thenSaysWhatIsNotInEffect() {
         composeTestRule.captureForDevice("phone", DefaultTestDevices.PHONE.spec, "JailHookMissing") {
-            Jail(isolatedApps(), SandboxStatus(gate = true, appOps = true, androidIdHook = false, appListHook = false))
+            Jail(isolatedApps(), SandboxStatus(gate = true, appOps = true, androidIdHook = false, appListHook = false, uriGrantsHook = false))
         }
     }
 
@@ -450,8 +450,8 @@ class JailScreenScreenshotTests {
     private fun demoLocale(): Locale = RuntimeEnvironment.getApplication().resources.configuration.locales[0]
 
     private companion object {
-        val FULL_STATUS = SandboxStatus(gate = true, appOps = true, androidIdHook = true, appListHook = true)
-        val NOTHING_IN_PLACE = SandboxStatus(gate = false, appOps = false, androidIdHook = false, appListHook = false)
+        val FULL_STATUS = SandboxStatus(gate = true, appOps = true, androidIdHook = true, appListHook = true, uriGrantsHook = true)
+        val NOTHING_IN_PLACE = SandboxStatus(gate = false, appOps = false, androidIdHook = false, appListHook = false, uriGrantsHook = false)
 
         /** An Android user other than the one the app runs as: a work profile. */
         const val OTHER_USER = 10
