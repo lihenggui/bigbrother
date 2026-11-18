@@ -27,7 +27,9 @@ import li.mercury.bigbrother.core.model.SandboxedApp
 
 /**
  * A sandbox kept in memory, worked out the way the daemon does it: an app's
- * own settings over the global ones, every item on unless set otherwise.
+ * own settings over the global ones, every item on unless set otherwise. As
+ * in the app, a change that was made does not fail when the lists cannot be
+ * read again; they stay as they were.
  */
 class TestSandboxRepository(
     apps: List<SandboxedApp> = emptyList(),
@@ -37,8 +39,14 @@ class TestSandboxRepository(
     /** Thrown by every call while set. */
     var failure: RecordsException? = null
 
-    /** Packages that cannot be put in the sandbox. */
-    var failsToIsolate: Set<String> = emptySet()
+    /** Thrown by [refresh] while set. */
+    var refreshFailure: RecordsException? = null
+
+    /** Packages that cannot be put in the sandbox, with what trying throws. */
+    var failsToIsolate: Map<String, RecordsException> = emptyMap()
+
+    /** Packages that cannot be taken out of the sandbox, with what trying throws. */
+    var failsToRelease: Map<String, RecordsException> = emptyMap()
 
     /** How many apps releasing every app leaves in the sandbox. */
     var releaseAllLeaves: Int = 0
@@ -58,6 +66,7 @@ class TestSandboxRepository(
 
     override suspend fun refresh() {
         check()
+        refreshFailure?.let { throw it }
         _apps.value = stored.map { it.copy(items = applies(it.settings)) }
         _global.value = applies(emptyMap())
     }
@@ -69,7 +78,7 @@ class TestSandboxRepository(
 
     override suspend fun isolate(packageName: String, userId: Int) {
         check()
-        if (packageName in failsToIsolate) throw RecordsException.CommandFailed("cannot isolate")
+        failsToIsolate[packageName]?.let { throw it }
         isolated += packageName
         val index = stored.indexOfFirst { it.packageName == packageName }
         if (index >= 0) {
@@ -77,21 +86,22 @@ class TestSandboxRepository(
         } else {
             stored += SandboxedApp(10_000 + stored.size, packageName, true, 0, emptyMap(), emptyMap())
         }
-        refresh()
+        refreshAfterChange()
     }
 
     override suspend fun release(packageName: String, userId: Int) {
         check()
+        failsToRelease[packageName]?.let { throw it }
         released += packageName
         stored.replaceAll { if (it.packageName == packageName) it.copy(enabled = false) else it }
-        refresh()
+        refreshAfterChange()
     }
 
     override suspend fun releaseAll(): Int {
         check()
         val kept = stored.filter { it.enabled }.take(releaseAllLeaves).toSet()
         stored.replaceAll { if (it in kept) it else it.copy(enabled = false) }
-        refresh()
+        refreshAfterChange()
         return kept.size
     }
 
@@ -103,16 +113,24 @@ class TestSandboxRepository(
             changes.forEach { (item, mode) -> if (mode == null) settings.remove(item) else settings[item] = mode }
             app.copy(settings = settings)
         }
-        refresh()
+        refreshAfterChange()
     }
 
     override suspend fun setGlobal(changes: Map<SandboxItem, SandboxMode>) {
         check()
         globalModes += changes
-        refresh()
+        refreshAfterChange()
     }
 
     private fun applies(own: Map<SandboxItem, SandboxMode>): Map<SandboxItem, SandboxMode> = SandboxItem.entries.associateWith { own[it] ?: globalModes[it] ?: SandboxMode.ON }
+
+    private suspend fun refreshAfterChange() {
+        try {
+            refresh()
+        } catch (_: RecordsException) {
+            // Made all the same.
+        }
+    }
 
     private fun check() {
         failure?.let { throw it }

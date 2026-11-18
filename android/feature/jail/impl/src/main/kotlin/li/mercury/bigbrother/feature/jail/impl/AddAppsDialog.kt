@@ -34,6 +34,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
@@ -74,12 +76,13 @@ import li.mercury.bigbrother.core.ui.AppIcon
 
 /**
  * The installed apps, to choose those to put in the sandbox. Full-screen on
- * a phone, a dialog on wider windows.
+ * a phone, a dialog on wider windows. The search field edits [query]
+ * directly; [state] lists the apps that match it once they are worked out.
  */
 @Composable
 internal fun AddAppsDialog(
     state: AddAppsUiState,
-    onQueryChange: (String) -> Unit,
+    query: TextFieldState,
     onToggle: (String) -> Unit,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
@@ -91,7 +94,7 @@ internal fun AddAppsDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = !compact),
     ) {
-        AddAppsSheet(state, compact, onQueryChange, onToggle, onDismiss, onConfirm)
+        AddAppsSheet(state, query, compact, onToggle, onDismiss, onConfirm)
     }
 }
 
@@ -100,8 +103,8 @@ internal fun AddAppsDialog(
 @Composable
 internal fun AddAppsSheet(
     state: AddAppsUiState,
+    query: TextFieldState,
     compact: Boolean,
-    onQueryChange: (String) -> Unit,
     onToggle: (String) -> Unit,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
@@ -120,7 +123,7 @@ internal fun AddAppsSheet(
         color = MaterialTheme.colorScheme.surfaceContainer,
     ) {
         Column(if (compact) Modifier.systemBarsPadding().imePadding() else Modifier) {
-            AddAppsContent(state, onQueryChange, onToggle, onDismiss, onConfirm)
+            AddAppsContent(state, query, onToggle, onDismiss, onConfirm)
         }
     }
 }
@@ -144,7 +147,7 @@ private fun SystemBarsOver(background: Color) {
 @Composable
 private fun ColumnScope.AddAppsContent(
     state: AddAppsUiState,
-    onQueryChange: (String) -> Unit,
+    query: TextFieldState,
     onToggle: (String) -> Unit,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
@@ -176,14 +179,13 @@ private fun ColumnScope.AddAppsContent(
         }
     }
     TextField(
-        value = state.query,
-        onValueChange = onQueryChange,
+        state = query,
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 4.dp),
         placeholder = { Text(stringResource(R.string.jail_add_search)) },
         leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-        singleLine = true,
+        lineLimits = TextFieldLineLimits.SingleLine,
         shape = CircleShape,
         colors = TextFieldDefaults.colors(
             focusedIndicatorColor = Color.Transparent,

@@ -30,9 +30,12 @@ import javax.inject.Singleton
 /** Result of a root command. */
 class CommandResult(val isSuccess: Boolean, val code: Int, val output: String, val error: String)
 
-/** Runs commands in a root shell. The single place the app touches root. */
+/**
+ * Runs commands in a root shell. The single place the app touches root;
+ * open so that the repositories' tests can answer in its place.
+ */
 @Singleton
-class RootShell @Inject constructor(
+open class RootShell @Inject constructor(
     @Dispatcher(IO) private val ioDispatcher: CoroutineDispatcher,
 ) {
     /**
@@ -41,7 +44,7 @@ class RootShell @Inject constructor(
      *
      * @throws RecordsException.NoRoot if the app has not been granted root.
      */
-    suspend fun run(command: String, label: String = command.substringBefore(' ')): CommandResult = withContext(ioDispatcher) {
+    open suspend fun run(command: String, label: String = command.substringBefore(' ')): CommandResult = withContext(ioDispatcher) {
         // A job only captures output into lists it is given.
         val output = ArrayList<String>()
         val error = ArrayList<String>()

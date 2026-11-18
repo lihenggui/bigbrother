@@ -20,6 +20,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
+import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.testing.MainDispatcherRule
@@ -27,6 +28,7 @@ import li.mercury.bigbrother.core.testing.repository.TestSandboxRepository
 import org.junit.Rule
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 
 class JailSettingsViewModelTest {
     @get:Rule
@@ -87,5 +89,17 @@ class JailSettingsViewModelTest {
         assertEquals(1, viewModel.uiState.value.notReleased)
         viewModel.dismissError()
         assertEquals(0, viewModel.uiState.value.notReleased)
+    }
+
+    @Test
+    fun givenListUnreadableAfterwards_whenAllReleased_thenToldHowManyAreLeftWithoutError() = runTest {
+        sandboxRepository.releaseAllLeaves = 1
+        val viewModel = viewModel()
+        sandboxRepository.refreshFailure = RecordsException.CommandFailed("cannot read")
+
+        viewModel.releaseAll()
+
+        assertEquals(1, viewModel.uiState.value.notReleased)
+        assertNull(viewModel.uiState.value.error)
     }
 }

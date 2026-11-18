@@ -97,33 +97,90 @@ class JailViewModelTest {
     }
 
     @Test
-    fun givenOneAppFailing_whenSeveralIsolated_thenOthersStillIsolatedAndFailureTold() = runTest {
-        sandboxRepository.failsToIsolate = setOf("com.example.shopping")
+    fun givenOneAppFailing_whenSeveralIsolated_thenOthersIsolatedWithUndoAndFailedOneNamed() = runTest {
+        sandboxRepository.failsToIsolate = mapOf("com.example.shopping" to RecordsException.CommandFailed("not installed"))
         val viewModel = viewModel()
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
         viewModel.refresh()
 
-        viewModel.isolate(
-            listOf(
-                installed(10231, "com.example.flashlight", "Flashlight"),
-                installed(10204, "com.example.shopping", "Shopping"),
-                installed(10120, "com.example.keyboard", "Keyboard"),
-            ),
-        )
+        viewModel.isolate(threeApps)
 
         assertEquals(listOf("com.example.flashlight", "com.example.keyboard"), sandboxRepository.isolated)
-        assertIs<JailMessage.Failed>(viewModel.message.value)
+        val message = assertIs<JailMessage.Isolated>(viewModel.message.value)
+        assertEquals(listOf("Flashlight", "Keyboard"), message.names)
+        assertEquals(listOf("Shopping"), message.notIsolated)
+
+        viewModel.dismissMessage()
+        viewModel.undoIsolate(message.apps)
+
+        assertEquals(listOf("com.example.flashlight", "com.example.keyboard"), sandboxRepository.released)
     }
 
     @Test
-    fun givenDaemonFailing_whenIsolated_thenFailureTold() = runTest {
+    fun givenModuleOutdated_whenSeveralIsolated_thenStopsAndLeftOnesNotIsolated() = runTest {
+        sandboxRepository.failsToIsolate = mapOf("com.example.shopping" to RecordsException.ModuleOutdated())
+        val viewModel = viewModel()
+
+        viewModel.isolate(threeApps)
+
+        // Keyboard would have been isolated, had it been tried.
+        assertEquals(listOf("com.example.flashlight"), sandboxRepository.isolated)
+        val message = assertIs<JailMessage.Isolated>(viewModel.message.value)
+        assertEquals(listOf("Flashlight"), message.names)
+        assertEquals(listOf("Shopping", "Keyboard"), message.notIsolated)
+    }
+
+    @Test
+    fun givenNoRoot_whenSeveralIsolated_thenEveryAppNamedWithReason() = runTest {
+        sandboxRepository.failure = RecordsException.NoRoot()
+        val viewModel = viewModel()
+
+        viewModel.isolate(threeApps)
+
+        assertEquals(JailMessage.NotIsolated(listOf("Flashlight", "Shopping", "Keyboard"), LoadFailure.NoRoot), viewModel.message.value)
+    }
+
+    @Test
+    fun givenDaemonFailing_whenIsolated_thenAppNamedWithReason() = runTest {
         sandboxRepository.failure = RecordsException.CommandFailed("no gate")
         val viewModel = viewModel()
 
         viewModel.isolate(listOf(installed(10204, "com.example.shopping", "Shopping")))
 
-        assertEquals(JailMessage.Failed(LoadFailure.Other("no gate")), viewModel.message.value)
+        assertEquals(JailMessage.NotIsolated(listOf("Shopping"), LoadFailure.Other("no gate")), viewModel.message.value)
     }
+
+    @Test
+    fun givenListUnreadableAfterwards_whenIsolated_thenToldIsolatedWithUndo() = runTest {
+        sandboxRepository.refreshFailure = RecordsException.CommandFailed("cannot read")
+        val viewModel = viewModel()
+
+        viewModel.isolate(listOf(installed(10204, "com.example.shopping", "Shopping")))
+
+        val message = assertIs<JailMessage.Isolated>(viewModel.message.value)
+        assertEquals(listOf("Shopping"), message.names)
+        assertEquals(emptyList(), message.notIsolated)
+    }
+
+    @Test
+    fun givenOneAppFailingToRelease_whenUndone_thenOthersReleasedAndFailedOneNamed() = runTest {
+        sandboxRepository.failsToRelease = mapOf("com.example.flashlight" to RecordsException.CommandFailed("busy"))
+        val viewModel = viewModel()
+        viewModel.isolate(threeApps)
+        val message = assertIs<JailMessage.Isolated>(viewModel.message.value)
+        viewModel.dismissMessage()
+
+        viewModel.undoIsolate(message.apps)
+
+        assertEquals(listOf("com.example.shopping", "com.example.keyboard"), sandboxRepository.released)
+        assertEquals(JailMessage.NotReleased(listOf("Flashlight"), LoadFailure.Other("busy")), viewModel.message.value)
+    }
+
+    private val threeApps = listOf(
+        installed(10231, "com.example.flashlight", "Flashlight"),
+        installed(10204, "com.example.shopping", "Shopping"),
+        installed(10120, "com.example.keyboard", "Keyboard"),
+    )
 }
 
 internal fun sandboxed(uid: Int, packageName: String, enabled: Boolean) = SandboxedApp(uid, packageName, enabled, created = 0, settings = emptyMap(), items = emptyMap())

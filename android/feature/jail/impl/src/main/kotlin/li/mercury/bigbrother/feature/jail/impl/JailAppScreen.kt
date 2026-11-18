@@ -274,10 +274,17 @@ internal fun Note(text: String, modifier: Modifier = Modifier) {
 /** Why a change was not made, in a line. */
 @Composable
 internal fun failureText(failure: LoadFailure): String = when (failure) {
+    is LoadFailure.Other -> stringResource(R.string.jail_failed, failure.message)
+    else -> failureReason(failure)
+}
+
+/** Why a change was not made, to follow a line that says which. */
+@Composable
+internal fun failureReason(failure: LoadFailure): String = when (failure) {
     LoadFailure.NoRoot -> stringResource(UiR.string.no_root_title)
     LoadFailure.ModuleMissing -> stringResource(UiR.string.no_module_title)
     LoadFailure.ModuleOutdated -> stringResource(UiR.string.old_module_title)
-    is LoadFailure.Other -> stringResource(R.string.jail_failed, failure.message)
+    is LoadFailure.Other -> failure.message
 }
 
 /** Tells once why a change was not made. */

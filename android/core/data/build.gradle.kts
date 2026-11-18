@@ -34,4 +34,5 @@ dependencies {
     implementation(libs.libsu.core)
 
     testImplementation(libs.kotlin.test.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
 }

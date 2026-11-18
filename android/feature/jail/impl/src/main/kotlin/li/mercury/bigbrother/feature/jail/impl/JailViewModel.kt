@@ -58,10 +58,21 @@ data class JailUiState(
 
 /** What a change did, to be told once. */
 sealed interface JailMessage {
-    /** [apps] were put in the sandbox, and can be taken out again. */
-    data class Isolated(val names: List<String>, val apps: List<InstalledApp>) : JailMessage
+    /**
+     * [apps] were put in the sandbox, and can be taken out again.
+     * [notIsolated] names those chosen with them that could not be.
+     */
+    data class Isolated(
+        val names: List<String>,
+        val apps: List<InstalledApp>,
+        val notIsolated: List<String> = emptyList(),
+    ) : JailMessage
 
-    data class Failed(val failure: LoadFailure) : JailMessage
+    /** None of the apps chosen, [names], could be put in the sandbox, first for [failure]. */
+    data class NotIsolated(val names: List<String>, val failure: LoadFailure) : JailMessage
+
+    /** Undoing left [names] in the sandbox, first for [failure]. */
+    data class NotReleased(val names: List<String>, val failure: LoadFailure) : JailMessage
 }
 
 @HiltViewModel
@@ -97,37 +108,24 @@ class JailViewModel @Inject constructor(
     }
 
     /**
-     * Puts [apps] in the sandbox, each whatever became of the others. If one
-     * could not be put in, that is told, and the list shows those that were.
+     * Puts [apps] in the sandbox, each whatever became of the others. Those
+     * that were can be taken out again, also when others could not be put in.
      */
     fun isolate(apps: List<InstalledApp>) {
         viewModelScope.launch {
-            val done = mutableListOf<InstalledApp>()
-            var failure: LoadFailure? = null
-            for (app in apps) {
-                try {
-                    sandboxRepository.isolate(app.packageName, app.uid / PER_USER_RANGE)
-                    done += app
-                } catch (e: RecordsException) {
-                    failure = failure ?: e.toLoadFailure()
-                }
-            }
+            val (done, failed, failure) = eachApp(apps) { sandboxRepository.isolate(it.packageName, it.uid / PER_USER_RANGE) }
             _message.value = when {
-                failure != null -> JailMessage.Failed(failure)
-                done.isNotEmpty() -> JailMessage.Isolated(done.map { it.info.label }, done)
-                else -> null
+                done.isEmpty() -> failure?.let { JailMessage.NotIsolated(failed.names(), it) }
+                else -> JailMessage.Isolated(done.names(), done, notIsolated = failed.names())
             }
         }
     }
 
-    /** Takes out again what [isolate] put in. */
+    /** Takes out again what [isolate] put in, each whatever became of the others. */
     fun undoIsolate(apps: List<InstalledApp>) {
         viewModelScope.launch {
-            try {
-                apps.forEach { sandboxRepository.release(it.packageName, it.uid / PER_USER_RANGE) }
-            } catch (e: RecordsException) {
-                _message.value = JailMessage.Failed(e.toLoadFailure())
-            }
+            val (_, failed, failure) = eachApp(apps) { sandboxRepository.release(it.packageName, it.uid / PER_USER_RANGE) }
+            if (failure != null) _message.value = JailMessage.NotReleased(failed.names(), failure)
         }
     }
 
@@ -135,6 +133,43 @@ class JailViewModel @Inject constructor(
     fun dismissMessage() {
         _message.value = null
     }
+
+    /**
+     * Runs [change] for each of [apps], the others' failures notwithstanding,
+     * except one that would fail for every app: then those left count as
+     * failed too, without a root command each.
+     */
+    private suspend fun eachApp(apps: List<InstalledApp>, change: suspend (InstalledApp) -> Unit): Outcome {
+        val done = mutableListOf<InstalledApp>()
+        val failed = mutableListOf<InstalledApp>()
+        var failure: LoadFailure? = null
+        for ((index, app) in apps.withIndex()) {
+            try {
+                change(app)
+                done += app
+            } catch (e: RecordsException) {
+                failure = failure ?: e.toLoadFailure()
+                if (e.failsEveryApp) {
+                    failed += apps.subList(index, apps.size)
+                    break
+                }
+                failed += app
+            }
+        }
+        return Outcome(done, failed, failure)
+    }
+
+    /** The apps a change was made for and those it failed for, and why the first one failed. */
+    private data class Outcome(val done: List<InstalledApp>, val failed: List<InstalledApp>, val failure: LoadFailure?)
+
+    private fun List<InstalledApp>.names() = map { it.info.label }
+
+    /** Whether no other app could fare better: root, or the daemon itself, is missing. */
+    private val RecordsException.failsEveryApp: Boolean
+        get() = when (this) {
+            is RecordsException.NoRoot, is RecordsException.ModuleMissing, is RecordsException.ModuleOutdated -> true
+            is RecordsException.CommandFailed -> false
+        }
 
     private companion object {
         const val PER_USER_RANGE = 100_000

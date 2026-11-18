@@ -116,6 +116,28 @@ class JailAppViewModelTest {
     }
 
     @Test
+    fun givenListUnreadableAfterwards_whenReleased_thenPageLeftWithoutError() = runTest {
+        val viewModel = viewModel()
+        sandboxRepository.refreshFailure = RecordsException.CommandFailed("cannot read")
+
+        viewModel.release()
+
+        assertEquals(listOf(PACKAGE), sandboxRepository.released)
+        assertTrue(viewModel.uiState.value.released)
+        assertNull(viewModel.uiState.value.error)
+    }
+
+    @Test
+    fun givenListUnreadableAfterwards_whenChanged_thenNoError() = runTest {
+        val viewModel = viewModel()
+        sandboxRepository.refreshFailure = RecordsException.CommandFailed("cannot read")
+
+        viewModel.setOn(SandboxItem.CONTACTS, on = false)
+
+        assertNull(viewModel.uiState.value.error)
+    }
+
+    @Test
     fun givenDaemonFailing_whenChanged_thenErrorToldOnce() = runTest {
         val viewModel = viewModel()
         sandboxRepository.failure = RecordsException.ModuleOutdated()

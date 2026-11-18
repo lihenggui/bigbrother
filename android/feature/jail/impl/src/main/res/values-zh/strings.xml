@@ -36,6 +36,18 @@
     <string name="jail_isolated">%1$s 已隔离</string>
     <string name="jail_undo">撤销</string>
     <string name="jail_failed">未更改：%1$s</string>
+    <string name="jail_isolated_partly">%1$s 已隔离，%2$s 未能隔离</string>
+    <plurals name="jail_isolated_partly_count">
+        <item quantity="other">%1$s 已隔离，%2$d 个应用未能隔离</item>
+    </plurals>
+    <string name="jail_not_isolated">%1$s 未能隔离：%2$s</string>
+    <plurals name="jail_not_isolated_count">
+        <item quantity="other">%1$d 个应用未能隔离：%2$s</item>
+    </plurals>
+    <string name="jail_not_released">%1$s 未解除隔离：%2$s</string>
+    <plurals name="jail_not_released_count">
+        <item quantity="other">%1$d 个应用未解除隔离：%2$s</item>
+    </plurals>
 
     <string name="jail_add_search">搜索应用</string>
     <plurals name="jail_add_confirm">
@@ -67,6 +79,7 @@
     <string name="jail_section_status">状态</string>
     <string name="jail_status_title">组件状态</string>
     <string name="jail_status_ok">存储隔离与系统框架钩子已生效</string>
+    <string name="jail_status_checking">正在检查…</string>
     <string name="jail_status_hook_missing">系统框架钩子未加载</string>
     <string name="jail_status_gate_missing">此内核不支持存储隔离</string>
     <string name="jail_release_all">解除全部隔离</string>
