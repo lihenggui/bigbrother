@@ -122,8 +122,8 @@ apd module install big_brother-<version>.zip        # APatch
 
 默认不会：Big Brother 只记录访问，不阻止访问。可在“监狱”中隔离应用：被隔离的应用使用
 独立的存储（初始为空），读不到个人数据，并获得独立的设备标识。每一项既可对所有隔离应用
-统一设置，也可单独设置。隐藏设备标识和已安装应用需要在 LSPosed 中为模块启用“系统框架”
-作用域。详见 [docs/sandbox.md](docs/sandbox.md)（英文）。
+统一设置，也可单独设置；此后安装的应用也可在首次启动前自动隔离。隐藏设备标识和已安装应用
+需要在 LSPosed 中为模块启用“系统框架”作用域。详见 [docs/sandbox.md](docs/sandbox.md)（英文）。
 
 ### 对续航的影响
 

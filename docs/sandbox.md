@@ -15,6 +15,7 @@ $bbd sandbox list
 $bbd sandbox status
 $bbd sandbox set com.example.app camera=off   # see Items
 $bbd sandbox global                           # the global settings
+$bbd sandbox auto on                          # see Newly installed apps
 ```
 
 Every subcommand takes `--json`. The commands are sent to the running
@@ -95,6 +96,42 @@ settings is made to every sandboxed app that follows them, or to none. An
 app in the sandbox with every item off has nothing done to it: no mount,
 no app op, no permission and no answer of the hook.
 
+## Newly installed apps
+
+A switch in the global settings, off by default, puts every app installed
+after it is turned on in the sandbox, with the global settings, before the
+app first starts:
+
+```sh
+$bbd sandbox auto on    # or off; without an argument, says which it is
+```
+
+`bbd sandbox global --json` reports it as `auto`.
+
+- Turning it on leaves every app installed then as it is, for every Android
+  user, then and later. Apps that came with the system, and those a system
+  update adds, are never put in.
+- An app installed afterwards is put in for each user it is installed for,
+  and for a user it is installed for later. Each is put in once: an app taken
+  out of the sandbox stays out.
+- An update is not a new app. An app uninstalled and installed again is.
+
+Android writes its package list (`/data/system/packages.list`) on every
+install, update and removal. While the switch is on, the daemon watches its
+directory for that (inotify) and puts the new app in the sandbox. The app
+may start first, when the installer opens it at once: the gate also holds
+the start of an app the daemon has not dealt with yet, and the daemon ends
+that start, as it ends any start it cannot give its sandbox, and puts the
+app in. Its next start is held as a sandboxed app's. So none of a new app's
+code runs outside the sandbox.
+
+What the daemon knows of the installed apps is kept in the database, and
+forgotten when the switch is turned off. While it is off, nothing is
+watched, and a start of an app that is not sandboxed reads one value more.
+While it is on, such a start of an app installed before costs a bit test,
+and one of an app installed since a hash lookup more; the daemon wakes only
+when a file is written to `/data/system`.
+
 ## How it works
 
 ### The gate
@@ -109,7 +146,8 @@ that is about to take a sandboxed uid with `storage` or `cpu_info` on, and
 reports it to the daemon. A
 thread of the daemon that does nothing else enters the child's mount
 namespace, makes the sandbox's mounts and lets the process continue. Apps
-that are not sandboxed pay for one hash lookup when they start.
+that are not sandboxed pay for one hash lookup when they start, and the
+read of the switch for [newly installed apps](#newly-installed-apps).
 
 A start is held for a few milliseconds.
 
