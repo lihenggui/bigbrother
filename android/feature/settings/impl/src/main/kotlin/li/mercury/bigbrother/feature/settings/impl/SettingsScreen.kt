@@ -100,6 +100,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel) {
 
 /** Name of a kind of activity the daemon reports as `coverage_<id>`. */
 private fun featureLabel(id: String): Int? = when (id) {
+    "files" -> R.string.feature_files
     "exec" -> R.string.feature_exec
     "network" -> R.string.feature_network
     "process" -> R.string.feature_process

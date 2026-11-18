@@ -24,6 +24,7 @@
     <string name="module_version">模块 %s</string>
     <string name="retention">记录保留 30 天</string>
     <string name="coverage_title">本设备不支持</string>
+    <string name="feature_files">文件打开</string>
     <string name="feature_exec">命令执行</string>
     <string name="feature_network">本地网络连接</string>
     <string name="feature_process">进程内存访问</string>

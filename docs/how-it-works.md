@@ -34,8 +34,16 @@ app      reads the daemon's JSON output as root
   sooner if the buffer is filling up. Each query from the app has it write
   first, so the app sees the latest records.
 - Only the file probes are required. The others are attached if the kernel
-  allows it; `bbd stats` reports which are active (`coverage_*`), and the
-  app says which kinds of activity are not recorded on the device.
+  allows it. A probe can attach and still never run, when the function it
+  is on has been inlined into its callers, so after attaching, the daemon
+  checks that each one fires: a child process that takes uid 70000, which
+  the probes trace and no app has, opens `/proc/version`, checks access to
+  it, execs `/`, connects a UDP socket to the loopback address, calls
+  `process_vm_readv` on the daemon and asks netlink for the interfaces.
+  Its events are counted, not recorded. `bbd stats` reports as active
+  (`coverage_*`) what is attached and fired, and the app says which kinds
+  of activity are not recorded on the device. `bbd selftest` runs the same
+  check on its own and exits non-zero if a feature does not fire.
 - Requests to system services are read from the binder transaction the app
   hands to the kernel: the interface name and the method's number, both part
   of binder's userspace format. Which number is which method differs between
