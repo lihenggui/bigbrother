@@ -18,13 +18,100 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path
-        android:fillColor="#00000000"
-        android:pathData="M30,54 C38,42 46,37 54,37 C62,37 70,42 78,54 C70,66 62,71 54,71 C46,71 38,66 30,54 Z"
-        android:strokeColor="#FFFFFF"
-        android:strokeLineJoin="round"
-        android:strokeWidth="4.5" />
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M54,54 m-9,0 a9,9 0 1,0 18,0 a9,9 0 1,0 -18,0" />
+    <!-- Scaled so the head reaches the safe zone; the torso and elbows run into the masked edge on purpose. -->
+    <group
+        android:pivotX="54"
+        android:pivotY="60"
+        android:scaleX="1.05"
+        android:scaleY="1.05">
+        <path
+            android:fillColor="#FF3E5796"
+            android:pathData="M44,46.5H64L74,52.5Q78,55 77,62V110H31V62Q30,55 34,52.5Z" />
+        <path
+            android:pathData="M46.4,46.5Q54,53.5 61.6,46.5"
+            android:strokeColor="#FF2A3F74"
+            android:strokeLineCap="round"
+            android:strokeWidth="1.6" />
+        <path
+            android:strokeAlpha="0.9"
+            android:pathData="M43.4,58.6Q48.6,63.2 54,60.4Q59.4,63.2 64.6,58.6M54,53.4V59.2"
+            android:strokeColor="#FF2A3F74"
+            android:strokeLineCap="round"
+            android:strokeWidth="1.5" />
+        <!-- Drawn before the front arm so it passes behind it; its hand hides under the left upper arm. -->
+        <path
+            android:pathData="M73.5,80L37,69.5"
+            android:strokeColor="#FFD48A17"
+            android:strokeLineCap="round"
+            android:strokeWidth="11" />
+        <!-- One shape from shoulder to wrist, so the elbow bends instead of two pieces overlapping. -->
+        <path
+            android:fillColor="@color/ic_launcher_skin"
+            android:pathData="M28.1,58a7.4,7.4 0 1,0 14.8,0a7.4,7.4 0 1,0 -14.8,0ZM28.2,59.5Q26.6,70 29,79Q30.5,86.5 37,85.6L72.2,74.3A5.75,5.75 0 0 0 68.8,63.3L42,71.6V59.5Z" />
+        <path
+            android:strokeAlpha="0.6"
+            android:pathData="M40.6,56.5Q37,62.5 30.8,64.6M39.2,63.6Q40.8,66.6 40.4,69.6"
+            android:strokeColor="#FFA86C06"
+            android:strokeLineCap="round"
+            android:strokeWidth="1.5" />
+        <path
+            android:strokeAlpha="0.45"
+            android:pathData="M44,75.6Q51,72.6 58.6,70.8"
+            android:strokeColor="#FFA86C06"
+            android:strokeLineCap="round"
+            android:strokeWidth="1.5" />
+        <!-- The right upper arm's shadow on the forearm it covers separates the two without an outline. -->
+        <group>
+            <clip-path android:pathData="M28.1,58a7.4,7.4 0 1,0 14.8,0a7.4,7.4 0 1,0 -14.8,0ZM28.2,59.5Q26.6,70 29,79Q30.5,86.5 37,85.6L72.2,74.3A5.75,5.75 0 0 0 68.8,63.3L42,71.6V59.5Z" />
+            <group
+                android:translateX="-2.4"
+                android:translateY="0.8">
+                <group
+                    android:pivotX="54"
+                    android:scaleX="-1">
+                    <path
+                        android:fillAlpha="0.38"
+                        android:fillColor="#FFA86C06"
+                        android:pathData="M28.1,58a7.4,7.4 0 1,0 14.8,0a7.4,7.4 0 1,0 -14.8,0ZM28.2,59.5Q26.6,70 29,79Q30.5,86 35.6,85.8Q41.2,85.6 42,79.6V59.5Z" />
+                </group>
+            </group>
+        </group>
+        <group
+            android:pivotX="54"
+            android:scaleX="-1">
+            <path
+                android:fillColor="@color/ic_launcher_skin"
+                android:pathData="M28.1,58a7.4,7.4 0 1,0 14.8,0a7.4,7.4 0 1,0 -14.8,0ZM28.2,59.5Q26.6,70 29,79Q30.5,86 35.6,85.8Q41.2,85.6 42,79.6V59.5Z" />
+            <path
+                android:strokeAlpha="0.6"
+                android:pathData="M40.6,56.5Q37,62.5 30.8,64.6M39.2,63.6Q40.8,66.6 40.4,69.6"
+                android:strokeColor="#FFA86C06"
+                android:strokeLineCap="round"
+                android:strokeWidth="1.5" />
+        </group>
+        <path
+            android:fillAlpha="0.35"
+            android:fillColor="#FFA86C06"
+            android:pathData="M47.6,45.2Q54,49.6 60.4,45.2L60.9,47.6Q54,51.6 47.1,47.6Z" />
+        <path
+            android:fillColor="@color/ic_launcher_skin"
+            android:pathData="M47.5,41H60.5L62,48H46ZM46,28.5Q46,23 51,23H57Q62,23 62,28.5V37.5Q62,45.5 54,45.5Q46,45.5 46,37.5ZM43.2,35.8a2.4,2.4 0 1,1 4.8,0a2.4,2.4 0 1,1 -4.8,0ZM60,35.8a2.4,2.4 0 1,1 4.8,0a2.4,2.4 0 1,1 -4.8,0Z" />
+        <path
+            android:fillColor="#FF1A2649"
+            android:pathData="M46,28.5Q46,23 51,23H57Q62,23 62,28.5V29H46Z" />
+        <path
+            android:fillColor="#FF1A2649"
+            android:pathData="M44.4,31H63.6V33.5Q63.6,38 59.3,38H57.8Q55.3,38 54.8,34.7H53.2Q52.7,38 50.2,38H48.7Q44.4,38 44.4,33.5Z" />
+        <path
+            android:strokeAlpha="0.85"
+            android:pathData="M46.8,36.4L49.2,32.4M57.6,36.4L60,32.4"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeLineCap="round"
+            android:strokeWidth="1.3" />
+        <path
+            android:pathData="M43.6,37.6Q41,39.6 42.4,41.4Q43.8,43 42,44.6Q40.4,46 41.8,47.6"
+            android:strokeColor="#FF1A2649"
+            android:strokeLineCap="round"
+            android:strokeWidth="1.4" />
+    </group>
 </vector>

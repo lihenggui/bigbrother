@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:pathData="M0,0H108V108H0Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:endColor="#FFD3DCFB"
+                android:endX="0"
+                android:endY="108"
+                android:startColor="#FFEEF2FF"
+                android:startX="0"
+                android:startY="0"
+                android:type="linear" />
+        </aapt:attr>
+    </path>
+    <!-- On the background layer, so the launcher's parallax moves the rays apart from the figure. -->
+    <path
+        android:fillAlpha="0.35"
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M54,38L54,-82L80.7,-78.99ZM54,38L106.07,-70.12L128.82,-55.82ZM54,38L147.82,-36.82L162.12,-14.07ZM54,38L170.99,11.3L174,38ZM54,38L170.99,64.7L162.12,90.07ZM54,38L147.82,112.82L128.82,131.82ZM54,38L106.07,146.12L80.7,154.99ZM54,38L54,158L27.3,154.99ZM54,38L1.93,146.12L-20.82,131.82ZM54,38L-39.82,112.82L-54.12,90.07ZM54,38L-62.99,64.7L-66,38ZM54,38L-62.99,11.3L-54.12,-14.07ZM54,38L-39.82,-36.82L-20.82,-55.82ZM54,38L1.93,-70.12L27.3,-78.99Z" />
+</vector>

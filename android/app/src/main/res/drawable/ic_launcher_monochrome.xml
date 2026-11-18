@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- The foreground's figure as one tint: parts are told apart by gaps and alpha instead of colour. -->
+    <group
+        android:pivotX="54"
+        android:pivotY="60"
+        android:scaleX="1.05"
+        android:scaleY="1.05">
+        <path
+            android:fillAlpha="0.5"
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M56.46,80.82 L65.72,83.49 Q67.62,87.03 72.35,87.2 Q75.11,87.31 77,85.78 L77,110 L31,110 L31,85.68 Q33.37,87.52 37.19,86.99 Q37.31,86.97 37.43,86.93 Z" />
+        <path
+            android:fillAlpha="0.5"
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M44,46.5 L44.79,46.5 L44.53,47.69 Q44.5,47.84 44.5,48 Q44.5,49.5 46,49.5 L62,49.5 Q62.16,49.5 62.31,49.47 Q63.78,49.15 63.47,47.69 L63.21,46.5 L64,46.5 L69.39,49.74 Q67.68,50.38 66.28,51.78 Q63.7,54.35 63.7,58 Q63.7,60.15 64.6,61.94 L64.6,63.13 L50.24,67.58 L43.4,65.62 L43.4,61.94 Q44.3,60.15 44.3,58 Q44.3,54.35 41.72,51.78 Q40.32,50.38 38.61,49.74 Z" />
+        <path
+            android:fillAlpha="0.5"
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M44.4,31 L63.6,31 L63.6,33.5 Q63.6,38 59.3,38 L57.8,38 Q55.3,38 54.8,34.7 L53.2,34.7 Q52.7,38 50.2,38 L48.7,38 Q44.4,38 44.4,33.5 Z" />
+        <path
+            android:fillAlpha="0.75"
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M64.6,78.21 L64.6,79.6 Q64.6,79.69 64.61,79.79 Q64.9,81.95 65.72,83.49 L56.46,80.82 Z" />
+        <path
+            android:fillAlpha="0.75"
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M50.24,67.58 L43.4,69.7 L43.4,65.62 Z" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M28.1,58 C28.1,53.91 31.41,50.6 35.5,50.6 C39.59,50.6 42.9,53.91 42.9,58 C42.9,59.28 42.57,60.49 42,61.54 L42,71.6 L64.6,64.6 L64.6,76.74 L37,85.6 Q30.5,86.5 29,79 Q26.6,70 28.2,59.5 L28.25,59.5 C28.15,59.02 28.1,58.51 28.1,58 Z" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M79.9,58 C79.9,58.51 79.85,59.02 79.75,59.5 L79.8,59.5 Q81.4,70 79,79 Q77.5,86 72.4,85.8 Q66.8,85.6 66,79.6 L66,61.54 C65.43,60.49 65.1,59.28 65.1,58 C65.1,53.91 68.41,50.6 72.5,50.6 C76.59,50.6 79.9,53.91 79.9,58 Z" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M61.94,38.87 Q61.72,41.02 60.82,42.47 L62,48 L46,48 L47.18,42.47 Q46.28,41.02 46.06,38.87 Q47.17,39.3 48.7,39.3 L50.2,39.3 Q52.96,39.3 54,36.74 Q55.04,39.3 57.8,39.3 L59.3,39.3 Q60.83,39.3 61.94,38.87 Z" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M46,28.5 Q46,23 51,23 L57,23 Q62,23 62,28.5 L62,29.7 L46,29.7 Z" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M43.72,74.96 Q43.4,75.09 43.31,75.32 Q43.22,75.55 43.36,75.88 Q43.49,76.2 43.72,76.29 Q43.95,76.38 44.28,76.24 Q51.22,73.27 58.76,71.48 Q59.1,71.4 59.23,71.19 Q59.36,70.98 59.28,70.64 Q59.2,70.3 58.99,70.17 Q58.78,70.04 58.44,70.12 Q50.78,71.93 43.72,74.96 Z" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M41.2,56.86 Q41.38,56.56 41.32,56.32 Q41.26,56.08 40.96,55.9 Q40.36,55.54 40,56.14 Q36.53,61.92 30.58,63.94 Q30.24,64.05 30.13,64.27 Q30.02,64.49 30.14,64.82 Q30.36,65.49 31.02,65.26 Q37.47,63.08 41.2,56.86 Z" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M66.8,56.86 Q70.53,63.08 76.97,65.26 Q77.64,65.49 77.86,64.82 Q77.97,64.49 77.87,64.27 Q77.76,64.05 77.43,63.94 Q71.47,61.92 68,56.14 Q67.64,55.54 67.04,55.9 Q66.74,56.08 66.68,56.32 Q66.62,56.56 66.8,56.86 Z" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M68.18,63.27 Q66.48,66.47 66.91,69.69 Q66.95,70.04 67.15,70.19 Q67.35,70.34 67.69,70.29 Q68.39,70.2 68.29,69.51 Q67.92,66.73 69.42,63.93 Q69.75,63.31 69.13,62.98 Q68.51,62.65 68.18,63.27 Z" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M39.82,63.27 Q39.49,62.65 38.87,62.98 Q38.25,63.31 38.58,63.93 Q40.08,66.73 39.71,69.51 Q39.61,70.2 40.31,70.29 Q40.65,70.34 40.85,70.19 Q41.05,70.04 41.09,69.69 Q41.52,66.47 39.82,63.27 Z" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M64.74,35.28 C64.78,35.45 64.8,35.62 64.8,35.8 C64.8,36.79 64.2,37.65 63.34,38.01 Q64.4,37.02 64.74,35.28 Z" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M44.66,38.01 C43.8,37.65 43.2,36.79 43.2,35.8 C43.2,35.62 43.22,35.45 43.26,35.28 Q43.6,37.02 44.66,38.01 Z" />
+    </group>
+</vector>
