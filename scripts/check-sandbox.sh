@@ -172,9 +172,8 @@ check "no other storage volume is listed ($volumes)" \
 check "the chip is not named in /proc/cpuinfo" [ "$(seen "$inside" cpu_named)" = false ]
 check "the processors are all there ($(seen "$inside" cpu_count))" \
     [ "$(seen "$inside" cpu_count)" = "$(seen "$outside" cpu_count)" ]
-memory="$(seen "$inside" mem_total_kb)"
-check "the memory is a round size ($memory kB, really $(seen "$outside" mem_total_kb))" \
-    [ "$((memory % 1048576))" = 0 ]
+check "the memory is reported as it is ($(seen "$inside" mem_total_kb) kB)" \
+    [ "$(seen "$inside" mem_total_kb)" = "$(seen "$outside" mem_total_kb)" ]
 
 # Layer 3: personal data.
 check "no contacts ($(seen "$outside" contacts) outside)" [ "$(seen "$inside" contacts)" = 0 ]
