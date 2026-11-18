@@ -98,10 +98,10 @@ enum Answer {
     Restored,
     /// To `apply`: the states of the permissions it took anew.
     Applied(String),
-    /// To `kind`: whether the package is a library rather than an app.
-    Kind {
-        library: bool,
-    },
+    /// To `kind`: whether the package is a library rather than an app, if
+    /// the helper could tell. Kept apart from the others (`State::kinds`):
+    /// one that comes late is never taken for the answer to a command.
+    Kind(Option<bool>),
     Failed,
 }
 
@@ -117,8 +117,9 @@ fn parse_line(line: &str) -> Option<(u32, Option<Answer>)> {
         "restored" => Some(Answer::Restored),
         "applied" => Some(Answer::Applied(words.next().unwrap_or("").to_string())),
         "failed" => Some(Answer::Failed),
-        "library" => Some(Answer::Kind { library: true }),
-        "app" => Some(Answer::Kind { library: false }),
+        "library" => Some(Answer::Kind(Some(true))),
+        "app" => Some(Answer::Kind(Some(false))),
+        "unknown" => Some(Answer::Kind(None)),
         "reverted" | "verified" => None,
         _ => return None,
     };
@@ -150,6 +151,8 @@ struct State {
     untold: bool,
     /// Answers not yet taken by who asked.
     answers: HashMap<u32, Answer>,
+    /// Answers to `kind` not yet taken.
+    kinds: HashMap<u32, Option<bool>>,
 }
 
 impl State {
@@ -217,6 +220,25 @@ impl Shared {
         settle: impl FnOnce(&mut State, Answer) -> T,
     ) -> anyhow::Result<T> {
         let deadline = Instant::now() + ANSWER_WAIT;
+        self.ask_until(
+            uid,
+            line,
+            deadline,
+            |state| state.answers.remove(&uid),
+            settle,
+        )
+    }
+
+    /// As [`Shared::ask`], waiting until `deadline`, for the answer `take`
+    /// takes from the state.
+    fn ask_until<A, T>(
+        &self,
+        uid: u32,
+        line: &str,
+        deadline: Instant,
+        mut take: impl FnMut(&mut State) -> Option<A>,
+        settle: impl FnOnce(&mut State, A) -> T,
+    ) -> anyhow::Result<T> {
         let mut state = self.state();
         let wait = |state, left| {
             self.changed
@@ -237,11 +259,12 @@ impl Shared {
             }
             state = wait(state, left);
         }
-        state.answers.remove(&uid);
+        // One left from an earlier command that was not waited for.
+        take(&mut state);
         state.send(line)?;
         state.asking = Some(uid);
         let settled = loop {
-            if let Some(answer) = state.answers.remove(&uid) {
+            if let Some(answer) = take(&mut state) {
                 break Ok(settle(&mut state, answer));
             }
             if state.input.is_none() {
@@ -285,10 +308,6 @@ impl AppOps {
         Self { shared }
     }
 
-    /// Called with the uid of an app that just started, to have its ops
-    /// looked at then: the system may set them back as an app starts. Never
-    /// waits, and does nothing if the helper is busy or away, which looks
-    /// again on its own every minute.
     /// What tells, through the helper, libraries from apps (see `auto`).
     pub fn librarian(&self) -> Librarian {
         Librarian {
@@ -296,6 +315,10 @@ impl AppOps {
         }
     }
 
+    /// Called with the uid of an app that just started, to have its ops
+    /// looked at then: the system may set them back as an app starts. Never
+    /// waits, and does nothing if the helper is busy or away, which looks
+    /// again on its own every minute.
     pub fn verifier(&self) -> impl Fn(u32) + Send + 'static {
         let shared = self.shared.clone();
         move |uid| {
@@ -316,7 +339,7 @@ pub struct Librarian {
 }
 
 impl super::auto::Libraries for Librarian {
-    fn is_library(&self, uid: u32, package: &str) -> Option<bool> {
+    fn is_library(&self, uid: u32, package: &str, until: Instant) -> Option<bool> {
         // A name the line could not carry is not one Android gives.
         let valid = !package.is_empty()
             && package
@@ -325,17 +348,19 @@ impl super::auto::Libraries for Librarian {
         if !valid {
             return None;
         }
+        let deadline = until.min(Instant::now() + ANSWER_WAIT);
         self.shared
-            .ask(
+            .ask_until(
                 uid,
                 &format!("kind {uid} {package}"),
-                |_, answer| match answer {
-                    Answer::Kind { library } => Some(library),
-                    _ => None,
-                },
+                deadline,
+                |state| state.kinds.remove(&uid),
+                |_, kind| kind,
             )
+            // One the package manager cannot tell about counts as an app;
+            // no answer in time is no answer.
             .ok()
-            .flatten()
+            .map(|kind| kind.unwrap_or(false))
     }
 
     fn done(&self) {
@@ -720,7 +745,12 @@ fn run_helper(shared: &Shared) -> anyhow::Error {
     }
     for line in BufReader::new(output).lines().map_while(Result::ok) {
         if let Some((uid, Some(answer))) = parse_line(&line) {
-            shared.state().answers.insert(uid, answer);
+            let mut state = shared.state();
+            match answer {
+                Answer::Kind(kind) => state.kinds.insert(uid, kind).map(|_| ()),
+                answer => state.answers.insert(uid, answer).map(|_| ()),
+            };
+            drop(state);
             shared.changed.notify_all();
         }
     }
@@ -788,11 +818,15 @@ mod tests {
         );
         assert_eq!(
             parse_line("library 10240"),
-            Some((10240, Some(Answer::Kind { library: true })))
+            Some((10240, Some(Answer::Kind(Some(true)))))
         );
         assert_eq!(
             parse_line("app 10240"),
-            Some((10240, Some(Answer::Kind { library: false })))
+            Some((10240, Some(Answer::Kind(Some(false)))))
+        );
+        assert_eq!(
+            parse_line("unknown 10240"),
+            Some((10240, Some(Answer::Kind(None))))
         );
         for line in ["", "saved", "saved x", "hello 10100", "restored -1"] {
             assert_eq!(parse_line(line), None, "{line:?}");
@@ -1069,6 +1103,35 @@ mod tests {
         own.set(Item::Camera, Some(on(camera))).unwrap();
         own.set(Item::Microphone, Some(Mode::On)).unwrap();
         own.over(&Settings::default())
+    }
+
+    #[test]
+    fn an_answer_to_a_question_is_never_taken_for_a_commands() {
+        use super::super::auto::Libraries as _;
+        let mut appops = AppOps {
+            shared: Arc::new(Shared::default()),
+        };
+        // The stand-in answers no question: it is given up on in time.
+        let (input, sent) = stand_in(&appops.shared, |_, _| {});
+        appops.shared.state().input = Some(input);
+        let librarian = appops.librarian();
+        let until = Instant::now() + Duration::from_millis(100);
+        assert_eq!(librarian.is_library(10230, "com.example.new", until), None);
+        // Its answer comes late, as the app is put in: the command gets
+        // its own.
+        let late = parse_line("app 10230").unwrap().1.unwrap();
+        assert_eq!(late, Answer::Kind(Some(false)));
+        appops.shared.state().kinds.insert(10230, Some(false));
+        let mut entry = sandboxed(10230);
+        appops
+            .enable(&mut entry, &[], &camera_and_microphone(true))
+            .unwrap();
+        appops.shared.state().input = None;
+        let sent = sent.join().unwrap();
+        assert_eq!(sent[0], "kind 10230 com.example.new");
+        assert!(sent[1].starts_with("set 10230 "));
+        // A name no package can have is not asked about.
+        assert_eq!(librarian.is_library(10230, "com.example app", until), None);
     }
 
     #[test]

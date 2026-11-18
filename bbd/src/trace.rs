@@ -347,6 +347,9 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
             // What was installed before the watch began.
             sandbox.isolate_new(&tracer.writer, &mut tracer.packages);
         }
+        // A new app left out of the sandbox is tried again then; no timer
+        // while none is.
+        let next_look = sandbox.as_ref().and_then(Sandbox::auto_next_look);
         // Every branch that does not end in a flush continues the loop.
         let request = tokio::select! {
             _ = sigint.recv() => break,
@@ -406,6 +409,12 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
                         }
                     }
                     Err(e) => package_watch.give_up(&e),
+                }
+                continue;
+            }
+            _ = sleep_until(next_look), if next_look.is_some() => {
+                if let Some(sandbox) = sandbox.as_mut() {
+                    sandbox.isolate_new(&tracer.writer, &mut tracer.packages);
                 }
                 continue;
             }
@@ -522,6 +531,14 @@ impl SensorCheck {
             }
             None => std::future::pending().await,
         }
+    }
+}
+
+/// Until `at`; never, without one.
+async fn sleep_until(at: Option<std::time::Instant>) {
+    match at {
+        Some(at) => tokio::time::sleep_until(at.into()).await,
+        None => std::future::pending().await,
     }
 }
 

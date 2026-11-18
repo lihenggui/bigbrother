@@ -317,5 +317,10 @@ internal object AppOpsGuardProtocol {
 
     fun failedLine(uid: Int): String = "failed $uid"
 
-    fun kindLine(uid: Int, library: Boolean): String = if (library) "library $uid" else "app $uid"
+    /** The answer to `kind`: `null` where it cannot be told. */
+    fun kindLine(uid: Int, library: Boolean?): String = when (library) {
+        true -> "library $uid"
+        false -> "app $uid"
+        null -> "unknown $uid"
+    }
 }

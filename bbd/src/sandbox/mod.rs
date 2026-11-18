@@ -112,6 +112,10 @@ const DISABLE_ALL_WAIT: std::time::Duration = control::COMMAND_WAIT
     .saturating_sub(appops::ANSWER_WAIT)
     .saturating_sub(std::time::Duration::from_secs(1));
 
+/// Least time between two log lines about entries that cannot be taken out:
+/// each is tried again at every command and every look for new apps.
+const RELEASE_LOG_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// The sandboxed uids and their entries, enabled ones only.
 pub type Snapshot = Arc<RwLock<HashMap<u32, Entry>>>;
 
@@ -324,6 +328,8 @@ pub struct Sandbox {
     /// Not checked when `None`.
     user_data: Option<PathBuf>,
     auto: auto::Auto,
+    /// When an entry that could not be taken out was last logged.
+    release_logged: Option<std::time::Instant>,
 }
 
 impl Sandbox {
@@ -348,6 +354,7 @@ impl Sandbox {
             effects,
             user_data: user_data.map(Path::to_path_buf),
             auto: auto::Auto::load(writer)?,
+            release_logged: None,
         })
     }
 
@@ -379,7 +386,7 @@ impl Sandbox {
     /// Put the apps that were sandboxed when the daemon last stopped back
     /// in. To be called once, when the daemon starts.
     pub fn resume(&mut self, writer: &Writer, packages: &mut Packages) {
-        self.release_reassigned(writer, packages);
+        self.release_reassigned(writer, packages, None);
         let mut apps: Vec<Resumed> = self
             .snapshot_read()
             .values()
@@ -398,22 +405,33 @@ impl Sandbox {
     /// Take out the entries whose uid no longer runs the app that was put
     /// in. Android hands the uid of an uninstalled app to one installed
     /// later, which would otherwise find itself sandboxed, with the other's
-    /// identity.
-    fn release_reassigned(&mut self, writer: &Writer, packages: &mut Packages) {
+    /// identity. An app of several packages stays in while any of them is
+    /// installed, named after one that is. Entries that would be taken out
+    /// past `until` are left for the next time.
+    fn release_reassigned(
+        &mut self,
+        writer: &Writer,
+        packages: &mut Packages,
+        until: Option<std::time::Instant>,
+    ) {
         packages.refresh();
         // Without the package list nothing can be told.
         if packages.is_empty() {
             return;
         }
-        let reassigned: Vec<Entry> = self
-            .snapshot_read()
-            .values()
-            .filter(|entry| !packages.for_uid(entry.uid).contains(&entry.package))
-            .cloned()
-            .collect();
-        for mut entry in reassigned {
+        let mut entries: Vec<Entry> = self.snapshot_read().values().cloned().collect();
+        entries.sort_by_key(|entry| entry.uid);
+        for mut entry in entries {
             let uid = entry.uid;
-            eprintln!("bbd: sandbox: the app of uid {uid} is gone; the uid is taken out");
+            let current = packages.for_uid(uid).to_vec();
+            let recorded = writer.sandbox_packages(uid).unwrap_or_default();
+            if current.contains(&entry.package) || current.iter().any(|p| recorded.contains(p)) {
+                self.keep_entry(writer, entry, &current, &recorded);
+                continue;
+            }
+            if until.is_some_and(|until| std::time::Instant::now() > until) {
+                continue;
+            }
             let kept = entry.clone();
             let items = self.items(&entry);
             self.snapshot_write().remove(&uid);
@@ -426,13 +444,56 @@ impl Sandbox {
             let released = self
                 .run(&mut entry, &[], Change::Disable(&items))
                 .and_then(|()| writer.put_sandbox(&entry));
-            if let Err(e) = released {
-                // Still sandboxed, and listed as such, rather than half
-                // taken out with nothing to show it. Tried again with the
-                // next command, and when the daemon next starts.
-                eprintln!("bbd: sandbox: uid {uid} cannot be taken out yet: {e:#}");
-                self.snapshot_write().insert(uid, kept);
+            match released {
+                Ok(()) => {
+                    eprintln!("bbd: sandbox: the app of uid {uid} is gone; the uid is taken out");
+                }
+                Err(e) => {
+                    // Still sandboxed, and listed as such, rather than half
+                    // taken out with nothing to show it. Tried again with
+                    // the next command or look, and when the daemon next
+                    // starts.
+                    let quiet = self
+                        .release_logged
+                        .is_some_and(|at| at.elapsed() < RELEASE_LOG_INTERVAL);
+                    if !quiet {
+                        eprintln!("bbd: sandbox: uid {uid} cannot be taken out yet: {e:#}");
+                        self.release_logged = Some(std::time::Instant::now());
+                    }
+                    self.snapshot_write().insert(uid, kept);
+                }
             }
+        }
+    }
+
+    /// Keep `entry`, of an app still installed under its uid as `current`
+    /// says: named after a package it has, and with its packages as they
+    /// are now.
+    fn keep_entry(
+        &mut self,
+        writer: &Writer,
+        mut entry: Entry,
+        current: &[String],
+        recorded: &std::collections::BTreeSet<String>,
+    ) {
+        let uid = entry.uid;
+        if !current.contains(&entry.package) {
+            let Some(named) = current.iter().find(|p| recorded.contains(*p)) else {
+                return;
+            };
+            entry.package = named.clone();
+            match writer.put_sandbox(&entry) {
+                Ok(()) => {
+                    self.snapshot_write().insert(uid, entry);
+                }
+                Err(e) => eprintln!("bbd: sandbox: cannot write uid {uid}'s entry: {e:#}"),
+            }
+        }
+        let now: std::collections::BTreeSet<String> = current.iter().cloned().collect();
+        if now != *recorded
+            && let Err(e) = writer.put_sandbox_packages(uid, current)
+        {
+            eprintln!("bbd: sandbox: cannot write uid {uid}'s packages: {e:#}");
         }
     }
 
@@ -452,7 +513,7 @@ impl Sandbox {
             Err(e) => return control::failure(&e),
         };
         if !matches!(request, Request::SandboxStatus) {
-            self.release_reassigned(writer, packages);
+            self.release_reassigned(writer, packages, None);
         }
         let answer = match request {
             Request::SandboxEnable { package, user } => self
@@ -506,15 +567,27 @@ impl Sandbox {
             "Big Brother cannot sandbox itself"
         );
         let also = sharing.iter().filter(|p| *p != package).cloned().collect();
-        if self.snapshot_read().contains_key(&uid) {
+        // An entry is the app's if it was made for one of its packages. One
+        // another app left under the uid, which Android gave this one after
+        // that was uninstalled, is not.
+        let recorded = writer.sandbox_packages(uid)?;
+        let ours = |entry: &Entry| {
+            sharing.contains(&entry.package) || sharing.iter().any(|p| recorded.contains(p))
+        };
+        if let Some(held) = self.snapshot_read().get(&uid) {
+            // Held still for the app that had the uid, which could not be
+            // taken out yet: this one is not in the sandbox until it is.
+            anyhow::ensure!(
+                ours(held),
+                "uid {uid} is still held for the app that had it before"
+            );
             return Ok(Enabled { uid, also });
         }
 
         let before = writer.sandbox_entry(uid)?;
-        // The identity and the settings it had stay. An entry another app
-        // left under the uid, which Android gave this one after it was
-        // uninstalled, is not this app's: it is written over.
-        let own = before.as_ref().filter(|old| sharing.contains(&old.package));
+        // The identity and the settings it had stay; another app's entry is
+        // written over.
+        let own = before.as_ref().filter(|old| ours(old));
         let mut entry = match own {
             Some(old) => Entry {
                 package: package.to_string(),
@@ -559,6 +632,10 @@ impl Sandbox {
             return Err(e);
         }
         self.snapshot_write().insert(uid, entry);
+        // Without them the entry is the app's by its name alone.
+        if let Err(e) = writer.put_sandbox_packages(uid, &sharing) {
+            eprintln!("bbd: sandbox: cannot write uid {uid}'s packages: {e:#}");
+        }
         Ok(Enabled { uid, also })
     }
 
@@ -718,9 +795,13 @@ impl Sandbox {
             None => writer.sandbox_entry(uid)?,
         };
         // Not the entry of an app that had the uid before this one.
+        let recorded = writer.sandbox_packages(uid)?;
+        let current = packages.for_uid(uid).to_vec();
         let mut entry = entry
             .filter(|entry| {
-                entry.package == package || packages.for_uid(uid).contains(&entry.package)
+                entry.package == package
+                    || current.contains(&entry.package)
+                    || current.iter().any(|p| recorded.contains(p))
             })
             .with_context(|| format!("{package} is not in the sandbox"))?;
         let mut own = Settings::parse(&entry.settings);
@@ -1588,6 +1669,34 @@ mod tests {
         assert_eq!(*log.borrow(), ["-gate", "+gate"]);
         assert_eq!(enabled(&sandbox), [10100]);
         assert!(f.writer.sandbox_entry(10100).unwrap().unwrap().enabled);
+    }
+
+    #[test]
+    fn an_app_stays_in_while_any_package_of_its_uid_is_installed() {
+        let mut f = Fixture::new("sandbox-shared-stays");
+        let mut sandbox = f.sandbox();
+        sandbox
+            .enable(&f.writer, &mut f.packages, "com.shared.one", 0, 1000)
+            .unwrap();
+        // The package it was put in by is uninstalled, the other is not.
+        std::fs::write(f.dir.join("packages.list"), "com.shared.two 10200 0 /d x\n").unwrap();
+        let mut restarted = f.sandbox();
+        restarted.resume(&f.writer, &mut f.packages);
+        assert_eq!(enabled(&restarted), [10200]);
+        assert_eq!(
+            f.writer.sandbox_entry(10200).unwrap().unwrap().package,
+            "com.shared.two"
+        );
+        // Its settings are the other's to change.
+        restarted
+            .configure(
+                &f.writer,
+                &mut f.packages,
+                "com.shared.two",
+                0,
+                &camera(Some(Mode::Off)),
+            )
+            .unwrap();
     }
 
     #[test]

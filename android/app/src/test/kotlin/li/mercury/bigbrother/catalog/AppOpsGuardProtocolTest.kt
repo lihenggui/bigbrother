@@ -50,6 +50,7 @@ class AppOpsGuardProtocolTest {
         assertNull(AppOpsGuardProtocol.parseCommand("kind 10240 com/example"))
         assertEquals("library 10240", AppOpsGuardProtocol.kindLine(10240, library = true))
         assertEquals("app 10240", AppOpsGuardProtocol.kindLine(10240, library = false))
+        assertEquals("unknown 10240", AppOpsGuardProtocol.kindLine(10240, library = null))
     }
 
     @Test

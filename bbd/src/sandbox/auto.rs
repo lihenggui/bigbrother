@@ -49,7 +49,7 @@
 //! reads only the switch.
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     ffi::CString,
     io,
     os::{
@@ -88,13 +88,15 @@ const FAILURE_LOG_INTERVAL: Duration = Duration::from_secs(60);
 const RETRY_FIRST: Duration = Duration::from_secs(10);
 const RETRY_MAX: Duration = Duration::from_secs(300);
 
+/// How soon an app a look had no time for is tried.
+const LOOK_AGAIN: Duration = Duration::from_secs(2);
+
 /// The answer to `sandbox.auto` and `sandbox.set_auto`.
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Switch {
     /// Whether apps installed from now on are put in the sandbox.
     pub auto: bool,
 }
-
 /// Whether newly installed apps are put in the sandbox, and what is known
 /// of the installed ones.
 pub struct Auto {
@@ -111,9 +113,9 @@ pub struct Auto {
     pending: u32,
     /// What tells libraries from apps, where there is something to ask.
     libraries: Option<Box<dyn Libraries>>,
-    /// What it told of packages, by app id and package, for as long as the
-    /// package is there under that app id.
-    kinds: HashMap<(u32, String), bool>,
+    /// Packages told to be apps, by app id, for as long as they are there
+    /// under it. A library is known (`Known::libraries`).
+    told_apps: BTreeSet<(u32, String)>,
     /// How long into a look apps are still put in.
     look_wait: Duration,
     failures: FailureLog,
@@ -129,8 +131,8 @@ pub struct Auto {
 /// text it controls.
 pub trait Libraries {
     /// Whether `package`, one of `uid`'s, is a library; `None` if that
-    /// cannot be told, and it counts as an app.
-    fn is_library(&self, uid: u32, package: &str) -> Option<bool>;
+    /// cannot be told by `until`.
+    fn is_library(&self, uid: u32, package: &str, until: Instant) -> Option<bool>;
 
     /// Called after the questions of a look.
     fn done(&self) {}
@@ -147,10 +149,21 @@ struct Retry {
 impl Retry {
     /// After a try that failed, the one before having been `last`.
     fn after(last: Option<Retry>) -> Self {
-        let waited = last.map_or(RETRY_FIRST, |last| (last.waited * 2).min(RETRY_MAX));
+        let waited = last.map_or(RETRY_FIRST, |last| {
+            (last.waited * 2).clamp(RETRY_FIRST, RETRY_MAX)
+        });
         Self {
             at: Instant::now() + waited,
             waited,
+        }
+    }
+
+    /// Soon, for an app a look had no time for, with what was waited
+    /// before kept.
+    fn soon(last: Option<Retry>) -> Self {
+        Self {
+            at: Instant::now() + LOOK_AGAIN,
+            waited: last.map_or(Duration::ZERO, |last| last.waited),
         }
     }
 }
@@ -167,7 +180,7 @@ impl Auto {
             retries: BTreeMap::new(),
             pending: 0,
             libraries: None,
-            kinds: HashMap::new(),
+            told_apps: BTreeSet::new(),
             look_wait: DISABLE_ALL_WAIT,
             failures: FailureLog::default(),
         })
@@ -192,22 +205,41 @@ impl Auto {
         };
     }
 
-    /// Whether `package`, one of `uid`'s, is a library, as told once for as
-    /// long as it is there. One that cannot be told about counts as an app.
-    fn is_library(&mut self, uid: u32, package: &str) -> bool {
+    /// Whether `package`, one of `uid`'s, is a library, as the package
+    /// manager says by `until`; `None` if it does not.
+    fn kind_of(&mut self, uid: u32, package: &str, until: Instant) -> Option<bool> {
         let key = (uid % PER_USER_RANGE, package.to_string());
-        if let Some(library) = self.kinds.get(&key) {
-            return *library;
+        if self.told_apps.contains(&key) {
+            return Some(false);
         }
-        let Some(told) = self
-            .libraries
-            .as_ref()
-            .and_then(|libraries| libraries.is_library(uid, package))
-        else {
-            return false;
+        // With nothing to ask, every package counts as an app.
+        let Some(libraries) = &self.libraries else {
+            return Some(false);
         };
-        self.kinds.insert(key, told);
-        told
+        let library = libraries.is_library(uid, package, until)?;
+        if !library {
+            self.told_apps.insert(key);
+        }
+        Some(library)
+    }
+
+    /// When a look is due without anything having changed: an app left
+    /// out is to be tried again. `None` while none is, and while this is
+    /// off.
+    pub fn next_look(&self) -> Option<Instant> {
+        if !self.on {
+            return None;
+        }
+        self.retries.values().map(|retry| retry.at).min()
+    }
+
+    /// Put off every try that is due, by as long as it waited before: a
+    /// look could not be made.
+    fn put_off(&mut self) {
+        let now = Instant::now();
+        for retry in self.retries.values_mut().filter(|retry| retry.at <= now) {
+            retry.at = now + retry.waited.max(RETRY_FIRST);
+        }
     }
 
     pub(super) fn report(&self, status: &mut super::Status) {
@@ -288,10 +320,14 @@ impl Kernel {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Known {
     /// App ids left alone for every user: those installed when this was
-    /// turned on, the system's, the app's own, and libraries.
+    /// turned on, the system's and the app's own.
     apps: BTreeMap<u32, BTreeSet<String>>,
     /// Uids of apps installed since that were dealt with.
     uids: BTreeMap<u32, BTreeSet<String>>,
+    /// Packages the package manager has as libraries, by app id: each is
+    /// left alone itself, while it is installed, and nothing else of its
+    /// app id is.
+    libraries: BTreeMap<u32, BTreeSet<String>>,
 }
 
 impl Known {
@@ -304,6 +340,7 @@ impl Known {
                 .map(|(app_id, names)| (app_id, names.iter().cloned().collect()))
                 .collect(),
             uids: BTreeMap::new(),
+            libraries: BTreeMap::new(),
         }
     }
 
@@ -311,6 +348,7 @@ impl Known {
         let mut known = Self::default();
         for row in rows {
             let names = match row.user {
+                None if row.library => known.libraries.entry(row.app_id),
                 None => known.apps.entry(row.app_id),
                 Some(user) => known.uids.entry(user * PER_USER_RANGE + row.app_id),
             };
@@ -320,20 +358,29 @@ impl Known {
     }
 
     fn rows(&self) -> Vec<KnownApp> {
-        let row = |app_id, user, package: &String| KnownApp {
+        let row = |app_id, user, package: &String, library| KnownApp {
             app_id,
             user,
             package: package.clone(),
+            library,
         };
         let apps = self
             .apps
             .iter()
-            .flat_map(|(app_id, names)| names.iter().map(|name| row(*app_id, None, name)));
+            .flat_map(|(app_id, names)| names.iter().map(|name| row(*app_id, None, name, false)));
         let uids = self.uids.iter().flat_map(|(uid, names)| {
             let (user, app_id) = (uid / PER_USER_RANGE, uid % PER_USER_RANGE);
-            names.iter().map(move |name| row(app_id, Some(user), name))
+            names
+                .iter()
+                .map(move |name| row(app_id, Some(user), name, false))
         });
-        apps.chain(uids).collect()
+        // A library's app id known as an app's needs no row of its own.
+        let libraries = self
+            .libraries
+            .iter()
+            .filter(|(app_id, _)| !self.apps.contains_key(app_id))
+            .flat_map(|(app_id, names)| names.iter().map(|name| row(*app_id, None, name, true)));
+        apps.chain(uids).chain(libraries).collect()
     }
 
     /// The known app ids as the kernel side has them: a bit per app id.
@@ -389,6 +436,13 @@ fn plan(
             next.uids.insert(*uid, now);
         }
     }
+    // A library is left alone for as long as that package is installed.
+    for (app_id, was) in &known.libraries {
+        let now: BTreeSet<String> = names_of(*app_id).intersection(was).cloned().collect();
+        if !now.is_empty() {
+            next.libraries.insert(*app_id, now);
+        }
+    }
 
     let mut app_ids: Vec<(u32, &[String])> = packages
         .app_ids()
@@ -406,8 +460,10 @@ fn plan(
             if next.uids.contains_key(&uid) {
                 continue;
             }
+            let libraries = next.libraries.get(&app_id);
             let here: BTreeSet<String> = names
                 .iter()
+                .filter(|name| libraries.is_none_or(|libraries| !libraries.contains(*name)))
                 .filter(|name| installed(user, name))
                 .cloned()
                 .collect();
@@ -472,19 +528,34 @@ impl Sandbox {
     /// yet, in the sandbox, and forget those uninstalled. Nothing is done
     /// while it is off.
     pub fn isolate_new(&mut self, writer: &Writer, packages: &mut Packages) {
-        if !self.auto.on {
-            return;
+        if self.auto.on {
+            self.look(writer, packages, true);
         }
+    }
+
+    /// Look at what is installed: forget what is not any more, know the
+    /// system's new apps, and with `put_in`, put new apps in the sandbox.
+    fn look(&mut self, writer: &Writer, packages: &mut Packages, put_in: bool) {
         let started = Instant::now();
-        // An app uninstalled while in the sandbox is taken out first, as
-        // before a command: an app given its uid since is new, and must
-        // not be found in the sandbox under the other's entry. This reads
-        // the package list again.
-        self.release_reassigned(writer, packages);
+        // Each question to the app ops helper and each app put in may wait
+        // for it, on the loop that also records. As when taking every app
+        // out, nothing more is begun past a point: one app being put in
+        // then waits no longer than a command does, and the rest are left
+        // for the next look, with their starts held meanwhile.
+        let until = started + self.auto.look_wait;
+        if put_in {
+            // An app uninstalled while in the sandbox is taken out first,
+            // as before a command: an app given its uid since is new. This
+            // reads the package list again.
+            self.release_reassigned(writer, packages, Some(until));
+        } else {
+            packages.refresh();
+        }
         let users = self.users();
         // Without the package list, or the users, nothing can be told, and
         // nothing known is forgotten.
         if packages.is_empty() || users.is_empty() {
+            self.auto.put_off();
             return;
         }
         let plan = plan(&self.auto.known, packages, &users, |user, package| {
@@ -493,28 +564,70 @@ impl Sandbox {
         let mut known = plan.known;
         let mut isolated = Vec::new();
         // What was told of packages that are gone, or under another app id
-        // now, is told again if they come back.
+        // now, is asked again if they come back.
         self.auto
-            .kinds
-            .retain(|(app_id, package), _| packages.packages_of(*app_id).contains(package));
+            .told_apps
+            .retain(|(app_id, package)| packages.packages_of(*app_id).contains(package));
         // The new apps this look leaves out, and when to try them again.
         let mut left = 0;
         let mut retries = BTreeMap::new();
-        // Each app may wait for the app ops helper, on the loop that also
-        // records: as when taking every app out, the rest are left for the
-        // next look past a point. Their starts are held meanwhile.
-        let until = started + self.auto.look_wait;
-        for (uid, mut names) in plan.isolate {
+        let mut asked = false;
+        for (uid, names) in plan.isolate {
+            let app_id = uid % PER_USER_RANGE;
             let retry = self.auto.retries.get(&uid).copied();
-            if retry.is_some_and(|retry| retry.at > Instant::now()) || Instant::now() > until {
-                retries.extend(retry.map(|retry| (uid, retry)));
+            if !put_in || retry.is_some_and(|retry| retry.at > Instant::now()) {
+                let later = match retry {
+                    Some(retry) if retry.at > Instant::now() => retry,
+                    // Left by a look that puts nothing in: due at once.
+                    _ => Retry {
+                        at: Instant::now(),
+                        waited: retry.map_or(Duration::ZERO, |retry| retry.waited),
+                    },
+                };
+                retries.insert(uid, later);
                 left += 1;
                 continue;
             }
-            // A library is left alone, and not known: what else is ever
-            // given its app id is new.
-            names.retain(|name| !self.auto.is_library(uid, name));
-            let Some(package) = names.first().cloned() else {
+            // Each package is asked about once. A library is known, and
+            // left alone; one not told about yet waits for the next try.
+            let mut apps = BTreeSet::new();
+            let mut told = true;
+            for name in &names {
+                if Instant::now() > until {
+                    told = false;
+                    break;
+                }
+                asked |= self.auto.libraries.is_some();
+                match self.auto.kind_of(uid, name, until) {
+                    Some(true) => {
+                        known
+                            .libraries
+                            .entry(app_id)
+                            .or_default()
+                            .insert(name.clone());
+                    }
+                    Some(false) => {
+                        apps.insert(name.clone());
+                    }
+                    None => {
+                        told = false;
+                        break;
+                    }
+                }
+            }
+            let out_of_time = Instant::now() > until;
+            if !told || (out_of_time && !apps.is_empty()) {
+                let later = if out_of_time {
+                    Retry::soon(retry)
+                } else {
+                    Retry::after(retry)
+                };
+                retries.insert(uid, later);
+                left += 1;
+                continue;
+            }
+            // Libraries alone.
+            let Some(package) = apps.first().cloned() else {
                 continue;
             };
             match self.enable(
@@ -524,9 +637,14 @@ impl Sandbox {
                 uid / PER_USER_RANGE,
                 crate::now(),
             ) {
-                Ok(enabled) => {
-                    isolated.push(enabled.uid);
-                    known.uids.insert(enabled.uid, names);
+                // Only an app in the sandbox under its own entry is known.
+                Ok(enabled) if enabled.uid == uid => {
+                    isolated.push(uid);
+                    known.uids.insert(uid, apps);
+                }
+                Ok(_) => {
+                    retries.insert(uid, Retry::after(retry));
+                    left += 1;
                 }
                 Err(e) => {
                     retries.insert(uid, Retry::after(retry));
@@ -537,7 +655,7 @@ impl Sandbox {
                 }
             }
         }
-        if let Some(libraries) = &self.auto.libraries {
+        if asked && let Some(libraries) = &self.auto.libraries {
             libraries.done();
         }
         self.auto.pending = left;
@@ -564,6 +682,12 @@ impl Sandbox {
         }
     }
 
+    /// When a look is due without anything having changed (see
+    /// [`Auto::next_look`]).
+    pub fn auto_next_look(&self) -> Option<Instant> {
+        self.auto.next_look()
+    }
+
     /// Tell libraries from apps with `libraries` (see [`Libraries`]).
     pub fn tell_libraries_with(&mut self, libraries: Box<dyn Libraries>) {
         self.auto.libraries = Some(libraries);
@@ -571,8 +695,11 @@ impl Sandbox {
 
     /// Take up the putting of new apps in the sandbox in a daemon that just
     /// started, with the kernel side's maps where the gate is there. What
-    /// was installed while no daemon ran is put in first; starts of new apps
-    /// are held from then on.
+    /// needs no helper is done first: what is uninstalled is forgotten, and
+    /// the system's new apps are known, so that their starts are not held.
+    /// Apps installed while no daemon ran are held from then on, and put in
+    /// by the main loop's first look, which waits for the helper no longer
+    /// than any look does: it may still be waiting for the system to start.
     pub fn resume_auto(
         &mut self,
         kernel: Option<Kernel>,
@@ -580,7 +707,9 @@ impl Sandbox {
         packages: &mut Packages,
     ) {
         self.auto.kernel = kernel;
-        self.isolate_new(writer, packages);
+        if self.auto.on {
+            self.look(writer, packages, false);
+        }
         self.auto.sync();
     }
 
@@ -654,9 +783,10 @@ const EVENTS_SIZE: usize = 4096;
 const LIST_MASK: u32 = libc::IN_MOVED_TO | libc::IN_CLOSE_WRITE;
 /// What is watched in the directory of all users' data: a user added.
 const USERS_MASK: u32 = libc::IN_CREATE | libc::IN_MOVED_TO | libc::IN_ONLYDIR;
-/// What is watched in a user's data directory: an app's directory made, or
-/// given its owner, which installd does right after.
-const USER_MASK: u32 = libc::IN_CREATE | libc::IN_MOVED_TO | libc::IN_ATTRIB | libc::IN_ONLYDIR;
+/// What is watched in a user's data directory: an app's directory made.
+/// Only that it is there counts, so a change of what is in it or of its
+/// attributes, which an app can make, does not wake the daemon.
+const USER_MASK: u32 = libc::IN_CREATE | libc::IN_MOVED_TO | libc::IN_ONLYDIR;
 
 /// Watches for apps being installed, while newly installed apps are put in
 /// the sandbox.
@@ -1085,6 +1215,7 @@ mod tests {
                 .map(|app_id| (app_id, names(&["com.a"])))
                 .collect(),
             uids: BTreeMap::from([(1_010_230, names(&["com.b"]))]),
+            libraries: BTreeMap::from([(10_065, names(&["com.library_2"]))]),
         };
         let words = known.words();
         assert_eq!(words.len(), 157);
@@ -1114,6 +1245,7 @@ mod tests {
                 (10221, names(&["com.example.gone"])),
                 (1_010_221, names(&["com.example.gone"])),
             ]),
+            libraries: BTreeMap::new(),
         };
         // User 10 has removed it, and has only the second of the pair.
         let installed = |user: u32, package: &str| {
@@ -1132,6 +1264,7 @@ mod tests {
             Known {
                 apps: known.apps.clone(),
                 uids: BTreeMap::from([(10221, names(&["com.example.gone"]))]),
+                libraries: BTreeMap::new(),
             }
         );
     }
@@ -1274,14 +1407,15 @@ mod tests {
         // Reported once.
         assert!(!reports(&mut watch).await);
 
-        // An app's data directory made, then given its owner.
+        // An app's data directory made.
         let app = users.join("0/com.example.new");
         std::fs::create_dir(&app).unwrap();
         assert!(reports(&mut watch).await);
+        // What the app does with it is its own business: its attributes,
+        // which it can change, and what it keeps there.
         std::fs::set_permissions(&app, std::os::unix::fs::PermissionsExt::from_mode(0o700))
             .unwrap();
-        assert!(reports(&mut watch).await);
-        // What the app keeps there is its own business.
+        assert!(!reports(&mut watch).await);
         std::fs::write(app.join("prefs.xml"), "x").unwrap();
         assert!(!reports(&mut watch).await);
 
@@ -1495,16 +1629,28 @@ mod tests {
         f.list(&[NEW]);
         f.install(0, "com.example.new");
         f.install(10, "com.example.new");
-        // A look that has taken its time already leaves the rest.
+        assert_eq!(sandbox.auto_next_look(), None);
+        // A look that has taken its time already leaves the rest, for a
+        // look soon after.
         sandbox.auto.look_wait = Duration::ZERO;
+        let looked = Instant::now();
         sandbox.isolate_new(&f.writer, &mut f.packages);
         assert!(sandboxed(&sandbox).is_empty());
         assert_eq!(sandbox.status().new_apps_pending, 2);
-        // The next one takes them up.
+        let next = sandbox.auto_next_look().unwrap();
+        assert!(next >= looked + LOOK_AGAIN && next <= Instant::now() + LOOK_AGAIN);
+        // Not before.
         sandbox.auto.look_wait = DISABLE_ALL_WAIT;
+        sandbox.isolate_new(&f.writer, &mut f.packages);
+        assert!(sandboxed(&sandbox).is_empty());
+        // Then.
+        for retry in sandbox.auto.retries.values_mut() {
+            retry.at = Instant::now();
+        }
         sandbox.isolate_new(&f.writer, &mut f.packages);
         assert_eq!(sandboxed(&sandbox), [10230, 1_010_230]);
         assert_eq!(sandbox.status().new_apps_pending, 0);
+        assert_eq!(sandbox.auto_next_look(), None);
     }
 
     /// The package manager as the helper reaches it: the packages it keeps
@@ -1512,14 +1658,17 @@ mod tests {
     struct PackageManager {
         libraries: Vec<&'static str>,
         /// None of its answers arrive.
-        silent: bool,
+        silent: std::rc::Rc<std::cell::Cell<bool>>,
         asked: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+        /// By when each question was to be answered.
+        deadlines: std::rc::Rc<std::cell::RefCell<Vec<Instant>>>,
     }
 
     impl Libraries for PackageManager {
-        fn is_library(&self, _: u32, package: &str) -> Option<bool> {
+        fn is_library(&self, _: u32, package: &str, until: Instant) -> Option<bool> {
             self.asked.borrow_mut().push(package.to_string());
-            (!self.silent).then(|| self.libraries.contains(&package))
+            self.deadlines.borrow_mut().push(until);
+            (!self.silent.get()).then(|| self.libraries.contains(&package))
         }
     }
 
@@ -1533,8 +1682,9 @@ mod tests {
         let asked = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         let manager = PackageManager {
             libraries,
-            silent,
+            silent: std::rc::Rc::new(std::cell::Cell::new(silent)),
             asked: asked.clone(),
+            deadlines: std::rc::Rc::default(),
         };
         (Box::new(manager), asked)
     }
@@ -1561,12 +1711,27 @@ mod tests {
         sandbox.isolate_new(&f.writer, &mut f.packages);
         assert!(sandboxed(&sandbox).is_empty());
         assert_eq!(sandbox.status().new_apps_pending, 0);
-        // Not known: nothing is written of it.
+        // That package alone is known, as a library, and its app id is not.
         let (_, known) = f.writer.sandbox_auto().unwrap();
-        assert!(known.iter().all(|row| row.app_id != 10240));
-        // Asked once for as long as it is there.
+        let rows: Vec<(u32, bool)> = known
+            .iter()
+            .filter(|row| row.app_id == 10240)
+            .map(|row| (row.app_id, row.library))
+            .collect();
+        assert_eq!(rows, [(10240, true)]);
+        assert_eq!(
+            sandbox.auto.known.words(),
+            Known::default().words(),
+            "the kernel side would let an app of the app id start"
+        );
+        // Asked once, also by a daemon started again.
         sandbox.isolate_new(&f.writer, &mut f.packages);
+        let mut restarted = f.sandbox();
+        let (again, asked_again) = package_manager(vec![LIBRARY], false);
+        restarted.tell_libraries_with(again);
+        restarted.isolate_new(&f.writer, &mut f.packages);
         assert_eq!(*asked.borrow(), [LIBRARY]);
+        assert!(asked_again.borrow().is_empty());
 
         // Uninstalled, and its app id given to an app: that app is new.
         f.list(&[NEW.replace("10230", "10240").as_str()]);
@@ -1594,17 +1759,28 @@ mod tests {
     }
 
     #[test]
-    fn a_package_that_cannot_be_told_about_counts_as_an_app() {
+    fn a_package_not_told_about_in_time_is_asked_about_again_later() {
         let mut f = Fixture::new("auto-library-silent");
         let mut sandbox = f.sandbox();
         let (manager, asked) = package_manager(vec![LIBRARY], true);
+        let silent = manager.silent.clone();
         sandbox.tell_libraries_with(manager);
         sandbox.set_auto(&f.writer, &mut f.packages, true).unwrap();
         f.list(&[&library_line(LIBRARY, 10240)]);
         f.install(0, LIBRARY);
+        // As at boot, while the helper waits for the system: neither a
+        // library nor an app yet.
         sandbox.isolate_new(&f.writer, &mut f.packages);
-        assert_eq!(sandboxed(&sandbox), [10240]);
-        assert_eq!(asked.borrow().len(), 1);
+        assert!(sandboxed(&sandbox).is_empty());
+        assert_eq!(sandbox.status().new_apps_pending, 1);
+        assert!(sandbox.auto.known.libraries.is_empty());
+        // Asked again when its time comes.
+        silent.set(false);
+        sandbox.auto.retries.get_mut(&10240).unwrap().at = Instant::now();
+        sandbox.isolate_new(&f.writer, &mut f.packages);
+        assert!(sandboxed(&sandbox).is_empty());
+        assert_eq!(sandbox.status().new_apps_pending, 0);
+        assert_eq!(asked.borrow().len(), 2);
     }
 
     #[test]
@@ -1676,5 +1852,239 @@ mod tests {
         assert_eq!(other.package, "com.example.other");
         assert_eq!(other.settings, "");
         assert_ne!(other.android_id, first.android_id);
+    }
+
+    /// Takes nothing out while `refusing` is set, as when the app ops
+    /// helper does not answer.
+    struct NoRelease {
+        refusing: std::rc::Rc<std::cell::Cell<bool>>,
+    }
+
+    impl crate::sandbox::Effect for NoRelease {
+        fn name(&self) -> &'static str {
+            "app ops"
+        }
+
+        fn enable(
+            &mut self,
+            _: &mut crate::sandbox::Entry,
+            _: &[String],
+            _: &crate::sandbox::items::Settings,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn disable(
+            &mut self,
+            _: &mut crate::sandbox::Entry,
+            _: &[String],
+            _: &crate::sandbox::items::Settings,
+        ) -> anyhow::Result<()> {
+            anyhow::ensure!(!self.refusing.get(), "the helper did not answer");
+            Ok(())
+        }
+
+        fn update(
+            &mut self,
+            _: &mut crate::sandbox::Entry,
+            _: &[String],
+            _: &crate::sandbox::items::Settings,
+            _: &crate::sandbox::items::Settings,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn an_app_of_two_packages_stays_in_while_either_is_installed() {
+        let mut f = Fixture::new("auto-pair-stays");
+        let mut sandbox = f.sandbox();
+        sandbox.set_auto(&f.writer, &mut f.packages, true).unwrap();
+        let pair = [
+            "com.pair.one 10230 0 /d default none 0 1 1 @null",
+            "com.pair.two 10230 0 /d default none 0 1 1 @null",
+        ];
+        f.list(&pair);
+        f.install(0, "com.pair.one");
+        f.install(0, "com.pair.two");
+        sandbox.isolate_new(&f.writer, &mut f.packages);
+        assert_eq!(sandboxed(&sandbox), [10230]);
+        let entry = f.writer.sandbox_entry(10230).unwrap().unwrap();
+        assert_eq!(entry.package, "com.pair.one");
+
+        // The one it is named after is uninstalled: it stays in, named
+        // after the other, with what it had.
+        f.list(&pair[1..]);
+        f.uninstall(0, "com.pair.one");
+        sandbox.isolate_new(&f.writer, &mut f.packages);
+        sandbox.isolate_new(&f.writer, &mut f.packages);
+        assert_eq!(sandboxed(&sandbox), [10230]);
+        let kept = f.writer.sandbox_entry(10230).unwrap().unwrap();
+        assert_eq!(kept.package, "com.pair.two");
+        assert_eq!(kept.android_id, entry.android_id);
+        assert!(kept.enabled);
+        // A daemon started again knows it so.
+        let mut restarted = f.sandbox();
+        restarted.resume(&f.writer, &mut f.packages);
+        assert_eq!(sandboxed(&restarted), [10230]);
+    }
+
+    #[test]
+    fn an_app_given_a_uid_still_held_for_another_is_put_in_once_that_is_out() {
+        let mut f = Fixture::new("auto-release-fails");
+        let refusing = std::rc::Rc::new(std::cell::Cell::new(false));
+        let effect = NoRelease {
+            refusing: refusing.clone(),
+        };
+        let mut sandbox =
+            Sandbox::load(&f.writer, vec![Box::new(effect)], Some(&f.user_data())).unwrap();
+        sandbox.set_auto(&f.writer, &mut f.packages, true).unwrap();
+        f.list(&[NEW]);
+        f.install(0, "com.example.new");
+        sandbox.isolate_new(&f.writer, &mut f.packages);
+        let first = f.writer.sandbox_entry(10230).unwrap().unwrap();
+
+        // Uninstalled, its uid given to another app, and it cannot be taken
+        // out: the other is not in the sandbox under its entry.
+        refusing.set(true);
+        f.list(&["com.example.other 10230 0 /d default none 0 1 1 @null"]);
+        f.uninstall(0, "com.example.new");
+        f.install(0, "com.example.other");
+        sandbox.isolate_new(&f.writer, &mut f.packages);
+        let (_, known) = f.writer.sandbox_auto().unwrap();
+        assert!(known.iter().all(|row| row.app_id != 10230));
+        assert_eq!(sandbox.status().new_apps_pending, 1);
+        assert_eq!(
+            sandbox.snapshot_read()[&10230].package,
+            "com.example.new",
+            "held for the one before, as it was"
+        );
+
+        // Taken out at last: the other is put in, with an entry of its own.
+        refusing.set(false);
+        sandbox.auto.retries.get_mut(&10230).unwrap().at = Instant::now();
+        sandbox.isolate_new(&f.writer, &mut f.packages);
+        assert_eq!(sandboxed(&sandbox), [10230]);
+        let other = f.writer.sandbox_entry(10230).unwrap().unwrap();
+        assert_eq!(other.package, "com.example.other");
+        assert_ne!(other.android_id, first.android_id);
+    }
+
+    #[test]
+    fn an_app_installed_again_under_the_same_uid_keeps_its_entry() {
+        let mut f = Fixture::new("auto-reinstall-uid");
+        let mut sandbox = f.sandbox();
+        sandbox.set_auto(&f.writer, &mut f.packages, true).unwrap();
+        let old = "com.example.old 10200 0 /d default none 0 1 1 com.android.vending";
+        f.list(&[old, NEW]);
+        f.install(0, "com.example.new");
+        sandbox.isolate_new(&f.writer, &mut f.packages);
+        let camera_off = BTreeMap::from([(
+            crate::sandbox::items::Item::Camera,
+            Some(crate::sandbox::items::Mode::Off),
+        )]);
+        sandbox
+            .configure(
+                &f.writer,
+                &mut f.packages,
+                "com.example.new",
+                0,
+                &camera_off,
+            )
+            .unwrap();
+        let first = f.writer.sandbox_entry(10230).unwrap().unwrap();
+        // Uninstalled, and installed again under the same uid, which
+        // Android may give it after a restart: new, and put in again with
+        // the settings and identity it had, as Android keeps its own
+        // ANDROID_ID for it.
+        f.list(&[old]);
+        f.uninstall(0, "com.example.new");
+        sandbox.isolate_new(&f.writer, &mut f.packages);
+        assert!(sandboxed(&sandbox).is_empty());
+        f.list(&[old, NEW]);
+        f.install(0, "com.example.new");
+        sandbox.isolate_new(&f.writer, &mut f.packages);
+        assert_eq!(sandboxed(&sandbox), [10230]);
+        let again = f.writer.sandbox_entry(10230).unwrap().unwrap();
+        assert_eq!(
+            (again.settings.as_str(), again.android_id.as_str()),
+            (first.settings.as_str(), first.android_id.as_str())
+        );
+    }
+
+    #[test]
+    fn a_daemon_starting_asks_the_helper_nothing() {
+        let mut f = Fixture::new("auto-resume");
+        let mut sandbox = f.sandbox();
+        sandbox.set_auto(&f.writer, &mut f.packages, true).unwrap();
+        // Installed while no daemon ran, with a system app a system
+        // update brought.
+        f.list(&[
+            NEW,
+            "com.android.newer 10240 0 /d platform:partition=system none 0 1 1 @system",
+        ]);
+        f.install(0, "com.example.new");
+        let mut started = f.sandbox();
+        let (manager, asked) = package_manager(vec![], false);
+        started.tell_libraries_with(manager);
+        started.resume_auto(None, &f.writer, &mut f.packages);
+        assert!(asked.borrow().is_empty());
+        assert!(sandboxed(&started).is_empty());
+        // The system's app is known before starts are held; the new one is
+        // left for the main loop's first look, soon.
+        assert!(started.auto.known.apps.contains_key(&10240));
+        assert_eq!(started.status().new_apps_pending, 1);
+        assert!(started.auto_next_look().unwrap() <= Instant::now() + LOOK_AGAIN);
+        started.isolate_new(&f.writer, &mut f.packages);
+        assert_eq!(sandboxed(&started), [10230]);
+        assert_eq!(*asked.borrow(), ["com.example.new"]);
+    }
+
+    #[test]
+    fn questions_are_given_no_more_time_than_the_look_has() {
+        let mut f = Fixture::new("auto-question-time");
+        let mut sandbox = f.sandbox();
+        let (manager, _) = package_manager(vec![], false);
+        let deadlines = manager.deadlines.clone();
+        sandbox.tell_libraries_with(manager);
+        sandbox.set_auto(&f.writer, &mut f.packages, true).unwrap();
+        f.list(&[NEW]);
+        f.install(0, "com.example.new");
+        let looked = Instant::now();
+        sandbox.isolate_new(&f.writer, &mut f.packages);
+        let deadlines = deadlines.borrow();
+        assert_eq!(deadlines.len(), 1);
+        assert!(deadlines[0] <= looked + sandbox.auto.look_wait + Duration::from_millis(50));
+    }
+
+    #[test]
+    fn a_retry_that_cannot_be_made_is_put_off() {
+        let mut f = Fixture::new("auto-put-off");
+        let refusing = std::rc::Rc::new(std::cell::Cell::new(true));
+        let tries = std::rc::Rc::new(std::cell::Cell::new(0));
+        let effect = Refusing {
+            refusing: refusing.clone(),
+            tries,
+        };
+        let mut sandbox =
+            Sandbox::load(&f.writer, vec![Box::new(effect)], Some(&f.user_data())).unwrap();
+        sandbox.set_auto(&f.writer, &mut f.packages, true).unwrap();
+        f.list(&[NEW]);
+        f.install(0, "com.example.new");
+        sandbox.isolate_new(&f.writer, &mut f.packages);
+        // Due, and the package list cannot be read: the next look is not
+        // due at once, again and again.
+        sandbox.auto.retries.get_mut(&10230).unwrap().at = Instant::now();
+        let mut absent = Packages::new(f.dir.join("absent.list").to_str().unwrap());
+        sandbox.isolate_new(&f.writer, &mut absent);
+        assert!(sandbox.auto_next_look().unwrap() >= Instant::now() + RETRY_FIRST / 2);
+        // Nothing left: no look is due.
+        refusing.set(false);
+        sandbox.auto.retries.get_mut(&10230).unwrap().at = Instant::now();
+        sandbox.isolate_new(&f.writer, &mut f.packages);
+        assert_eq!(sandbox.auto_next_look(), None);
+        // Nor while it is off.
+        sandbox.set_auto(&f.writer, &mut f.packages, false).unwrap();
+        assert_eq!(sandbox.auto_next_look(), None);
     }
 }

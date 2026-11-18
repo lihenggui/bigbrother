@@ -82,7 +82,10 @@ import kotlin.system.exitProcess
  *   it set itself.
  * - `kind <uid> <package>`: prints `library <uid>` if the package manager
  *   has the package, one of the uid's, as a static shared library or an SDK
- *   library, which nothing runs as, and `app <uid>` otherwise.
+ *   library, which nothing runs as, `app <uid>` if it has it as anything
+ *   else, and `unknown <uid>` if that cannot be found out. These answers
+ *   are never `failed`, so that one that comes late cannot be taken for a
+ *   command's.
  *
  * In `<values>` an op has a mode, the framework's number for it, or
  * `default` for an op that had no uid mode, which `restore` removes again;
@@ -400,7 +403,17 @@ object AppOpsGuard {
                 emit(AppOpsGuardProtocol.verifiedLine(uid))
             }
 
-            is Command.Kind -> emit(AppOpsGuardProtocol.kindLine(uid, isLibrary(command.packageName, uid)))
+            is Command.Kind -> {
+                // Answered apart from the commands, `unknown` where it
+                // cannot be told: never taken for a command's answer.
+                val library = try {
+                    isLibrary(command.packageName, uid)
+                } catch (e: Throwable) {
+                    System.err.println("kind $uid: ${describe(e)}")
+                    null
+                }
+                emit(AppOpsGuardProtocol.kindLine(uid, library))
+            }
         }
     }
 

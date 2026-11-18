@@ -49,7 +49,8 @@ JSON.
 - Commands run on the main loop and hold up recording while they do: keep
   what an effect waits for bounded (`appops::ANSWER_WAIT`).
 - Helper programs cost a Java runtime each. The app ops helper runs only
-  while an app is sandboxed.
+  while an app is sandboxed, or for a moment to say whether a newly
+  installed package is a library (`sandbox/auto.rs`).
 
 ## Database
 
@@ -70,7 +71,9 @@ The daemon runs on every device all the time; its cost is the product's cost.
   close to when it did. With no session open that timer does not exist.
 - While newly installed apps are put in the sandbox (`sandbox/auto.rs`),
   `/data/system` is watched with inotify for the package list being
-  replaced. With that off nothing is watched.
+  replaced, and `/data/user_de` and each user's directory in it for new
+  directories; while a new app waits to be tried again, a timer runs until
+  then. With that off nothing is watched and there is no timer.
 - Rate-limit anything that can repeat (log lines, helper restarts) and back off
   on failure.
 - Filter as early as possible: in the kernel if the decision can be made there
