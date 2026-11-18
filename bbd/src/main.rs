@@ -152,6 +152,11 @@ enum Command {
         #[command(subcommand)]
         command: SandboxCommand,
     },
+    /// The app ops helper's lines that give every sandboxed app its app ops
+    /// back, read from the database; for uninstall.sh, which may run without
+    /// the daemon.
+    #[command(hide = true)]
+    SandboxRestoreLines,
 }
 
 #[derive(Subcommand)]
@@ -273,7 +278,10 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     // Every other command reads the records, which the daemon writes only
     // now and then. The sandbox commands do not read them.
-    if !matches!(cli.command, Command::Run { .. } | Command::Sandbox { .. }) {
+    if !matches!(
+        cli.command,
+        Command::Run { .. } | Command::Sandbox { .. } | Command::SandboxRestoreLines
+    ) {
         control::request_flush(&cli.db);
     }
     match cli.command {
@@ -336,5 +344,11 @@ fn main() -> anyhow::Result<()> {
             daemon_running: control::daemon_running(&cli.db),
         }),
         Command::Sandbox { json, command } => sandbox::command(&cli.db, command.into(), json),
+        Command::SandboxRestoreLines => {
+            for line in sandbox::restore_lines(&cli.db)? {
+                println!("{line}");
+            }
+            Ok(())
+        }
     }
 }

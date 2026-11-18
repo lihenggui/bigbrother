@@ -46,7 +46,7 @@ const FLUSH_WAIT: Duration = Duration::from_secs(1);
 
 /// The longest a command waits for the daemon's answer. Generous: carrying
 /// out a command may mean stopping apps and asking system services.
-const COMMAND_WAIT: Duration = Duration::from_secs(10);
+pub const COMMAND_WAIT: Duration = Duration::from_secs(10);
 
 /// The longest the daemon waits for a connected client to send its request,
 /// and for an answer to be taken.

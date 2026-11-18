@@ -16,30 +16,40 @@
 
 # Runs when the module is removed: stop the daemon and delete its records.
 MODDIR=${0%/*}
+BBD=$MODDIR/bin/bbd
+
 # Sandboxed apps are given their app ops back first; left as they are, the
 # apps would be refused their data for good. The daemon does it where it is
-# still running. Most root managers run this script at the next boot instead,
-# before anything of the module has started: then the helper program that
-# sets the ops is run by itself once the system is up, from a copy of its
-# own, and clears them for every uid still listed for the hook.
-LIST=/data/system/big_brother_sandbox
-if ! "$MODDIR/bin/bbd" sandbox disable --all >/dev/null 2>&1 && [ -s "$LIST" ]; then
-    uids=$(cut -d' ' -f1 "$LIST")
+# still running and gets every app out. Otherwise (most root managers run
+# this script at the next boot, before anything of the module has started)
+# the lines that give each app still sandboxed its ops back are read from the
+# database, and the app ops helper is run with them by itself once the system
+# is up, from a copy of its own.
+released_all() {
+    answer=$("$BBD" sandbox disable --all --json 2>/dev/null) || return 1
+    case "$answer" in
+    *'"failed":[]'*) return 0 ;;
+    esac
+    return 1
+}
+lines=
+released_all || lines=$("$BBD" sandbox-restore-lines 2>/dev/null)
+# Stopped before the helper runs: a daemon still holding apps must not hold
+# them again behind its back.
+. "$MODDIR/stop.sh"
+if [ -n "$lines" ]; then
     helper=/data/adb/big_brother_release.apk
     if cp "$MODDIR/helper.apk" "$helper"; then
         (
             while [ "$(getprop sys.boot_completed)" != 1 ]; do
                 sleep 5
             done
-            for uid in $uids; do
-                echo "restore $uid"
-            done | CLASSPATH=$helper /system/bin/app_process /system/bin \
+            echo "$lines" | CLASSPATH=$helper /system/bin/app_process /system/bin \
                 li.mercury.bigbrother.catalog.AppOpsGuard >/dev/null 2>&1
             rm -f "$helper"
         ) &
     fi
 fi
-. "$MODDIR/stop.sh"
 rm -rf /data/adb/big_brother
 # What the sandbox shares with the hook in system_server. Without the list
 # the hook, which stays for as long as the app does, sandboxes nothing.
