@@ -75,6 +75,30 @@ as_root() {
         adb shell su -c "'$*'"
     fi
 }
+# Run a command as the shell user, whose test location provider the shell
+# may set: Android 13 and 14 refuse it to root (adb root on an emulator).
+as_shell() {
+    if $root_shell; then
+        adb shell "su 2000 $*"
+    else
+        adb shell "$*"
+    fi
+}
+
+# A system dialog (an app that crashed elsewhere, say) takes the focus the
+# canary waits for: the screen is woken and such dialogs are closed before
+# it starts and while it is waited for.
+clear_screen() {
+    adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
+    adb shell wm dismiss-keyguard >/dev/null 2>&1 || true
+    adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS >/dev/null 2>&1 || true
+}
+# Whether a window other than the canary's has the focus.
+focus_elsewhere() {
+    local focus
+    focus="$(adb shell dumpsys window windows 2>/dev/null | tr -d '\r' | sed -n 's/.*mCurrentFocus=//p')"
+    [[ -n "$focus" && "$focus" != *"$PACKAGE"* ]]
+}
 
 # What a case's subject is: the permissions pm and settings steps grant,
 # those "Don't allow" denies in the settings (location takes background
@@ -292,12 +316,16 @@ run_canary() {
     adb shell am force-stop "$PACKAGE"
     adb logcat -c
     # Each start finds a fresh location from the test provider.
-    adb shell cmd location providers set-test-provider-location gps --location 52.52,13.405 --accuracy 5
+    if [[ "$test_location" == yes ]]; then
+        as_shell cmd location providers set-test-provider-location gps --location 52.52,13.405 --accuracy 5
+    fi
+    clear_screen
     adb shell am start -W -n "$PACKAGE/.MainActivity" --es ops "android:camera" >/dev/null
     local i log=""
     for ((i = 0; i < 90; i++)); do
         log="$(adb logcat -d -s BigBrotherCanary:I | tr -d '\r')"
         grep -q "BigBrotherCanary: done" <<<"$log" && break
+        if ((i % 5 == 4)) && focus_elsewhere; then clear_screen; fi
         sleep 1
     done
     ((i < 90)) || return 1
@@ -469,7 +497,7 @@ cleanup() {
 content delete --uri "content://com.android.contacts/raw_contacts?caller_is_syncadapter=true" --where "account_type='$TEST_ACCOUNT'"
 EOF
     as_root "sh $SEED; rm -f $SEED" >/dev/null 2>&1 || true
-    adb shell cmd location providers remove-test-provider gps >/dev/null 2>&1 || true
+    as_shell cmd location providers remove-test-provider gps >/dev/null 2>&1 || true
     adb shell appops set com.android.shell android:mock_location "${mock_location:-default}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -480,17 +508,38 @@ adb shell "cat > $SEED" <<EOF
 content insert --uri content://com.android.contacts/raw_contacts --bind account_type:s:$TEST_ACCOUNT --bind account_name:s:$TEST_ACCOUNT
 raw=\$(content query --uri content://com.android.contacts/raw_contacts --projection _id --where "account_type='$TEST_ACCOUNT'" | grep -o '_id=[0-9]*' | tail -n 1 | cut -d= -f2)
 content insert --uri content://com.android.contacts/data --bind raw_contact_id:i:\$raw --bind mimetype:s:vnd.android.cursor.item/name --bind data1:s:Canary
+echo "kept contacts \$(content query --uri content://com.android.contacts/raw_contacts --projection _id --where "account_type='$TEST_ACCOUNT'" | grep -c '_id=')"
 EOF
-as_root "sh $SEED" >/dev/null
+# A provider may drop the insert without an error: what it kept is read
+# back, and the contacts cases are skipped without it.
+kept="$(as_root "sh $SEED" | tr -d '\r' | sed -n 's/^kept contacts \([0-9]*\)$/\1/p')" || {
+    echo "error: the test contact could not be written" >&2
+    exit 2
+}
+[[ -n "$kept" ]] || {
+    echo "error: the seed did not report on the test contact" >&2
+    exit 2
+}
+contacts=no
+((kept > 0)) && contacts=yes
 adb shell appops set com.android.shell android:mock_location allow
-adb shell cmd location providers add-test-provider gps >/dev/null 2>&1 || true
-adb shell cmd location providers set-test-provider-enabled gps true
+as_shell cmd location providers add-test-provider gps >/dev/null 2>&1 || true
+test_location=no
+# The answer is kept as the reason the location cases are skipped.
+if no_location="$(as_shell cmd location providers set-test-provider-enabled gps true 2>&1)"; then
+    test_location=yes
+fi
+no_location="$(tr -d '\r' <<<"$no_location" | sed -n '1{p;q}')"
 
 # The settings' steps change flags with pm set-permission-flags and
 # clear-permission-flags, which Android 13 (API 33) added.
 sdk="$(adb shell getprop ro.build.version.sdk | tr -d '\r')"
 
-failed=0 played=0
+failed=0 played=0 skipped=0
+skip() {
+    echo "  skipped $*"
+    skipped=$((skipped + 1))
+}
 for line in "${CASES[@]}"; do
     IFS=$'\t' read -r name subject before steps leave want_permission want_mode want_reads where <<<"$line"
     if (($# > 0)); then
@@ -499,11 +548,19 @@ for line in "${CASES[@]}"; do
         $chosen || continue
     fi
     if [[ "$where" != both ]]; then
-        echo "  skipped $name (played on the JVM only)"
+        skip "$name: played on the JVM only"
         continue
     fi
     if [[ "$steps" == *settings:* ]] && ((sdk < 33)); then
-        echo "  skipped $name: settings steps need Android 13"
+        skip "$name: settings steps need Android 13"
+        continue
+    fi
+    if [[ "$subject" == contacts && "$contacts" == no ]]; then
+        skip "$name: the provider did not keep the test contact"
+        continue
+    fi
+    if [[ "$subject" == location && "$test_location" == no ]]; then
+        skip "$name: no test location provider${no_location:+ ($no_location)}"
         continue
     fi
     played=$((played + 1))
@@ -526,6 +583,8 @@ for line in "${CASES[@]}"; do
     fi
 done
 
+# What a green run did not cover, in sight.
+echo "$skipped case(s) skipped"
 if ((failed > 0)); then
     echo "$failed of $played case(s) failed"
     exit 1
