@@ -31,6 +31,20 @@ cargo test
 (cd android && ./gradlew test)
 ```
 
+`scripts/check-kernels.sh` boots the kernel of each Android release from
+13 on (those of the x86_64 emulator images) in QEMU, with an initramfs
+that runs `bbd selftest`, and fails if a probe of the x86_64 build does
+not load, attach or fire on one of them; the arm64 build is checked on
+devices (`check-canary.sh`). It needs `qemu-system-x86_64` and a static
+busybox, and builds a static daemon for musl
+(`x86_64-unknown-linux-musl`, `musl-gcc`) unless given one (`--bbd`). The
+`Kernels` workflow runs it for every change to the daemon or the eBPF
+programs:
+
+```sh
+./scripts/check-kernels.sh                  # --api 33, or --kernel PATH
+```
+
 On a device with the module running, `scripts/check-canary.sh` installs a
 test app (`android/canary`) that does one of everything Big Brother is meant
 to notice, and checks that each left a record:
