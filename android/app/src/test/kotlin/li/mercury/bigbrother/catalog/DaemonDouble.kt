@@ -23,8 +23,10 @@ import li.mercury.bigbrother.catalog.FakeAndroid.Companion.UID
  * answers, as `bbd/src/sandbox/appops.rs` does (`enable`, `update`,
  * `disable`, `found`, and `Sandbox::release_reassigned` for an app
  * uninstalled while sandboxed), for the items the permission matrix plays
- * with: contacts, calendar, location and camera, all on at first. The
- * on-device check of the same matrix runs the daemon itself.
+ * with: contacts, calendar, location and camera, all on at first. What the
+ * helper reports found is kept in the entry once the command or check that
+ * found it is over, as the daemon's main loop is woken to do. The on-device
+ * check of the same matrix runs the daemon itself.
  */
 internal class DaemonDouble(private val android: FakeAndroid) {
     private var helper = AppOpsGuardHandler(android)
@@ -44,53 +46,52 @@ internal class DaemonDouble(private val android: FakeAndroid) {
     /** The permissions the helper found changed, not yet kept in the entry. */
     private val found = mutableListOf<String>()
 
-    fun enable() {
-        command()
+    fun enable() = command {
         enableEffect(items)
         sandboxed = true
     }
 
-    fun disable() {
-        command()
-        if (!sandboxed) return
-        disableEffect(items)
-        sandboxed = false
+    fun disable() = command {
+        if (sandboxed) {
+            disableEffect(items)
+            sandboxed = false
+        }
     }
 
-    fun set(item: String, mode: String) {
-        command()
+    fun set(item: String, mode: String) = command {
         val before = items.toMap()
         items[item] = mode
         if (sandboxed) update(before, items)
     }
 
     /** Taken out by the next command, as an app whose uid no longer has its package. */
-    fun uninstalled() {
-        command()
-        if (!sandboxed || android.installed) return
-        // What was saved was the app's that is gone.
-        savedOps = ""
-        savedPermissions = ""
-        disableEffect(items)
-        sandboxed = false
+    fun uninstalled() = command {
+        if (sandboxed && !android.installed) {
+            // What was saved was the app's that is gone.
+            savedOps = ""
+            savedPermissions = ""
+            disableEffect(items)
+            sandboxed = false
+        }
     }
 
     /** The helper ends and is started again, and told of the uid held. */
     fun restartHelper() {
         helper = AppOpsGuardHandler(android)
         tellGuarded()
+        keepWhatWasFound()
     }
 
     /**
-     * The daemon is killed: what the helper found and was not kept in the
-     * entry yet is gone with it, and so is the helper. The daemon that
-     * starts takes the entry up again.
+     * The daemon is killed, and the helper with it; what the helper found
+     * is in the entry already. The daemon that starts takes the entry up
+     * again.
      */
     fun restartDaemon() {
-        found.clear()
         helper = AppOpsGuardHandler(android)
         guarded = if (sandboxed) targetsOf(items).ifEmpty { null } else null
         tellGuarded()
+        keepWhatWasFound()
     }
 
     /** The helper's check, as after a reported change. */
@@ -98,14 +99,22 @@ internal class DaemonDouble(private val android: FakeAndroid) {
         val from = android.printed.size
         helper.checkAll()
         read(from)
+        keepWhatWasFound()
     }
 
     private fun tellGuarded() {
         guarded?.let { send("verify $UID $it") }
     }
 
-    /** What `Sandbox::answer` does first: keep what was found. */
-    private fun command() {
+    /** A command from `bbd sandbox`, which `Sandbox::answer` begins by keeping what was found. */
+    private fun command(run: () -> Unit) {
+        keepWhatWasFound()
+        run()
+        keepWhatWasFound()
+    }
+
+    /** `Sandbox::keep_found`, which the daemon is woken for when the helper finds something. */
+    private fun keepWhatWasFound() {
         keepRegranted(found)
         found.clear()
     }

@@ -68,7 +68,7 @@ use std::{
     os::fd::AsRawFd as _,
     process::ChildStdin,
     sync::{
-        Arc, Condvar, Mutex, MutexGuard,
+        Arc, Condvar, Mutex, MutexGuard, OnceLock,
         atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant},
@@ -276,6 +276,8 @@ struct Shared {
     state: Mutex<State>,
     /// An answer arrived, the helper started or ended, or it is wanted.
     changed: Condvar,
+    /// Called when the helper reports a permission changed by the user.
+    on_found: OnceLock<Box<dyn Fn() + Send + Sync>>,
 }
 
 impl Shared {
@@ -386,6 +388,16 @@ impl AppOps {
         let supervised = shared.clone();
         std::thread::spawn(move || supervise(&supervised));
         Self { shared }
+    }
+
+    /// Have `wake` called whenever the helper reports a permission changed
+    /// by the user, which [`Effect::found`] then hands over: to be kept in
+    /// the entry at once rather than with the next write of the records.
+    /// The helper, which knows it too, ends with the daemon, so a daemon
+    /// killed before that write would give back the state from before the
+    /// user's choice.
+    pub fn on_found(&self, wake: impl Fn() + Send + Sync + 'static) {
+        let _ = self.shared.on_found.set(Box::new(wake));
     }
 
     /// What tells, through the helper, libraries from apps (see `auto`).
@@ -973,6 +985,9 @@ fn run_helper(shared: &Shared) -> anyhow::Error {
             shared.changed.notify_all();
         } else if let Some(found) = found_in(&line) {
             shared.state().found.push(found);
+            if let Some(wake) = shared.on_found.get() {
+                wake();
+            }
         }
     }
     // Closes its input, if it is still there to notice. The next helper

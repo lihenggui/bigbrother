@@ -129,5 +129,6 @@ location_precise_allowed_in_settings_right_before_disable	location	approximate	s
 location_precise_allowed_in_settings_right_before_another_item_changes	location	approximate	set:coarse,settings:grant:fine&set:camera=foreground,set:on	disable	granted	foreground	precise	both
 location_precise_allowed_in_settings_while_coarse_flags_refused	location	approximate	set:coarse,refuse:flags,settings:grant:fine,set:on	disable	granted	foreground	precise	jvm
 location_denied_in_settings_while_coarse	location	granted	set:coarse,settings:revoke,set:on	disable	denied	ignore	none	both
+location_precise_allowed_in_settings_while_coarse_before_the_daemon_restarts	location	approximate	set:coarse,settings:grant:fine,restart:daemon,set:on	disable	granted	foreground	precise	both
 location_granted_with_pm_while_the_policy_syncs_late	location	denied	pm:grant,late:sync	disable	granted	foreground	precise	jvm
 contacts_granted_with_pm_while_the_policy_syncs_late	contacts	denied	pm:grant,late:sync	disable	granted	allow	yes	jvm
