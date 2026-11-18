@@ -276,12 +276,24 @@ pub struct Writer {
 }
 
 impl Writer {
+    /// Open the database at `path`, creating it if new. One at another
+    /// schema version is neither upgraded nor read with the wrong layout:
+    /// it is set aside as `<path>.old`, over the one set aside before, and
+    /// recording starts over in a new one.
     pub fn open(path: &Path) -> anyhow::Result<Self> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
         }
-        let mut conn =
-            Connection::open(path).with_context(|| format!("opening {}", path.display()))?;
+        let open = || Connection::open(path).with_context(|| format!("opening {}", path.display()));
+        let mut conn = open()?;
+        if let Some(version) = other_version(&conn)? {
+            drop(conn);
+            set_aside(path)?;
+            eprintln!(
+                "bbd: the database was version {version}, not {SCHEMA_VERSION}: set aside, starting a new one"
+            );
+            conn = open()?;
+        }
         // WAL lets `bbd` query commands read while the daemon writes.
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
@@ -678,23 +690,55 @@ fn sandbox_global(conn: &Connection) -> anyhow::Result<String> {
     Ok(pairs.join(","))
 }
 
-/// Create the schema in a new database. A database at any other version
-/// than `SCHEMA_VERSION` is refused: it is not upgraded or replaced.
+fn has_tables(conn: &Connection) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table')",
+        [],
+        |r| r.get(0),
+    )
+}
+
+fn version_of(conn: &Connection) -> rusqlite::Result<i32> {
+    conn.pragma_query_value(None, "user_version", |r| r.get(0))
+}
+
+/// The version of a database that has tables but another schema version
+/// than this build's; `None` for a new database or one at this version.
+fn other_version(conn: &Connection) -> anyhow::Result<Option<i32>> {
+    if !has_tables(conn)? {
+        return Ok(None);
+    }
+    let version = version_of(conn)?;
+    Ok((version != SCHEMA_VERSION).then_some(version))
+}
+
+/// Move the database at `path`, with its write-ahead log, to `<path>.old`,
+/// over what is there. SQLite finds a database's log by its name, so the
+/// set-aside one stays whole.
+fn set_aside(path: &Path) -> anyhow::Result<()> {
+    for suffix in ["", "-wal", "-shm"] {
+        let mut from = path.as_os_str().to_owned();
+        from.push(suffix);
+        let mut to = path.as_os_str().to_owned();
+        to.push(".old");
+        to.push(suffix);
+        match std::fs::rename(&from, &to) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound && !suffix.is_empty() => {
+                // A log left over from the one set aside before is not this one's.
+                let _ = std::fs::remove_file(&to);
+            }
+            result => result.with_context(|| format!("setting {} aside", path.display()))?,
+        }
+    }
+    Ok(())
+}
+
+/// Create the schema in a new database; one that has it is left alone.
 fn create_schema(conn: &mut Connection) -> anyhow::Result<()> {
     // One transaction for the tables and the version that records them: if
     // the process dies half way, the next start finds an empty database.
     let conn = conn.transaction()?;
-    let has_tables: bool = conn.query_row(
-        "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table')",
-        [],
-        |r| r.get(0),
-    )?;
-    if has_tables {
-        let version: i32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        anyhow::ensure!(
-            version == SCHEMA_VERSION,
-            "database is version {version}, this build reads version {SCHEMA_VERSION}"
-        );
+    if has_tables(&conn)? {
         return Ok(());
     }
     conn.execute_batch(SCHEMA)?;
@@ -892,10 +936,23 @@ pub struct Reader {
 }
 
 impl Reader {
+    /// Open the database at `path` to read. One at another schema version
+    /// is not read: its layout is not this build's, and the daemon sets it
+    /// aside when it starts.
     pub fn open(path: &Path) -> anyhow::Result<Self> {
         let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
             .with_context(|| format!("opening {} (has the daemon run yet?)", path.display()))?;
-        Ok(Self { conn })
+        match version_of(&conn)? {
+            SCHEMA_VERSION => Ok(Self { conn }),
+            0 => anyhow::bail!(
+                "{} has no records yet (has the daemon run yet?)",
+                path.display()
+            ),
+            version => anyhow::bail!(
+                "{} is version {version}, not {SCHEMA_VERSION}: the daemon starts a new one when it starts",
+                path.display()
+            ),
+        }
     }
 
     /// Every sandbox entry, enabled or not, by uid.
@@ -1743,33 +1800,61 @@ mod tests {
     }
 
     #[test]
-    fn a_database_at_another_version_is_refused() {
+    fn a_database_at_another_version_is_set_aside_and_a_new_one_started() {
         let dir = std::env::temp_dir().join(format!("bbd-test-version-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let db = dir.join("bb.db");
-        let version = || -> i32 {
-            Connection::open(&db)
+        let old = dir.join("bb.db.old");
+        let version = |path: &Path| -> i32 {
+            Connection::open(path)
                 .unwrap()
                 .pragma_query_value(None, "user_version", |r| r.get(0))
                 .unwrap()
         };
         // A new database is created at the current version; opening it again
-        // keeps it.
-        drop(Writer::open(&db).unwrap());
-        assert_eq!(version(), SCHEMA_VERSION);
-        drop(Writer::open(&db).unwrap());
-        assert_eq!(version(), SCHEMA_VERSION);
+        // keeps it, with what was written.
+        Writer::open(&db)
+            .unwrap()
+            .put_sandbox_global(&[("camera", "off")])
+            .unwrap();
+        let w = Writer::open(&db).unwrap();
+        assert_eq!(version(&db), SCHEMA_VERSION);
+        assert_eq!(w.sandbox_global().unwrap(), "camera=off");
+        drop(w);
+        assert!(!old.exists());
 
         // Neither upgraded nor misread: an older database and a newer one
-        // are refused, and left as they are.
+        // are each set aside whole, and recording starts over.
         for other in [SCHEMA_VERSION - 1, SCHEMA_VERSION + 1] {
-            Connection::open(&db)
+            let w = Writer::open(&db).unwrap();
+            w.put_sandbox_global(&[("camera", "off")]).unwrap();
+            w.conn.pragma_update(None, "user_version", other).unwrap();
+            drop(w);
+            let w = Writer::open(&db).unwrap();
+            assert_eq!(version(&db), SCHEMA_VERSION);
+            assert_eq!(w.sandbox_global().unwrap(), "");
+            assert_eq!(version(&old), other);
+            let kept: String = Connection::open(&old)
                 .unwrap()
-                .pragma_update(None, "user_version", other)
+                .query_row("SELECT mode FROM sandbox_global", [], |r| r.get(0))
                 .unwrap();
-            assert!(Writer::open(&db).is_err());
-            assert_eq!(version(), other);
+            assert_eq!(kept, "off");
         }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_database_at_another_version_is_not_read() {
+        let dir = std::env::temp_dir().join(format!("bbd-test-read-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let db = dir.join("bb.db");
+        let w = Writer::open(&db).unwrap();
+        assert!(Reader::open(&db).is_ok());
+        w.conn
+            .pragma_update(None, "user_version", SCHEMA_VERSION - 1)
+            .unwrap();
+        assert!(Reader::open(&db).is_err());
+        drop(w);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
