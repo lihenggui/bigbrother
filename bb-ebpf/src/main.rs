@@ -158,6 +158,8 @@ struct Destination {
     addr: [u8; 16],
 }
 
+bb_common::assert_no_padding!(Destination { tgid, port, addr });
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct Pending {
@@ -170,7 +172,21 @@ struct Pending {
     op: u32,
     /// Set by `file_open` once it has reported a file for this syscall.
     reported: u32,
+    /// Always 0. Fills what would be padding after `reported`, which no
+    /// store would write (see `assert_no_padding`).
+    _pad: u32,
 }
+
+bb_common::assert_no_padding!(Pending {
+    path_ptr,
+    how_ptr,
+    dfd,
+    flags,
+    abi,
+    op,
+    reported,
+    _pad
+});
 
 /// Which processes get recorded: everything that runs as an app, in any
 /// Android user. That is installed apps (app ids from 10000) and the isolated
@@ -609,6 +625,7 @@ fn syscall_enter(ctx: &ProbeContext, op: u32, shape: Shape) -> Result<(), i32> {
         },
         op,
         reported: 0,
+        _pad: 0,
     };
     PENDING
         .insert(&bpf_get_current_pid_tgid(), &pending, 0)
@@ -672,6 +689,7 @@ fn expect_result(pid_tgid: u64) -> Result<(), i32> {
         abi: ABI_NATIVE,
         op: OP_PAIRED,
         reported: 1,
+        _pad: 0,
     };
     PENDING.insert(&pid_tgid, &pending, 0).map_err(|e| e as i32)
 }

@@ -24,6 +24,36 @@
 
 pub mod filter;
 
+/// Fails to compile unless `$t` is exactly as large as its fields together,
+/// that is, has no padding. The fields must all be named: the pattern below
+/// does not compile when one is left out, so a field added later is checked
+/// too.
+///
+/// Padding is never written, and the verifier of kernels before 6.6 rejects
+/// a program that passes a value with unwritten bytes from its stack to a
+/// helper (`invalid indirect read from stack`): a map key or value, or an
+/// event output in one go. So every struct that may be on an eBPF program's
+/// stack has none, explicit filler fields included.
+#[macro_export]
+macro_rules! assert_no_padding {
+    ($t:ident { $($field:ident),+ $(,)? }) => {
+        const _: () = {
+            #[allow(dead_code)]
+            fn all_fields_named(value: $t) {
+                let $t { $($field: _),+ } = value;
+            }
+            const fn pointee_size<P>(_: *const P) -> usize {
+                core::mem::size_of::<P>()
+            }
+            let value = core::mem::MaybeUninit::<$t>::uninit();
+            let base = value.as_ptr();
+            // SAFETY: only field addresses are taken, nothing is read.
+            let fields = 0 $(+ pointee_size(unsafe { &raw const (*base).$field }))+;
+            assert!(core::mem::size_of::<$t>() == fields, "struct has padding");
+        };
+    };
+}
+
 // ---- kernel struct offsets --------------------------------------------------
 
 /// Indexes into the `OFFSETS` global: byte offsets of kernel struct fields,
@@ -112,6 +142,15 @@ pub struct EventHeader {
     pub boot_ns_high: u32,
 }
 
+assert_no_padding!(EventHeader {
+    kind,
+    uid,
+    pid,
+    tid,
+    boot_ns_low,
+    boot_ns_high
+});
+
 impl EventHeader {
     pub fn boot_ns(&self) -> u64 {
         u64::from(self.boot_ns_high) << 32 | u64::from(self.boot_ns_low)
@@ -151,6 +190,18 @@ pub struct FileEvent {
     pub data: [u8; DATA_CAP],
 }
 
+assert_no_padding!(FileEvent {
+    hdr,
+    flags,
+    magic,
+    dev,
+    mode,
+    in_syscall,
+    truncated,
+    data_len,
+    data
+});
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ResultEvent {
@@ -158,6 +209,8 @@ pub struct ResultEvent {
     /// fd on success, negative errno on failure.
     pub ret: i32,
 }
+
+assert_no_padding!(ResultEvent { hdr, ret });
 
 /// Bytes of path captured per `PathEvent`. Longer paths are truncated.
 pub const PATH_CAP: usize = 512;
@@ -179,6 +232,17 @@ pub struct PathEvent {
     pub path: [u8; PATH_CAP],
 }
 
+assert_no_padding!(PathEvent {
+    hdr,
+    op,
+    ret,
+    dfd,
+    flags,
+    abi,
+    path_len,
+    path
+});
+
 /// Bytes of the program path captured per `ExecEvent`.
 pub const EXEC_PATH_CAP: usize = 256;
 /// Arguments captured per `ExecEvent`, not counting `argv[0]`.
@@ -199,6 +263,14 @@ pub struct ExecEvent {
     pub args: [[u8; EXEC_ARG_CAP]; EXEC_ARGS],
 }
 
+assert_no_padding!(ExecEvent {
+    hdr,
+    path_len,
+    argc,
+    path,
+    args
+});
+
 pub const AF_INET: u32 = 2;
 pub const AF_INET6: u32 = 10;
 
@@ -214,6 +286,13 @@ pub struct ConnectEvent {
     pub addr: [u8; 16],
 }
 
+assert_no_padding!(ConnectEvent {
+    hdr,
+    family,
+    port,
+    addr
+});
+
 /// How a process went after another one (`ProcessEvent::how`).
 pub const PROCESS_TRACE: u32 = 0;
 pub const PROCESS_READ: u32 = 1;
@@ -228,6 +307,8 @@ pub struct ProcessEvent {
     pub target: u32,
 }
 
+assert_no_padding!(ProcessEvent { hdr, how, target });
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct NetlinkEvent {
@@ -237,6 +318,12 @@ pub struct NetlinkEvent {
     /// `nlmsghdr::nlmsg_type` of the request.
     pub msg_type: u32,
 }
+
+assert_no_padding!(NetlinkEvent {
+    hdr,
+    protocol,
+    msg_type
+});
 
 // ---- binder -----------------------------------------------------------------
 //
@@ -305,6 +392,15 @@ pub struct BinderEvent {
     pub args: [u8; BINDER_ARGS_CAP],
 }
 
+assert_no_padding!(BinderEvent {
+    hdr,
+    interface,
+    code,
+    target,
+    args_len,
+    args
+});
+
 // ---- sandbox gate -----------------------------------------------------------
 //
 // Not a record: the gate holds a starting app until the daemon has replaced
@@ -323,6 +419,13 @@ pub struct GateEvent {
     pub at_ns_low: u32,
     pub at_ns_high: u32,
 }
+
+assert_no_padding!(GateEvent {
+    pid,
+    uid,
+    at_ns_low,
+    at_ns_high
+});
 
 impl GateEvent {
     pub fn at_ns(&self) -> u64 {
