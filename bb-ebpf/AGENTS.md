@@ -18,6 +18,11 @@ stay `GPL`, which the GPL-only helpers require.
   read kernel and user memory only through the probe-read helpers.
 - Event layouts are shared with the daemon through `bb-common`: `#[repr(C)]`,
   4-byte fields, no padding. Change both sides together.
+- Every byte of a value passed from the stack to a helper (map keys and
+  values, `output`) must be written: kernels before 6.6 reject the program
+  otherwise. Structs that go on the stack have no padding, filling it with
+  an explicit zeroed field where needed, and each is checked with
+  `bb_common::assert_no_padding!`.
 
 ## Cost on the hot path
 
