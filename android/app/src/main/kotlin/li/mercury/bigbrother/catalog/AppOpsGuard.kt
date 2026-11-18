@@ -44,7 +44,7 @@ import kotlin.system.exitProcess
  *
  * - `set <uid> <op>=<mode>,...`: prints `saved <uid> <op>=<mode>,...`, the
  *   uid's current modes for the guarded ops, then sets the ops listed to the
- *   modes given (ignored or errored) and keeps them so.
+ *   modes given (ignored) and keeps them so.
  * - `apply <uid> <targets> <resets>`: for a guarded uid, sets the ops in
  *   `resets` (`<op>=<mode>,...`, or `-`) to those modes and leaves them to
  *   the system, then holds the uid to `targets` (as `set` takes them, or

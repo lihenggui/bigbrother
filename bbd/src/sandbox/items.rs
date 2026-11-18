@@ -16,8 +16,8 @@
 //!
 //! Each item is a kind of data the app is kept from, and has a mode: off
 //! (the app gets what the system gives it), on (an empty, made-up or
-//! separate answer), and for some, deny (a permission error) or coarse
-//! (location only). The settings of a sandboxed app name the items it has
+//! separate answer), and for location, coarse (an approximate one). The
+//! settings of a sandboxed app name the items it has
 //! its own mode for; every other item has the mode of the global settings,
 //! and every item is on unless set otherwise.
 
@@ -61,17 +61,8 @@ pub enum Mode {
     /// An empty, made-up or separate answer, with the permissions still
     /// shown as granted.
     On,
-    /// A permission error.
-    Deny,
     /// For location: an approximate one, and nothing more precise.
     Coarse,
-}
-
-/// The mode of an app op, as the app ops service numbers it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OpMode {
-    Ignored = 1,
-    Errored = 2,
 }
 
 impl Item {
@@ -114,16 +105,11 @@ impl Item {
         Item::ALL.into_iter().find(|item| item.name() == name)
     }
 
-    /// Whether the item can be set to `mode`. Every item can be off or on.
-    /// Only data handed out by system services behind app ops can be
-    /// refused with an error, and only location made coarse.
+    /// Whether the item can be set to `mode`. Every item can be off or on;
+    /// only location can be made coarse.
     pub fn allows(self, mode: Mode) -> bool {
         match mode {
             Mode::Off | Mode::On => true,
-            Mode::Deny => !matches!(
-                self,
-                Item::Storage | Item::CpuInfo | Item::DeviceIds | Item::InstalledApps
-            ),
             Mode::Coarse => self == Item::Location,
         }
     }
@@ -294,21 +280,20 @@ impl Settings {
         )
     }
 
-    /// The app ops to hold the app to, and in which mode. Location made
-    /// coarse holds only the precise location ([`COARSE_KEPT`]).
-    pub fn op_targets(&self) -> Vec<(&'static str, OpMode)> {
+    /// The app ops to hold the app to, ignored. Location made coarse holds
+    /// only the precise location ([`COARSE_KEPT`]).
+    pub fn op_targets(&self) -> Vec<&'static str> {
         let mut targets = Vec::new();
         for item in Item::ALL {
-            let mode = match self.mode(item) {
-                Mode::Off => continue,
-                Mode::On | Mode::Coarse => OpMode::Ignored,
-                Mode::Deny => OpMode::Errored,
-            };
+            let mode = self.mode(item);
+            if mode == Mode::Off {
+                continue;
+            }
             for op in item.ops() {
-                if self.mode(item) == Mode::Coarse && COARSE_KEPT.contains(op) {
+                if mode == Mode::Coarse && COARSE_KEPT.contains(op) {
                     continue;
                 }
-                targets.push((*op, mode));
+                targets.push(*op);
             }
         }
         targets
@@ -348,7 +333,7 @@ fn keeps(mode: Mode) -> u8 {
         Mode::Off => 0,
         // All but an approximate location.
         Mode::Coarse => 1,
-        Mode::On | Mode::Deny => 2,
+        Mode::On => 2,
     }
 }
 
@@ -356,13 +341,12 @@ pub fn mode_name(mode: Mode) -> &'static str {
     match mode {
         Mode::Off => "off",
         Mode::On => "on",
-        Mode::Deny => "deny",
         Mode::Coarse => "coarse",
     }
 }
 
 pub fn parse_mode(name: &str) -> Option<Mode> {
-    [Mode::Off, Mode::On, Mode::Deny, Mode::Coarse]
+    [Mode::Off, Mode::On, Mode::Coarse]
         .into_iter()
         .find(|mode| mode_name(*mode) == name)
 }
@@ -384,13 +368,14 @@ mod tests {
 
     #[test]
     fn what_is_not_known_or_not_allowed_is_left_out() {
+        // `deny` is not a mode (any more): the item follows the global settings.
         let settings = Settings::parse(
-            "camera=off,teleport=on,storage=deny,cpu_info=coarse,x,=,contacts=deny",
+            "camera=off,teleport=on,storage=coarse,x,=,contacts=deny,location=coarse",
         );
-        assert_eq!(settings.to_text(), "contacts=deny,camera=off");
+        assert_eq!(settings.to_text(), "location=coarse,camera=off");
         let mut settings = Settings::default();
-        assert!(settings.set(Item::DeviceIds, Some(Mode::Deny)).is_err());
         assert!(settings.set(Item::Camera, Some(Mode::Coarse)).is_err());
+        assert_eq!(parse_mode("deny"), None);
     }
 
     #[test]
@@ -429,39 +414,39 @@ mod tests {
         for item in Item::ALL {
             own.set(item, Some(Mode::Off)).unwrap();
         }
-        own.set(Item::Contacts, Some(Mode::Deny)).unwrap();
+        own.set(Item::Contacts, Some(Mode::On)).unwrap();
         own.set(Item::Location, Some(Mode::Coarse)).unwrap();
         let targets = own.over(&Settings::default()).op_targets();
         assert_eq!(
             targets,
             [
-                ("android:read_contacts", OpMode::Errored),
-                ("android:write_contacts", OpMode::Errored),
+                "android:read_contacts",
+                "android:write_contacts",
                 // Coarse: the precise location only.
-                ("android:fine_location", OpMode::Ignored),
+                "android:fine_location",
             ]
         );
         own.set(Item::Location, Some(Mode::On)).unwrap();
         assert!(
             own.over(&Settings::default())
                 .op_targets()
-                .contains(&("android:wifi_scan", OpMode::Ignored))
+                .contains(&"android:wifi_scan")
         );
     }
 
     #[test]
     fn covering_settings_keep_all_that_either_keeps() {
         let ops = |items: &Settings| -> std::collections::BTreeSet<&str> {
-            items.op_targets().into_iter().map(|(op, _)| op).collect()
+            items.op_targets().into_iter().collect()
         };
         let global = Settings::parse("camera=off");
-        let before = Settings::parse("location=coarse,microphone=deny");
+        let before = Settings::parse("location=coarse,microphone=on");
         let after = Settings::parse("camera=on,location=off,microphone=on");
         let covering = before.covering(&after, &global);
         // What follows the global settings still does.
         assert_eq!(
             covering.to_text(),
-            "location=coarse,camera=on,microphone=deny"
+            "location=coarse,camera=on,microphone=on"
         );
         let held = ops(&covering.over(&global));
         assert!(held.is_superset(&ops(&before.over(&global))));
@@ -493,6 +478,6 @@ mod tests {
             assert_eq!(json, format!("\"{}\"", item.name()));
         }
         assert_eq!(parse_mode("coarse"), Some(Mode::Coarse));
-        assert_eq!(serde_json::to_string(&Mode::Deny).unwrap(), "\"deny\"");
+        assert_eq!(serde_json::to_string(&Mode::Coarse).unwrap(), "\"coarse\"");
     }
 }

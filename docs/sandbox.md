@@ -53,24 +53,24 @@ it again by a file in it that only root can see.
 ## Items
 
 What the sandbox does to an app is set item by item. Each item is off (the
-app gets what the system gives it) or on, and some can also be set to deny
-(a permission error rather than an empty answer) or coarse:
+app gets what the system gives it) or on, and location can also be made
+coarse:
 
 | Item | On | Modes |
 | --- | --- | --- |
 | `storage` | Shared storage of its own; an empty media library | off, on |
 | `cpu_info` | `/proc/cpuinfo` without what names the chip | off, on |
-| `contacts` | No contacts | off, on, deny |
-| `messages` | No messages or call log | off, on, deny |
-| `calendar` | No calendar | off, on, deny |
-| `clipboard_accounts` | An empty clipboard, no accounts | off, on, deny |
-| `location` | No location; with coarse, an approximate one only | off, on, deny, coarse |
-| `camera` | No camera image | off, on, deny |
-| `microphone` | Silence | off, on, deny |
-| `body_sensors` | No body sensor or activity data | off, on, deny |
+| `contacts` | No contacts | off, on |
+| `messages` | No messages or call log | off, on |
+| `calendar` | No calendar | off, on |
+| `clipboard_accounts` | An empty clipboard, no accounts | off, on |
+| `location` | No location; with coarse, an approximate one only | off, on, coarse |
+| `camera` | No camera image | off, on |
+| `microphone` | Silence | off, on |
+| `body_sensors` | No body sensor or activity data | off, on |
 | `device_ids` | An ANDROID_ID of its own; no phone number or phone state | off, on |
 | `installed_apps` | No installed app but itself and the system's; no usage statistics | off, on |
-| `nearby_devices` | No Bluetooth or Wi-Fi devices nearby | off, on, deny |
+| `nearby_devices` | No Bluetooth or Wi-Fi devices nearby | off, on |
 
 The global settings give every item a mode; an app has these, except for
 the items it has a mode of its own for. Every item is on unless set
@@ -118,7 +118,9 @@ The thread has no timer: with no sandboxed app starting, it does not run.
 
 System services ask the system's app ops whether a uid may have the data
 behind a permission. With an op "ignored" the caller gets an empty answer
-rather than an error; with an op "errored", the error. A helper program
+rather than an error, and the permission still shows as granted. (An op
+"errored" would give an error instead, but the system keeps the ops of
+runtime permissions at "ignored" whatever is set.) A helper program
 (`AppOpsGuard`, run by the daemon with `app_process`) sets the ops of the
 items that are on, remembers what they were, and sets them again when the
 system changes them, which it does whenever the app's permissions change.

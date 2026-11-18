@@ -184,7 +184,7 @@ enum SandboxCommand {
     /// Whether each part of the sandbox works on this device.
     Status,
     /// Set what the sandbox does to an app, item by item, as ITEM=MODE:
-    /// MODE is off, on, deny or coarse, or global to follow the global
+    /// MODE is off, on or (for location) coarse, or global to follow the global
     /// settings again.
     Set {
         package: String,

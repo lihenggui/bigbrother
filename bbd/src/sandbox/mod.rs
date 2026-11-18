@@ -1725,7 +1725,7 @@ mod tests {
             )
             .unwrap();
         let held = |seen: &Settings| -> std::collections::BTreeSet<&str> {
-            seen.op_targets().into_iter().map(|(op, _)| op).collect()
+            seen.op_targets().into_iter().collect()
         };
         let both = ["android:camera", "android:record_audio"];
 
@@ -1875,14 +1875,14 @@ mod tests {
         // Item by item, for one app and for all.
         assert_eq!(
             ask(
-                r#"{"cmd":"sandbox.set","package":"com.shared.one","settings":{"camera":"off","contacts":"deny"}}"#
+                r#"{"cmd":"sandbox.set","package":"com.shared.one","settings":{"camera":"off","location":"coarse"}}"#
             ),
             serde_json::json!({
                 "ok": true, "uid": 10200,
-                "settings": {"contacts": "deny", "camera": "off"},
+                "settings": {"location": "coarse", "camera": "off"},
                 "items": {
-                    "storage": "on", "cpu_info": "on", "contacts": "deny", "messages": "on",
-                    "calendar": "on", "clipboard_accounts": "on", "location": "on", "camera": "off",
+                    "storage": "on", "cpu_info": "on", "contacts": "on", "messages": "on",
+                    "calendar": "on", "clipboard_accounts": "on", "location": "coarse", "camera": "off",
                     "microphone": "on", "body_sensors": "on", "device_ids": "on",
                     "installed_apps": "on", "nearby_devices": "on",
                 },
@@ -1890,13 +1890,13 @@ mod tests {
         );
         assert_eq!(
             ask(r#"{"cmd":"sandbox.set","package":"com.shared.one","settings":{"camera":null}}"#)["settings"],
-            serde_json::json!({"contacts": "deny"})
+            serde_json::json!({"location": "coarse"})
         );
         assert_eq!(
             ask(
-                r#"{"cmd":"sandbox.set","package":"com.shared.one","settings":{"storage":"deny"}}"#
+                r#"{"cmd":"sandbox.set","package":"com.shared.one","settings":{"storage":"coarse"}}"#
             ),
-            serde_json::json!({"ok": false, "error": "storage cannot be deny"})
+            serde_json::json!({"ok": false, "error": "storage cannot be coarse"})
         );
         assert_eq!(
             ask(r#"{"cmd":"sandbox.global"}"#)["items"]["microphone"],
@@ -1961,7 +1961,7 @@ mod tests {
                         created: 0,
                         settings: Settings::parse("camera=off"),
                         items: Settings::parse("camera=off")
-                            .over(&Settings::parse("contacts=deny")),
+                            .over(&Settings::parse("location=coarse")),
                     },
                 ],
             },
@@ -1974,7 +1974,7 @@ mod tests {
              Also sandboxed, sharing its uid: com.shared.two.\n\
              UID        STATE     PACKAGE\n\
              10100      disabled  com.app\n\
-             10200      enabled   com.shared.one (contacts deny, camera off)\n\
+             10200      enabled   com.shared.one (location coarse, camera off)\n\
              No apps in the sandbox.\n"
         );
     }

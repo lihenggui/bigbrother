@@ -31,17 +31,17 @@ class AppOpsGuardProtocolTest {
 
     @Test
     fun givenSetOrVerifyLine_whenParsed_thenTargetsByOp() {
-        val targets = mapOf("android:camera" to 1, "android:read_contacts" to 2)
-        assertEquals(Command.Set(10123, targets), AppOpsGuardProtocol.parseCommand("set 10123 android:camera=1,android:read_contacts=2"))
-        assertEquals(Command.Verify(10123, targets), AppOpsGuardProtocol.parseCommand("verify 10123 android:camera=1,android:read_contacts=2"))
+        val targets = mapOf("android:camera" to 1, "android:read_contacts" to 1)
+        assertEquals(Command.Set(10123, targets), AppOpsGuardProtocol.parseCommand("set 10123 android:camera=1,android:read_contacts=1"))
+        assertEquals(Command.Verify(10123, targets), AppOpsGuardProtocol.parseCommand("verify 10123 android:camera=1,android:read_contacts=1"))
         assertEquals(Command.Set(10123, mapOf("android:camera" to 1)), AppOpsGuardProtocol.parseCommand("  set\t10123 android:camera=1 \n"))
     }
 
     @Test
     fun givenApplyLine_whenParsed_thenTargetsAndResets() {
         assertEquals(
-            Command.Apply(10123, mapOf("android:camera" to 2), listOf("android:read_contacts" to null, "android:read_sms" to 4)),
-            AppOpsGuardProtocol.parseCommand("apply 10123 android:camera=2 android:read_contacts=default,android:read_sms=4"),
+            Command.Apply(10123, mapOf("android:camera" to 1), listOf("android:read_contacts" to null, "android:read_sms" to 4)),
+            AppOpsGuardProtocol.parseCommand("apply 10123 android:camera=1 android:read_contacts=default,android:read_sms=4"),
         )
         assertEquals(Command.Apply(10123, mapOf("android:camera" to 1), emptyList()), AppOpsGuardProtocol.parseCommand("apply 10123 android:camera=1 -"))
         assertEquals(Command.Apply(10123, emptyMap(), listOf("android:camera" to 0)), AppOpsGuardProtocol.parseCommand("apply 10123 - android:camera=0"))
@@ -68,6 +68,7 @@ class AppOpsGuardProtocolTest {
             "set 10123 extra",
             "verify 10123 extra",
             "set 10123 android:camera=0",
+            "set 10123 android:camera=2",
             "set 10123 android:camera=default",
             "set 10123 android:camera=1 more",
             "apply 10123 android:camera=1",

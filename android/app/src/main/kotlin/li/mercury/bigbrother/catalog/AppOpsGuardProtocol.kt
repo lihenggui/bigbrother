@@ -25,9 +25,6 @@ internal object AppOpsGuardProtocol {
     /** `AppOpsManager.MODE_IGNORED`: the app is told no data, not refused. */
     const val MODE_IGNORED = 1
 
-    /** `AppOpsManager.MODE_ERRORED`: the app is refused, with a permission error. */
-    const val MODE_ERRORED = 2
-
     /** `AppOpsManager.MODE_DEFAULT`. */
     const val MODE_DEFAULT = 3
 
@@ -153,12 +150,12 @@ internal object AppOpsGuardProtocol {
     private const val NONE = "-"
 
     /**
-     * The ops to hold a uid to, in the form [encodeModes] writes, each to a
-     * mode that keeps its data from the app; `null` for anything else.
+     * The ops to hold a uid to, in the form [encodeModes] writes, each
+     * ignored; `null` for anything else.
      */
     fun decodeTargets(text: String): Map<String, Int>? {
         val modes = decodeModes(text) ?: return null
-        if (modes.any { (_, mode) -> mode != MODE_IGNORED && mode != MODE_ERRORED }) return null
+        if (modes.any { (_, mode) -> mode != MODE_IGNORED }) return null
         return modes.associate { (name, mode) -> name to mode!! }
     }
 

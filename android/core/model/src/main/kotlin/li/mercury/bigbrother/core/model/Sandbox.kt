@@ -39,9 +39,8 @@ enum class SandboxItem(val id: String) {
     /** The modes it can be set to, the one it starts with first. */
     val modes: List<SandboxMode>
         get() = when (this) {
-            STORAGE, CPU_INFO, DEVICE_IDS, INSTALLED_APPS -> listOf(SandboxMode.ON, SandboxMode.OFF)
-            LOCATION -> listOf(SandboxMode.ON, SandboxMode.DENY, SandboxMode.COARSE, SandboxMode.OFF)
-            else -> listOf(SandboxMode.ON, SandboxMode.DENY, SandboxMode.OFF)
+            LOCATION -> listOf(SandboxMode.ON, SandboxMode.COARSE, SandboxMode.OFF)
+            else -> listOf(SandboxMode.ON, SandboxMode.OFF)
         }
 
     /** Carried out by the LSPosed hook in system_server. */
@@ -94,9 +93,6 @@ enum class SandboxMode(val id: String) {
 
     /** An empty, made-up or separate answer, with the permission shown as granted. */
     ON("on"),
-
-    /** A permission error. */
-    DENY("deny"),
 
     /** For location: an approximate one only. */
     COARSE("coarse"),

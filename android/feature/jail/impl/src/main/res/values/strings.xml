@@ -134,8 +134,6 @@
     <string name="jail_item_nearby_devices_on_detail">Bluetooth and Wi-Fi scans return nothing.</string>
 
     <!-- The other modes of an item. -->
-    <string name="jail_mode_deny">Deny</string>
-    <string name="jail_mode_deny_detail">The app gets a permission error, and may ask for the permission or stop the feature.</string>
     <string name="jail_mode_coarse">Approximate location</string>
     <string name="jail_mode_coarse_detail">Only an approximate location, to the neighbourhood.</string>
     <string name="jail_mode_off">Real data</string>
