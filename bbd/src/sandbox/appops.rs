@@ -214,7 +214,7 @@ impl State {
             return;
         }
         if let Some(targets) = self.guarded.get(&uid) {
-            let line = format!("verify {uid} {targets}");
+            let line = Command::Verify(uid, targets).to_string();
             let _ = self.send(&line);
         }
     }
@@ -365,15 +365,46 @@ const NOT_KNOWN: &str = "default";
 /// op, with the mode's number, then `<permission>=revoked` for each
 /// permission taken, joined by commas. Empty if nothing.
 fn targets_of(items: &Settings) -> String {
-    let ops = items
-        .op_targets()
-        .into_iter()
-        .map(|(op, mode)| format!("{op}={}", mode_number(mode)));
-    let permissions = items
-        .taken_permissions()
-        .into_iter()
+    targets_text(&items.op_targets(), &items.taken_permissions())
+}
+
+/// `ops` at their modes and `permissions` revoked, as [`targets_of`]
+/// writes them.
+fn targets_text(ops: &[(&str, OpMode)], permissions: &[&str]) -> String {
+    let ops = ops
+        .iter()
+        .map(|(op, mode)| format!("{op}={}", mode_number(*mode)));
+    let permissions = permissions
+        .iter()
         .map(|permission| format!("{permission}={REVOKED}"));
     ops.chain(permissions).collect::<Vec<_>>().join(",")
+}
+
+/// A line the daemon tells the helper (`parseCommand` in
+/// `AppOpsGuardProtocol.kt`): targets as [`targets_of`] writes them,
+/// values as [`saved_values_of`] does.
+enum Command<'a> {
+    Set(u32, &'a str),
+    Verify(u32, &'a str),
+    Release(u32),
+    Restore(u32, &'a str),
+    /// The targets, then what to set back; nothing to set back is `-`.
+    Apply(u32, &'a str, &'a str),
+}
+
+impl std::fmt::Display for Command<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            Self::Set(uid, targets) => write!(f, "set {uid} {targets}"),
+            Self::Verify(uid, targets) => write!(f, "verify {uid} {targets}"),
+            Self::Release(uid) => write!(f, "release {uid}"),
+            Self::Restore(uid, values) => write!(f, "restore {uid} {values}"),
+            Self::Apply(uid, targets, resets) => {
+                let resets = if resets.is_empty() { "-" } else { resets };
+                write!(f, "apply {uid} {targets} {resets}")
+            }
+        }
+    }
 }
 
 /// Whether `name`, in what the helper is told, is a permission's rather
@@ -501,7 +532,8 @@ pub fn naming_taken(entry: &Entry, items: &Settings) -> Entry {
 pub fn restore_line(entry: &Entry, items: &Settings) -> Option<String> {
     let targets = targets_of(items);
     let names = to_give_back(entry, &targets);
-    (!names.is_empty()).then(|| format!("restore {} {}", entry.uid, saved_values_of(entry, &names)))
+    (!names.is_empty())
+        .then(|| Command::Restore(entry.uid, &saved_values_of(entry, &names)).to_string())
 }
 
 impl Effect for AppOps {
@@ -515,7 +547,7 @@ impl Effect for AppOps {
             return Ok(());
         }
         let uid = entry.uid;
-        let line = format!("set {uid} {targets}");
+        let line = Command::Set(uid, &targets).to_string();
         let saved = self.shared.ask(uid, &line, |state, answer| match answer {
             Answer::Saved(saved) => {
                 state.guarded.insert(uid, targets);
@@ -533,7 +565,7 @@ impl Effect for AppOps {
             failed => {
                 // It may have set them all the same, or be about to: a
                 // helper that is there puts back what it saved itself.
-                let _ = self.shared.state().send(&format!("release {uid}"));
+                let _ = self.shared.state().send(&Command::Release(uid).to_string());
                 self.shared.rest_if_unused();
                 failed?;
                 anyhow::bail!("the system did not take the app ops")
@@ -560,7 +592,7 @@ impl Effect for AppOps {
         // them down) their uid modes are cleared, and the system's defaults
         // apply; a permission without a saved state is left revoked, but
         // the app may ask for it again.
-        let line = format!("restore {uid} {}", saved_values_of(entry, &names));
+        let line = Command::Restore(uid, &saved_values_of(entry, &names)).to_string();
         let restored = self.shared.ask(uid, &line, |state, answer| {
             let restored = answer == Answer::Restored;
             if restored {
@@ -604,16 +636,13 @@ impl Effect for AppOps {
                 .collect()
         };
         let resets = |names: &[String]| {
-            if names.is_empty() {
-                return "-".to_string();
-            }
             let names: Vec<&str> = names.iter().map(String::as_str).collect();
             saved_values_of(entry, &names)
         };
         let (let_go, taken_back) = (released(&held, &holding), released(&holding, &held));
         let uid = entry.uid;
-        let line = format!("apply {uid} {holding} {}", resets(&let_go));
-        let back = format!("apply {uid} {held} {}", resets(&taken_back));
+        let line = Command::Apply(uid, &holding, &resets(&let_go)).to_string();
+        let back = Command::Apply(uid, &held, &resets(&taken_back)).to_string();
         let applied = self.shared.ask(uid, &line, |state, answer| match answer {
             Answer::Applied(found) => {
                 state.guarded.insert(uid, holding.clone());
@@ -800,65 +829,127 @@ fn run_helper(shared: &Shared) -> anyhow::Error {
 mod tests {
     use super::*;
 
+    /// The `<name>=<value>` of a value word of a case (`op=` or
+    /// `permission=`), as the helper writes it and the daemon keeps it and
+    /// hands it back unread: an op's mode, `default` for none, then `/`
+    /// and its grant's mode; a permission's state with its flags joined by
+    /// `+`, `default` where it is not known.
+    fn value_of(word: &str) -> (&str, String) {
+        let mut parts = word.split('/');
+        let name = parts.next().unwrap();
+        let first = match parts.next().unwrap() {
+            "none" | "unknown" => NOT_KNOWN,
+            value => value,
+        };
+        let rest: Vec<&str> = std::iter::once(first).chain(parts).collect();
+        let value = rest.join(if is_permission(name) { "+" } else { "/" });
+        (name, value)
+    }
+
+    /// The values a case names, in order.
+    fn values_of(case: &crate::protocol_cases::Case) -> Vec<(&str, String)> {
+        case.meaning
+            .iter()
+            .filter(|(key, _)| key == "op" || key == "permission")
+            .map(|(_, word)| value_of(word))
+            .collect()
+    }
+
+    fn joined(values: &[(&str, String)], permissions: bool) -> String {
+        values
+            .iter()
+            .filter(|(name, _)| is_permission(name) == permissions)
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
     #[test]
-    fn the_helpers_lines_are_read_as_it_prints_them() {
-        assert_eq!(
-            parse_line("saved 10100 android:camera=default,android:fine_location=4"),
-            Some((
-                10100,
-                Some(Answer::Saved(
-                    "android:camera=default,android:fine_location=4".into()
-                ))
-            ))
-        );
-        // A device that knows none of the ops saved none.
-        assert_eq!(
-            parse_line("saved 10100"),
-            Some((10100, Some(Answer::Saved(String::new()))))
-        );
-        assert_eq!(
-            parse_line("restored 1010100"),
-            Some((1_010_100, Some(Answer::Restored)))
-        );
-        assert_eq!(
-            parse_line("failed 10100"),
-            Some((10100, Some(Answer::Failed)))
-        );
-        assert_eq!(
-            parse_unheld("unheld 10100 android:camera,android:read_sms"),
-            Some((
-                10100,
-                BTreeSet::from(["android:camera".into(), "android:read_sms".into()])
-            ))
-        );
-        assert_eq!(
-            parse_unheld("unheld 10100 -"),
-            Some((10100, BTreeSet::new()))
-        );
-        assert_eq!(parse_unheld("verified 10100"), None);
-        assert_eq!(parse_line("unheld 10100 -"), Some((10100, None)));
-        // What the helper did by itself answers nothing.
-        assert_eq!(
-            parse_line("reverted 10100 android:camera"),
-            Some((10100, None))
-        );
-        assert_eq!(parse_line("verified 10100"), Some((10100, None)));
-        assert_eq!(
-            parse_line("applied 10100"),
-            Some((10100, Some(Answer::Applied(String::new()))))
-        );
-        // With the states of the permissions it took.
-        assert_eq!(
-            parse_line("applied 10100 android.permission.ACCESS_FINE_LOCATION=granted+user_set"),
-            Some((
-                10100,
-                Some(Answer::Applied(
-                    "android.permission.ACCESS_FINE_LOCATION=granted+user_set".into()
-                ))
-            ))
-        );
-        for line in ["", "saved", "saved x", "hello 10100", "restored -1"] {
+    fn every_command_is_written_as_the_helper_reads_it() {
+        let cases = crate::protocol_cases::appops();
+        for case in crate::protocol_cases::of(&cases, &["command"]) {
+            let uid: u32 = case.get("uid").unwrap().parse().unwrap();
+            let ops: Vec<(&str, OpMode)> = case
+                .all("hold")
+                .map(|word| {
+                    let (op, mode) = word.split_once('/').unwrap();
+                    let mode = match mode {
+                        "1" => OpMode::Ignored,
+                        "4" => OpMode::Foreground,
+                        other => panic!("no op is held at {other}"),
+                    };
+                    (op, mode)
+                })
+                .collect();
+            let permissions: Vec<&str> = case.all("revoke").collect();
+            let targets = targets_text(&ops, &permissions);
+            // What the entry saved; a value not known is not in it, and
+            // is sent as not known all the same.
+            let values = values_of(case);
+            let known: Vec<(&str, String)> = values
+                .iter()
+                .filter(|(_, value)| value != NOT_KNOWN)
+                .cloned()
+                .collect();
+            let entry = Entry {
+                saved_ops: joined(&known, false),
+                saved_permissions: joined(&known, true),
+                ..sandboxed(uid)
+            };
+            let names: Vec<&str> = values.iter().map(|(name, _)| *name).collect();
+            let saved = saved_values_of(&entry, &names);
+            let line = match case.first() {
+                "set" => Command::Set(uid, &targets),
+                "verify" => Command::Verify(uid, &targets),
+                "release" => Command::Release(uid),
+                "restore" => Command::Restore(uid, &saved),
+                "apply" => Command::Apply(uid, &targets, &saved),
+                other => panic!("no command {other}"),
+            }
+            .to_string();
+            assert_eq!(line, case.line);
+        }
+    }
+
+    #[test]
+    fn every_answer_and_report_is_read_as_the_helper_writes_it() {
+        let cases = crate::protocol_cases::appops();
+        for case in crate::protocol_cases::of(&cases, &["answer"]) {
+            let line = case.line.as_str();
+            let uid: u32 = case.get("uid").unwrap().parse().unwrap();
+            let values = values_of(case);
+            let text = values
+                .iter()
+                .map(|(name, value)| format!("{name}={value}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            let answer = match case.first() {
+                "saved" => Some(Answer::Saved(text.clone())),
+                "restored" => Some(Answer::Restored),
+                "applied" => Some(Answer::Applied(text.clone())),
+                "failed" => Some(Answer::Failed),
+                "verified" | "reverted" | "unheld" => None,
+                other => panic!("no answer {other}"),
+            };
+            assert_eq!(parse_line(line), Some((uid, answer)), "{line}");
+            if case.first() == "saved" {
+                assert_eq!(
+                    split_saved(&text),
+                    (joined(&values, false), joined(&values, true)),
+                    "{line}"
+                );
+            }
+            let unheld = (case.first() == "unheld")
+                .then(|| (uid, case.all("not_held").map(str::to_string).collect()));
+            assert_eq!(parse_unheld(line), unheld, "{line}");
+            let found = (case.first() == "reverted" && !values.is_empty()).then_some((uid, text));
+            assert_eq!(found_in(line), found, "{line}");
+        }
+        for case in crate::protocol_cases::of(&cases, &["answer-bad"]) {
+            let line = case.line.as_str();
             assert_eq!(parse_line(line), None, "{line:?}");
+            assert_eq!(parse_unheld(line), None, "{line:?}");
+            assert_eq!(found_in(line), None, "{line:?}");
         }
     }
 

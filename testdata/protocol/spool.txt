@@ -1,0 +1,32 @@
+# The lines the LSPosed hook appends to its spool for the daemon
+# (EventSpool.kt and bbd/src/spool.rs), read by the tests of both. The
+# format of the cases is in README.md.
+#
+# line    the hook writes the line for the meaning; the daemon reads the
+#         meaning from it
+# read    the daemon reads the meaning; the hook does not write the line
+#         in this form
+# bad     the daemon rejects the line
+#
+# The meaning: ts=<unix time>, uid=<caller uid>, op=query or op=open,
+# mode=<open mode> as the hook was given it, read= and write= (1 or 0) as
+# the daemon takes the mode, items=<rows a query returned>, uri=<uri>,
+# path=<the file an open resolved to, or nothing>.
+
+line	1\t1700000000\t10123\tq\t\t3214\tcontent://media/external/images/media\t	ts=1700000000	uid=10123	op=query	mode=	read=0	write=0	items=3214	uri=content://media/external/images/media	path=
+line	1\t1700000001\t10123\to\trw\t0\tcontent://media/external/images/media/7\t/storage/emulated/0/DCIM/a.jpg	ts=1700000001	uid=10123	op=open	mode=rw	read=1	write=1	items=0	uri=content://media/external/images/media/7	path=/storage/emulated/0/DCIM/a.jpg
+line	1\t1700000002\t10123\to\tr\t0\tcontent://com.android.externalstorage.documents/document/primary%3ADocuments%2Fa.pdf\t/storage/emulated/0/Documents/O'Brien résumé.pdf	ts=1700000002	uid=10123	op=open	mode=r	read=1	write=0	items=0	uri=content://com.android.externalstorage.documents/document/primary%3ADocuments%2Fa.pdf	path=/storage/emulated/0/Documents/O'Brien résumé.pdf
+line	1\t1700000003\t1010123\to\twt\t0\tcontent://downloads/my_downloads/12\t	ts=1700000003	uid=1010123	op=open	mode=wt	read=0	write=1	items=0	uri=content://downloads/my_downloads/12	path=
+line	1\t1700000004\t10124\tq\t\t0\tcontent://com.android.contacts/contacts\t	ts=1700000004	uid=10124	op=query	mode=	read=0	write=0	items=0	uri=content://com.android.contacts/contacts	path=
+# Without the path field.
+read	1\t1700000005\t10123\tq\t\t3\tcontent://media/external/file	ts=1700000005	uid=10123	op=query	mode=	read=0	write=0	items=3	uri=content://media/external/file	path=
+
+bad
+bad	garbage
+bad	2\t1700000000\t10123\tq\t\t0\tcontent://x\t
+bad	1\tnot-a-time\t10123\tq\t\t0\tcontent://x\t
+bad	1\t1700000000\t-1\tq\t\t0\tcontent://x\t
+bad	1\t1700000000\t10123\tx\t\t0\tcontent://x\t
+bad	1\t1700000000\t10123\tq\t\t-1\tcontent://x\t
+bad	1\t1700000000\t10123\tq\t\t0\t\t
+bad	1\t1700000000\t10123\tq

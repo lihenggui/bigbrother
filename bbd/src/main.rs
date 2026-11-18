@@ -28,6 +28,8 @@ mod net;
 mod packages;
 mod paths;
 mod personal;
+#[cfg(test)]
+mod protocol_cases;
 mod rules;
 mod sandbox;
 mod sensors;
