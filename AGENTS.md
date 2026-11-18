@@ -15,7 +15,8 @@ building, checks and releasing in CONTRIBUTING.md.
 - `android/`: the app, the LSPosed hook and the canary test app. See `android/AGENTS.md`.
 - `scripts/`: `build.sh` (full build), `check-kernels.sh` (`bbd selftest` on
   Android kernels in QEMU), `check-canary.sh` and `check-sandbox.sh`
-  (on-device checks of the records and of the sandbox).
+  (on-device checks of the records and of the sandbox), and
+  `install-on-emulator.sh` (the module on an emulator without a root manager).
 
 The sandbox (`bbd sandbox`, `bbd/src/sandbox/`, `SandboxHook` in the hook,
 `AppOpsGuard` in the app) is described in docs/sandbox.md.

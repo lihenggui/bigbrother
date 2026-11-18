@@ -20,6 +20,9 @@
 #   scripts/check-sandbox.sh              the check
 #   scripts/check-sandbox.sh --stress N   also N cold starts in the sandbox,
 #                                         none of which may fail or stay held
+#   --max-hold-ms N                       the 95th percentile a start may be
+#                                         held for (20 ms), for slower devices
+#                                         such as an emulator without a GPU
 #
 # Requires adb, a connected and unlocked device with the module installed
 # and running, and the canary built:
@@ -40,7 +43,7 @@ LIST=/data/system/big_brother_sandbox
 # What a new sandbox has in it, and the app's own directories.
 SANDBOX_ENTRIES="Android DCIM Documents Download Movies Music Pictures"
 # The 95th percentile a start may be held for, in microseconds.
-MAX_HOLD_US=20000
+max_hold_us=20000
 # Every item of the sandbox (`bbd/src/sandbox/items.rs`), each set to on,
 # back to the global settings, or off but for device_ids.
 ITEMS="storage cpu_info contacts messages calendar clipboard_accounts location camera microphone
@@ -81,9 +84,23 @@ TEST_NUMBER=5550199
 SEED=/data/local/tmp/bb_check_seed.sh
 
 stress=0
-if [[ "${1:-}" == --stress ]]; then
-    stress="${2:?--stress needs a number of starts}"
-fi
+while (($# > 0)); do
+    case "$1" in
+    --stress) stress="${2:?--stress needs a number of starts}" ;;
+    --max-hold-ms)
+        [[ "${2:-}" =~ ^[1-9][0-9]{0,5}$ ]] || {
+            echo "error: --max-hold-ms needs a positive whole number of milliseconds" >&2
+            exit 2
+        }
+        max_hold_us=$(($2 * 1000))
+        ;;
+    *)
+        echo "error: unknown option $1" >&2
+        exit 2
+        ;;
+    esac
+    shift 2
+done
 
 as_root() {
     if [[ "$(adb shell id -u | tr -d '\r')" == 0 ]]; then
@@ -92,19 +109,47 @@ as_root() {
         adb shell su -c "'$*'"
     fi
 }
+# Run a command as the shell user, whose test location provider the shell
+# may set: Android 13 and 14 refuse it to root (adb root on an emulator).
+as_shell() {
+    if [[ "$(adb shell id -u | tr -d '\r')" == 0 ]]; then
+        adb shell "su 2000 $*"
+    else
+        adb shell "$*"
+    fi
+}
 
 [[ -f "$APK" ]] || {
     echo "error: $APK not found; build it with: (cd android && ./gradlew :canary:assembleDebug)" >&2
     exit 2
 }
 
+# A system dialog (an app that crashed elsewhere, say) takes the focus the
+# canary waits for: the screen is woken and such dialogs are closed before
+# it starts and while it is waited for.
+clear_screen() {
+    adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
+    adb shell wm dismiss-keyguard >/dev/null 2>&1 || true
+    adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS >/dev/null 2>&1 || true
+}
+# Whether a window other than the canary's has the focus.
+focus_elsewhere() {
+    local focus
+    focus="$(adb shell dumpsys window windows 2>/dev/null | tr -d '\r' | sed -n 's/.*mCurrentFocus=//p')"
+    [[ -n "$focus" && "$focus" != *"$PACKAGE"* ]]
+}
+
 failed=0
+skipped=0
 pass() { echo "  ok      $*"; }
 fail() {
     echo "  FAILED  $*"
     failed=$((failed + 1))
 }
-skip() { echo "  skipped $*"; }
+skip() {
+    echo "  skipped $*"
+    skipped=$((skipped + 1))
+}
 # check <what> <condition...>: the condition is a command.
 check() {
     local what="$1"
@@ -118,12 +163,16 @@ run_canary() {
     adb shell am force-stop "$PACKAGE"
     adb logcat -c
     # Each start finds a fresh location from the test provider.
-    adb shell cmd location providers set-test-provider-location gps --location 52.52,13.405 --accuracy 5
+    if [[ "$location" == yes ]]; then
+        as_shell cmd location providers set-test-provider-location gps --location 52.52,13.405 --accuracy 5
+    fi
+    clear_screen
     adb shell am start -W -n "$PACKAGE/.MainActivity" --es ops "$ALL_OPS" >/dev/null
     local i log=""
     for ((i = 0; i < 90; i++)); do
         log="$(adb logcat -d -s BigBrotherCanary:I | tr -d '\r')"
         grep -q "BigBrotherCanary: done" <<<"$log" && break
+        if ((i % 5 == 4)) && focus_elsewhere; then clear_screen; fi
         sleep 1
     done
     ((i < 90)) || {
@@ -162,7 +211,9 @@ names_nothing() {
 }
 
 # The value the canary reported for a key, in a report.
-seen() { sed -n "s/^$2=//p" <<<"$1" | head -n 1; }
+# (sed stops at the first; a reader that stops early in a pipeline would
+# end the writer with SIGPIPE, which pipefail makes a failure.)
+seen() { sed -n "/^$2=/{s///p;q}" <<<"$1"; }
 # The mode (0 allowed, 1 ignored, ...) the canary found app op $2 in, in
 # report $1; "none" for an op this Android version does not have.
 op_mode() { seen "$1" ops | tr ',' '\n' | sed -n "s/^$2=//p"; }
@@ -190,9 +241,23 @@ ops_changed() {
     echo "$out"
 }
 
-status_field() { grep -o "\"$1\":[a-z0-9]*" <<<"$status" | head -n 1 | cut -d: -f2; }
+# The first value of a field in the status (awk reads to the end; see seen).
+status_field() { grep -o "\"$1\":[a-z0-9]*" <<<"$status" | awk -F: 'NR == 1 { print $2 }'; }
 
-adb install -r "$APK" >/dev/null
+# check_if <yes|no> <why not> <what> <condition...>: a check that needs what
+# the device may not allow, such as a provider that keeps a test record;
+# skipped, saying why, where it does not.
+check_if() {
+    local able="$1" why="$2"
+    shift 2
+    if [[ "$able" == yes ]]; then check "$@"; else skip "$1: $why"; fi
+}
+NOT_KEPT="the provider did not keep the test record"
+
+# Installed afresh, so that its permissions are those granted below and
+# nothing a previous run left.
+adb uninstall "$PACKAGE" >/dev/null 2>&1 || true
+adb install "$APK" >/dev/null
 for permission in $PERMISSIONS; do
     adb shell pm grant "$PACKAGE" "android.permission.$permission" 2>/dev/null || true
 done
@@ -203,8 +268,14 @@ as_root "echo real > $MARKER && chown media_rw:media_rw $MARKER"
 # A location to be had, from a test provider the shell may set.
 mock_location="$(adb shell appops get com.android.shell android:mock_location | tr -d '\r' | sed -n 's/.*: \([a-z]*\).*/\1/p')"
 adb shell appops set com.android.shell android:mock_location allow
-adb shell cmd location providers add-test-provider gps >/dev/null 2>&1 || true
-adb shell cmd location providers set-test-provider-enabled gps true
+as_shell cmd location providers add-test-provider gps >/dev/null 2>&1 || true
+location=no
+# The answer is kept as the reason the location checks are skipped.
+if no_location="$(as_shell cmd location providers set-test-provider-enabled gps true 2>&1)"; then
+    location=yes
+fi
+no_location="$(tr -d '\r' <<<"$no_location" | sed -n '1{p;q}')"
+NO_LOCATION="no test location provider${no_location:+ ($no_location)}"
 # The test records, written as root through the providers (the script is
 # pushed rather than quoted through su).
 adb shell "cat > $SEED" <<EOF
@@ -217,8 +288,30 @@ cal="content://com.android.calendar/calendars?caller_is_syncadapter=true&account
 content insert --uri "\$cal" --bind account_name:s:$TEST_ACCOUNT --bind account_type:s:LOCAL --bind name:s:$TEST_ACCOUNT --bind calendar_displayName:s:$TEST_ACCOUNT --bind calendar_access_level:i:700 --bind ownerAccount:s:$TEST_ACCOUNT --bind visible:i:1 --bind sync_events:i:1
 id=\$(content query --uri content://com.android.calendar/calendars --projection _id --where "account_name='$TEST_ACCOUNT'" | grep -o '_id=[0-9]*' | tail -n 1 | cut -d= -f2)
 content insert --uri content://com.android.calendar/events --bind calendar_id:i:\$id --bind title:s:canary --bind dtstart:l:\$(date +%s)000 --bind dtend:l:\$(date +%s)000 --bind eventTimezone:s:UTC
+echo "kept contacts \$(content query --uri content://com.android.contacts/raw_contacts --projection _id --where "account_type='$TEST_ACCOUNT'" | grep -c '_id=')"
+echo "kept sms \$(content query --uri content://sms --projection _id --where "address='$TEST_NUMBER'" | grep -c '_id=')"
+echo "kept call_log \$(content query --uri content://call_log/calls --projection _id --where "number='$TEST_NUMBER'" | grep -c '_id=')"
+echo "kept calendar \$(content query --uri content://com.android.calendar/events --projection _id --where "calendar_id=\$id" | grep -c '_id=')"
 EOF
-as_root "sh $SEED" >/dev/null
+# Some providers drop an insert without an error (the SMS provider of some
+# images, whoever asks): what each kept is read back, keyed by what the
+# canary reports the count of.
+# A seed that did not run, or did not report on every kind, is an error.
+kept="$(as_root "sh $SEED" | tr -d '\r' | sed -n 's/^kept \([a-z_]*\) \([0-9]*\)$/\1 \2/p')" || {
+    echo "error: the test records could not be written" >&2
+    exit 2
+}
+declare -A seeded=([contacts]=no [sms]=no [call_log]=no [calendar]=no)
+reported=0
+while read -r kind count; do
+    [[ -n "$kind" && -n "${seeded[$kind]+set}" ]] || continue
+    reported=$((reported + 1))
+    if ((count > 0)); then seeded[$kind]=yes; fi
+done <<<"$kept"
+((reported == ${#seeded[@]})) || {
+    echo "error: the seed reported on $reported of ${#seeded[@]} kinds of test record" >&2
+    exit 2
+}
 
 # Leave the device as it was, whatever happens.
 cleanup() {
@@ -232,7 +325,7 @@ content delete --uri content://call_log/calls --where "number='$TEST_NUMBER'"
 content delete --uri "content://com.android.calendar/calendars?caller_is_syncadapter=true&account_name=$TEST_ACCOUNT&account_type=LOCAL" --where "account_name='$TEST_ACCOUNT'"
 EOF
     as_root "sh $SEED; rm -f $SEED" >/dev/null 2>&1 || true
-    adb shell cmd location providers remove-test-provider gps >/dev/null 2>&1 || true
+    as_shell cmd location providers remove-test-provider gps >/dev/null 2>&1 || true
     adb shell appops set com.android.shell android:mock_location "${mock_location:-default}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -242,9 +335,11 @@ as_root "$BBD sandbox disable $PACKAGE" >/dev/null
 echo "outside the sandbox:"
 run_canary
 outside="$view"
-check "the test records are there (contacts $(seen "$outside" contacts), messages $(seen "$outside" sms), calls $(seen "$outside" call_log), events $(seen "$outside" calendar))" \
-    [ "$(seen "$outside" contacts)" -gt 0 -a "$(seen "$outside" sms)" -gt 0 -a "$(seen "$outside" call_log)" -gt 0 -a "$(seen "$outside" calendar)" -gt 0 ]
-check "a location is had ($(seen "$outside" location))" grep -q '^accuracy:' <<<"$(seen "$outside" location)"
+for kind in contacts sms call_log calendar; do
+    check_if "${seeded[$kind]}" "$NOT_KEPT" "the test record of $kind is seen ($(seen "$outside" "$kind"))" \
+        [ "$(seen "$outside" "$kind")" -gt 0 ]
+done
+check_if "$location" "$NO_LOCATION" "a location is had ($(seen "$outside" location))" grep -q '^accuracy:' <<<"$(seen "$outside" location)"
 check "the real storage is visible" [ "$(seen "$outside" marker)" = real ]
 check "the chip is named in /proc/cpuinfo" [ "$(seen "$outside" cpu_named)" = true ]
 
@@ -288,14 +383,14 @@ check "the memory is reported as it is ($(seen "$inside" mem_total_kb) kB)" \
     [ "$(seen "$inside" mem_total_kb)" = "$(seen "$outside" mem_total_kb)" ]
 
 # Layer 3: personal data.
-check "no contacts ($(seen "$outside" contacts) outside)" [ "$(seen "$inside" contacts)" = 0 ]
+check_if "${seeded[contacts]}" "$NOT_KEPT" "no contacts ($(seen "$outside" contacts) outside)" [ "$(seen "$inside" contacts)" = 0 ]
 check "no clipboard ($(seen "$outside" clipboard) outside)" [ "$(seen "$inside" clipboard)" = 0 ]
 check "no images ($(seen "$outside" images) outside)" [ "$(seen "$inside" images)" = 0 ]
-check "no messages ($(seen "$outside" sms) outside)" [ "$(seen "$inside" sms)" = 0 ]
-check "no call log ($(seen "$outside" call_log) outside)" [ "$(seen "$inside" call_log)" = 0 ]
-check "no calendar ($(seen "$outside" calendar) outside)" [ "$(seen "$inside" calendar)" = 0 ]
+check_if "${seeded[sms]}" "$NOT_KEPT" "no messages ($(seen "$outside" sms) outside)" [ "$(seen "$inside" sms)" = 0 ]
+check_if "${seeded[call_log]}" "$NOT_KEPT" "no call log ($(seen "$outside" call_log) outside)" [ "$(seen "$inside" call_log)" = 0 ]
+check_if "${seeded[calendar]}" "$NOT_KEPT" "no calendar ($(seen "$outside" calendar) outside)" [ "$(seen "$inside" calendar)" = 0 ]
 check "no accounts ($(seen "$outside" accounts) outside)" [ "$(seen "$inside" accounts)" = 0 ]
-check "no location ($(seen "$inside" location))" [ "$(seen "$inside" location)" = none ]
+check_if "$location" "$NO_LOCATION" "no location ($(seen "$inside" location))" [ "$(seen "$inside" location)" = none ]
 not_held="$(ops_not_held "$inside" "${!ITEM_OPS[@]}")"
 check "every item's app ops are ignored${not_held:+ (not:$not_held)}" [ -z "$not_held" ]
 
@@ -329,8 +424,8 @@ if ((stress > 0)); then
     echo "  status  $status"
     check "every start got its sandbox" [ "$unsandboxed" = 0 ]
     check "no start failed" [ "$(status_field failed)" = 0 ]
-    check "starts were held for under $((MAX_HOLD_US / 1000)) ms ($(status_field hold_p95_us) us)" \
-        [ "$(status_field hold_p95_us)" -lt "$MAX_HOLD_US" ]
+    check "starts were held for under $((max_hold_us / 1000)) ms ($(status_field hold_p95_us) us)" \
+        [ "$(status_field hold_p95_us)" -lt "$max_hold_us" ]
     # State T in /proc/<pid>/stat: stopped and never let go.
     # grep finds none, and says so with its status, when all is well.
     held="$( (as_root "grep -l \"^[0-9]* (.*) T \" /proc/[0-9]*/stat 2>/dev/null" || true) | wc -l)"
@@ -346,10 +441,10 @@ if [[ "$(status_field android_id)" == true ]]; then
     only_id="$view"
     check "the real storage is visible" [ "$(seen "$only_id" marker)" = real ]
     check "the chip is named" [ "$(seen "$only_id" cpu_named)" = true ]
-    check "the contacts are as outside ($(seen "$only_id" contacts))" \
+    check_if "${seeded[contacts]}" "$NOT_KEPT" "the contacts are as outside ($(seen "$only_id" contacts))" \
         [ "$(seen "$only_id" contacts)" = "$(seen "$outside" contacts)" ]
     check "the installed apps are as outside" [ "$(seen "$only_id" apps)" = "$(seen "$outside" apps)" ]
-    check "the location is as outside ($(seen "$only_id" location))" \
+    check_if "$location" "$NO_LOCATION" "the location is as outside ($(seen "$only_id" location))" \
         [ "$(seen "$only_id" location)" = "$(seen "$outside" location)" ]
     not_held="$(ops_not_held "$only_id" device_ids)"
     others=()
@@ -387,7 +482,7 @@ as_root "$BBD sandbox set $PACKAGE location=coarse camera=foreground microphone=
 run_canary
 coarse="$view"
 accuracy="$(seen "$coarse" location | sed -n 's/^accuracy://p')"
-check "the location is approximate ($(seen "$coarse" location))" [ "${accuracy:-0}" -ge 1000 ]
+check_if "$location" "$NO_LOCATION" "the location is approximate ($(seen "$coarse" location))" [ "${accuracy:-0}" -ge 1000 ]
 check "the precise permission is taken back ($(precise))" grep -q 'granted=false.*USER_FIXED' <<<"$(precise)"
 check "the camera and the microphone are foreground-only" \
     [ "$(uid_mode CAMERA)" = foreground -a "$(uid_mode RECORD_AUDIO)" = foreground ]
@@ -409,8 +504,8 @@ check "the clipboard is readable again" [ "$(seen "$after" clipboard)" = "$(seen
 # used it, whatever its mode.
 changed="$(ops_changed "$after" "$outside" "${!ITEM_OPS[@]}")"
 check "the app ops are as they were${changed:+ (changed:$changed)}" [ -z "$changed" ]
-check "the messages are back" [ "$(seen "$after" sms)" = "$(seen "$outside" sms)" ]
-check "the location is back ($(seen "$after" location))" [ "$(seen "$after" location)" = "$(seen "$outside" location)" ]
+check_if "${seeded[sms]}" "$NOT_KEPT" "the messages are back" [ "$(seen "$after" sms)" = "$(seen "$outside" sms)" ]
+check_if "$location" "$NO_LOCATION" "the location is back ($(seen "$after" location))" [ "$(seen "$after" location)" = "$(seen "$outside" location)" ]
 
 # A permission granted while in the sandbox is the app's once it is out.
 echo "with contacts granted while in the sandbox:"
@@ -422,8 +517,10 @@ run_canary
 granted="$view"
 check "the contacts op is allowed ($(op_mode "$granted" android:read_contacts))" \
     [ "$(op_mode "$granted" android:read_contacts)" = 0 ]
-check "the contacts are back ($(seen "$granted" contacts))" [ "$(seen "$granted" contacts)" = "$(seen "$outside" contacts)" ]
+check_if "${seeded[contacts]}" "$NOT_KEPT" "the contacts are back ($(seen "$granted" contacts))" [ "$(seen "$granted" contacts)" = "$(seen "$outside" contacts)" ]
 
+# What a green run did not cover, in sight.
+echo "$skipped check(s) skipped"
 if ((failed > 0)); then
     echo "$failed check(s) failed"
     exit 1
