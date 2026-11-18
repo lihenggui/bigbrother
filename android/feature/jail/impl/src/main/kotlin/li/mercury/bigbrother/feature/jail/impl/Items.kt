@@ -142,15 +142,19 @@ internal fun modeLabel(item: SandboxItem, mode: SandboxMode): String = stringRes
 )
 
 /**
- * Why an item is not in effect, from the parts of it not in place: what the
- * user can do about it first, then what nobody can.
+ * Why an item is not in effect, from the parts of it not in place. Storage
+ * isolation not running comes first: without it, the hook would not put
+ * storage in effect either. Then what the user can do about it, then what
+ * nobody can.
  */
 @StringRes
 internal fun notInEffect(unmet: Set<SandboxPart>): Int = when {
-    SandboxPart.ANDROID_ID_HOOK in unmet || SandboxPart.APP_LIST_HOOK in unmet -> R.string.jail_not_in_effect_hook
     SandboxPart.MOUNTS in unmet -> R.string.jail_not_in_effect_mounts
+    unmet.any { it in HOOK_PARTS } -> R.string.jail_not_in_effect_hook
     else -> R.string.jail_not_in_effect_app_ops
 }
+
+private val HOOK_PARTS = setOf(SandboxPart.ANDROID_ID_HOOK, SandboxPart.APP_LIST_HOOK, SandboxPart.URI_GRANTS_HOOK)
 
 /** What [mode] of [item] means for the app. */
 @Composable

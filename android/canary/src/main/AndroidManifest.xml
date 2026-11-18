@@ -68,6 +68,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- For the sandbox check: what an isolated process of the app sees. -->
+        <service
+            android:name=".IsolatedProbe"
+            android:exported="false"
+            android:isolatedProcess="true" />
     </application>
 
 </manifest>

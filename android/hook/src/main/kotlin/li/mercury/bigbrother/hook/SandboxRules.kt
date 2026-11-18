@@ -30,22 +30,24 @@ internal const val FIRST_APPLICATION_UID = 10_000
 
 /**
  * What the hook answers differently for a sandboxed uid: its own
- * [androidId], if [ownAndroidId], and no installed app but itself and the
- * system's, if [hidesApps].
+ * [androidId], if [ownAndroidId]; no installed app but itself and the
+ * system's, if [hidesApps]; and, if [isolatesStorage], no file grant but
+ * those of the moment ([strengthOfTheMoment]).
  */
 internal data class SandboxedUid(
     val androidId: String,
     val ownAndroidId: Boolean = true,
     val hidesApps: Boolean = true,
+    val isolatesStorage: Boolean = false,
 )
 
 /**
  * Parses the sandbox list the daemon writes (keep in sync with
  * `bbd/src/sandbox/identity.rs`): one `<uid> <android id>` pair per line,
- * separated by white space, the id being 16 hexadecimal digits, and for a
- * uid that has only some of the hook's items, a line
- * `items <uid> <item>[,<item>]` naming those (`device_ids`,
- * `installed_apps`). A uid without such a line has them all.
+ * separated by white space, the id being 16 hexadecimal digits, and a line
+ * `items <uid> <item>[,<item>]` naming the hook's items that are on for the
+ * uid (`device_ids`, `installed_apps`, `storage`). A uid without such a
+ * line has `device_ids` and `installed_apps`, as before there was storage.
  *
  * Lines that do not have this shape are skipped rather than failing the
  * whole list, and so are uids of system components, which the daemon never
@@ -73,7 +75,12 @@ internal fun parseSandboxList(text: String): Map<Int, SandboxedUid> {
     }
     return ids.mapValues { (uid, androidId) ->
         val named = items[uid] ?: return@mapValues SandboxedUid(androidId)
-        SandboxedUid(androidId, ownAndroidId = DEVICE_IDS in named, hidesApps = INSTALLED_APPS in named)
+        SandboxedUid(
+            androidId,
+            ownAndroidId = DEVICE_IDS in named,
+            hidesApps = INSTALLED_APPS in named,
+            isolatesStorage = STORAGE in named,
+        )
     }
 }
 
@@ -83,6 +90,40 @@ private const val ITEMS = "items"
 /** The items of the sandbox the hook carries out (`bbd/src/sandbox/items.rs`). */
 private const val DEVICE_IDS = "device_ids"
 private const val INSTALLED_APPS = "installed_apps"
+private const val STORAGE = "storage"
+
+/** `Intent.FLAG_GRANT_READ_URI_PERMISSION` and `FLAG_GRANT_WRITE_URI_PERMISSION`. */
+private const val READ_AND_WRITE = 0x1 or 0x2
+
+/**
+ * Strengths `UriPermission.getStrength` answers with (its `STRENGTH_*`,
+ * compiled into the callers and so not to be read at run time).
+ */
+internal const val STRENGTH_NONE = 0
+internal const val STRENGTH_OWNED = 1
+internal const val STRENGTH_GLOBAL = 2
+
+/**
+ * How strong a grant to an app whose storage is isolated is for [modeFlags],
+ * given the modes it was granted for the moment: [ownedModeFlags], held for
+ * as long as what it was granted through (the activity the user picked a
+ * file for), and [globalModeFlags], until the device restarts. The modes it
+ * keeps across restarts (persisted) do not count: those reach real files
+ * the app may have been let pick before its storage was isolated, and the
+ * app itself can take them again at any time to make them look new. The
+ * moment's grants are made by the system as the user picks a file, which
+ * the app cannot do on its own.
+ *
+ * Mirrors `UriPermission.getStrength` without its persistable modes.
+ */
+internal fun strengthOfTheMoment(modeFlags: Int, ownedModeFlags: Int, globalModeFlags: Int): Int {
+    val wanted = modeFlags and READ_AND_WRITE
+    return when {
+        globalModeFlags and wanted == wanted -> STRENGTH_GLOBAL
+        ownedModeFlags and wanted == wanted -> STRENGTH_OWNED
+        else -> STRENGTH_NONE
+    }
+}
 
 /**
  * Whether the arguments of a `ContentProvider.Transport.call` are a read of
@@ -166,9 +207,17 @@ internal fun hideFromSandboxed(callingUid: Int, targetAppId: Int, targetIsSystem
  * A status left by an earlier boot, in which the hook may have been there
  * and no longer is, is told by its [bootId].
  */
-internal fun sandboxStatusText(androidId: Boolean, appList: Boolean, api: Int, listReadable: Boolean, bootId: String): String = buildString {
+internal fun sandboxStatusText(
+    androidId: Boolean,
+    appList: Boolean,
+    uriGrants: Boolean,
+    api: Int,
+    listReadable: Boolean,
+    bootId: String,
+): String = buildString {
     append("android_id=").append(if (androidId) 1 else 0).append('\n')
     append("app_list=").append(if (appList) 1 else 0).append('\n')
+    append("uri_grants=").append(if (uriGrants) 1 else 0).append('\n')
     append("api=").append(api).append('\n')
     append("list=").append(if (listReadable) 1 else 0).append('\n')
     append("boot=").append(bootId).append('\n')

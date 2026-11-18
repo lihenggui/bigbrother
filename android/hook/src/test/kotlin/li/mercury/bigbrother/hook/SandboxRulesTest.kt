@@ -114,12 +114,32 @@ class SandboxRulesTest {
     }
 
     @Test
+    fun givenIsolatedStorage_whenAGrantIsWeighed_thenOnlyTheGrantsOfTheMomentCount() {
+        val read = 0x1
+        val readWrite = 0x3
+        // Kept from before, persisted only: nothing.
+        assertEquals(STRENGTH_NONE, strengthOfTheMoment(read, ownedModeFlags = 0, globalModeFlags = 0))
+        // Picked by the user just now, through an activity, or until restart.
+        assertEquals(STRENGTH_OWNED, strengthOfTheMoment(read, ownedModeFlags = read, globalModeFlags = 0))
+        assertEquals(STRENGTH_GLOBAL, strengthOfTheMoment(read, ownedModeFlags = read, globalModeFlags = read))
+        // Asked to write as well, with only reading granted.
+        assertEquals(STRENGTH_NONE, strengthOfTheMoment(readWrite, ownedModeFlags = read, globalModeFlags = 0))
+        // The persistable flag in the request is not a mode of its own.
+        assertEquals(STRENGTH_OWNED, strengthOfTheMoment(read or 0x40, ownedModeFlags = read, globalModeFlags = 0))
+    }
+
+    @Test
     fun givenEveryListOfTheCases_whenParsed_thenTheAppsTheDaemonListed() {
         val cases = protocolCases("sandbox-list.txt", types = setOf("line", "read", "bad"), keys = setOf("app"))
         for (case in cases.ofType("line") + cases.ofType("read") + cases.ofType("bad")) {
             val apps = case.all("app").associate { app ->
                 val parts = app.split('/')
-                parts[0].toInt() to SandboxedUid(parts[1], ownAndroidId = "device_ids" in parts, hidesApps = "installed_apps" in parts)
+                parts[0].toInt() to SandboxedUid(
+                    parts[1],
+                    ownAndroidId = "device_ids" in parts,
+                    hidesApps = "installed_apps" in parts,
+                    isolatesStorage = "storage" in parts,
+                )
             }
             assertEquals(apps, parseSandboxList(case.line), case.line)
         }
@@ -130,12 +150,13 @@ class SandboxRulesTest {
         val cases = protocolCases(
             "sandbox-status.txt",
             types = setOf("line", "read"),
-            keys = setOf("android_id", "app_list", "api", "list", "boot", "in_place", "now"),
+            keys = setOf("android_id", "app_list", "uri_grants", "api", "list", "boot", "in_place", "now"),
         )
         for (case in cases.ofType("line")) {
             val text = sandboxStatusText(
                 androidId = case.get("android_id") == "1",
                 appList = case.get("app_list") == "1",
+                uriGrants = case.get("uri_grants") == "1",
                 api = case.get("api")!!.toInt(),
                 listReadable = case.get("list") == "1",
                 bootId = case.get("boot")!!,

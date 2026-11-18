@@ -27,6 +27,7 @@ import android.util.Log
 import io.github.libxposed.api.XposedInterface
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 import java.io.File
+import java.lang.reflect.Field
 import java.lang.reflect.Method
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -42,6 +43,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  * - Which installed packages are visible, decided by the package manager's
  *   `shouldFilterApplication`. A sandboxed app sees the system's packages and
  *   its own, and no other installed app.
+ * - Which files the app was granted through the system, decided by
+ *   `UriPermission.getStrength` as a provider asks whether the app holds a
+ *   grant. The providers that open such files run outside the sandbox and
+ *   reach the real ones; an app whose storage is isolated is held to the
+ *   grants of the moment, made as the user picks a file, and not to those
+ *   it kept from before.
  *
  * The daemon lists the sandboxed uids in [LIST_PATH] and reads [STATUS_PATH]
  * to learn which hooks attached. Nothing else is shared with it.
@@ -56,13 +63,14 @@ internal class SandboxHook(private val module: XposedInterface) {
     fun install(classLoader: ClassLoader) {
         if (!StartGuard(File(GUARD_DIR)).allowStart()) {
             module.log(Log.WARN, TAG, "start guard tripped in system_server; sandbox hooks not installed")
-            writeStatus(androidId = false, appList = false, listReadable = false)
+            writeStatus(androidId = false, appList = false, uriGrants = false, listReadable = false)
             return
         }
         val list = SandboxList(File(LIST_PATH), ::onListError)
         val androidId = attach("ANDROID_ID") { hookAndroidId(list) }
         val appList = attach("app list") { hookAppList(classLoader, list) }
-        writeStatus(androidId, appList, list.readable)
+        val uriGrants = attach("file grants") { hookUriGrants(classLoader, list) }
+        writeStatus(androidId, appList, uriGrants, list.readable)
     }
 
     /** Runs one hook installation; a failure leaves the other hook unaffected. */
@@ -131,6 +139,27 @@ internal class SandboxHook(private val module: XposedInterface) {
     }
 
     /**
+     * Every check of a grant to a file goes through
+     * `UriPermission.getStrength`, the exact grant's and those of the
+     * folders above it alike. Hooked only if every field it needs is there:
+     * a hook that cannot tell the grants apart would hold back none.
+     */
+    @SuppressLint("PrivateApi")
+    private fun hookUriGrants(classLoader: ClassLoader, list: SandboxList): Boolean {
+        val grant = Class.forName(URI_PERMISSION_CLASS, false, classLoader)
+        val field = { name: String -> grant.getDeclaredField(name).apply { isAccessible = true } }
+        val hooker = UriGrantHooker(
+            module,
+            list,
+            targetUid = field("targetUid"),
+            ownedModeFlags = field("ownedModeFlags"),
+            globalModeFlags = field("globalModeFlags"),
+        )
+        module.hook(grant.getDeclaredMethod("getStrength", Int::class.javaPrimitiveType)).intercept(hooker)
+        return true
+    }
+
+    /**
      * A getter of the declared target type: an interface on Android 13 and
      * later, a class whose getters may be inherited before.
      */
@@ -153,12 +182,12 @@ internal class SandboxHook(private val module: XposedInterface) {
     }
 
     /** Written by rename, so the daemon never reads half a file. */
-    private fun writeStatus(androidId: Boolean, appList: Boolean, listReadable: Boolean) {
+    private fun writeStatus(androidId: Boolean, appList: Boolean, uriGrants: Boolean, listReadable: Boolean) {
         try {
             val status = File(STATUS_PATH)
             val temporary = File("$STATUS_PATH.tmp")
             val bootId = File(BOOT_ID_PATH).readText().trim()
-            temporary.writeText(sandboxStatusText(androidId, appList, Build.VERSION.SDK_INT, listReadable, bootId))
+            temporary.writeText(sandboxStatusText(androidId, appList, uriGrants, Build.VERSION.SDK_INT, listReadable, bootId))
             if (!temporary.renameTo(status)) error("rename failed")
         } catch (e: Throwable) {
             module.log(Log.ERROR, TAG, "could not write the sandbox status", e)
@@ -266,6 +295,29 @@ internal class SandboxHook(private val module: XposedInterface) {
     }
 
     /**
+     * Answers how strong a grant to a file is, for an app whose storage is
+     * isolated, from the grants of the moment alone. Named class, not a
+     * lambda: see `ProviderHook.RecordingHooker`.
+     */
+    private class UriGrantHooker(
+        module: XposedInterface,
+        private val list: SandboxList,
+        private val targetUid: Field,
+        private val ownedModeFlags: Field,
+        private val globalModeFlags: Field,
+    ) : FailSafeHooker(module, "file grants") {
+        override fun replacement(chain: XposedInterface.Chain): Any? {
+            val grant = chain.thisObject ?: return null
+            if (!list.isolatesStorageOf(targetUid.getInt(grant))) return null
+            return strengthOfTheMoment(
+                chain.getArg(0) as Int,
+                ownedModeFlags.getInt(grant),
+                globalModeFlags.getInt(grant),
+            )
+        }
+    }
+
+    /**
      * Runs the original method unless [replacement] returns a value to
      * answer with instead. If [replacement] throws, the original runs as if
      * the hook were not there, and the first such failure is logged; the
@@ -304,6 +356,9 @@ internal class SandboxHook(private val module: XposedInterface) {
 
         /** Start records for [StartGuard]; system_server has no app data directory. */
         const val GUARD_DIR = "/data/system/big_brother_hook"
+
+        /** Android 11 and later. */
+        const val URI_PERMISSION_CLASS = "com.android.server.uri.UriPermission"
 
         val FILTER_CLASSES = listOf(
             // Android 13 to 17.

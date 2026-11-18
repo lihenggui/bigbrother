@@ -16,13 +16,22 @@
 //!
 //! Its ANDROID_ID and the list of installed apps are answered inside
 //! system_server, where only a hook can change them (`SandboxHook` in the
-//! app's LSPosed module). The daemon and the hook share two files:
+//! app's LSPosed module). So are the grants to files the app was given
+//! through the system (a document or a folder it was let pick): the
+//! providers that open those files, outside the sandbox, ask system_server
+//! whether the app holds a grant. While its storage is isolated, an app is
+//! held to the grants of the moment, made as the user picks a file, and
+//! not to those kept across restarts (persisted), which reach the real
+//! files around the sandbox however long ago they were made. The daemon
+//! and the hook share two files:
 //!
 //! - The list, written here: one `<uid> <android id>` line per sandboxed
-//!   app the hook answers for, and for one that has only one of the hook's
-//!   items on (`device_ids`, `installed_apps`), an `items <uid> <item>`
-//!   line naming it. The hook reads the list again when it changes, so an
-//!   app enters and leaves the sandbox without a restart of the system.
+//!   app the hook answers for, and an `items <uid> <item>[,<item>]` line
+//!   naming the hook's items that are on for it (`device_ids`,
+//!   `installed_apps`, `storage`), but for an app that has the first two
+//!   and not storage: a uid without the line has those. The hook reads the
+//!   list again when it changes, so an app enters and leaves the sandbox
+//!   without a restart of the system.
 //! - The status, written by the hook when system_server starts: which of
 //!   its hooks are in place, and the boot it wrote that in.
 //!
@@ -41,7 +50,9 @@ use std::{
 use anyhow::Context as _;
 
 use super::{
-    Effect, Entry, Global, HookStatus, Resumed, Snapshot, Status, items::Settings, items_of,
+    Effect, Entry, Global, HookStatus, Resumed, Snapshot, Status,
+    items::{Item, Mode, Settings},
+    items_of,
 };
 
 /// Keep in sync with `SandboxHook.kt`.
@@ -61,15 +72,29 @@ pub struct Identity {
     status: PathBuf,
 }
 
-/// A uid's line of the list: its ANDROID_ID, and whether the hook gives it
-/// that ID and hides the installed apps from it.
-type Listed = (String, bool, bool);
+/// What the list says of a uid.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Listed {
+    android_id: String,
+    /// Whether the hook gives it its ANDROID_ID.
+    own_id: bool,
+    /// Whether the hook hides the installed apps from it.
+    hides_apps: bool,
+    /// Whether the hook holds it to the file grants of the moment.
+    storage: bool,
+}
 
 /// What the list says of `entry`, to which `items` apply; `None` if the
 /// hook has nothing to do for it.
 fn listed(entry: &Entry, items: &Settings) -> Option<Listed> {
-    let (android_id, app_list) = items.hooked();
-    (android_id || app_list).then(|| (entry.android_id.clone(), android_id, app_list))
+    let (own_id, hides_apps) = items.hooked();
+    let storage = items.mode(Item::Storage) != Mode::Off;
+    (own_id || hides_apps || storage).then(|| Listed {
+        android_id: entry.android_id.clone(),
+        own_id,
+        hides_apps,
+        storage,
+    })
 }
 
 impl Identity {
@@ -148,15 +173,20 @@ impl Identity {
 /// The list as the hook reads it (`parseSandboxList` in `SandboxRules.kt`).
 fn list_text(apps: &BTreeMap<u32, Listed>) -> String {
     let mut text = String::new();
-    for (uid, (android_id, own_id, hides_apps)) in apps {
-        text.push_str(&format!("{uid} {android_id}\n"));
-        if !(*own_id && *hides_apps) {
-            let item = if *own_id {
-                "device_ids"
-            } else {
-                "installed_apps"
-            };
-            text.push_str(&format!("items {uid} {item}\n"));
+    for (uid, listed) in apps {
+        text.push_str(&format!("{uid} {}\n", listed.android_id));
+        // Without the line, both of the items there were before storage:
+        // what a hook from then still reads it as.
+        if !(listed.own_id && listed.hides_apps) || listed.storage {
+            let items: Vec<&str> = [
+                (listed.own_id, "device_ids"),
+                (listed.hides_apps, "installed_apps"),
+                (listed.storage, "storage"),
+            ]
+            .into_iter()
+            .filter_map(|(on, item)| on.then_some(item))
+            .collect();
+            text.push_str(&format!("items {uid} {}\n", items.join(",")));
         }
     }
     text
@@ -182,7 +212,7 @@ impl Effect for Identity {
         before: &Settings,
         after: &Settings,
     ) -> anyhow::Result<()> {
-        if before.hooked() == after.hooked() {
+        if listed(entry, before) == listed(entry, after) {
             return Ok(());
         }
         self.write(entry.uid, listed(entry, after))
@@ -209,7 +239,8 @@ impl Effect for Identity {
 }
 
 /// What the hook wrote about itself (`sandboxStatusText` in
-/// `SandboxRules.kt`): `android_id=1`, `app_list=1`, `list=1`, `boot=<id>`,
+/// `SandboxRules.kt`): `android_id=1`, `app_list=1`, `uri_grants=1`,
+/// `list=1`, `boot=<id>`,
 /// one per line. Nothing is in place unless it was written in this boot (a
 /// file left from an earlier one says what was then) and the hook could
 /// read the list.
@@ -225,6 +256,7 @@ fn parse_status(text: &str, boot_id: &str) -> HookStatus {
     HookStatus {
         android_id: current && on("android_id"),
         app_list: current && on("app_list"),
+        uri_grants: current && on("uri_grants"),
     }
 }
 
@@ -275,12 +307,19 @@ mod tests {
         identity.enable(&mut first, &[], &all).unwrap();
         let mut second = entry(10100, "00000000000000bb");
         identity.enable(&mut second, &[], &all).unwrap();
-        assert_eq!(list(), "10100 00000000000000bb\n1010100 00000000000000aa\n");
+        assert_eq!(
+            list(),
+            "10100 00000000000000bb\nitems 10100 device_ids,installed_apps,storage\n\
+             1010100 00000000000000aa\nitems 1010100 device_ids,installed_apps,storage\n"
+        );
         let mode = fs::metadata(dir.join("list")).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o644);
 
         identity.disable(&mut second, &[], &all).unwrap();
-        assert_eq!(list(), "1010100 00000000000000aa\n");
+        assert_eq!(
+            list(),
+            "1010100 00000000000000aa\nitems 1010100 device_ids,installed_apps,storage\n"
+        );
         identity.resume(&[]);
         assert!(!dir.join("list").exists());
         // Nothing to remove is not an error.
@@ -296,6 +335,7 @@ mod tests {
         let list = || fs::read_to_string(dir.join("list")).unwrap_or_default();
         let with = |pairs: &[(Item, Mode)]| {
             let mut own = Settings::default();
+            own.set(Item::Storage, Some(Mode::Off)).unwrap();
             for (item, mode) in pairs {
                 own.set(*item, Some(*mode)).unwrap();
             }
@@ -328,7 +368,7 @@ mod tests {
         // As the daemon starts, the apps it loaded are listed as their
         // settings over the global ones say, also by a write that comes
         // before they are taken up again (a uid taken out first).
-        app.settings = "device_ids=off".into();
+        app.settings = "device_ids=off,storage=off".into();
         let snapshot = Snapshot::default();
         snapshot.write().unwrap().insert(app.uid, app.clone());
         let global = Global::default();
@@ -353,6 +393,57 @@ mod tests {
     }
 
     #[test]
+    fn an_app_with_its_storage_isolated_is_listed_for_it() {
+        let dir = test_dir("identity-storage");
+        let mut identity = Identity::new(&Snapshot::default(), &Global::default()).at(&dir);
+        let list = || fs::read_to_string(dir.join("list")).unwrap_or_default();
+        let only = |on: &[Item]| {
+            let mut own = Settings::default();
+            for item in Item::ALL {
+                let mode = if on.contains(&item) {
+                    Mode::On
+                } else {
+                    Mode::Off
+                };
+                own.set(item, Some(mode)).unwrap();
+            }
+            own.over(&Settings::default())
+        };
+
+        let mut app = entry(10100, "00000000000000aa");
+        identity
+            .enable(&mut app, &[], &only(&[Item::Storage]))
+            .unwrap();
+        assert_eq!(list(), "10100 00000000000000aa\nitems 10100 storage\n");
+        identity
+            .update(
+                &mut app,
+                &[],
+                &only(&[Item::Storage]),
+                &only(&[Item::Storage, Item::DeviceIds]),
+            )
+            .unwrap();
+        assert_eq!(
+            list(),
+            "10100 00000000000000aa\nitems 10100 device_ids,storage\n"
+        );
+        identity
+            .update(
+                &mut app,
+                &[],
+                &only(&[Item::Storage, Item::DeviceIds]),
+                &only(&[Item::DeviceIds]),
+            )
+            .unwrap();
+        assert_eq!(list(), "10100 00000000000000aa\nitems 10100 device_ids\n");
+        identity
+            .update(&mut app, &[], &only(&[Item::DeviceIds]), &only(&[]))
+            .unwrap();
+        assert!(!dir.join("list").exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn the_list_is_written_as_the_hook_reads_it() {
         let cases = crate::protocol_cases::sandbox_list();
         for case in crate::protocol_cases::of(&cases, &["line"]) {
@@ -363,11 +454,12 @@ mod tests {
                     let uid = parts.next().unwrap().parse().unwrap();
                     let android_id = parts.next().unwrap().to_string();
                     let items: Vec<&str> = parts.collect();
-                    let listed = (
+                    let listed = Listed {
                         android_id,
-                        items.contains(&"device_ids"),
-                        items.contains(&"installed_apps"),
-                    );
+                        own_id: items.contains(&"device_ids"),
+                        hides_apps: items.contains(&"installed_apps"),
+                        storage: items.contains(&"storage"),
+                    };
                     (uid, listed)
                 })
                 .collect();
@@ -389,6 +481,7 @@ mod tests {
                 HookStatus {
                     android_id: in_place.contains(&"android_id"),
                     app_list: in_place.contains(&"app_list"),
+                    uri_grants: in_place.contains(&"uri_grants"),
                 },
                 "{:?}",
                 case.line

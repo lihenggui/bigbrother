@@ -143,6 +143,7 @@ pub fn sandbox_status() -> Vec<Case> {
         &[
             "android_id",
             "app_list",
+            "uri_grants",
             "api",
             "list",
             "boot",

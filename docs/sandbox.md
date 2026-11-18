@@ -28,12 +28,12 @@ any way.
 
 | | What the app gets | How | Needs |
 | --- | --- | --- | --- |
-| Shared storage | A directory of its own in place of `/storage/emulated/<user>`, empty at first, which it can write to. Its own `Android/data`, `obb` and `media` directories stay. Other volumes (SD cards) are empty. | Mounts made in the app's mount namespace as it starts | root |
+| Shared storage | A directory of its own in place of `/storage/emulated/<user>`, empty at first, which it can write to. Its own `Android/data`, `obb` and `media` directories stay. Other volumes (SD cards) are empty. A file chosen for it in the system's file picker is open to it for that use only. | Mounts made in the app's mount namespace as it starts; a hook in system_server for the files picked through the system | root; LSPosed for picked files |
 | Kernel information | `/proc/cpuinfo` without what names the chip | The same mounts | root |
 | Personal data | Nothing: contacts, calendar, messages, call log, accounts, location, clipboard, camera, microphone, body sensors, media, usage statistics, nearby devices | App ops set to "ignored" for the app's uid; for an approximate location, the precise location permission revoked | root |
 | Identity | An ANDROID_ID of its own, fixed per app; no installed app other than itself and what came with the system | Hooks in system_server | LSPosed |
 
-The first three work without LSPosed. `bbd sandbox status` says which parts
+The mounts and the app ops work without LSPosed. `bbd sandbox status` says which parts
 are in place on the device. `bbd sandbox list` names, for each app, the
 items that are on but not in effect and the part each lacks: the mounts,
 the app ops (read back after they are set, and whenever the system changes
@@ -65,7 +65,7 @@ Android's "only while using the app" does:
 
 | Item | On | Modes |
 | --- | --- | --- |
-| `storage` | Shared storage of its own; an empty media library | off, on |
+| `storage` | Shared storage of its own; an empty media library; picked files for that use only | off, on |
 | `cpu_info` | `/proc/cpuinfo` without what names the chip | off, on |
 | `contacts` | No contacts | off, on |
 | `messages` | No messages or call log | off, on |
@@ -180,10 +180,24 @@ provider's entry points (`ContentProvider.Transport.call` and `query`) and
 the package manager's visibility check (`shouldFilterApplication`), and
 answers by the calling uid, which Binder reports and an app cannot forge.
 
-The daemon lists the uids with `device_ids` or `installed_apps` on in
-`/data/system/big_brother_sandbox`, with an `items` line for a uid that has
-only one of them; the hook reads the list again when it changes, so no
-restart is needed. The
+A file the app was let pick through the system (a document, a folder, a
+photo) is opened by the provider that holds it, outside the sandbox, once
+system_server says the app holds a grant to it (`UriPermission.getStrength`).
+An app that keeps such a grant (persists it) keeps it across restarts, and
+one it kept from before it entered the sandbox would reach the real file.
+For an app with `storage` on, the hook counts only the grants of the
+moment: the one made as the user picks a file for it, which lasts while
+that use does, and those that last until the device restarts. Such a grant
+made just before the app entered the sandbox still counts until then. The
+app cannot pass a grant on to another app to be persisted there. Persisted
+grants count again once `storage` is off or the app leaves the sandbox; none
+is removed. Going by when a grant was persisted would not do: the app can
+persist one again at any time.
+
+The daemon lists the uids with `device_ids`, `installed_apps` or `storage`
+on in `/data/system/big_brother_sandbox`, with an `items` line naming them
+unless a uid has the first two and not `storage`; the hook reads the list
+again when it changes, so no restart is needed. The
 hook writes which of its hooks are in place to
 `/data/system/big_brother_sandbox.status`.
 
@@ -199,7 +213,16 @@ minutes.
 
 - When the daemon starts, at boot or after a restart, it takes up the
   sandboxed apps again and ends those of their processes that should have
-  been given mounts and started without them. The supervisor restarts a daemon that died at once.
+  been given mounts and started without them. The supervisor restarts a
+  daemon that died at once. Until then such a process runs with the real
+  storage, and what it read in that time it keeps. Early in boot that is
+  little: shared storage cannot be read before the user first unlocks the
+  device.
+- Isolated processes of a sandboxed app (a service declared
+  `isolatedProcess`, a WebView renderer) run under uids of their own and
+  are not given the mounts. Android gives them no shared storage, no
+  ANDROID_ID and no personal data; `/proc/cpuinfo` in them is the
+  device's.
 - An app started before the user first unlocks the device, when its sandbox
   directory cannot be reached yet, gets empty, read-only storage in its
   place.
@@ -210,7 +233,9 @@ minutes.
 ## Testing
 
 `scripts/check-sandbox.sh` runs the canary app outside the sandbox, inside
-it and outside again, and checks what it reports seeing each time:
+it and outside again, and checks what it reports seeing each time, an
+isolated process of it and a file it was let pick among it. Picking the
+file goes through the system's file picker, driven with `uiautomator`:
 
 ```sh
 (cd android && ./gradlew :canary:assembleDebug)

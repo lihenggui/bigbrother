@@ -104,7 +104,7 @@
 
     <string name="jail_item_storage">文件和媒体</string>
     <string name="jail_item_storage_on">隔离存储</string>
-    <string name="jail_item_storage_on_detail">使用独立的隔离存储，应用保存的文件留存其中；真实的照片、下载和文档不可见。</string>
+    <string name="jail_item_storage_on_detail">使用独立的隔离存储，应用保存的文件留存其中；真实的照片、下载和文档不可见，通过系统文件选择器为其选择的文件仅限本次使用。</string>
     <string name="jail_item_cpu_info">处理器信息</string>
     <string name="jail_item_cpu_info_on">隐藏芯片型号</string>
     <string name="jail_item_cpu_info_on_detail">保留核心数和指令集特性，去除芯片型号等标识。</string>

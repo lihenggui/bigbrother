@@ -22,7 +22,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class SandboxStatusTest {
-    private val appOpsNotHeld = SandboxStatus(gate = true, appOps = false, androidIdHook = true, appListHook = true)
+    private val appOpsNotHeld = SandboxStatus(gate = true, appOps = false, androidIdHook = true, appListHook = true, uriGrantsHook = true)
 
     @Test
     fun givenAppOpsNotHeld_whenAnAppKeepsPersonalData_thenPersonalDataNotInEffect() {
@@ -46,7 +46,7 @@ class SandboxStatusTest {
 
     @Test
     fun givenHookMissing_whenItemsChecked_thenOnlyTheHookPartsMissing() {
-        val status = SandboxStatus(gate = true, appOps = true, androidIdHook = false, appListHook = true)
+        val status = SandboxStatus(gate = true, appOps = true, androidIdHook = false, appListHook = true, uriGrantsHook = true)
 
         assertEquals(setOf(SandboxPart.ANDROID_ID_HOOK), status.unmet(SandboxItem.DEVICE_IDS))
         assertEquals(emptySet(), status.unmet(SandboxItem.INSTALLED_APPS))

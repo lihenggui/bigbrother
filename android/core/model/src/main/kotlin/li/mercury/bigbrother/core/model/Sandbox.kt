@@ -50,7 +50,7 @@ enum class SandboxItem(val id: String) {
      */
     val parts: Set<SandboxPart>
         get() = when (this) {
-            STORAGE -> setOf(SandboxPart.MOUNTS, SandboxPart.APP_OPS)
+            STORAGE -> setOf(SandboxPart.MOUNTS, SandboxPart.APP_OPS, SandboxPart.URI_GRANTS_HOOK)
             CPU_INFO -> setOf(SandboxPart.MOUNTS)
             DEVICE_IDS -> setOf(SandboxPart.APP_OPS, SandboxPart.ANDROID_ID_HOOK)
             INSTALLED_APPS -> setOf(SandboxPart.APP_OPS, SandboxPart.APP_LIST_HOOK)
@@ -114,6 +114,12 @@ enum class SandboxPart(val id: String) {
 
     /** The LSPosed hook in system_server, hiding the installed apps. */
     APP_LIST_HOOK("app_list_hook"),
+
+    /**
+     * The LSPosed hook in system_server, holding the app to the file grants
+     * of the moment rather than those it kept from before.
+     */
+    URI_GRANTS_HOOK("uri_grants_hook"),
     ;
 
     companion object {
@@ -187,6 +193,8 @@ data class SandboxStatus(
     val androidIdHook: Boolean,
     /** The hook hides the installed apps. */
     val appListHook: Boolean,
+    /** The hook holds apps to the file grants of the moment. */
+    val uriGrantsHook: Boolean,
 ) {
     /** The parts of [item] not in place on this device, for every app. */
     fun unmet(item: SandboxItem): Set<SandboxPart> = item.parts.filterTo(mutableSetOf()) { part ->
@@ -195,6 +203,7 @@ data class SandboxStatus(
             SandboxPart.APP_OPS -> !appOps
             SandboxPart.ANDROID_ID_HOOK -> !androidIdHook
             SandboxPart.APP_LIST_HOOK -> !appListHook
+            SandboxPart.URI_GRANTS_HOOK -> !uriGrantsHook
         }
     }
 
