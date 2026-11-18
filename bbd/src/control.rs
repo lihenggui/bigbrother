@@ -342,6 +342,17 @@ async fn write_all(stream: &UnixStream, mut bytes: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
+/// Why a command found no daemon to take it. A daemon that runs without
+/// taking commands started without the sandbox (it could not be set up, or
+/// the daemon was told to leave it to another), which its log says.
+fn unreachable_daemon(running: bool) -> &'static str {
+    if running {
+        "the daemon is running without the sandbox; see bbd.log"
+    } else {
+        "the daemon is not running"
+    }
+}
+
 /// Send `request` to the daemon recording into `db` and return its answer.
 /// An answer without `ok` true is an error carrying the daemon's message.
 pub fn command(db: &Path, request: &Request) -> anyhow::Result<serde_json::Value> {
@@ -352,7 +363,7 @@ pub fn command(db: &Path, request: &Request) -> anyhow::Result<serde_json::Value
             anyhow::bail!("not allowed to reach the daemon; run as root")
         }
         // No socket, or one left by a daemon that has gone.
-        Err(_) => anyhow::bail!("the daemon is not running"),
+        Err(_) => anyhow::bail!(unreachable_daemon(daemon_running(db))),
     };
     stream.set_read_timeout(Some(COMMAND_WAIT))?;
     stream.set_write_timeout(Some(COMMAND_WAIT))?;
@@ -584,6 +595,15 @@ mod tests {
         assert_eq!(e.to_string(), "the daemon is not running");
         assert!(start.elapsed() < Duration::from_secs(1));
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_daemon_that_takes_no_commands_is_not_reported_as_stopped() {
+        assert_eq!(unreachable_daemon(false), "the daemon is not running");
+        assert_eq!(
+            unreachable_daemon(true),
+            "the daemon is running without the sandbox; see bbd.log"
+        );
     }
 
     #[test]
