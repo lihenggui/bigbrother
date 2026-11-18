@@ -20,6 +20,9 @@
 #   scripts/check-sandbox.sh              the check
 #   scripts/check-sandbox.sh --stress N   also N cold starts in the sandbox,
 #                                         none of which may fail or stay held
+#   --max-hold-ms N                       the 95th percentile a start may be
+#                                         held for (20 ms), for slower devices
+#                                         such as an emulator without a GPU
 #
 # Requires adb, a connected and unlocked device with the module installed
 # and running, and the canary built:
@@ -40,7 +43,7 @@ LIST=/data/system/big_brother_sandbox
 # What a new sandbox has in it, and the app's own directories.
 SANDBOX_ENTRIES="Android DCIM Documents Download Movies Music Pictures"
 # The 95th percentile a start may be held for, in microseconds.
-MAX_HOLD_US=20000
+max_hold_us=20000
 # Every item of the sandbox (`bbd/src/sandbox/items.rs`), each set to on,
 # back to the global settings, or off but for device_ids.
 ITEMS="storage cpu_info contacts messages calendar clipboard_accounts location camera microphone
@@ -81,9 +84,23 @@ TEST_NUMBER=5550199
 SEED=/data/local/tmp/bb_check_seed.sh
 
 stress=0
-if [[ "${1:-}" == --stress ]]; then
-    stress="${2:?--stress needs a number of starts}"
-fi
+while (($# > 0)); do
+    case "$1" in
+    --stress) stress="${2:?--stress needs a number of starts}" ;;
+    --max-hold-ms)
+        [[ "${2:-}" =~ ^[1-9][0-9]{0,5}$ ]] || {
+            echo "error: --max-hold-ms needs a positive whole number of milliseconds" >&2
+            exit 2
+        }
+        max_hold_us=$(($2 * 1000))
+        ;;
+    *)
+        echo "error: unknown option $1" >&2
+        exit 2
+        ;;
+    esac
+    shift 2
+done
 
 as_root() {
     if [[ "$(adb shell id -u | tr -d '\r')" == 0 ]]; then
@@ -407,8 +424,8 @@ if ((stress > 0)); then
     echo "  status  $status"
     check "every start got its sandbox" [ "$unsandboxed" = 0 ]
     check "no start failed" [ "$(status_field failed)" = 0 ]
-    check "starts were held for under $((MAX_HOLD_US / 1000)) ms ($(status_field hold_p95_us) us)" \
-        [ "$(status_field hold_p95_us)" -lt "$MAX_HOLD_US" ]
+    check "starts were held for under $((max_hold_us / 1000)) ms ($(status_field hold_p95_us) us)" \
+        [ "$(status_field hold_p95_us)" -lt "$max_hold_us" ]
     # State T in /proc/<pid>/stat: stopped and never let go.
     # grep finds none, and says so with its status, when all is well.
     held="$( (as_root "grep -l \"^[0-9]* (.*) T \" /proc/[0-9]*/stat 2>/dev/null" || true) | wc -l)"
