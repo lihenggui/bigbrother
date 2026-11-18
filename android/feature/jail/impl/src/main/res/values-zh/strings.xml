@@ -32,6 +32,8 @@
     <string name="jail_hook_missing">在 LSPosed 中为 Big Brother 启用系统框架作用域，然后重启设备。</string>
     <string name="jail_gate_missing_title">无法隔离存储和处理器信息</string>
     <string name="jail_gate_missing">此内核不支持在应用启动时进行拦截。</string>
+    <string name="jail_appops_missing_title">无法隔离通讯录、位置、相机等</string>
+    <string name="jail_appops_missing">负责隔离这些项目的组件未运行，会自动重新启动。</string>
 
     <string name="jail_isolated">%1$s 已隔离</string>
     <string name="jail_undo">撤销</string>
@@ -69,6 +71,10 @@
     <string name="jail_fewer_items">收起</string>
     <string name="jail_restart_note">开启项目或更改存储、处理器信息时，应用会重新启动。</string>
     <string name="jail_custom">自定义</string>
+    <string name="jail_choices_shown">已展开</string>
+    <string name="jail_choices_hidden">已收起</string>
+    <string name="jail_show_choices">显示选项</string>
+    <string name="jail_hide_choices">隐藏选项</string>
     <string name="jail_not_in_effect">在此设备上未生效</string>
 
     <string name="jail_settings_subtitle">适用于未单独设置的已隔离应用</string>
@@ -82,6 +88,7 @@
     <string name="jail_status_checking">正在检查…</string>
     <string name="jail_status_hook_missing">系统框架钩子未加载</string>
     <string name="jail_status_gate_missing">此内核不支持存储隔离</string>
+    <string name="jail_status_appops_missing">通讯录、位置等未生效</string>
     <string name="jail_release_all">解除全部隔离</string>
     <string name="jail_release_all_summary">隔离存储中的文件保留</string>
     <string name="jail_release_all_title">解除全部隔离？</string>
@@ -140,6 +147,5 @@
     <string name="jail_mode_global">跟随全局设置</string>
     <string name="jail_mode_global_detail">当前：%1$s</string>
     <string name="jail_list_separator">、</string>
-    <string name="jail_app_not_isolated">此应用未被隔离</string>
     <string name="jail_select">选择已隔离的应用或全局设置</string>
 </resources>

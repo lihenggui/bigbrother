@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import li.mercury.bigbrother.core.common.di.CurrentUserId
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.AppInfoRepository
 import li.mercury.bigbrother.core.data.repository.SandboxRepository
@@ -41,8 +42,11 @@ import li.mercury.bigbrother.core.model.SandboxStatus
 import li.mercury.bigbrother.core.model.SandboxedApp
 import javax.inject.Inject
 
-/** An app in the jail, with its name and icon if it is installed. */
-data class IsolatedApp(val app: SandboxedApp, val info: AppInfo?) {
+/**
+ * An app in the jail, with its name and icon if it is installed, and
+ * [otherUser], the Android user it belongs to, if not the one this app runs as.
+ */
+data class IsolatedApp(val app: SandboxedApp, val info: AppInfo?, val otherUser: Int? = null) {
     val name: String get() = info?.label ?: app.packageName
 }
 
@@ -50,11 +54,18 @@ data class JailUiState(
     /** The apps in the sandbox, by name; null until read. */
     val apps: List<IsolatedApp>? = null,
     val global: Map<SandboxItem, SandboxMode> = emptyMap(),
-    /** Null until known. */
+    /** Null until known; as it bears on the apps in the sandbox. */
     val status: SandboxStatus? = null,
     val refreshing: Boolean = false,
     val failure: LoadFailure? = null,
 )
+
+/**
+ * The daemon's status as it bore on the apps in the sandbox when it was
+ * read. App ops reported not held while no app needed them say nothing
+ * about an app put in afterwards, which the daemon holds them for first.
+ */
+internal suspend fun SandboxRepository.relevantStatus(): SandboxStatus = getStatus().relevantTo(apps.value.orEmpty())
 
 /** What a change did, to be told once. */
 sealed interface JailMessage {
@@ -79,6 +90,7 @@ sealed interface JailMessage {
 class JailViewModel @Inject constructor(
     private val sandboxRepository: SandboxRepository,
     private val appInfoRepository: AppInfoRepository,
+    @CurrentUserId private val currentUserId: Int,
 ) : ViewModel() {
     private val load = MutableStateFlow(JailUiState())
     private val _message = MutableStateFlow<JailMessage?>(null)
@@ -86,12 +98,14 @@ class JailViewModel @Inject constructor(
 
     private val isolated = sandboxRepository.apps.map { apps ->
         val enabled = apps?.filter { it.enabled } ?: return@map null
+        // The package manager answers for this app's user. Another user's
+        // copy of a package is the same app, so it gives the name and icon.
         val infos = appInfoRepository.getAppInfo(enabled.map { it.packageName })
-        enabled.map { IsolatedApp(it, infos[it.packageName]) }.sortedByName { it.name }
+        enabled.map { IsolatedApp(it, infos[it.packageName], it.userId.takeIf { user -> user != currentUserId }) }.sortedByName { it.name }
     }
 
     val uiState: StateFlow<JailUiState> = combine(isolated, sandboxRepository.global, load) { apps, global, loaded ->
-        loaded.copy(apps = apps, global = global.orEmpty())
+        loaded.copy(apps = apps, global = global.orEmpty(), status = loaded.status?.relevantTo(apps.orEmpty().map { it.app }))
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), JailUiState())
 
     fun refresh() {
@@ -99,7 +113,7 @@ class JailViewModel @Inject constructor(
             load.update { it.copy(refreshing = true) }
             try {
                 sandboxRepository.refresh()
-                val status = sandboxRepository.getStatus()
+                val status = sandboxRepository.relevantStatus()
                 load.update { it.copy(status = status, refreshing = false, failure = null) }
             } catch (e: RecordsException) {
                 load.update { it.copy(refreshing = false, failure = e.toLoadFailure()) }

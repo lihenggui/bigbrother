@@ -26,9 +26,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.runningReduce
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import li.mercury.bigbrother.core.common.di.CurrentUserId
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.AppInfoRepository
 import li.mercury.bigbrother.core.data.repository.InstalledAppRepository
@@ -43,19 +45,31 @@ import li.mercury.bigbrother.core.model.SandboxedApp
 
 data class JailAppUiState(
     val packageName: String = "",
-    /** Null until read, or once the app is not in the sandbox. */
+    /**
+     * Null until read. Once the app has left the sandbox, the one read last:
+     * the page shows the app as it was while it leaves.
+     */
     val app: SandboxedApp? = null,
     val info: AppInfo? = null,
+    /** The Android user the app belongs to, if not the one this app runs as. */
+    val otherUser: Int? = null,
     val global: Map<SandboxItem, SandboxMode> = emptyMap(),
+    /** Null until known; as it bears on the apps in the sandbox. */
     val status: SandboxStatus? = null,
-    /** The permissions the app asks for: which items concern it. */
-    val requested: Set<String> = emptySet(),
+    /**
+     * The permissions the app asks for: which items concern it. Null if not
+     * known, for an app not installed for this app's user.
+     */
+    val requested: Set<String>? = null,
     val loading: Boolean = true,
     val failure: LoadFailure? = null,
     /** Why the last change was not made, to be told once. */
     val error: LoadFailure? = null,
-    /** The app was taken out of the sandbox from here. */
-    val released: Boolean = false,
+    /**
+     * The app is no longer in the sandbox, taken out from here or elsewhere,
+     * or uninstalled: the page leaves.
+     */
+    val left: Boolean = false,
 ) {
     val name: String get() = info?.label ?: packageName
 }
@@ -68,26 +82,37 @@ class JailAppViewModel @AssistedInject constructor(
     private val sandboxRepository: SandboxRepository,
     private val appInfoRepository: AppInfoRepository,
     private val installedAppRepository: InstalledAppRepository,
+    @CurrentUserId currentUserId: Int,
 ) : ViewModel() {
     @AssistedFactory
     interface Factory {
         fun create(uid: Int, packageName: String): JailAppViewModel
     }
 
-    private val load = MutableStateFlow(JailAppUiState(packageName = packageName))
+    private val initial = JailAppUiState(packageName = packageName, otherUser = (uid / PER_USER_RANGE).takeIf { it != currentUserId })
+    private val load = MutableStateFlow(initial)
 
-    val uiState: StateFlow<JailAppUiState> = combine(sandboxRepository.apps, sandboxRepository.global, load) { apps, global, loaded ->
+    /** Taken out from here: the page leaves even if the list is not read again. */
+    private val releasedHere = MutableStateFlow(false)
+
+    val uiState: StateFlow<JailAppUiState> = combine(sandboxRepository.apps, sandboxRepository.global, load, releasedHere) { apps, global, loaded, released ->
+        val app = apps?.firstOrNull { it.uid == uid && it.enabled }
         loaded.copy(
-            app = apps?.firstOrNull { it.uid == uid && it.enabled },
+            app = app,
             global = global.orEmpty(),
+            status = loaded.status?.relevantTo(apps.orEmpty()),
+            left = released || (apps != null && app == null),
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), JailAppUiState(packageName = packageName))
+    }.runningReduce { shown, next ->
+        // Going straight from the app to leaving: not by a page without it.
+        if (next.left && next.app == null) next.copy(app = shown.app) else next
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), initial)
 
     fun refresh() {
         viewModelScope.launch {
             try {
                 if (sandboxRepository.apps.value == null) sandboxRepository.refresh()
-                val status = sandboxRepository.getStatus()
+                val status = sandboxRepository.relevantStatus()
                 val info = appInfoRepository.getAppInfo(packageName)
                 val requested = installedAppRepository.getRequestedPermissions(packageName)
                 load.update { it.copy(info = info, status = status, requested = requested, loading = false, failure = null) }
@@ -118,11 +143,11 @@ class JailAppViewModel @AssistedInject constructor(
     }
 
     fun release() {
-        val app = uiState.value.app ?: return
+        val app = shownApp() ?: return
         viewModelScope.launch {
             try {
                 sandboxRepository.release(app.packageName, app.userId)
-                load.update { it.copy(released = true) }
+                releasedHere.value = true
             } catch (e: RecordsException) {
                 load.update { it.copy(error = e.toLoadFailure()) }
             }
@@ -133,8 +158,11 @@ class JailAppViewModel @AssistedInject constructor(
         load.update { it.copy(error = null) }
     }
 
+    /** The app, while it is in the sandbox: once it has left, nothing is changed. */
+    private fun shownApp(): SandboxedApp? = uiState.value.takeUnless { it.left }?.app
+
     private fun change(changes: Map<SandboxItem, SandboxMode?>) {
-        val app = uiState.value.app ?: return
+        val app = shownApp() ?: return
         viewModelScope.launch {
             try {
                 sandboxRepository.setItems(app.packageName, app.userId, changes)
@@ -142,5 +170,9 @@ class JailAppViewModel @AssistedInject constructor(
                 load.update { it.copy(error = e.toLoadFailure()) }
             }
         }
+    }
+
+    private companion object {
+        const val PER_USER_RANGE = 100_000
     }
 }

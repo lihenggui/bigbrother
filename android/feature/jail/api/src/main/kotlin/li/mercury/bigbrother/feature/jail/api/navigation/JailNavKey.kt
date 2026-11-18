@@ -45,6 +45,14 @@ fun Navigator.navigateToJailApp(uid: Int, packageName: String) {
     navigate(JailAppNavKey(uid, packageName))
 }
 
+/**
+ * Closes an app's page once its app is no longer in the jail. Only that
+ * page goes: back could take away a screen opened in the meantime.
+ */
+fun Navigator.closeJailApp(uid: Int, packageName: String) {
+    state.subStacks[JailNavKey]?.remove(JailAppNavKey(uid, packageName))
+}
+
 /** Opens the global settings, in place of everything opened beside the list. */
 fun Navigator.navigateToJailSettings() {
     state.currentSubStack.removeAll { it != JailNavKey }

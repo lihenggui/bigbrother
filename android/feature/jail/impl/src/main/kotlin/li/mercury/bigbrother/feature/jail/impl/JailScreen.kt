@@ -225,13 +225,13 @@ private fun JailList(
             }
             itemsIndexed(apps, key = { _, app -> app.app.uid }) { index, app ->
                 LinkRow(
-                    title = app.name,
+                    title = nameWithUser(app.name, app.otherUser),
                     supporting = itemsSummary(app.app.items),
                     onClick = { onOpenApp(app) },
                     index = index,
                     count = apps.size,
                     leading = { IsolatedAppIcon(app.info, app.name) },
-                    selected = beside && app.app.uid == selectedUid,
+                    selected = if (beside) app.app.uid == selectedUid else null,
                     modifier = Modifier.animateItem(),
                 )
             }
@@ -245,7 +245,7 @@ private fun JailList(
                 index = 0,
                 count = 1,
                 leading = { ShapedIcon(Icons.Outlined.Tune) },
-                selected = beside && settingsSelected,
+                selected = if (beside) settingsSelected else null,
             )
         }
     }
@@ -268,6 +268,15 @@ private fun androidx.compose.foundation.lazy.LazyListScope.statusCards(status: S
             StatusCard(
                 title = stringResource(R.string.jail_gate_missing_title),
                 body = stringResource(R.string.jail_gate_missing),
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+        }
+    }
+    if (!status.appOps) {
+        item(key = "appops") {
+            StatusCard(
+                title = stringResource(R.string.jail_appops_missing_title),
+                body = stringResource(R.string.jail_appops_missing),
                 modifier = Modifier.padding(bottom = 8.dp),
             )
         }

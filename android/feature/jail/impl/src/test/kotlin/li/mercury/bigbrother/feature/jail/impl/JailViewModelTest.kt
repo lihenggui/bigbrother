@@ -53,7 +53,7 @@ class JailViewModelTest {
         ),
     )
 
-    private fun viewModel() = JailViewModel(sandboxRepository, appInfoRepository)
+    private fun viewModel(sandboxRepository: TestSandboxRepository = this.sandboxRepository) = JailViewModel(sandboxRepository, appInfoRepository, currentUserId = 0)
 
     @Test
     fun givenIsolatedAndReleasedApps_whenRefreshed_thenOnlyIsolatedAppsListedByName() = runTest {
@@ -64,6 +64,58 @@ class JailViewModelTest {
 
         assertEquals(listOf("Arctic Weather", "Notes"), viewModel.uiState.value.apps?.map { it.name })
         assertNotNull(viewModel.uiState.value.status)
+    }
+
+    @Test
+    fun givenSamePackageInTwoUsers_whenListed_thenOtherUsersCopyMarked() = runTest {
+        val repository = TestSandboxRepository(
+            apps = listOf(sandboxed(10156, "com.example.notes", enabled = true), sandboxed(10 * 100_000 + 10156, "com.example.notes", enabled = true)),
+        )
+        val viewModel = viewModel(repository)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
+
+        viewModel.refresh()
+
+        assertEquals(listOf(null, 10), viewModel.uiState.value.apps?.map { it.otherUser })
+        assertEquals(listOf("Notes", "Notes"), viewModel.uiState.value.apps?.map { it.name })
+    }
+
+    @Test
+    fun givenAppOpsNotHeld_whenAppsIsolated_thenToldNotHeld() = runTest {
+        sandboxRepository.status = sandboxRepository.status.copy(appOps = false)
+        val viewModel = viewModel()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
+
+        viewModel.refresh()
+
+        assertEquals(false, viewModel.uiState.value.status?.appOps)
+    }
+
+    @Test
+    fun givenAppOpsNotHeld_whenNoAppIsolated_thenNotTold() = runTest {
+        // The daemon holds app ops only for an app in the sandbox.
+        val repository = TestSandboxRepository(apps = listOf(sandboxed(10204, "com.example.shopping", enabled = false)))
+        repository.status = repository.status.copy(appOps = false)
+        val viewModel = viewModel(repository)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
+
+        viewModel.refresh()
+
+        assertEquals(true, viewModel.uiState.value.status?.appOps)
+    }
+
+    @Test
+    fun givenStatusReadWithNoAppIsolated_whenAppIsolated_thenAppOpsNotTold() = runTest {
+        val repository = TestSandboxRepository()
+        repository.status = repository.status.copy(appOps = false)
+        val viewModel = viewModel(repository)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
+        viewModel.refresh()
+
+        viewModel.isolate(listOf(installed(10204, "com.example.shopping", "Shopping")))
+
+        assertEquals(listOf("com.example.shopping"), viewModel.uiState.value.apps?.map { it.app.packageName })
+        assertEquals(true, viewModel.uiState.value.status?.appOps)
     }
 
     @Test

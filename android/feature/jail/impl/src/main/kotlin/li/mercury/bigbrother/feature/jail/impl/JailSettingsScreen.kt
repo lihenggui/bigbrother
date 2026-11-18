@@ -226,6 +226,7 @@ private fun StatusRow(status: SandboxStatus?) {
     val problems = buildList {
         if (status != null && !status.gate) add(stringResource(R.string.jail_status_gate_missing))
         if (status != null && (!status.androidIdHook || !status.appListHook)) add(stringResource(R.string.jail_status_hook_missing))
+        if (status != null && !status.appOps) add(stringResource(R.string.jail_status_appops_missing))
     }
     val colors = MaterialTheme.colorScheme
     ListItem(
