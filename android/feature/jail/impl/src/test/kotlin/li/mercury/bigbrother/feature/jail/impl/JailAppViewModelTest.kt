@@ -110,6 +110,28 @@ class JailAppViewModelTest {
     }
 
     @Test
+    fun givenCameraOffGlobally_whenOnlyWhileInUseChosen_thenAppHasItsOwnForegroundAndItIsOn() = runTest {
+        val viewModel = viewModel()
+
+        viewModel.choose(SandboxItem.CAMERA, SandboxMode.FOREGROUND)
+
+        assertEquals(mapOf(SandboxItem.CAMERA to SandboxMode.FOREGROUND), viewModel.app().settings)
+        assertTrue(viewModel.app().modeOf(SandboxItem.CAMERA).isOn)
+    }
+
+    @Test
+    fun givenForegroundGlobally_whenTurnedOffAndOnAgain_thenFollowsGlobalForegroundAgain() = runTest {
+        sandboxRepository.setGlobal(mapOf(SandboxItem.MICROPHONE to SandboxMode.FOREGROUND))
+        val viewModel = viewModel()
+        viewModel.setOn(SandboxItem.MICROPHONE, on = false)
+
+        viewModel.setOn(SandboxItem.MICROPHONE, on = true)
+
+        assertTrue(viewModel.app().settings.isEmpty())
+        assertEquals(SandboxMode.FOREGROUND, viewModel.app().modeOf(SandboxItem.MICROPHONE))
+    }
+
+    @Test
     fun givenOwnSettings_whenReset_thenEveryItemFollowsGlobalSettings() = runTest {
         val viewModel = viewModel()
         viewModel.choose(SandboxItem.LOCATION, SandboxMode.COARSE)

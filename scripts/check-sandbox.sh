@@ -371,6 +371,26 @@ else
     skip "only device_ids on: the hook is not in place"
 fi
 
+# Location made coarse takes the precise permission back (the system then
+# gives an approximate location), and foreground-only leaves the camera and
+# the microphone to the app while it is in front.
+echo "with location coarse, camera and microphone foreground-only:"
+precise() { adb shell dumpsys package "$PACKAGE" | tr -d '\r' | grep -m 1 'ACCESS_FINE_LOCATION: granted' | sed 's/^ *//'; }
+uid_mode() { adb shell appops get --uid "$PACKAGE" "$1" | tr -d '\r' | sed -n 's/^Uid mode: [A-Z_]*: \([a-z]*\).*/\1/p'; }
+precise_before="$(precise)"
+as_root "$BBD sandbox set $PACKAGE location=coarse camera=foreground microphone=foreground" >/dev/null
+run_canary
+coarse="$view"
+accuracy="$(seen "$coarse" location | sed -n 's/^accuracy://p')"
+check "the location is approximate ($(seen "$coarse" location))" [ "${accuracy:-0}" -ge 1000 ]
+check "the precise permission is taken back ($(precise))" grep -q 'granted=false.*USER_FIXED' <<<"$(precise)"
+check "the camera and the microphone are foreground-only" \
+    [ "$(uid_mode CAMERA)" = foreground -a "$(uid_mode RECORD_AUDIO)" = foreground ]
+check "and in front the app has them" \
+    [ "$(op_mode "$coarse" android:camera)" = 0 -a "$(op_mode "$coarse" android:record_audio)" = 0 ]
+as_root "$BBD sandbox set $PACKAGE location=on camera=on microphone=on" >/dev/null
+check "the precise permission is back as it was" [ "$(precise)" = "$precise_before" ]
+
 echo "disabling the sandbox:"
 as_root "$BBD sandbox disable $PACKAGE" >/dev/null
 run_canary

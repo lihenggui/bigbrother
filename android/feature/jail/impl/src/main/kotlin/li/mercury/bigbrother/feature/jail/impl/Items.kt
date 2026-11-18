@@ -135,6 +135,7 @@ internal fun modeLabel(item: SandboxItem, mode: SandboxMode): String = stringRes
     when (mode) {
         SandboxMode.ON -> item.onLabel
         SandboxMode.COARSE -> R.string.jail_mode_coarse
+        SandboxMode.FOREGROUND -> R.string.jail_mode_foreground
         SandboxMode.OFF -> R.string.jail_mode_off
     },
 )
@@ -145,6 +146,7 @@ internal fun modeDetail(item: SandboxItem, mode: SandboxMode): String = stringRe
     when (mode) {
         SandboxMode.ON -> item.onDetail
         SandboxMode.COARSE -> R.string.jail_mode_coarse_detail
+        SandboxMode.FOREGROUND -> R.string.jail_mode_foreground_detail
         SandboxMode.OFF -> R.string.jail_mode_off_detail
     },
 )

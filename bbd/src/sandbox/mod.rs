@@ -30,20 +30,26 @@
 //!   items that keep from the app all that the old or the new ones keep
 //!   (`items::Settings::covering`), and after them as the new ones, and so
 //!   are the global settings: an app op held anew is named before it is
-//!   held, and one let go stays named until it is.
+//!   held, and one let go stays named until it is. A runtime permission
+//!   taken anew is named in the row before it is taken
+//!   (`appops::naming_taken`), as no mode of the items covers it together
+//!   with the ops of another.
 //! - The snapshot, in memory, says what is meant to be in effect. It changes
 //!   before the effects run, which may read it, and is shared with whatever
 //!   needs to look up a uid without waiting for the daemon's main loop.
 //!
 //! The effects, in the order they are carried out:
 //!
-//! - [`appops`]: personal data is refused through app ops.
+//! - [`appops`]: personal data is refused through app ops, and location
+//!   made approximate through its permission.
 //! - [`identity`]: the system server hook is told which uids to answer
 //!   differently.
 //! - [`gate`]: starting apps are held until [`mounts`] has replaced the
 //!   storage they see.
 //! - [`sweep`]: the app's running processes are ended, so that it starts
-//!   again as it should.
+//!   again as it should. The system ends them itself when [`appops`] takes
+//!   a permission the app had: Android does whenever a runtime permission
+//!   is revoked.
 //!
 //! Taking an app out begins with the one that can fail, restoring its app
 //! ops, so that a failure leaves the app as sandboxed as it was.
@@ -394,8 +400,10 @@ impl Sandbox {
             self.snapshot_write().remove(&uid);
             entry.enabled = false;
             // What was saved was the other app's: the uid goes back to the
-            // system's defaults.
+            // system's defaults, and a permission taken from the app that
+            // has it now to what it is, which the app may ask for again.
             entry.saved_ops.clear();
+            entry.saved_permissions.clear();
             let released = self
                 .run(&mut entry, &[], Change::Disable(&items))
                 .and_then(|()| writer.put_sandbox(&entry));
@@ -493,15 +501,16 @@ impl Sandbox {
                 enabled: true,
                 android_id: new_android_id()?,
                 saved_ops: String::new(),
+                saved_permissions: String::new(),
                 created: now,
                 settings: String::new(),
             },
         };
-        writer.put_sandbox(&entry)?;
+        let items = self.items(&entry);
+        let written = appops::naming_taken(&entry, &items);
+        writer.put_sandbox(&written)?;
         self.snapshot_write().insert(uid, entry.clone());
 
-        let items = self.items(&entry);
-        let written = entry.clone();
         let mut applied = self.run(&mut entry, &sharing, Change::Enable(&items));
         if applied.is_ok() && entry != written {
             applied = writer.put_sandbox(&entry);
@@ -705,12 +714,15 @@ impl Sandbox {
         let sharing = packages.for_uid(uid).to_vec();
         // Until the effects have run, the row covers both what was in
         // effect and what is to be.
-        let covering = Entry {
-            settings: Settings::parse(&previous.settings)
-                .covering(&own, &self.global_read())
-                .to_text(),
-            ..previous.clone()
-        };
+        let covering = appops::naming_taken(
+            &Entry {
+                settings: Settings::parse(&previous.settings)
+                    .covering(&own, &self.global_read())
+                    .to_text(),
+                ..previous.clone()
+            },
+            &after,
+        );
         if covering != previous {
             writer.put_sandbox(&covering)?;
         }
@@ -801,20 +813,37 @@ impl Sandbox {
                 break;
             }
             let sharing = packages.for_uid(uid).to_vec();
-            let written = entry.clone();
+            let unchanged = entry.clone();
+            // As for one app's items: a permission is named before it is
+            // taken.
+            let written = appops::naming_taken(&entry, &after);
+            if written != unchanged
+                && let Err(e) = writer.put_sandbox(&written)
+            {
+                failure = Some(e.context(format!("uid {uid}")));
+                break;
+            }
             match self.run(&mut entry, &sharing, Change::Update(&before, &after)) {
                 Ok(()) => {
-                    if entry != written {
-                        if let Err(e) = writer.put_sandbox(&entry) {
-                            failure = Some(e.context(format!("uid {uid}")));
-                            changed.push((entry, sharing, before, after));
-                            break;
-                        }
+                    if entry != written
+                        && let Err(e) = writer.put_sandbox(&entry)
+                    {
+                        failure = Some(e.context(format!("uid {uid}")));
+                        changed.push((entry, sharing, before, after));
+                        break;
+                    }
+                    if entry != unchanged {
                         self.snapshot_write().insert(uid, entry.clone());
                     }
                     changed.push((entry, sharing, before, after));
                 }
                 Err(e) => {
+                    // Undone, and written down as it was.
+                    if written != unchanged
+                        && let Err(e) = writer.put_sandbox(&unchanged)
+                    {
+                        eprintln!("bbd: sandbox: cannot write uid {uid}'s entry back: {e:#}");
+                    }
                     failure = Some(e.context(format!("uid {uid}")));
                     break;
                 }
@@ -906,7 +935,8 @@ fn random_bytes<const N: usize>() -> std::io::Result<[u8; N]> {
 }
 
 /// The app ops helper's lines that give every app in the sandbox its app
-/// ops back, read from the database without the daemon: for `uninstall.sh`,
+/// ops and the permissions it may have been taken back, read from the
+/// database without the daemon: for `uninstall.sh`,
 /// which may run before the daemon has started, or after it failed to take
 /// every app out.
 pub fn restore_lines(db: &Path) -> anyhow::Result<Vec<String>> {
@@ -1211,6 +1241,59 @@ mod tests {
             let global = Settings::parse(&written.sandbox_global()?);
             self.seen.borrow_mut().push(items_of(&row, &global));
             Ok(())
+        }
+    }
+
+    /// Takes the precise location permission as the app ops helper does,
+    /// finding it granted, and reads, as it does, what the app's row names
+    /// as perhaps taken.
+    struct Taker {
+        db: PathBuf,
+        seen: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Taker {
+        fn take(&self, entry: &mut Entry, items: &Settings) -> anyhow::Result<()> {
+            let row = Writer::open(&self.db)?
+                .sandbox_entry(entry.uid)?
+                .context("no row")?;
+            self.seen.borrow_mut().push(row.saved_permissions);
+            if items.taken_permissions().is_empty() {
+                entry.saved_permissions.clear();
+            } else if entry.saved_permissions.is_empty() {
+                entry.saved_permissions = format!("{}=granted", items::PRECISE_LOCATION);
+            }
+            Ok(())
+        }
+    }
+
+    impl Effect for Taker {
+        fn name(&self) -> &'static str {
+            "taker"
+        }
+
+        fn enable(
+            &mut self,
+            entry: &mut Entry,
+            _: &[String],
+            items: &Settings,
+        ) -> anyhow::Result<()> {
+            self.take(entry, items)
+        }
+
+        fn disable(&mut self, entry: &mut Entry, _: &[String], _: &Settings) -> anyhow::Result<()> {
+            entry.saved_permissions.clear();
+            Ok(())
+        }
+
+        fn update(
+            &mut self,
+            entry: &mut Entry,
+            _: &[String],
+            _: &Settings,
+            after: &Settings,
+        ) -> anyhow::Result<()> {
+            self.take(entry, after)
         }
     }
 
@@ -1725,7 +1808,7 @@ mod tests {
             )
             .unwrap();
         let held = |seen: &Settings| -> std::collections::BTreeSet<&str> {
-            seen.op_targets().into_iter().collect()
+            seen.op_targets().into_iter().map(|(op, _)| op).collect()
         };
         let both = ["android:camera", "android:record_audio"];
 
@@ -1793,6 +1876,242 @@ mod tests {
             seen.borrow()[1..]
                 .iter()
                 .all(|seen| held(seen).contains("android:record_audio"))
+        );
+    }
+
+    #[test]
+    fn a_permission_is_named_in_the_row_before_it_is_taken() {
+        let mut f = Fixture::new("sandbox-permission-named");
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let taker = || {
+            Box::new(Taker {
+                db: f.dir.join("bb.db"),
+                seen: seen.clone(),
+            })
+        };
+        let fine = items::PRECISE_LOCATION;
+        let (unknown, granted) = (format!("{fine}=default"), format!("{fine}=granted"));
+        let row = |uid| {
+            f.writer
+                .sandbox_entry(uid)
+                .unwrap()
+                .unwrap()
+                .saved_permissions
+        };
+        let location = |mode| BTreeMap::from([(Item::Location, Some(mode))]);
+        let global = |mode| BTreeMap::from([(Item::Location, mode)]);
+        let mut sandbox = f.sandbox_with(vec![taker()]);
+
+        // Put in with location coarse: named before the state is known,
+        // and written down with it after.
+        sandbox
+            .set_global(&f.writer, &mut f.packages, &global(Mode::Coarse))
+            .unwrap();
+        sandbox
+            .enable(&f.writer, &mut f.packages, "com.app", 0, 1000)
+            .unwrap();
+        assert_eq!(*seen.borrow(), std::slice::from_ref(&unknown));
+        assert_eq!(row(10100), granted);
+
+        // Precise again: given back, and no longer named.
+        sandbox
+            .configure(
+                &f.writer,
+                &mut f.packages,
+                "com.app",
+                0,
+                &location(Mode::On),
+            )
+            .unwrap();
+        assert_eq!(row(10100), "");
+        // Coarse from on, whose covering mode takes no permission: named
+        // all the same.
+        seen.borrow_mut().clear();
+        sandbox
+            .configure(
+                &f.writer,
+                &mut f.packages,
+                "com.app",
+                0,
+                &location(Mode::Coarse),
+            )
+            .unwrap();
+        assert_eq!(*seen.borrow(), std::slice::from_ref(&unknown));
+        assert_eq!(row(10100), granted);
+
+        // The same for an app made coarse by the global settings.
+        sandbox
+            .enable(&f.writer, &mut f.packages, "com.shared.one", 0, 1000)
+            .unwrap();
+        sandbox
+            .set_global(&f.writer, &mut f.packages, &global(Mode::On))
+            .unwrap();
+        assert_eq!(row(10200), "");
+        seen.borrow_mut().clear();
+        sandbox
+            .set_global(&f.writer, &mut f.packages, &global(Mode::Coarse))
+            .unwrap();
+        assert_eq!(*seen.borrow(), std::slice::from_ref(&unknown));
+        assert_eq!(row(10200), granted);
+        // The app with its own coarse was not changed, and still names its own.
+        assert_eq!(row(10100), granted);
+
+        // A change that fails is written down as it was.
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let mut failing = Recorder::new("gate", &log);
+        failing.fail_update = true;
+        let mut sandbox = f.sandbox_with(vec![taker(), failing]);
+        sandbox
+            .configure(
+                &f.writer,
+                &mut f.packages,
+                "com.app",
+                0,
+                &location(Mode::On),
+            )
+            .unwrap_err();
+        assert_eq!(row(10100), granted);
+        sandbox
+            .set_global(&f.writer, &mut f.packages, &global(Mode::On))
+            .unwrap_err();
+        assert_eq!(row(10200), granted);
+        sandbox
+            .configure(
+                &f.writer,
+                &mut f.packages,
+                "com.shared.one",
+                0,
+                &location(Mode::On),
+            )
+            .unwrap_err();
+        assert_eq!(row(10200), granted);
+        sandbox
+            .disable(&f.writer, &mut f.packages, "com.app", 0)
+            .unwrap();
+        assert_eq!(row(10100), "");
+    }
+
+    #[test]
+    fn a_change_between_coarse_and_foreground_is_written_down_as_on() {
+        let mut f = Fixture::new("sandbox-coarse-foreground");
+        let (covered, named) = (
+            Rc::new(RefCell::new(Vec::new())),
+            Rc::new(RefCell::new(Vec::new())),
+        );
+        let mut sandbox = f.sandbox_with(vec![
+            Box::new(Witness {
+                db: f.dir.join("bb.db"),
+                seen: covered.clone(),
+            }),
+            Box::new(Taker {
+                db: f.dir.join("bb.db"),
+                seen: named.clone(),
+            }),
+        ]);
+        let fine = items::PRECISE_LOCATION;
+        let location = |mode| BTreeMap::from([(Item::Location, Some(mode))]);
+        let row = || f.writer.sandbox_entry(10100).unwrap().unwrap();
+        sandbox
+            .enable(&f.writer, &mut f.packages, "com.app", 0, 1000)
+            .unwrap();
+        sandbox
+            .configure(
+                &f.writer,
+                &mut f.packages,
+                "com.app",
+                0,
+                &location(Mode::Coarse),
+            )
+            .unwrap();
+        assert_eq!(row().saved_permissions, format!("{fine}=granted"));
+
+        // While it runs, the app is held to on: neither keeps all the other
+        // does. The permission taken stays named until it is given back.
+        named.borrow_mut().clear();
+        sandbox
+            .configure(
+                &f.writer,
+                &mut f.packages,
+                "com.app",
+                0,
+                &location(Mode::Foreground),
+            )
+            .unwrap();
+        assert_eq!(covered.borrow()[0].mode(Item::Location), Mode::On);
+        assert_eq!(*named.borrow(), [format!("{fine}=granted")]);
+        assert_eq!(row().settings, "location=foreground");
+        assert_eq!(row().saved_permissions, "");
+
+        // And back: on while it runs, the permission named before it is
+        // taken.
+        covered.borrow_mut().clear();
+        named.borrow_mut().clear();
+        sandbox
+            .configure(
+                &f.writer,
+                &mut f.packages,
+                "com.app",
+                0,
+                &location(Mode::Coarse),
+            )
+            .unwrap();
+        assert_eq!(covered.borrow()[0].mode(Item::Location), Mode::On);
+        assert_eq!(*named.borrow(), [format!("{fine}=default")]);
+        assert_eq!(row().settings, "location=coarse");
+        assert_eq!(row().saved_permissions, format!("{fine}=granted"));
+    }
+
+    #[test]
+    fn the_restore_lines_give_back_the_ops_and_the_permissions_taken() {
+        let f = Fixture::new("sandbox-restore-lines");
+        let entry = |uid, enabled, settings: &str, saved_permissions: &str| Entry {
+            uid,
+            package: "com.app".into(),
+            enabled,
+            android_id: "0123456789abcdef".into(),
+            saved_ops: "android:camera=4".into(),
+            saved_permissions: saved_permissions.into(),
+            created: 1000,
+            settings: settings.into(),
+        };
+        let fine = items::PRECISE_LOCATION;
+        let off: String = Item::ALL
+            .iter()
+            .map(|item| format!("{}=off", item.name()))
+            .collect::<Vec<_>>()
+            .join(",");
+        f.writer.put_sandbox_global(&[("location", "off")]).unwrap();
+        // Coarse, and the state the permission had saved.
+        f.writer
+            .put_sandbox(&entry(
+                10100,
+                true,
+                &format!("{off},location=coarse"),
+                &format!("{fine}=denied+user_set"),
+            ))
+            .unwrap();
+        // Written down as the camera only while location changed from
+        // coarse: the permission is given back all the same.
+        f.writer
+            .put_sandbox(&entry(
+                10200,
+                true,
+                &format!("{off},camera=on"),
+                &format!("{fine}=default"),
+            ))
+            .unwrap();
+        // Every item off, and nothing taken: nothing to give back.
+        f.writer.put_sandbox(&entry(10300, true, &off, "")).unwrap();
+        // Out of the sandbox already.
+        f.writer
+            .put_sandbox(&entry(10400, false, "location=coarse", ""))
+            .unwrap();
+        assert_eq!(
+            restore_lines(&f.dir.join("bb.db")).unwrap(),
+            [
+                format!("restore 10100 {fine}=denied+user_set"),
+                format!("restore 10200 android:camera=4,{fine}=default"),
+            ]
         );
     }
 
@@ -1897,6 +2216,23 @@ mod tests {
                 r#"{"cmd":"sandbox.set","package":"com.shared.one","settings":{"storage":"coarse"}}"#
             ),
             serde_json::json!({"ok": false, "error": "storage cannot be coarse"})
+        );
+        assert_eq!(
+            ask(
+                r#"{"cmd":"sandbox.set","package":"com.shared.one","settings":{"contacts":"foreground"}}"#
+            ),
+            serde_json::json!({"ok": false, "error": "contacts cannot be foreground"})
+        );
+        assert_eq!(
+            ask(
+                r#"{"cmd":"sandbox.set","package":"com.shared.one","settings":{"camera":"foreground"}}"#
+            )["items"]["camera"],
+            "foreground"
+        );
+        assert_eq!(
+            ask(r#"{"cmd":"sandbox.set","package":"com.shared.one","settings":{"camera":null}}"#)["items"]
+                ["camera"],
+            "on"
         );
         assert_eq!(
             ask(r#"{"cmd":"sandbox.global"}"#)["items"]["microphone"],

@@ -39,7 +39,8 @@ enum class SandboxItem(val id: String) {
     /** The modes it can be set to, the one it starts with first. */
     val modes: List<SandboxMode>
         get() = when (this) {
-            LOCATION -> listOf(SandboxMode.ON, SandboxMode.COARSE, SandboxMode.OFF)
+            LOCATION -> listOf(SandboxMode.ON, SandboxMode.COARSE, SandboxMode.FOREGROUND, SandboxMode.OFF)
+            CAMERA, MICROPHONE -> listOf(SandboxMode.ON, SandboxMode.FOREGROUND, SandboxMode.OFF)
             else -> listOf(SandboxMode.ON, SandboxMode.OFF)
         }
 
@@ -103,6 +104,9 @@ enum class SandboxMode(val id: String) {
 
     /** For location: an approximate one only. */
     COARSE("coarse"),
+
+    /** For location, camera and microphone: only while the app is in use. */
+    FOREGROUND("foreground"),
     ;
 
     /** Whether the item keeps anything from the app. */

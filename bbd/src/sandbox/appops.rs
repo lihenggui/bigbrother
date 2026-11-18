@@ -33,8 +33,24 @@
 //! put back when the app leaves the sandbox.
 //!
 //! Only the ops of the items that are on for the app are held (see
-//! `items::Settings::op_targets`), ignored. An app with none of them on is
-//! not handed to the helper.
+//! `items::Settings::op_targets`), ignored, or, for an item left to the
+//! app in the foreground, at "foreground": the system then gives the data
+//! while the app is in use and nothing in the background, as Android's
+//! "only while using the app" does. An app with none of them on is not
+//! handed to the helper.
+//!
+//! Location made coarse is the system's own approximate location: no mode
+//! of the app ops gives it. The helper revokes the precise location
+//! permission of every package of the uid that requests it, marked as the
+//! user's choice so that the app cannot ask for it again, and holds it so
+//! as it holds the ops (`items::Settings::taken_permissions`). What the
+//! permission was before, granted or not and with the user's flags, is
+//! kept in the entry (`saved_permissions`) and put back when the app leaves
+//! coarse. No mode of the items covers both the ops of one mode and the
+//! permission of another (`items::Settings::covering`), so a permission is
+//! named in the entry before it is taken, its state not known yet
+//! ([`naming_taken`]), and whatever the entry names is put back when the app
+//! leaves the sandbox, whatever its items say.
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -47,7 +63,10 @@ use std::{
 
 use anyhow::Context as _;
 
-use super::{Effect, Entry, Resumed, Status, items::Settings};
+use super::{
+    Effect, Entry, Resumed, Status,
+    items::{OpMode, Settings},
+};
 use crate::helper;
 
 const HELPER_CLASS: &str = "AppOpsGuard";
@@ -73,11 +92,12 @@ fn retry_delay(failures: u32) -> Duration {
 /// The helper's answer to a command about one uid.
 #[derive(Debug, PartialEq, Eq)]
 enum Answer {
-    /// To `set`: the modes the ops had, as `restore` takes them.
+    /// To `set`: the modes the ops had and the states of the permissions
+    /// taken, as `restore` takes them.
     Saved(String),
     Restored,
-    /// To `apply`.
-    Applied,
+    /// To `apply`: the states of the permissions it took anew.
+    Applied(String),
     Failed,
 }
 
@@ -91,7 +111,7 @@ fn parse_line(line: &str) -> Option<(u32, Option<Answer>)> {
     let answer = match kind {
         "saved" => Some(Answer::Saved(words.next().unwrap_or("").to_string())),
         "restored" => Some(Answer::Restored),
-        "applied" => Some(Answer::Applied),
+        "applied" => Some(Answer::Applied(words.next().unwrap_or("").to_string())),
         "failed" => Some(Answer::Failed),
         "reverted" | "verified" => None,
         _ => return None,
@@ -275,54 +295,148 @@ impl AppOps {
     }
 }
 
-/// `AppOpsManager.MODE_IGNORED`: the app is given an empty answer, with its
-/// permission still shown as granted.
-const MODE_IGNORED: u8 = 1;
+/// The framework's number for an op's mode, as the helper takes it.
+fn mode_number(mode: OpMode) -> u8 {
+    match mode {
+        // `AppOpsManager.MODE_IGNORED`: the app is given an empty answer,
+        // with its permission still shown as granted.
+        OpMode::Ignored => 1,
+        // `AppOpsManager.MODE_FOREGROUND`.
+        OpMode::Foreground => 4,
+    }
+}
 
-/// The ops to hold an app to, as the helper takes them: `<op>=<mode>,...`,
-/// with the mode's number. Empty if none.
+/// What the helper holds a permission to: revoked, and not to be asked for
+/// again.
+const REVOKED: &str = "revoked";
+
+/// What `restore` and `apply` are given for an op or a permission whose
+/// state before is not known: an op loses its uid mode, a permission the
+/// mark that keeps the app from asking for it.
+const NOT_KNOWN: &str = "default";
+
+/// What to hold an app to, as the helper takes it: `<op>=<mode>` for each
+/// op, with the mode's number, then `<permission>=revoked` for each
+/// permission taken, joined by commas. Empty if nothing.
 fn targets_of(items: &Settings) -> String {
-    items
+    let ops = items
         .op_targets()
-        .iter()
-        .map(|op| format!("{op}={MODE_IGNORED}"))
-        .collect::<Vec<_>>()
-        .join(",")
+        .into_iter()
+        .map(|(op, mode)| format!("{op}={}", mode_number(mode)));
+    let permissions = items
+        .taken_permissions()
+        .into_iter()
+        .map(|permission| format!("{permission}={REVOKED}"));
+    ops.chain(permissions).collect::<Vec<_>>().join(",")
 }
 
-/// The ops named in `targets` (as [`targets_of`] writes them).
-fn ops_in(targets: &str) -> Vec<&str> {
-    targets
-        .split(',')
-        .filter_map(|pair| pair.split_once('=').map(|(op, _)| op))
-        .collect()
+/// Whether `name`, in what the helper is told, is a permission's rather
+/// than an op's (`android:camera`).
+fn is_permission(name: &str) -> bool {
+    name.starts_with("android.permission.")
 }
 
-/// The modes `saved` (an entry's `saved_ops`) has for `ops`, as `restore`
-/// and `apply` take them: `default` for an op it does not name.
-fn saved_modes_of(saved: &str, ops: &[&str]) -> String {
-    let saved: HashMap<&str, &str> = saved
-        .split(',')
-        .filter_map(|pair| pair.split_once('='))
+/// The pairs of a list of `<name>=<value>,...`.
+fn pairs(list: &str) -> impl Iterator<Item = (&str, &str)> {
+    list.split(',').filter_map(|pair| pair.split_once('='))
+}
+
+/// The names in a list of `<name>=<value>,...`, such as [`targets_of`]
+/// writes.
+fn names_in(list: &str) -> Vec<&str> {
+    pairs(list).map(|(name, _)| name).collect()
+}
+
+/// What `entry` saved for each of `names`, as `restore` and `apply` take
+/// it: an op's mode from `saved_ops`, a permission's state from
+/// `saved_permissions`, `default` for what it saved nothing for.
+fn saved_values_of(entry: &Entry, names: &[&str]) -> String {
+    let saved: HashMap<&str, &str> = pairs(&entry.saved_ops)
+        .chain(pairs(&entry.saved_permissions))
         .collect();
-    ops.iter()
-        .map(|op| format!("{op}={}", saved.get(op).copied().unwrap_or("default")))
+    names
+        .iter()
+        .map(|name| format!("{name}={}", saved.get(name).copied().unwrap_or(NOT_KNOWN)))
         .collect::<Vec<_>>()
         .join(",")
+}
+
+/// What there is to give `entry` back: what it is held to (`held`, as
+/// [`targets_of`] writes it), and every permission it names as perhaps
+/// taken.
+fn to_give_back<'a>(entry: &'a Entry, held: &'a str) -> Vec<&'a str> {
+    let mut names = names_in(held);
+    for name in names_in(&entry.saved_permissions) {
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names
+}
+
+/// Keep in `entry` the states the helper found for the permissions it
+/// took (`<permission>=<state>,...`), for those `entry` names none for: a
+/// permission named already was taken before, and what the helper finds
+/// now is its own doing.
+fn keep_found(entry: &mut Entry, found: &str) {
+    let named = names_in(&entry.saved_permissions);
+    let kept: Vec<(&str, &str)> = pairs(found)
+        .filter(|(name, _)| is_permission(name) && !named.contains(name))
+        .collect();
+    if kept.is_empty() {
+        return;
+    }
+    entry.saved_permissions = pairs(&entry.saved_permissions)
+        .chain(kept)
+        .map(|(name, state)| format!("{name}={state}"))
+        .collect::<Vec<_>>()
+        .join(",");
+}
+
+/// Forget what `entry` saved for the permissions among `names`: they were
+/// given back.
+fn forget_given_back(entry: &mut Entry, names: &[String]) {
+    entry.saved_permissions = pairs(&entry.saved_permissions)
+        .filter(|(name, _)| !names.iter().any(|given| given == name))
+        .map(|(name, state)| format!("{name}={state}"))
+        .collect::<Vec<_>>()
+        .join(",");
+}
+
+/// The ops and the permissions of the helper's `saved` answer: what goes in
+/// an entry's `saved_ops`, and the states it found of the permissions.
+fn split_saved(saved: &str) -> (String, String) {
+    let (permissions, ops): (Vec<&str>, Vec<&str>) = saved
+        .split(',')
+        .filter(|pair| !pair.is_empty())
+        .partition(|pair| is_permission(pair.split('=').next().unwrap_or("")));
+    (ops.join(","), permissions.join(","))
+}
+
+/// `entry` as written down before `items` are carried out: naming each
+/// permission they take that it does not name yet, its state not known.
+/// The helper finds the state as it takes the permission; a daemon that
+/// stops before it writes that down still gives the permission back, as
+/// it does an op whose mode it did not write down.
+pub fn naming_taken(entry: &Entry, items: &Settings) -> Entry {
+    let mut named = entry.clone();
+    let unknown: Vec<String> = items
+        .taken_permissions()
+        .into_iter()
+        .map(|permission| format!("{permission}={NOT_KNOWN}"))
+        .collect();
+    keep_found(&mut named, &unknown.join(","));
+    named
 }
 
 /// The helper's line that gives `entry` back the ops `items` hold it to,
-/// at the modes saved for them, as disabling it would; `None` if they hold
-/// none. For when the daemon is not there to disable it (`uninstall.sh`).
+/// at the modes saved for them, and the permissions it may have been
+/// taken, as disabling it would; `None` if there is nothing to give back.
+/// For when the daemon is not there to disable it (`uninstall.sh`).
 pub fn restore_line(entry: &Entry, items: &Settings) -> Option<String> {
     let targets = targets_of(items);
-    (!targets.is_empty()).then(|| {
-        format!(
-            "restore {} {}",
-            entry.uid,
-            saved_modes_of(&entry.saved_ops, &ops_in(&targets))
-        )
-    })
+    let names = to_give_back(entry, &targets);
+    (!names.is_empty()).then(|| format!("restore {} {}", entry.uid, saved_values_of(entry, &names)))
 }
 
 impl Effect for AppOps {
@@ -338,15 +452,17 @@ impl Effect for AppOps {
         let uid = entry.uid;
         let line = format!("set {uid} {targets}");
         let saved = self.shared.ask(uid, &line, |state, answer| match answer {
-            Answer::Saved(modes) => {
+            Answer::Saved(saved) => {
                 state.guarded.insert(uid, targets);
-                Some(modes)
+                Some(saved)
             }
             _ => None,
         });
         match saved {
-            Ok(Some(modes)) => {
-                entry.saved_ops = modes;
+            Ok(Some(saved)) => {
+                let (ops, permissions) = split_saved(&saved);
+                entry.saved_ops = ops;
+                keep_found(entry, &permissions);
                 Ok(())
             }
             failed => {
@@ -369,18 +485,17 @@ impl Effect for AppOps {
             .get(&uid)
             .cloned()
             .unwrap_or_else(|| targets_of(items));
-        if held.is_empty() {
+        let names = to_give_back(entry, &held);
+        if names.is_empty() {
             return Ok(());
         }
         // Only the ops held go back: one the app was not held to is the
         // system's, and may have been changed since it was saved. Without
         // saved modes (the daemon stopped between setting them and writing
         // them down) their uid modes are cleared, and the system's defaults
-        // apply.
-        let line = format!(
-            "restore {uid} {}",
-            saved_modes_of(&entry.saved_ops, &ops_in(&held))
-        );
+        // apply; a permission without a saved state is left revoked, but
+        // the app may ask for it again.
+        let line = format!("restore {uid} {}", saved_values_of(entry, &names));
         let restored = self.shared.ask(uid, &line, |state, answer| {
             let restored = answer == Answer::Restored;
             if restored {
@@ -389,6 +504,7 @@ impl Effect for AppOps {
             restored
         })?;
         anyhow::ensure!(restored, "the system did not take the app ops back");
+        entry.saved_permissions.clear();
         self.shared.rest_if_unused();
         Ok(())
     }
@@ -410,35 +526,44 @@ impl Effect for AppOps {
         if holding.is_empty() {
             return self.disable(entry, packages, before);
         }
-        // The ops no longer held go back to what they were before the app
-        // was sandboxed.
-        let resets = |from: &str, to: &str| {
-            let kept: HashSet<&str> = ops_in(to).into_iter().collect();
-            let released: Vec<&str> = ops_in(from)
+        // What is no longer held goes back to what it was before: an op to
+        // its mode before the app was sandboxed, a permission to its state
+        // before it was taken.
+        let released = |from: &str, to: &str| -> Vec<String> {
+            let kept: HashSet<&str> = names_in(to).into_iter().collect();
+            names_in(from)
                 .into_iter()
-                .filter(|op| !kept.contains(op))
-                .collect();
-            if released.is_empty() {
-                "-".to_string()
-            } else {
-                saved_modes_of(&entry.saved_ops, &released)
-            }
+                .filter(|name| !kept.contains(name))
+                .map(str::to_string)
+                .collect()
         };
-        let uid = entry.uid;
-        let line = format!("apply {uid} {holding} {}", resets(&held, &holding));
-        let applied = self.shared.ask(uid, &line, |state, answer| {
-            let applied = answer == Answer::Applied;
-            if applied {
-                state.guarded.insert(uid, holding.clone());
+        let resets = |names: &[String]| {
+            if names.is_empty() {
+                return "-".to_string();
             }
-            applied
+            let names: Vec<&str> = names.iter().map(String::as_str).collect();
+            saved_values_of(entry, &names)
+        };
+        let (let_go, taken_back) = (released(&held, &holding), released(&holding, &held));
+        let uid = entry.uid;
+        let line = format!("apply {uid} {holding} {}", resets(&let_go));
+        let back = format!("apply {uid} {held} {}", resets(&taken_back));
+        let applied = self.shared.ask(uid, &line, |state, answer| match answer {
+            Answer::Applied(found) => {
+                state.guarded.insert(uid, holding.clone());
+                Some(found)
+            }
+            _ => None,
         });
         match applied {
-            Ok(true) => Ok(()),
+            Ok(Some(found)) => {
+                forget_given_back(entry, &let_go);
+                keep_found(entry, &found);
+                Ok(())
+            }
             failed => {
                 // It may have applied them all the same, or be about to:
                 // what was held is held again.
-                let back = format!("apply {uid} {held} {}", resets(&holding, &held));
                 let _ = self.shared.state().send(&back);
                 failed?;
                 anyhow::bail!("the system did not take the app ops")
@@ -599,7 +724,17 @@ mod tests {
         assert_eq!(parse_line("verified 10100"), Some((10100, None)));
         assert_eq!(
             parse_line("applied 10100"),
-            Some((10100, Some(Answer::Applied)))
+            Some((10100, Some(Answer::Applied(String::new()))))
+        );
+        // With the states of the permissions it took.
+        assert_eq!(
+            parse_line("applied 10100 android.permission.ACCESS_FINE_LOCATION=granted+user_set"),
+            Some((
+                10100,
+                Some(Answer::Applied(
+                    "android.permission.ACCESS_FINE_LOCATION=granted+user_set".into()
+                ))
+            ))
         );
         for line in ["", "saved", "saved x", "hello 10100", "restored -1"] {
             assert_eq!(parse_line(line), None, "{line:?}");
@@ -613,9 +748,25 @@ mod tests {
             enabled: true,
             android_id: String::new(),
             saved_ops: String::new(),
+            saved_permissions: String::new(),
             created: 0,
             settings: String::new(),
         }
+    }
+
+    const FINE: &str = super::super::items::PRECISE_LOCATION;
+
+    /// Every item off, but those `on` names, at their modes.
+    fn only(on: &[(super::super::items::Item, super::super::items::Mode)]) -> Settings {
+        use super::super::items::{Item, Mode};
+        let mut own = Settings::default();
+        for item in Item::ALL {
+            own.set(item, Some(Mode::Off)).unwrap();
+        }
+        for (item, mode) in on {
+            own.set(*item, Some(*mode)).unwrap();
+        }
+        own.over(&Settings::default())
     }
 
     #[test]
@@ -653,37 +804,151 @@ mod tests {
     #[test]
     fn the_helper_is_told_the_ops_of_the_items_on() {
         use super::super::items::{Item, Mode};
-        let mut own = Settings::default();
-        for item in Item::ALL {
-            own.set(item, Some(Mode::Off)).unwrap();
-        }
-        own.set(Item::Camera, Some(Mode::On)).unwrap();
-        own.set(Item::Contacts, Some(Mode::On)).unwrap();
-        let items = own.over(&Settings::default());
+        let items = only(&[(Item::Camera, Mode::On), (Item::Contacts, Mode::On)]);
         assert_eq!(
             targets_of(&items),
             "android:read_contacts=1,android:write_contacts=1,android:camera=1"
         );
+        let entry = Entry {
+            saved_ops: "android:camera=4,android:read_contacts=default".into(),
+            saved_permissions: format!("{FINE}=denied+user_set"),
+            ..sandboxed(10100)
+        };
         assert_eq!(
-            saved_modes_of(
-                "android:camera=4,android:read_contacts=default",
+            saved_values_of(
+                &entry,
                 &[
                     "android:camera",
                     "android:read_contacts",
-                    "android:record_audio"
+                    "android:record_audio",
+                    FINE,
+                    "android.permission.CAMERA",
                 ]
             ),
-            "android:camera=4,android:read_contacts=default,android:record_audio=default"
+            "android:camera=4,android:read_contacts=default,android:record_audio=default,\
+             android.permission.ACCESS_FINE_LOCATION=denied+user_set,\
+             android.permission.CAMERA=default"
         );
         assert_eq!(
-            ops_in(&targets_of(&items)),
+            names_in(&targets_of(&items)),
             [
                 "android:read_contacts",
                 "android:write_contacts",
                 "android:camera"
             ]
         );
-        assert!(ops_in("").is_empty());
+        assert!(names_in("").is_empty());
+    }
+
+    #[test]
+    fn location_made_coarse_takes_the_precise_permission_and_no_location_op() {
+        use super::super::items::{Item, Mode};
+        assert_eq!(
+            targets_of(&only(&[
+                (Item::Location, Mode::Coarse),
+                (Item::Camera, Mode::On)
+            ])),
+            "android:camera=1,android.permission.ACCESS_FINE_LOCATION=revoked"
+        );
+        assert_eq!(
+            targets_of(&only(&[(Item::Location, Mode::Coarse)])),
+            "android.permission.ACCESS_FINE_LOCATION=revoked"
+        );
+        // What the helper saved goes where it belongs.
+        assert_eq!(
+            split_saved(&format!(
+                "android:camera=4,{FINE}=granted,android:read_sms=default"
+            )),
+            (
+                "android:camera=4,android:read_sms=default".to_string(),
+                format!("{FINE}=granted")
+            )
+        );
+        assert_eq!(split_saved(""), (String::new(), String::new()));
+    }
+
+    #[test]
+    fn an_item_left_to_the_foreground_holds_its_ops_at_foreground() {
+        use super::super::items::{Item, Mode};
+        let mut appops = AppOps {
+            shared: Arc::new(Shared::default()),
+        };
+        let (input, sent) = stand_in(&appops.shared, |_, _| {});
+        appops.shared.state().input = Some(input);
+        let on = only(&[(Item::Location, Mode::On), (Item::Camera, Mode::On)]);
+        let foreground = only(&[
+            (Item::Location, Mode::Foreground),
+            (Item::Camera, Mode::Foreground),
+        ]);
+        let coarse = only(&[
+            (Item::Location, Mode::Coarse),
+            (Item::Camera, Mode::Foreground),
+        ]);
+        let mut entry = Entry {
+            saved_ops: "android:wifi_scan=4,android:camera=default".into(),
+            ..sandboxed(10100)
+        };
+        appops.resume(&[Resumed {
+            entry: entry.clone(),
+            packages: vec![],
+            items: on.clone(),
+        }]);
+
+        appops.update(&mut entry, &[], &on, &foreground).unwrap();
+        appops
+            .update(&mut entry, &[], &foreground, &coarse)
+            .unwrap();
+        appops.disable(&mut entry, &[], &coarse).unwrap();
+        assert_eq!(
+            sent.join().unwrap(),
+            [
+                // The Wi-Fi scan goes back to what it was, and then with
+                // the coarse location, its switch op, to the foreground.
+                "apply 10100 android:coarse_location=4,android:fine_location=4,\
+                 android:camera=4 android:wifi_scan=4"
+                    .to_string(),
+                format!(
+                    "apply 10100 android:camera=4,{FINE}=revoked \
+                     android:coarse_location=default,android:fine_location=default"
+                ),
+                format!("restore 10100 android:camera=default,{FINE}=granted"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_permission_is_named_before_it_is_taken_and_its_first_state_kept() {
+        use super::super::items::{Item, Mode};
+        let coarse = only(&[(Item::Location, Mode::Coarse)]);
+        let named = naming_taken(&sandboxed(10100), &coarse);
+        assert_eq!(named.saved_permissions, format!("{FINE}=default"));
+        // Nothing to name for items that take no permission, and nothing
+        // again for one named already.
+        assert_eq!(
+            naming_taken(&sandboxed(10100), &only(&[(Item::Location, Mode::On)])),
+            sandboxed(10100)
+        );
+        let saved = Entry {
+            saved_permissions: format!("{FINE}=granted+user_set"),
+            ..sandboxed(10100)
+        };
+        assert_eq!(naming_taken(&saved, &coarse), saved);
+
+        // What the helper finds is kept only where nothing was named: for
+        // a permission named already, it is the helper's own doing.
+        let mut entry = sandboxed(10100);
+        keep_found(&mut entry, &format!("{FINE}=granted"));
+        assert_eq!(entry.saved_permissions, format!("{FINE}=granted"));
+        keep_found(&mut entry, &format!("{FINE}=denied+user_fixed"));
+        assert_eq!(entry.saved_permissions, format!("{FINE}=granted"));
+        let mut leftover = named.clone();
+        keep_found(&mut leftover, &format!("{FINE}=denied+user_fixed"));
+        assert_eq!(leftover.saved_permissions, format!("{FINE}=default"));
+        // An op is never taken for a permission.
+        keep_found(&mut entry, "android:camera=1");
+        assert_eq!(entry.saved_permissions, format!("{FINE}=granted"));
+        forget_given_back(&mut entry, &[FINE.to_string()]);
+        assert_eq!(entry.saved_permissions, "");
     }
 
     /// Stands in for the helper: `cat`, which gives back every line it was
@@ -708,10 +973,17 @@ mod tests {
                 let mut words = line.split(' ');
                 let kind = words.next().unwrap().to_string();
                 let uid = words.next().unwrap().parse().unwrap();
-                sent.push(line);
+                // Each permission taken was granted, as far as it says.
+                let found = names_in(words.next().unwrap_or(""))
+                    .into_iter()
+                    .filter(|name| is_permission(name))
+                    .map(|name| format!("{name}=granted"))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                sent.push(line.clone());
                 let answer = match kind.as_str() {
-                    "set" => Answer::Saved(String::new()),
-                    "apply" => Answer::Applied,
+                    "set" => Answer::Saved(found),
+                    "apply" => Answer::Applied(found),
                     "restore" => Answer::Restored,
                     _ => continue,
                 };
@@ -812,33 +1084,121 @@ mod tests {
     }
 
     #[test]
+    fn location_made_coarse_and_back_saves_and_gives_back_the_permission() {
+        use super::super::items::{Item, Mode};
+        let mut appops = AppOps {
+            shared: Arc::new(Shared::default()),
+        };
+        let (input, sent) = stand_in(&appops.shared, |_, _| {});
+        appops.shared.state().input = Some(input);
+        let coarse = only(&[(Item::Location, Mode::Coarse), (Item::Camera, Mode::On)]);
+        let on = only(&[(Item::Location, Mode::On), (Item::Camera, Mode::On)]);
+        let mut entry = sandboxed(10100);
+
+        appops.enable(&mut entry, &[], &coarse).unwrap();
+        assert_eq!(entry.saved_permissions, format!("{FINE}=granted"));
+        // Given back as it was when the location is no longer coarse...
+        appops.update(&mut entry, &[], &coarse, &on).unwrap();
+        assert_eq!(entry.saved_permissions, "");
+        // ...and saved anew when it is again, as the user may have changed
+        // it in between.
+        appops.update(&mut entry, &[], &on, &coarse).unwrap();
+        assert_eq!(entry.saved_permissions, format!("{FINE}=granted"));
+        appops.disable(&mut entry, &[], &coarse).unwrap();
+        assert_eq!(entry.saved_permissions, "");
+        assert_eq!(
+            sent.join().unwrap(),
+            [
+                format!("set 10100 android:camera=1,{FINE}=revoked"),
+                format!(
+                    "apply 10100 android:coarse_location=1,android:fine_location=1,\
+                     android:wifi_scan=1,android:camera=1 {FINE}=granted"
+                ),
+                format!(
+                    "apply 10100 android:camera=1,{FINE}=revoked \
+                     android:coarse_location=default,android:fine_location=default,\
+                     android:wifi_scan=default"
+                ),
+                format!("restore 10100 android:camera=default,{FINE}=granted"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_permission_named_is_given_back_whatever_the_items_say() {
+        use super::super::items::{Item, Mode};
+        let mut appops = AppOps {
+            shared: Arc::new(Shared::default()),
+        };
+        let (input, sent) = stand_in(&appops.shared, |_, _| {});
+        appops.shared.state().input = Some(input);
+        // A daemon that stopped while location was made coarse from on,
+        // written down as on, and the state not yet known.
+        let on = only(&[(Item::Location, Mode::On)]);
+        let off = only(&[]);
+        let mut entry = Entry {
+            saved_permissions: format!("{FINE}=default"),
+            ..sandboxed(10100)
+        };
+        assert_eq!(
+            restore_line(&entry, &on).as_deref(),
+            Some(
+                "restore 10100 android:coarse_location=default,android:fine_location=default,\
+                 android:wifi_scan=default,android.permission.ACCESS_FINE_LOCATION=default"
+            )
+        );
+        assert_eq!(
+            restore_line(&entry, &off).as_deref(),
+            Some("restore 10100 android.permission.ACCESS_FINE_LOCATION=default")
+        );
+        appops.resume(&[Resumed {
+            entry: entry.clone(),
+            packages: vec![],
+            items: on.clone(),
+        }]);
+        appops.update(&mut entry, &[], &on, &off).unwrap();
+        assert_eq!(entry.saved_permissions, "");
+        assert_eq!(
+            sent.join().unwrap(),
+            [format!(
+                "restore 10100 android:coarse_location=default,android:fine_location=default,\
+                 android:wifi_scan=default,{FINE}=default"
+            )]
+        );
+    }
+
+    #[test]
     fn an_app_is_given_back_the_ops_it_is_held_to_at_their_saved_modes() {
         use super::super::items::{Item, Mode};
         let entry = Entry {
-            uid: 10100,
-            package: "com.app".into(),
-            enabled: true,
-            android_id: String::new(),
             saved_ops: "android:camera=4,android:read_sms=1".into(),
-            created: 0,
-            settings: String::new(),
+            ..sandboxed(10100)
         };
-        let mut own = Settings::default();
-        for item in Item::ALL {
-            own.set(item, Some(Mode::Off)).unwrap();
-        }
         // The processor information holds no op: nothing to give back.
-        own.set(Item::CpuInfo, Some(Mode::On)).unwrap();
-        assert_eq!(restore_line(&entry, &own.over(&Settings::default())), None);
-        own.set(Item::Camera, Some(Mode::On)).unwrap();
         assert_eq!(
-            restore_line(&entry, &own.over(&Settings::default())).as_deref(),
+            restore_line(&entry, &only(&[(Item::CpuInfo, Mode::On)])),
+            None
+        );
+        assert_eq!(
+            restore_line(&entry, &only(&[(Item::Camera, Mode::On)])).as_deref(),
             Some("restore 10100 android:camera=4")
         );
-        own.set(Item::Microphone, Some(Mode::On)).unwrap();
         assert_eq!(
-            restore_line(&entry, &own.over(&Settings::default())).as_deref(),
+            restore_line(
+                &entry,
+                &only(&[(Item::Camera, Mode::On), (Item::Microphone, Mode::On)])
+            )
+            .as_deref(),
             Some("restore 10100 android:camera=4,android:record_audio=default")
+        );
+        // The precise location permission at the state saved for it.
+        let coarse = Entry {
+            saved_permissions: format!("{FINE}=denied+user_set"),
+            ..entry
+        };
+        assert_eq!(
+            restore_line(&coarse, &only(&[(Item::Location, Mode::Coarse)])).as_deref(),
+            Some("restore 10100 android.permission.ACCESS_FINE_LOCATION=denied+user_set")
         );
     }
 

@@ -30,7 +30,7 @@ any way.
 | --- | --- | --- | --- |
 | Shared storage | A directory of its own in place of `/storage/emulated/<user>`, empty at first, which it can write to. Its own `Android/data`, `obb` and `media` directories stay. Other volumes (SD cards) are empty. | Mounts made in the app's mount namespace as it starts | root |
 | Kernel information | `/proc/cpuinfo` without what names the chip | The same mounts | root |
-| Personal data | Nothing: contacts, calendar, messages, call log, accounts, location, clipboard, camera, microphone, body sensors, media, usage statistics, nearby devices | App ops set to "ignored" for the app's uid | root |
+| Personal data | Nothing: contacts, calendar, messages, call log, accounts, location, clipboard, camera, microphone, body sensors, media, usage statistics, nearby devices | App ops set to "ignored" for the app's uid; for an approximate location, the precise location permission revoked | root |
 | Identity | An ANDROID_ID of its own, fixed per app; no installed app other than itself and what came with the system | Hooks in system_server | LSPosed |
 
 The first three work without LSPosed. `bbd sandbox status` says which parts
@@ -53,8 +53,10 @@ it again by a file in it that only root can see.
 ## Items
 
 What the sandbox does to an app is set item by item. Each item is off (the
-app gets what the system gives it) or on, and location can also be made
-coarse:
+app gets what the system gives it) or on. Location can also be made
+coarse, and location, the camera and the microphone can be left to the app
+while it is in use and kept from it in the background (foreground), as
+Android's "only while using the app" does:
 
 | Item | On | Modes |
 | --- | --- | --- |
@@ -64,9 +66,9 @@ coarse:
 | `messages` | No messages or call log | off, on |
 | `calendar` | No calendar | off, on |
 | `clipboard_accounts` | An empty clipboard, no accounts | off, on |
-| `location` | No location; with coarse, an approximate one only | off, on, coarse |
-| `camera` | No camera image | off, on |
-| `microphone` | Silence | off, on |
+| `location` | No location; with coarse, an approximate one only, as with precise location turned off | off, on, coarse, foreground |
+| `camera` | No camera image | off, on, foreground |
+| `microphone` | Silence | off, on, foreground |
 | `body_sensors` | No body sensor or activity data | off, on |
 | `device_ids` | An ANDROID_ID of its own; no phone number or phone state | off, on |
 | `installed_apps` | No installed app but itself and the system's; no usage statistics | off, on |
@@ -79,15 +81,19 @@ otherwise. An app keeps its own settings when it leaves the sandbox.
 ```sh
 $bbd sandbox global camera=off microphone=off
 $bbd sandbox set com.example.app camera=on location=coarse
+$bbd sandbox set com.example.app microphone=foreground
 $bbd sandbox set com.example.app camera=global   # follows the global settings again
 ```
 
 A change takes effect at once. It ends the app's processes if what is
 mounted for it changes (`storage`, `cpu_info`), or an item that was off is
-turned on: what the app read before, and may keep, goes with them. A change of the global
+turned on, to any mode but off: what the app read before, and may keep,
+goes with them. Making
+location coarse ends them too when the app had precise location: Android
+ends an app whenever it revokes a permission the app had. A change of the global
 settings is made to every sandboxed app that follows them, or to none. An
 app in the sandbox with every item off has nothing done to it: no mount,
-no app op and no answer of the hook.
+no app op, no permission and no answer of the hook.
 
 ## How it works
 
@@ -126,8 +132,29 @@ items that are on, remembers what they were, and sets them again when the
 system changes them, which it does whenever the app's permissions change.
 The helper runs only while a sandboxed app has such an item on.
 
-What the ops were is kept in the database and put back when the app leaves
-the sandbox. Removing the module takes every app out first. Where the
+An item left to the app in the foreground has its ops held at
+"foreground" instead, which the system keeps for the ops of runtime
+permissions as it keeps "ignored": the app gets the data while it is in
+the foreground and nothing in the background. For location these are the
+coarse and the precise location ops; the Wi-Fi scan op goes with the
+coarse location one, under which the system keeps its mode.
+
+No mode of the app ops makes location approximate: with the precise
+location op ignored, the location service still takes the app for one
+with precise location and gives it none at all. Location made coarse is
+the system's own approximate location instead. The helper revokes the
+precise location permission (`ACCESS_FINE_LOCATION`) of every package of
+the app that requests it, keeps the approximate one, and marks it as the
+user's choice not to be asked again, as Android's settings do; it revokes
+it again if the system or the user grants it while location is coarse.
+The app's settings show precise location as turned off.
+
+What the ops were, and whether the precise location permission was granted
+and with which of the user's choices, is kept in the database and put back
+when the app leaves the sandbox or location is no longer coarse. The
+permission is written down as perhaps taken before the helper takes it, so
+that a daemon that stopped in between still gives it back. Removing the
+module takes every app out first. Where the
 daemon cannot (the root manager removes the module at the next boot, before
 the daemon starts) or does not get every app out, the helper is run by
 itself once the system is up, with what the database says each app still

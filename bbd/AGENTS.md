@@ -29,8 +29,11 @@ JSON.
   for an item that is off, and `update` carries out a change of items on an
   app already in the sandbox. An app with every item off has nothing done to
   it, and an app not in the sandbox is never touched.
-- A new item names the app ops, mounts or hook answers it covers in
-  `items.rs`; its app ops must also be in `AppOpsGuardProtocol.GUARDED_OPS`.
+- A new item names the app ops, runtime permissions, mounts or hook answers
+  it covers in `items.rs`; its app ops must also be in
+  `AppOpsGuardProtocol.GUARDED_OPS`. A runtime permission it takes is named
+  in the entry before it is taken (`appops::naming_taken`), as no covering
+  mode of the items can name it.
 
 - Fail closed. A start that cannot be given its sandbox is killed, never let
   through, and the kernel side does the same when the gate thread is stuck

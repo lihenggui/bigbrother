@@ -251,6 +251,7 @@ mod tests {
             enabled: true,
             android_id: android_id.into(),
             saved_ops: String::new(),
+            saved_permissions: String::new(),
             created: 0,
             settings: String::new(),
         }

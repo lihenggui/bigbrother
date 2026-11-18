@@ -101,7 +101,7 @@ impl Category {
 
 /// Schema version stored in SQLite's `user_version`. A database at any
 /// other version is refused: bump it whenever `SCHEMA` changes.
-const SCHEMA_VERSION: i32 = 6;
+const SCHEMA_VERSION: i32 = 7;
 
 /// Most entries returned for one path's history.
 const HISTORY_LIMIT: u32 = 2000;
@@ -200,6 +200,9 @@ CREATE TABLE sandbox (
     android_id TEXT    NOT NULL,      -- 16 hex digits, drawn on the first enable
     saved_ops  TEXT    NOT NULL,      -- the uid's app-op modes before it was enabled,
                                       -- 'op=mode,...', restored when it is disabled
+    saved_permissions TEXT NOT NULL,  -- the runtime permissions the sandbox may have
+                                      -- taken, each with its state before, or 'default'
+                                      -- where that is not known: 'permission=state,...'
     created    INTEGER NOT NULL,
     settings   TEXT    NOT NULL       -- 'item=mode,...'
 ) WITHOUT ROWID;
@@ -568,11 +571,13 @@ impl Writer {
     /// the daemon stopping, and the power going, right after.
     pub fn put_sandbox(&self, entry: &SandboxEntry) -> anyhow::Result<()> {
         self.conn.execute(
-            "INSERT INTO sandbox (uid, package, enabled, android_id, saved_ops, created, settings)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            "INSERT INTO sandbox (uid, package, enabled, android_id, saved_ops, saved_permissions,
+                                  created, settings)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT (uid) DO UPDATE SET
                  package = excluded.package, enabled = excluded.enabled,
                  android_id = excluded.android_id, saved_ops = excluded.saved_ops,
+                 saved_permissions = excluded.saved_permissions,
                  created = excluded.created, settings = excluded.settings",
             params![
                 entry.uid,
@@ -580,6 +585,7 @@ impl Writer {
                 entry.enabled,
                 entry.android_id,
                 entry.saved_ops,
+                entry.saved_permissions,
                 entry.created,
                 entry.settings
             ],
@@ -650,13 +656,16 @@ pub struct SandboxEntry {
     pub enabled: bool,
     pub android_id: String,
     pub saved_ops: String,
+    /// The runtime permissions the sandbox may have taken from the app,
+    /// with the state each had before (see `sandbox::appops`).
+    pub saved_permissions: String,
     pub created: i64,
     /// The items the app has a mode of its own for, as `item=mode,...`.
     pub settings: String,
 }
 
-const SANDBOX_SELECT: &str =
-    "SELECT uid, package, enabled, android_id, saved_ops, created, settings FROM sandbox";
+const SANDBOX_SELECT: &str = "SELECT uid, package, enabled, android_id, saved_ops, \
+     saved_permissions, created, settings FROM sandbox";
 
 fn sandbox_entry(r: &rusqlite::Row<'_>) -> rusqlite::Result<SandboxEntry> {
     Ok(SandboxEntry {
@@ -665,8 +674,9 @@ fn sandbox_entry(r: &rusqlite::Row<'_>) -> rusqlite::Result<SandboxEntry> {
         enabled: r.get(2)?,
         android_id: r.get(3)?,
         saved_ops: r.get(4)?,
-        created: r.get(5)?,
-        settings: r.get(6)?,
+        saved_permissions: r.get(5)?,
+        created: r.get(6)?,
+        settings: r.get(7)?,
     })
 }
 
@@ -1879,7 +1889,8 @@ mod tests {
             package: "com.a".into(),
             enabled: true,
             android_id: "0123456789abcdef".into(),
-            saved_ops: String::new(),
+            saved_ops: "android:camera=default".into(),
+            saved_permissions: "android.permission.ACCESS_FINE_LOCATION=granted+user_set".into(),
             created: 1000,
             settings: String::new(),
         }
