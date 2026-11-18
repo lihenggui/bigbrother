@@ -25,15 +25,8 @@ import android.content.pm.PermissionInfo
 import android.os.Binder
 import android.os.IBinder
 import android.os.Parcel
-import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.Command
-import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.FLAG_USER_FIXED
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.GUARDED_OPS
-import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.MODE_DEFAULT
-import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.OpState
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.PermissionState
-import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.Targets
-import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.USER_FLAGS
-import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.Values
 import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Method
 import java.util.concurrent.LinkedBlockingQueue
@@ -169,31 +162,10 @@ object AppOpsGuard {
      */
     private const val SETTLE_MS = 1000L
 
-    /**
-     * An op this device knows, as the service names it, with the permission
-     * whose grant the system sets its uid mode by, if any.
-     */
-    private class Op(val name: String, val code: Int, val switchCode: Int, val defaultMode: Int?, val permission: String?)
-
     /** Held by each command and each check, so that they run one at a time and their output lines stay whole. */
     private val lock = Any()
 
-    /**
-     * What a guarded uid is held to, the modes saved for it when known with
-     * the grants they were saved at, and the states of the permissions this
-     * program took from it itself, of which those [regranted] were found
-     * granted again since.
-     */
-    private data class Guard(
-        val saved: List<Pair<String, Int?>>?,
-        val targets: Targets,
-        val tookPermissions: Map<String, PermissionState> = emptyMap(),
-        val savedGrants: Map<String, Int> = emptyMap(),
-        val regranted: Set<String> = emptySet(),
-    ) {
-        /** What to give [permission] back as, the daemon having sent [sent]. */
-        fun toGiveBack(permission: String, sent: PermissionState?): PermissionState? = AppOpsGuardProtocol.stateToGiveBack(sent, tookPermissions[permission], permission in regranted)
-    }
+    private val handler = AppOpsGuardHandler(Framework)
 
     private data class Installation(val pkg: String, val token: String) {
         fun matches(uid: Int): Boolean {
@@ -224,12 +196,6 @@ object AppOpsGuard {
         check(owners[uid]?.matches(uid) == true) { "installation changed" }
     }
 
-    /** The guarded uids. */
-    private val guarded = mutableMapOf<Int, Guard>()
-
-    /** The unheld ops last printed for each guarded uid. */
-    private val reported = mutableMapOf<Int, List<String>>()
-
     private val changes = LinkedBlockingQueue<Unit>()
 
     @Volatile
@@ -243,7 +209,7 @@ object AppOpsGuard {
      */
     private val serviceType by lazy { Class.forName("com.android.internal.app.IAppOpsService") }
 
-    private lateinit var ops: List<Op>
+    private lateinit var ops: List<GuardedOp>
 
     /** The runtime permissions, if this device lets them be reached. */
     private var permissions: Permissions? = null
@@ -283,8 +249,8 @@ object AppOpsGuard {
         while (true) {
             val line = lines.take() as? Line.Text ?: break
             if (line.text.startsWith("kind ")) {
-                val query = AppOpsGuardProtocol.parseCommand(line.text) as? Command.Kind ?: continue
-                handle(query)
+                val query = AppOpsGuardProtocol.parseCommand(line.text) as? AppOpsGuardProtocol.Command.Kind ?: continue
+                synchronized(lock) { answerKind(query) }
                 continue
             }
             val parts = line.text.split(' ', limit = 4)
@@ -308,17 +274,14 @@ object AppOpsGuard {
                             throw e
                         }
                     }
-                    if (!current && journal != null && command is Command.Restore) {
+                    if (!current && journal != null && command is AppOpsGuardProtocol.Command.Restore) {
                         emit("retired ${command.uid}")
                         return@synchronized
                     }
                     check(current) { "installation changed" }
-                    if (owners.put(command.uid, owner) != owner) {
-                        guarded.remove(command.uid)
-                        reported.remove(command.uid)
-                    }
-                    handle(command)
-                    if (command.uid !in guarded) owners.remove(command.uid)
+                    if (owners.put(command.uid, owner) != owner) handler.forget(command.uid)
+                    handler.handle(command)
+                    if (!handler.isGuarded(command.uid)) owners.remove(command.uid)
                 } catch (e: Throwable) {
                     System.err.println("${line.text.trim().substringBefore(' ')} ${command.uid}: ${describe(e)}")
                     emit(AppOpsGuardProtocol.failedLine(command.uid))
@@ -391,10 +354,7 @@ object AppOpsGuard {
             .invoke(null, systemService("package") ?: error("no package service"))!!,
     ).also { specialAccess = it }
 
-    /** What takes [name] from an app and gives it back. */
-    private fun taking(name: String): Taking = if (AppOpsGuardProtocol.isSpecialAccess(name)) specialAccess() else permissions()
-
-    private fun resolve(names: List<String>): List<Op> {
+    private fun resolve(names: List<String>): List<GuardedOp> {
         val manager = Class.forName("android.app.AppOpsManager")
         val toCode = manager.getMethod("strOpToOp", String::class.java)
         val toSwitch = manager.optionalMethod("opToSwitch", Int::class.javaPrimitiveType!!)
@@ -415,137 +375,23 @@ object AppOpsGuard {
             // grant only the op the permission maps back to.
             val permission = (toPermission?.invokeOrNull(switchCode) as String?)
                 ?.takeIf { permissionToCode?.invokeOrNull(it) == switchCode }
-            Op(name, code, switchCode, toDefault?.invokeOrNull(switchCode) as Int?, permission)
-        }
-    }
-
-    private fun handle(command: Command) {
-        val uid = command.uid
-        when (command) {
-            is Command.Set -> {
-                val guard = guarded[uid]
-                // Guarded since a `verify`, by a daemon carrying on: what the
-                // ops are now is this program's own doing, not what to go
-                // back to, and the daemon has that already.
-                if (guard != null && guard.saved == null) error("already guarded, with nothing saved")
-                // Asked again, the modes and states saved the first time are
-                // the ones to go back to: the current ones are this
-                // program's own.
-                val saved = guard?.saved ?: AppOpsGuardProtocol.savedModes(states(uid))
-                val grants = if (guard != null) guard.savedGrants else grantModes(uid)
-                val targets = command.targets
-                val found = statesBefore(uid, targets.permissions, guard?.tookPermissions.orEmpty())
-                // Written down first, so that a `release` after a failure
-                // below puts back whatever was done.
-                guarded[uid] = Guard(saved, targets, found, grants)
-                val taken = targets.ops.count { (name, mode) -> setKnown(name, uid, mode) }
-                // Ops this Android version doesn't have are nothing to hold.
-                if (targets.ops.keys.any(::isKnown) && taken == 0) error("the system took none of the modes")
-                for (permission in targets.permissions) taking(permission).hold(uid, permission)
-                reportUnheld(uid, verify(uid), always = true)
-                emit(AppOpsGuardProtocol.savedLine(uid, Values(saved, found.toList(), grants)))
-            }
-
-            is Command.Apply -> {
-                val guard = guarded[uid] ?: error("not guarded")
-                // Permissions taken only below are still as the user has them.
-                val held = AppOpsGuardProtocol.heldWhileSettingBack(guard.heldPermissions(), command.resets)
-                var taken = command.resets.ops.count { (name, mode) ->
-                    val op = ops.find { it.name == name }
-                    if (op == null) return@count false
-                    check(setBack(op, uid, mode, command.resets.grants[name], held)) { "app op restore incomplete" }
-                    true
-                }
-                for ((permission, state) in command.resets.permissions) {
-                    taking(permission).putBack(uid, permission, guard.toGiveBack(permission, state))
-                }
-                val targets = command.targets
-                // Found before they are taken; one held already was taken
-                // by this program, and is as it left it.
-                val found = statesBefore(uid, targets.permissions - guard.targets.permissions, emptyMap())
-                guarded[uid] = guard.copy(
-                    targets = targets,
-                    tookPermissions = guard.tookPermissions - command.resets.permissions.map { it.first }.toSet() + found,
-                    regranted = guard.regranted - command.resets.permissions.map { it.first }.toSet() - found.keys,
-                )
-                taken += targets.ops.count { (name, mode) -> setKnown(name, uid, mode) }
-                val known = command.resets.ops.any { (name, _) -> isKnown(name) } || targets.ops.keys.any(::isKnown)
-                if (known && taken == 0) error("the system took none of the modes")
-                for (permission in targets.permissions) taking(permission).hold(uid, permission)
-                reportUnheld(uid, verify(uid), always = true)
-                emit(AppOpsGuardProtocol.appliedLine(uid, found.toList()))
-            }
-
-            is Command.Restore -> {
-                val guard = guarded[uid]
-                // Nothing saved: every guarded op goes back to having no uid
-                // mode, which is how the system has them before it is asked.
-                val values = if (command.values.isEmpty()) Values(ops.map { it.name to null }, emptyList()) else command.values
-                // Given back below, after the ops: their grants now are
-                // this program's doing.
-                val held = AppOpsGuardProtocol.heldWhileSettingBack(guard.heldPermissions(), values)
-                for ((name, mode) in values.ops) {
-                    val op = ops.find { it.name == name } ?: resolve(listOf(name)).firstOrNull()
-                    if (op == null) {
-                        System.err.println("restore $uid: no op $name here")
-                        continue
-                    }
-                    restoreItem(name) { check(setBack(op, uid, mode, values.grants[name], held)) { "app op restore incomplete" } }
-                }
-                // Still guarded if it fails: the daemon then keeps the app
-                // sandboxed, and its ops must stay as they are held.
-                for ((permission, state) in values.permissions) {
-                    restoreItem(permission) { taking(permission).putBack(uid, permission, guard?.toGiveBack(permission, state) ?: state) }
-                }
-                guarded.remove(uid)
-                reported.remove(uid)
-                emit(AppOpsGuardProtocol.restoredLine(uid))
-            }
-
-            is Command.Release -> {
-                // The daemon gave up on a `set` it got no answer to, and does
-                // not have what was saved: put that back from here.
-                val guard = guarded[uid]
-                for ((name, mode) in guard?.saved.orEmpty()) {
-                    val op = ops.find { it.name == name } ?: continue
-                    check(setBack(op, uid, mode, guard?.savedGrants?.get(name), guard.heldPermissions()))
-                }
-                for ((permission, state) in guard?.tookPermissions.orEmpty()) {
-                    taking(permission).putBack(uid, permission, state)
-                }
-                guarded.remove(uid)
-                reported.remove(uid)
-                emit(AppOpsGuardProtocol.restoredLine(uid))
-            }
-
-            is Command.Verify -> {
-                val guard = guarded[uid]
-                guarded[uid] = guard?.copy(targets = command.targets) ?: Guard(null, command.targets)
-                reportUnheld(uid, verify(uid), always = true)
-                emit(AppOpsGuardProtocol.verifiedLine(uid))
-            }
-
-            is Command.Kind -> {
-                // Answered apart from the commands, `unknown` where it
-                // cannot be told: never taken for a command's answer.
-                val library = try {
-                    isLibrary(command.packageName, uid)
-                } catch (e: Throwable) {
-                    System.err.println("kind $uid: ${describe(e)}")
-                    null
-                }
-                emit(AppOpsGuardProtocol.kindLine(uid, command.request, library))
-            }
+            GuardedOp(name, code, switchCode, toDefault?.invokeOrNull(switchCode) as Int?, permission)
         }
     }
 
     /**
-     * The states of [names] for [uid] as they are now, or as [known] has
-     * them; none for a permission no package of the uid requests.
+     * Answer `kind`, apart from the commands, `unknown` where it cannot be
+     * told: never taken for a command's answer.
      */
-    private fun statesBefore(uid: Int, names: Set<String>, known: Map<String, PermissionState>): Map<String, PermissionState> = names.mapNotNull { name ->
-        (known[name] ?: taking(name).state(uid, name))?.let { name to it }
-    }.toMap()
+    private fun answerKind(command: AppOpsGuardProtocol.Command.Kind) {
+        val library = try {
+            isLibrary(command.packageName, command.uid)
+        } catch (e: Throwable) {
+            System.err.println("kind ${command.uid}: ${describe(e)}")
+            null
+        }
+        emit(AppOpsGuardProtocol.kindLine(command.uid, command.request, library))
+    }
 
     /**
      * Whether [packageName], one of [uid]'s packages, is a library rather
@@ -581,128 +427,49 @@ object AppOpsGuard {
             .invoke(null, binder)!!
     }
 
-    /** Whether this device knows the op [name]. */
-    private fun isKnown(name: String): Boolean = ops.any { it.name == name }
+    /** The framework, as [AppOpsGuardHandler] is given it. */
+    private object Framework : AppOpsSystem {
+        override val ops: List<GuardedOp> get() = AppOpsGuard.ops
 
-    /** Set [name], if this device knows it, to [mode] for [uid]; whether it was set. */
-    private fun setKnown(name: String, uid: Int, mode: Int): Boolean {
-        val op = ops.find { it.name == name } ?: return false
-        return setUidMode(name, op.code, uid, mode)
-    }
+        override fun requireOwner(uid: Int) = AppOpsGuard.requireOwner(uid)
 
-    /**
-     * Set [op] back for [uid] to [saved], or to the mode the system gives
-     * it for its permission now if the grant is no longer [grantThen]
-     * ([AppOpsGuardProtocol.modeToRestore]), unless the permission is among
-     * those this program [held]; whether it was set.
-     */
-    private fun setBack(op: Op, uid: Int, saved: Int?, grantThen: Int?, held: Set<String>): Boolean {
-        val compared = grantThen != null && AppOpsGuardProtocol.comparesGrant(op.permission, held)
-        // Setting an op's default mode removes the uid mode.
-        val default = op.defaultMode ?: MODE_DEFAULT
-        return AppOpsGuardProtocol.restoreUidMode(
-            desiredMode = {
-                val grantNow = if (compared) grantMode(op, uid) else null
-                AppOpsGuardProtocol.modeToRestore(saved, grantThen, grantNow) ?: default
-            },
-            writeMode = { mode -> setUidMode(op.name, op.code, uid, mode) },
-            readMode = { states(uid, listOf(op)).single().uidMode ?: default },
-        )
-    }
+        override fun restoreItem(name: String, change: () -> Unit) = AppOpsGuard.restoreItem(name, change)
 
-    /** The permissions this program holds revoked for a guarded uid, or took and has not given back. */
-    private fun Guard?.heldPermissions(): Set<String> = if (this == null) emptySet() else targets.permissions + tookPermissions.keys
+        override fun specialAccess(): Taking = AppOpsGuard.specialAccess()
 
-    /** The mode the system gives each guarded op of a runtime permission for its grant to [uid]. */
-    private fun grantModes(uid: Int): Map<String, Int> = ops.mapNotNull { op -> grantMode(op, uid)?.let { op.name to it } }.toMap()
+        override fun resolve(name: String): GuardedOp? = AppOpsGuard.resolve(listOf(name)).firstOrNull()
 
-    /**
-     * The mode the system gives [op] for its permission's grant to [uid],
-     * or `null` where it has no runtime permission or the permissions
-     * cannot be reached: its mode is then put back as saved.
-     */
-    private fun grantMode(op: Op, uid: Int): Int? {
-        val permission = op.permission ?: return null
-        val connected = permissions ?: return null
-        return try {
-            connected.grantMode(uid, permission)
-        } catch (e: Throwable) {
-            System.err.println("grant of ${op.name} for $uid: ${describe(e)}")
-            null
-        }
-    }
-
-    /**
-     * Set what [uid] is held to again where it no longer is. Returns what
-     * still is not after that: the ops the system did not keep at their
-     * mode, and the permissions it did not keep revoked.
-     */
-    private fun verify(uid: Int): List<String> {
-        requireOwner(uid)
-        val targets = guarded[uid]?.targets ?: return emptyList()
-        val again = AppOpsGuardProtocol.opsToSetAgain(states(uid), targets.ops)
-        for (name in again) {
-            if (setKnown(name, uid, targets.ops.getValue(name))) {
-                emit(AppOpsGuardProtocol.revertedLine(uid, name))
-            }
-        }
-        // Read again only when something was set again: otherwise every op
-        // was found as it is held.
-        val unheld = if (again.isEmpty()) mutableListOf() else AppOpsGuardProtocol.opsToSetAgain(states(uid), targets.ops).toMutableList()
-        for (permission in targets.permissions) {
-            try {
-                // Granted again while held: the user's choice since it was
-                // taken, which is what to give back from now on.
-                val regranted = AppOpsGuardProtocol.regranted(taking(permission).state(uid, permission))
-                if (!taking(permission).hold(uid, permission)) continue
-                val kept = regranted?.let { AppOpsGuardProtocol.regrantedToKeep(guarded[uid]?.tookPermissions?.get(permission), it) }
-                if (kept != null) {
-                    guarded[uid]?.let { guarded[uid] = it.copy(tookPermissions = it.tookPermissions + (permission to kept), regranted = it.regranted + permission) }
+        override fun uidModes(uid: Int, switchCodes: IntArray): Map<Int, Int> {
+            // Only ops with a uid mode of their own are listed, under their
+            // switch op; `null` if there are none.
+            val packages = serviceType
+                .getMethod("getUidOps", Int::class.javaPrimitiveType, IntArray::class.java)
+                .invoke(service, uid, switchCodes) as List<*>?
+            val modes = mutableMapOf<Int, Int>()
+            for (pkg in packages.orEmpty()) {
+                for (entry in pkg?.call("getOps") as List<*>? ?: continue) {
+                    entry ?: continue
+                    modes[entry.call("getOp") as Int] = entry.call("getMode") as Int
                 }
-                emit(AppOpsGuardProtocol.revertedLine(uid, permission, kept))
-            } catch (e: Throwable) {
-                System.err.println("holding $permission for $uid: ${describe(e)}")
-                unheld += permission
             }
+            return modes
         }
-        return unheld
-    }
 
-    /** Print [unheld] for [uid]: [always], or if it changed since last printed. */
-    private fun reportUnheld(uid: Int, unheld: List<String>, always: Boolean) {
-        if (!always && reported[uid] == unheld) return
-        reported[uid] = unheld
-        emit(AppOpsGuardProtocol.unheldLine(uid, unheld))
-    }
-
-    /** The guarded ops' uid modes for [uid], as the service reports them. */
-    private fun states(uid: Int, selected: List<Op> = ops): List<OpState> {
-        val switchCodes = selected.map { it.switchCode }.distinct().toIntArray()
-        // Only ops with a uid mode of their own are listed, under their
-        // switch op; `null` if there are none.
-        val packages = serviceType
-            .getMethod("getUidOps", Int::class.javaPrimitiveType, IntArray::class.java)
-            .invoke(service, uid, switchCodes) as List<*>?
-        val modes = mutableMapOf<Int, Int>()
-        for (pkg in packages.orEmpty()) {
-            for (entry in pkg?.call("getOps") as List<*>? ?: continue) {
-                entry ?: continue
-                modes[entry.call("getOp") as Int] = entry.call("getMode") as Int
-            }
+        override fun setUidMode(code: Int, uid: Int, mode: Int) {
+            serviceType
+                .getMethod("setUidMode", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
+                .invoke(service, code, uid, mode)
         }
-        return selected.map { OpState(it.name, modes[it.switchCode], it.defaultMode) }
-    }
 
-    /** Whether the mode was set; a failure is reported and the rest carries on. */
-    private fun setUidMode(name: String, code: Int, uid: Int, mode: Int): Boolean = try {
-        requireOwner(uid)
-        serviceType
-            .getMethod("setUidMode", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
-            .invoke(service, code, uid, mode)
-        true
-    } catch (e: Throwable) {
-        System.err.println("setting $name for $uid: ${describe(e)}")
-        false
+        override val permissions: RuntimePermissions? get() = AppOpsGuard.permissions
+
+        override val permissionsMissing: String get() = AppOpsGuard.permissionsMissing
+
+        override fun emit(line: String) = AppOpsGuard.emit(line)
+
+        override fun warn(message: String) = System.err.println(message)
+
+        override fun describe(e: Throwable): String = AppOpsGuard.describe(e)
     }
 
     /**
@@ -747,15 +514,7 @@ object AppOpsGuard {
                 Thread.sleep(SETTLE_MS)
                 changes.clear()
             }
-            synchronized(lock) {
-                for (uid in guarded.keys.toList()) {
-                    try {
-                        reportUnheld(uid, verify(uid), always = false)
-                    } catch (e: Throwable) {
-                        System.err.println("checking $uid: ${describe(e)}")
-                    }
-                }
-            }
+            synchronized(lock) { handler.checkAll() }
         }
     }
 
@@ -783,14 +542,14 @@ object AppOpsGuard {
      * app too old for runtime permissions): every change is looked at again
      * afterwards, and fails if it did not take.
      */
-    private class Permissions(private val service: Any, private val packages: Any) : Taking {
+    private class Permissions(private val service: Any, private val packages: Any) : RuntimePermissions {
         private val permissionType = Class.forName("android.permission.IPermissionManager")
         private val packageType = Class.forName("android.content.pm.IPackageManager")
 
         private val getFlags = DeviceCall(permissionType, "getPermissionFlags", listOf(STRING, STRING), listOf(INT))
         private val updateFlags = DeviceCall(permissionType, "updatePermissionFlags", listOf(STRING, STRING, INT, INT, BOOLEAN), listOf(INT))
-        private val grant = DeviceCall(permissionType, "grantRuntimePermission", listOf(STRING, STRING), listOf(INT))
-        private val revoke = DeviceCall(permissionType, "revokeRuntimePermission", listOf(STRING, STRING), listOf(INT, STRING))
+        private val grantCall = DeviceCall(permissionType, "grantRuntimePermission", listOf(STRING, STRING), listOf(INT))
+        private val revokeCall = DeviceCall(permissionType, "revokeRuntimePermission", listOf(STRING, STRING), listOf(INT, STRING))
         private val packagesForUid = packageType.getMethod("getPackagesForUid", INT)
         private val checkUidPermission = packageType.getMethod("checkUidPermission", STRING, INT)
         private val packageInfo = packageType.optionalMethod("getPackageInfo", STRING, LONG, INT)
@@ -806,33 +565,12 @@ object AppOpsGuard {
             null
         }
 
-        /**
-         * The runtime permissions asked about, each with its background
-         * permission if it has one, and `null` for one that is not runtime.
-         */
-        private val runtime = mutableMapOf<String, Runtime?>()
-
-        private class Runtime(val background: String?)
-
-        /**
-         * The mode the system gives the op of [permission] for its grant to
-         * [uid] ([AppOpsGuardProtocol.grantMode]), `null` if it is not a
-         * runtime permission. The grant alone decides: the flag that marks
-         * the op of a granted permission ignored (`REVOKED_COMPAT`) is what
-         * this program's own `setUidMode` leaves while it holds the op.
-         */
-        fun grantMode(uid: Int, permission: String): Int? {
-            val info = if (runtime.containsKey(permission)) runtime[permission] else runtimeInfo(permission).also { runtime[permission] = it }
-            info ?: return null
-            return AppOpsGuardProtocol.grantMode(isGranted(uid, permission), info.background?.let { isGranted(uid, it) })
-        }
-
-        private fun runtimeInfo(permission: String): Runtime? {
+        override fun runtime(permission: String): RuntimePermissions.Runtime? {
             val method = permissionInfo ?: error("no getPermissionInfo")
             val field = backgroundField ?: error("no backgroundPermission")
             // Asked for as the system, which is shown every permission.
             val info = method.call(service, permission, "android", 0) as PermissionInfo? ?: return null
-            return if (info.protection == PermissionInfo.PROTECTION_DANGEROUS) Runtime(field.get(info) as String?) else null
+            return if (info.protection == PermissionInfo.PROTECTION_DANGEROUS) RuntimePermissions.Runtime(field.get(info) as String?) else null
         }
 
         /** Have [watcher] called on every change of a permission. */
@@ -843,64 +581,20 @@ object AppOpsGuard {
             addListener.call(service, listener)
         }
 
-        /** The state of [permission] for [uid], `null` if no package of it requests it. */
-        override fun state(uid: Int, permission: String): PermissionState? {
-            val first = requesting(uid, permission).firstOrNull() ?: return null
-            return PermissionState(isGranted(uid, permission), flags(first, permission, uid) and USER_FLAGS)
+        override fun grant(pkg: String, permission: String, uid: Int) {
+            grantCall.call(service, listOf(pkg, permission), listOf(userOf(uid)))
         }
 
-        /**
-         * Revoke [permission] for [uid], fixed as the user's choice, where
-         * it is not already; whether anything had to be changed.
-         */
-        override fun hold(uid: Int, permission: String): Boolean {
-            val requesting = requesting(uid, permission)
-            var changed = false
-            for (pkg in requesting) {
-                requireOwner(uid)
-                if (isGranted(uid, permission)) {
-                    // The system's own reason, as when the user revokes it:
-                    // the app can read why it was ended.
-                    revoke.call(service, listOf(pkg, permission), listOf(userOf(uid), null))
-                    changed = true
-                }
-                if (flags(pkg, permission, uid) and FLAG_USER_FIXED == 0) {
-                    setFlags(pkg, permission, uid, FLAG_USER_FIXED, FLAG_USER_FIXED)
-                    changed = true
-                }
-            }
-            check(requesting.all { AppOpsGuardProtocol.isHeld(isGranted(uid, permission), flags(it, permission, uid)) }) {
-                "the system did not take $permission away"
-            }
-            return changed
+        override fun revoke(pkg: String, permission: String, uid: Int) {
+            // The system's own reason, as when the user revokes it: the app
+            // can read why it was ended.
+            revokeCall.call(service, listOf(pkg, permission), listOf(userOf(uid), null))
         }
 
-        /**
-         * Give [uid] back [permission] as it was ([state]), or, with no state
-         * known, only let the app ask for it again.
-         */
-        override fun putBack(uid: Int, permission: String, state: PermissionState?) {
-            val requesting = requesting(uid, permission)
-            for (pkg in requesting) {
-                requireOwner(uid)
-                if (state == null) {
-                    setFlags(pkg, permission, uid, FLAG_USER_FIXED, 0)
-                    continue
-                }
-                val granted = isGranted(uid, permission)
-                if (state.granted && !granted) grant.call(service, listOf(pkg, permission), listOf(userOf(uid)))
-                if (!state.granted && granted) revoke.call(service, listOf(pkg, permission), listOf(userOf(uid), null))
-                setFlags(pkg, permission, uid, USER_FLAGS, state.flags)
-            }
-            check(requesting.all { AppOpsGuardProtocol.isPutBack(state, isGranted(uid, permission), flags(it, permission, uid)) }) {
-                "the system did not give $permission back"
-            }
-        }
-
-        /** The packages of [uid] that request [permission]. */
+        /** The packages of [uid]. */
         fun packagesOf(uid: Int): List<String> = (packagesForUid.call(packages, uid) as Array<*>?).orEmpty().filterIsInstance<String>()
 
-        private fun requesting(uid: Int, permission: String): List<String> {
+        override fun requesting(uid: Int, permission: String): List<String> {
             val names = packagesForUid.call(packages, uid) as Array<*>? ?: return emptyList()
             return names.filterIsInstance<String>().filter { name ->
                 val info = if (packageInfo != null) {
@@ -912,32 +606,17 @@ object AppOpsGuard {
             }
         }
 
-        /** The system keeps one grant for every package of a uid. */
-        private fun isGranted(uid: Int, permission: String): Boolean = checkUidPermission.call(packages, permission, uid) == PackageManager.PERMISSION_GRANTED
+        override fun isGranted(uid: Int, permission: String): Boolean = checkUidPermission.call(packages, permission, uid) == PackageManager.PERMISSION_GRANTED
 
-        private fun flags(pkg: String, permission: String, uid: Int): Int = getFlags.call(service, listOf(pkg, permission), listOf(userOf(uid))) as Int
+        override fun flags(pkg: String, permission: String, uid: Int): Int = getFlags.call(service, listOf(pkg, permission), listOf(userOf(uid))) as Int
 
-        /**
-         * Set the flags in [mask] to [values]. Policy flags are never among
-         * them, so the check of the right to change those is asked for.
-         */
-        private fun setFlags(pkg: String, permission: String, uid: Int, mask: Int, values: Int) {
+        // Policy flags are never among them, so the check of the right to
+        // change those is asked for.
+        override fun setFlags(pkg: String, permission: String, uid: Int, mask: Int, values: Int) {
             updateFlags.call(service, listOf(pkg, permission, mask, values, true), listOf(userOf(uid)))
         }
 
         private fun userOf(uid: Int): Int = uid / PER_USER_RANGE
-    }
-
-    /** What is taken from a uid by name, and given back: see [Permissions] and [SpecialAccess]. */
-    private interface Taking {
-        /** The state of [name] for [uid], `null` if no package of it has it to take. */
-        fun state(uid: Int, name: String): PermissionState?
-
-        /** Take [name] from [uid] where it is not taken; whether anything had to be changed. */
-        fun hold(uid: Int, name: String): Boolean
-
-        /** Give [uid] back [name] as it was ([state]); `null` where that is not known. */
-        fun putBack(uid: Int, name: String, state: PermissionState?)
     }
 
     /**
