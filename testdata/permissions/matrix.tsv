@@ -124,5 +124,8 @@ location_precise_allowed_in_settings_while_coarse_after_the_helper_restarts	loca
 location_precise_allowed_in_settings_while_coarse_and_the_helper_is_down	location	approximate	set:coarse,restart:helper&settings:grant:fine,set:on	disable	granted	foreground	precise	both
 location_coarse_through_a_daemon_restart	location	granted	set:coarse,restart:daemon,set:on	disable	granted	foreground	precise	both
 location_coarse_then_uninstalled	location	granted	set:coarse	uninstall	granted	foreground	precise	both
+location_precise_allowed_in_settings_right_before_leaving_coarse	location	approximate	set:coarse,settings:grant:fine&set:on	disable	granted	foreground	precise	both
+location_precise_allowed_in_settings_right_before_disable	location	approximate	set:coarse,settings:grant:fine	&disable	granted	foreground	precise	both
+location_precise_allowed_in_settings_right_before_another_item_changes	location	approximate	set:coarse,settings:grant:fine&set:camera=foreground,set:on	disable	granted	foreground	precise	both
 location_granted_with_pm_while_the_policy_syncs_late	location	denied	pm:grant,late:sync	disable	granted	foreground	precise	jvm
 contacts_granted_with_pm_while_the_policy_syncs_late	contacts	denied	pm:grant,late:sync	disable	granted	allow	yes	jvm

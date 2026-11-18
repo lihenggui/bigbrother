@@ -168,6 +168,9 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
 
     fun handle(command: Command) {
         val uid = command.uid
+        // What the check would find, had it run since the user's last
+        // change: a command may come first.
+        val regranted = if (command is Command.Verify) emptySet() else takeRegranted(uid)
         when (command) {
             is Command.Set -> {
                 val guard = guarded[uid]
@@ -184,11 +187,12 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
                 val found = statesBefore(uid, targets.permissions, guard?.tookPermissions.orEmpty())
                 // Written down first, so that a `release` after a failure
                 // below puts back whatever was done.
-                guarded[uid] = Guard(saved, targets, found, grants)
+                guarded[uid] = Guard(saved, targets, found, grants, regranted = guard?.regranted.orEmpty())
                 val taken = targets.ops.count { (name, mode) -> setKnown(name, uid, mode) }
                 // Ops this Android version doesn't have are nothing to hold.
                 if (targets.ops.keys.any(::isKnown) && taken == 0) error("the system took none of the modes")
                 for (permission in targets.permissions) taking(permission).hold(uid, permission)
+                reportRegranted(uid, regranted)
                 reportUnheld(uid, verify(uid), always = true)
                 system.emit(AppOpsGuardProtocol.savedLine(uid, Values(saved, found.toList(), grants)))
             }
@@ -218,6 +222,7 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
                 val known = command.resets.ops.any { (name, _) -> isKnown(name) } || targets.ops.keys.any(::isKnown)
                 if (known && taken == 0) error("the system took none of the modes")
                 for (permission in targets.permissions) taking(permission).hold(uid, permission)
+                reportRegranted(uid, regranted)
                 reportUnheld(uid, verify(uid), always = true)
                 system.emit(AppOpsGuardProtocol.appliedLine(uid, found.toList()))
             }
@@ -294,6 +299,41 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
             } catch (e: Throwable) {
                 system.warn("checking $uid: ${system.describe(e)}")
             }
+        }
+    }
+
+    /**
+     * Find the permissions held revoked for [uid] that were granted again
+     * since the last check, and keep the state each was found in as the
+     * one to give back, as the check does ([verify]). The system reports
+     * the grant, but the check waits for the burst of changes to settle,
+     * and a command that comes first would otherwise give the permission
+     * back, or take it again, as if the user had not chosen. Returns
+     * their names.
+     */
+    private fun takeRegranted(uid: Int): Set<String> {
+        val guard = guarded[uid] ?: return emptySet()
+        val found = guard.targets.permissions.mapNotNull { permission ->
+            try {
+                AppOpsGuardProtocol.regranted(taking(permission).state(uid, permission))?.let { permission to AppOpsGuardProtocol.regrantedToKeep(guard.tookPermissions[permission], it) }
+            } catch (e: Throwable) {
+                system.warn("looking at $permission for $uid: ${system.describe(e)}")
+                null
+            }
+        }.toMap()
+        if (found.isNotEmpty()) guarded[uid] = guard.copy(tookPermissions = guard.tookPermissions + found, regranted = guard.regranted + found.keys)
+        return found.keys
+    }
+
+    /**
+     * Report each of [regranted] that [uid] is still held to, taken back
+     * once more, with the state it was found in, as the check does: the
+     * daemon keeps that state to give back.
+     */
+    private fun reportRegranted(uid: Int, regranted: Set<String>) {
+        val guard = guarded[uid] ?: return
+        for (permission in regranted intersect guard.targets.permissions) {
+            guard.tookPermissions[permission]?.let { system.emit(AppOpsGuardProtocol.revertedLine(uid, permission, it)) }
         }
     }
 
