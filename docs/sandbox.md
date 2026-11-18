@@ -48,9 +48,7 @@ An app can read its own mounts, which show the path of its sandbox
 directory and the source of each tmpfs. Neither names the project: the
 tmpfs mounts have the usual source, `tmpfs`, and `<name>` is a hidden
 directory named at random when the first app is sandboxed. The daemon finds
-it again by a file in it that only root can see. A directory made under the
-fixed name `.bb_sandbox` by an earlier version is renamed the first time it
-is reached, with what is in it.
+it again by a file in it that only root can see.
 
 ## Items
 
@@ -147,9 +145,8 @@ restart is needed. The
 hook writes which of its hooks are in place to
 `/data/system/big_brother_sandbox.status`.
 
-The hook needs the `system` scope in the LSPosed manager. After updating
-from a version without the sandbox, enable that scope for Big Brother in
-the manager and restart the device.
+The hook needs the `system` scope in the LSPosed manager: enable that scope
+for Big Brother in the manager and restart the device.
 
 A fault in system_server restarts the device, so every hook falls back to
 the original method when its own work fails, and the hook does not install

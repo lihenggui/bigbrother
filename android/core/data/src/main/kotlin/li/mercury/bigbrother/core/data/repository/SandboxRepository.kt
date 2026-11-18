@@ -135,10 +135,9 @@ internal class RootSandboxRepository @Inject constructor(
         uid = getInt("uid"),
         packageName = getString("package"),
         enabled = getBoolean("enabled"),
-        created = optLong("created"),
-        settings = optJSONObject("settings")?.toModes().orEmpty(),
-        // A daemon from before the items did everything to every app.
-        items = optJSONObject("items")?.toModes() ?: SandboxItem.entries.associateWith { SandboxMode.ON },
+        created = getLong("created"),
+        settings = getJSONObject("settings").toModes(),
+        items = getJSONObject("items").toModes(),
     )
 
     /** Items and modes by name; what this build doesn't know is left out. */
@@ -179,7 +178,6 @@ internal class RootSandboxRepository @Inject constructor(
             "unrecognized subcommand",
             "unexpected argument",
             "unknown command",
-            "does not take commands",
         )
     }
 }

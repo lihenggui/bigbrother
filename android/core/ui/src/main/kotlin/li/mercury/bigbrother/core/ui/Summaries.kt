@@ -47,7 +47,7 @@ private const val SENSORS = "sensors"
  * they differ: which way the clipboard went ("Read 3 times · Written once"),
  * which sensors were turned on ("Accelerometer, Gyroscope (high rate) · 12
  * times"); [compact] for a line shared with more. Null for other kinds, and
- * for records that do not say it, such as those of an older module.
+ * for records that do not say it.
  */
 @Composable
 fun topicRecordsSummary(topic: String?, records: List<SubjectCount>, compact: Boolean = false): String? = when (topic) {

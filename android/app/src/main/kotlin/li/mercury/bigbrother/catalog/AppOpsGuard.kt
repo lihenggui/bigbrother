@@ -23,7 +23,6 @@ import android.os.Parcel
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.Command
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.GUARDED_OPS
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.MODE_DEFAULT
-import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.MODE_IGNORED
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.OpState
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
@@ -43,10 +42,9 @@ import kotlin.system.exitProcess
  *
  * It reads one command per line and answers each, one line per item:
  *
- * - `set <uid> [<op>=<mode>,...]`: prints `saved <uid> <op>=<mode>,...`, the
+ * - `set <uid> <op>=<mode>,...`: prints `saved <uid> <op>=<mode>,...`, the
  *   uid's current modes for the guarded ops, then sets the ops listed to the
- *   modes given (ignored or errored) and keeps them so. Without a list,
- *   every guarded op is ignored.
+ *   modes given (ignored or errored) and keeps them so.
  * - `apply <uid> <targets> <resets>`: for a guarded uid, sets the ops in
  *   `resets` (`<op>=<mode>,...`, or `-`) to those modes and leaves them to
  *   the system, then holds the uid to `targets` (as `set` takes them, or
@@ -57,12 +55,11 @@ import kotlin.system.exitProcess
  *   daemon lost what `set` saved.
  * - `release <uid>`: undoes a `set` whose answer the daemon did not get:
  *   sets the modes saved here back and prints `restored <uid>`.
- * - `verify <uid> [<op>=<mode>,...]`: sets each op the uid is held to that no
- *   longer has its mode again, printing `reverted <uid> <op>` for each, then
- *   `verified <uid>`. A uid not guarded yet is guarded from then on, to the
- *   ops listed, so that the daemon can resume after this program was
- *   restarted without saving modes it set itself; without a list, it is left
- *   alone.
+ * - `verify <uid> <op>=<mode>,...`: holds the uid to the ops listed and sets
+ *   each that no longer has its mode again, printing `reverted <uid> <op>`
+ *   for each, then `verified <uid>`. A uid not guarded yet is guarded from
+ *   then on, so that the daemon can resume after this program was restarted
+ *   without saving modes it set itself.
  *
  * A command that fails is answered with `failed <uid>`, and the reason goes
  * to the error output. So is one the system took none of: a `set` after
@@ -225,7 +222,7 @@ object AppOpsGuard {
                 // Asked again, the modes saved the first time are the ones to
                 // go back to: the current ones are this program's own.
                 val saved = guard?.saved ?: AppOpsGuardProtocol.savedModes(states(uid))
-                val targets = command.targets ?: allIgnored()
+                val targets = command.targets
                 val taken = targets.count { (name, mode) -> setKnown(name, uid, mode) }
                 // Ops this Android version doesn't have are nothing to hold.
                 if (targets.keys.any(::isKnown) && taken == 0) error("the system took none of the modes")
@@ -279,19 +276,12 @@ object AppOpsGuard {
             }
 
             is Command.Verify -> {
-                val guard = guarded[uid]
-                val targets = command.targets ?: guard?.targets
-                if (targets != null) {
-                    guarded[uid] = Guard(guard?.saved, targets)
-                    verify(uid)
-                }
+                guarded[uid] = Guard(guarded[uid]?.saved, command.targets)
+                verify(uid)
                 emit(AppOpsGuardProtocol.verifiedLine(uid))
             }
         }
     }
-
-    /** Every guarded op this device knows, ignored. */
-    private fun allIgnored(): Map<String, Int> = ops.associate { it.name to MODE_IGNORED }
 
     /** Whether this device knows the op [name]. */
     private fun isKnown(name: String): Boolean = ops.any { it.name == name }

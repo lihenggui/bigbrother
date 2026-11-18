@@ -22,8 +22,7 @@ They are packaged into the app's APK, which is also the flashable module, and
   runs under `supervise.sh` in the background, which restarts it with
   increasing delays.
 - `sync.sh` is run by the app to update an installed module in place. Replace
-  each file atomically (copy to a temporary name, then rename), and keep it
-  working against modules installed by older versions.
+  each file atomically (copy to a temporary name, then rename).
 - `uninstall.sh` takes every app out of the sandbox. Root managers run it
   either at once, with the daemon running, or at the next boot, before
   anything of the module has started: it has to work both ways. It then

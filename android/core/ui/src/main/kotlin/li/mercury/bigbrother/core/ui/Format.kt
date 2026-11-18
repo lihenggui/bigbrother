@@ -46,15 +46,9 @@ fun relativeTime(epochSeconds: Long): String {
 // Made for each use: a formatter keeps the locale it was made in, and the
 // user can change the language while the app runs.
 private val dateTimeFormat: DateTimeFormatter get() = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM)
-private val timeFormat: DateTimeFormatter get() = DateTimeFormatter.ofLocalizedTime(FormatStyle.MEDIUM)
-
-private fun localTime(epochSeconds: Long) = Instant.ofEpochSecond(epochSeconds).atZone(ZoneId.systemDefault())
 
 /** Date and time to the second, in the device's locale and time zone. */
-fun exactDateTime(epochSeconds: Long): String = dateTimeFormat.format(localTime(epochSeconds))
-
-/** Time of day to the second, in the device's locale and time zone. */
-fun exactTime(epochSeconds: Long): String = timeFormat.format(localTime(epochSeconds))
+fun exactDateTime(epochSeconds: Long): String = dateTimeFormat.format(Instant.ofEpochSecond(epochSeconds).atZone(ZoneId.systemDefault()))
 
 /** A storage volume's root: `/storage/emulated/<user>` or `/storage/<volume id>`. */
 val VOLUME_ROOT = Regex("^/storage/(?:emulated/\\d+|[^/]+)")

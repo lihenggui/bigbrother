@@ -50,8 +50,7 @@ interface AccessRepository {
 
     /**
      * The periods in which [uid] had a sensor turned on that overlap
-     * [range], most recent first. A module older than this app does not
-     * keep them and throws [li.mercury.bigbrother.core.data.RecordsException.ModuleOutdated].
+     * [range], most recent first.
      */
     suspend fun getSensorSessions(uid: Int, range: TimeRange): List<SensorSession>
 

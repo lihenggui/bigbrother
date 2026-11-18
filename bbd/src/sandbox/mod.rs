@@ -211,13 +211,7 @@ pub struct Enabled {
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Disabled {
     /// False if the app was not in the sandbox, and nothing was done.
-    #[serde(default = "yes")]
     pub was_enabled: bool,
-}
-
-/// What a daemon that does not say is taken to mean.
-fn yes() -> bool {
-    true
 }
 
 /// The answer to `sandbox.disable_all`.
@@ -241,13 +235,10 @@ pub struct ListedApp {
     pub package: String,
     pub enabled: bool,
     /// When it was first put in the sandbox, in seconds since the epoch.
-    #[serde(default)]
     pub created: i64,
     /// The items it has a mode of its own for.
-    #[serde(default)]
     pub settings: Settings,
     /// What applies to it: its own settings over the global ones.
-    #[serde(default)]
     pub items: Settings,
 }
 

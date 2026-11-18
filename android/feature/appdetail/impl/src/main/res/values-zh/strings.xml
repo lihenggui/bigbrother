@@ -84,7 +84,6 @@
     <string name="open_file_no_access">无法访问共享存储，请确认已授予 root 权限。</string>
 
     <string name="open_file">打开</string>
-    <string name="time_span">%1$s – %2$s</string>
     <string name="show_all_details">显示全部 %d 项</string>
     <plurals name="apps_asked">
         <item quantity="other">查询了 %d 个应用</item>

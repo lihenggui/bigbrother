@@ -90,8 +90,8 @@ enum class InstalledModule {
     OUTDATED,
 
     /**
-     * Newer than this app's. Left alone: its daemon may have upgraded the
-     * database past what this app's daemon can read.
+     * Newer than this app's. Left alone: this app's daemon may not read its
+     * database.
      */
     NEWER,
 
@@ -148,9 +148,8 @@ internal class RootModuleRepository @Inject constructor(
         val staged = withContext(ioDispatcher) { stageBundledModule() }
             ?: throw RecordsException.CommandFailed("This app carries no daemon for ${Build.SUPPORTED_ABIS.first()}")
         try {
-            // The script comes from this app, not the installed module, so
-            // that a module from before it existed can be updated too. Run by
-            // its own shell, its exit leaves the shared root shell open.
+            // The script comes from this app: the module does not carry it.
+            // Run by its own shell, its exit leaves the shared root shell open.
             val result = rootShell.run(
                 "sh ${staged.resolve(SYNC_SCRIPT).path.shellQuoted()} " +
                     "${staged.path.shellQuoted()} ${context.applicationInfo.sourceDir.shellQuoted()} 2>&1",

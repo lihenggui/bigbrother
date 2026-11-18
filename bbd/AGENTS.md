@@ -7,9 +7,9 @@ JSON.
 
 ## Output is an interface
 
-- Newer and older apps and daemons talk to each other (see the root
-  `AGENTS.md`). Add fields and subcommands; do not rename, remove or repurpose
-  existing ones, and keep options backward compatible.
+- The app parses this output. Change it together with the app, in the same
+  commit; no compatibility with earlier versions is kept (see the root
+  `AGENTS.md`).
 - Every query first asks the running daemon to write what it holds
   (`control::request_flush`, over `bbd.sock`), waiting at most one second.
   `main` does this for every subcommand except `run`; a new subcommand that
@@ -51,9 +51,9 @@ JSON.
 ## Database
 
 - SQLite at `/data/adb/big_brother/bb.db`, records kept 30 days.
-- The schema is versioned (`SCHEMA_VERSION` in `src/store.rs`). A schema change
-  bumps it, adds a step to `migrate`, and adds a test that upgrades a database
-  of the previous version.
+- The schema is `SCHEMA` in `src/store.rs`, at `SCHEMA_VERSION`. A schema
+  change edits `SCHEMA` and bumps the version; a database at another version
+  is refused, not upgraded.
 
 ## Power and performance
 

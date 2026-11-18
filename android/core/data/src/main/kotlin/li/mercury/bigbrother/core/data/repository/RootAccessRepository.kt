@@ -71,10 +71,7 @@ internal class RootAccessRepository @Inject constructor(
                 packageName = row.getString("pkg"),
                 counts = Category.entries.associateWith { row.optInt(it.id) },
                 lastSeen = row.getLong("last_ts"),
-                // A module older than this app doesn't report files read
-                // separately; fall back to everything it touched rather than
-                // show every app as having read nothing.
-                filesRead = if (row.has("files_read")) row.getInt("files_read") else row.optInt("storage"),
+                filesRead = row.getInt("files_read"),
                 folders = row.optJSONArray("folders").toStringList(),
                 folderCount = row.optInt("folder_count"),
                 topics = row.optJSONArray("topics").toStringList(),
@@ -176,7 +173,10 @@ internal class RootAccessRepository @Inject constructor(
         )
     }
 
-    /** A timeline entry's records; an older daemon leaves them out. */
+    /**
+     * A timeline entry's records, which the daemon lists only for kinds of
+     * data whose records each say something of their own.
+     */
     private fun JSONArray?.toSubjectCounts(): List<SubjectCount> = if (this == null) {
         emptyList()
     } else {
@@ -221,10 +221,9 @@ internal class RootAccessRepository @Inject constructor(
                 viaProvider = Action.isViaProvider(mode),
                 allowed = row.getInt("ok"),
                 denied = row.getInt("fail"),
-                firstSeen = row.getLong("first_ts"),
-                lastSeen = row.getLong("last_ts"),
-                // The daemon names it when several paths are asked for (an
-                // older one does not); with one, it is that one.
+                time = row.getLong("ts"),
+                // The daemon names it when several paths are asked for; with
+                // one, it is that one.
                 subject = row.optString("path").ifEmpty { paths.singleOrNull() },
             )
         }
@@ -256,12 +255,7 @@ internal class RootAccessRepository @Inject constructor(
         val stats = JSONObject(query("stats"))
         val meta = stats.optJSONObject("meta") ?: JSONObject()
         RecorderStatus(
-            recording = if (stats.has("daemon_running")) {
-                stats.getBoolean("daemon_running")
-            } else {
-                // An older module doesn't say; its daemon writes every 5 s.
-                System.currentTimeMillis() / 1000 - meta.optLong("last_flush") < STALE_AFTER_SECONDS
-            },
+            recording = stats.getBoolean("daemon_running"),
             // Per kind of activity the daemon stores 1 (recording), 0 (can't
             // on this device) or -1 (not known yet, shortly after it starts).
             // Only a definite 0 is worth telling the user about.
@@ -312,8 +306,5 @@ internal class RootAccessRepository @Inject constructor(
             "cannot be used multiple times",
         )
         const val COVERAGE_PREFIX = "coverage_"
-
-        /** An older daemon writes every 5 s; allow several missed beats. */
-        const val STALE_AFTER_SECONDS = 30
     }
 }

@@ -260,8 +260,7 @@ fn since(hours: Option<u32>) -> i64 {
 struct StatsOutput {
     #[serde(flatten)]
     stats: store::Stats,
-    /// Whether the daemon is running. Older versions leave this out, and
-    /// their `last_flush` in `meta`, renewed every 5 s, says it instead.
+    /// Whether the daemon is running.
     daemon_running: bool,
 }
 

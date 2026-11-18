@@ -49,8 +49,8 @@ data class RecordUiState(
     val historyFailure: LoadFailure? = null,
     /**
      * For sensors: when each was on, most recent first. Null when not
-     * loaded, or not to be had: from an older module, or for records that
-     * are not the app's own.
+     * loaded, when the read failed, or for records that are not the app's
+     * own.
      */
     val sensorSessions: List<SensorSession>? = null,
     val loaded: Boolean = false,
@@ -115,9 +115,8 @@ class RecordViewModel @AssistedInject constructor(
     }
 
     /**
-     * When each sensor was on. A module older than this app does not keep
-     * that; the section is then left out, as it is when the read fails, and
-     * the rest of the record still shows.
+     * When each sensor was on. If the read fails, the section is left out
+     * and the rest of the record still shows.
      */
     private suspend fun loadSensorSessions() {
         val sessions = try {
