@@ -57,7 +57,6 @@ use super::{
     dirs::{self, MEDIA_RW},
     mounts::{self, Kernel},
 };
-use crate::packages::PER_USER_RANGE;
 
 /// How long a process is waited for to come to a stop. It stops as it leaves
 /// the system call it was caught in, which takes microseconds.
@@ -216,8 +215,7 @@ impl Effect for Storage {
     }
 
     fn enable(&mut self, entry: &mut Entry, packages: &[String]) -> anyhow::Result<()> {
-        let media = format!("/data/media/{}", entry.uid / PER_USER_RANGE);
-        dirs::prepare(Path::new(&media), entry.uid, MEDIA_RW)
+        dirs::prepare(Path::new(&mounts::media_of(entry.uid)), entry.uid, MEDIA_RW)
             .context("making the sandbox directory")?;
         self.hold(entry.uid, packages)
     }

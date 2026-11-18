@@ -102,7 +102,21 @@ has_sandbox() {
         mounts="$(as_root "cat /proc/$pid/mountinfo 2>/dev/null")"
         [[ -n "$mounts" ]] || continue
         looked=$((looked + 1))
-        grep -q "/.bb_sandbox/$uid /storage/emulated/0 " <<<"$mounts" || return 1
+        grep -qE " /[^ ]+/$uid /storage/emulated/0 " <<<"$mounts" || return 1
+    done
+    ((looked > 0))
+}
+
+# Whether the mounts of the canary's processes leave the project unnamed: an
+# app can read its own mounts. (The canary's package name has "bigbrother"
+# in it, and its own directories are mounted under that name.)
+names_nothing() {
+    local pid mounts looked=0
+    for pid in $(adb shell pidof "$PACKAGE" | tr -d '\r'); do
+        mounts="$(as_root "cat /proc/$pid/mountinfo 2>/dev/null")"
+        [[ -n "$mounts" ]] || continue
+        looked=$((looked + 1))
+        grep -qE 'bb_sandbox|big_brother' <<<"$mounts" && return 1
     done
     ((looked > 0))
 }
@@ -152,6 +166,7 @@ echo "in the sandbox:"
 run_canary
 inside="$view"
 check "the process has the sandbox mounted over shared storage" has_sandbox
+check "no mount names the project" names_nothing
 
 # Layers 1 and 2: storage and kernel information.
 unexpected=""

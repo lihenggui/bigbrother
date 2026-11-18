@@ -45,5 +45,5 @@ rm -rf /data/adb/big_brother
 # the hook, which stays for as long as the app does, sandboxes nothing.
 rm -rf /data/system/big_brother_sandbox /data/system/big_brother_sandbox.status \
     /data/system/big_brother_sandbox.new /data/system/big_brother_hook
-# The sandbox directories (/data/media/<user>/.bb_sandbox) are kept: they
-# hold what sandboxed apps saved.
+# The sandbox directories (in a hidden directory of /data/media/<user> with a
+# name drawn at random) are kept: they hold what sandboxed apps saved.

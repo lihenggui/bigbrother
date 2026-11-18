@@ -28,13 +28,9 @@
 //! and leaves the app in the stopped state, where it gets no broadcasts
 //! until the user opens it.
 
-use std::{fs, os::unix::fs::MetadataExt as _};
+use std::{fs, os::unix::fs::MetadataExt as _, path::Path};
 
-use super::{
-    Effect, Entry,
-    gate::Process,
-    mounts::{self, TMPFS_SOURCE},
-};
+use super::{Effect, Entry, dirs, gate::Process, mounts};
 
 /// Ends an app's processes as it enters or leaves the sandbox. The last of
 /// the effects: by then everything the next start will find is in place.
@@ -77,21 +73,29 @@ const PASS_PAUSE: std::time::Duration = std::time::Duration::from_millis(20);
 /// one may fork while the others are being ended, or have been about to
 /// take the uid when it was looked for.
 fn end(uid: u32, which: Which) {
+    // Looked up once: it is the same for every process of the uid. If it
+    // cannot be, a process with its sandbox is ended too, and gets it again
+    // as it starts.
+    let sandboxes = dirs::sandboxes_name(Path::new(&mounts::media_of(uid))).unwrap_or_else(|e| {
+        eprintln!("bbd: warning: looking up the sandbox directory: {e}");
+        None
+    });
     for pass in 0..PASSES {
         if pass > 0 {
             std::thread::sleep(PASS_PAUSE);
         }
         // Twice at least: what was just about to take the uid is not seen
         // the first time.
-        if end_once(uid, which) == 0 && pass > 0 {
+        if end_once(uid, which, sandboxes.as_deref()) == 0 && pass > 0 {
             break;
         }
     }
 }
 
 /// One pass; returns how many were ended. A process that cannot be looked
-/// at has ended already.
-fn end_once(uid: u32, which: Which) -> u32 {
+/// at has ended already. `sandboxes` is the name of the directory of the
+/// sandboxes, if it could be found.
+fn end_once(uid: u32, which: Which, sandboxes: Option<&str>) -> u32 {
     let Ok(processes) = fs::read_dir("/proc") else {
         return 0;
     };
@@ -119,7 +123,7 @@ fn end_once(uid: u32, which: Which) -> u32 {
             continue;
         }
         let sandboxed = fs::read_to_string(format!("/proc/{pid}/mountinfo"))
-            .is_ok_and(|mounts| has_sandbox(&mounts, uid));
+            .is_ok_and(|mounts| has_sandbox(&mounts, uid, sandboxes));
         if which == Which::All || !sandboxed {
             held.signal(libc::SIGKILL);
             ended += 1;
@@ -129,27 +133,41 @@ fn end_once(uid: u32, which: Which) -> u32 {
 }
 
 /// Whether a process with these mounts (`/proc/<pid>/mountinfo`) was given
-/// the sandbox of `uid`: its shared storage is the sandbox directory, or
-/// the empty stand-in for one.
+/// the sandbox of `uid`: its shared storage is the sandbox directory, in
+/// the directory of the sandboxes named `sandboxes`, or the read-only empty
+/// stand-in for one, told by its size. Nothing else is mounted on the root
+/// of a user's shared storage: the system mounts its storage on
+/// `/storage/emulated`, a level above.
 ///
 /// A line is `<id> <parent> <dev> <root> <mount point> <options> ... -
 /// <type> <source> ...`, where the root is the mounted directory's path in
 /// its own filesystem.
-fn has_sandbox(mountinfo: &str, uid: u32) -> bool {
+fn has_sandbox(mountinfo: &str, uid: u32, sandboxes: Option<&str>) -> bool {
     let storage = mounts::storage_root_of(uid);
-    let directory = format!("/{}/{uid}", super::dirs::SANDBOXES);
+    let directory = sandboxes.map(|name| format!("/{name}/{uid}"));
     mountinfo.lines().any(|line| {
         let mut fields = line.split(' ');
-        let (Some(root), Some(mount_point)) = (fields.nth(3), fields.next()) else {
+        let (Some(root), Some(mount_point), Some(options)) =
+            (fields.nth(3), fields.next(), fields.next())
+        else {
             return false;
         };
         if mount_point != storage {
             return false;
         }
         let mut after_separator = fields.skip_while(|field| *field != "-").skip(1);
-        let stand_in =
-            after_separator.next() == Some("tmpfs") && after_separator.next() == Some(TMPFS_SOURCE);
-        root.ends_with(&directory) || stand_in
+        let (fstype, super_options) = (after_separator.next(), after_separator.nth(1));
+        let stand_in = fstype == Some("tmpfs")
+            && options.split(',').any(|option| option == "ro")
+            && super_options.is_some_and(|super_options| {
+                super_options
+                    .split(',')
+                    .any(|option| option == mounts::STAND_IN_SIZE)
+            });
+        stand_in
+            || directory
+                .as_deref()
+                .is_some_and(|directory| root.ends_with(directory))
     })
 }
 
@@ -162,35 +180,45 @@ mod tests {
         2101 2100 0:96 / /storage/emulated rw,nosuid,nodev,noexec,noatime master:30 - fuse /dev/fuse rw,lazytime,user_id=0,group_id=0,allow_other\n\
         2102 2101 254:48 /media/0/Android/data/com.app /storage/emulated/0/Android/data/com.app rw,nosuid,nodev,noatime master:1 - ext4 /dev/block/dm-48 rw,seclabel\n";
 
+    const SANDBOXES: Option<&str> = Some(".5f0c9a2e");
+
     #[test]
     fn a_process_with_the_sandbox_over_its_storage_is_sandboxed() {
         let sandboxed = format!(
-            "{ZYGOTE_MOUNTS}2200 2101 254:48 /media/0/.bb_sandbox/10100 /storage/emulated/0 rw,nosuid,nodev,noatime - ext4 /dev/block/dm-48 rw,seclabel\n"
+            "{ZYGOTE_MOUNTS}2200 2101 254:48 /media/0/.5f0c9a2e/10100 /storage/emulated/0 rw,nosuid,nodev,noatime - ext4 /dev/block/dm-48 rw,seclabel\n"
         );
-        assert!(has_sandbox(&sandboxed, 10100));
+        assert!(has_sandbox(&sandboxed, 10100, SANDBOXES));
         // Another app's sandbox is not this one's, nor another user's.
-        assert!(!has_sandbox(&sandboxed, 10101));
-        assert!(!has_sandbox(&sandboxed, 1_010_100));
-        assert!(!has_sandbox(ZYGOTE_MOUNTS, 10100));
-        assert!(!has_sandbox("", 10100));
-        assert!(!has_sandbox("garbage\n1 2\n", 10100));
+        assert!(!has_sandbox(&sandboxed, 10101, SANDBOXES));
+        assert!(!has_sandbox(&sandboxed, 1_010_100, SANDBOXES));
+        // Nor is a directory elsewhere, or one not known to be the daemon's.
+        assert!(!has_sandbox(&sandboxed, 10100, Some(".0000beef")));
+        assert!(!has_sandbox(&sandboxed, 10100, None));
+        assert!(!has_sandbox(ZYGOTE_MOUNTS, 10100, SANDBOXES));
+        assert!(!has_sandbox("", 10100, SANDBOXES));
+        assert!(!has_sandbox("garbage\n1 2\n", 10100, SANDBOXES));
     }
 
     #[test]
     fn the_empty_stand_in_counts_as_the_sandbox() {
+        // Before the user unlocks the device, when the directory of the
+        // sandboxes cannot be found either.
         let locked = format!(
-            "{ZYGOTE_MOUNTS}2200 2101 0:120 / /storage/emulated/0 ro,relatime - tmpfs bb_sandbox ro,seclabel,size=4k,mode=555\n"
+            "{ZYGOTE_MOUNTS}2200 2101 0:120 / /storage/emulated/0 ro,relatime - tmpfs tmpfs ro,seclabel,size=4k,mode=555\n"
         );
-        assert!(has_sandbox(&locked, 10100));
-        // A tmpfs of the system's there is not.
-        let other = format!(
-            "{ZYGOTE_MOUNTS}2200 2101 0:120 / /storage/emulated/0 ro,relatime - tmpfs tmpfs ro,seclabel\n"
-        );
-        assert!(!has_sandbox(&other, 10100));
-        // Nor the stand-in over something else (a hidden volume).
+        assert!(has_sandbox(&locked, 10100, None));
+        // Another tmpfs there is not one, read-only or not.
+        for other in [
+            "ro,relatime - tmpfs tmpfs ro,seclabel",
+            "rw,relatime - tmpfs tmpfs rw,seclabel,size=4k",
+        ] {
+            let other = format!("{ZYGOTE_MOUNTS}2200 2101 0:120 / /storage/emulated/0 {other}\n");
+            assert!(!has_sandbox(&other, 10100, None), "{other}");
+        }
+        // Nor is the stand-in over something else (a hidden volume).
         let volume = format!(
-            "{ZYGOTE_MOUNTS}2200 2100 0:120 / /storage/1A2B-3C4D ro,relatime - tmpfs bb_sandbox ro\n"
+            "{ZYGOTE_MOUNTS}2200 2100 0:120 / /storage/1A2B-3C4D ro,relatime - tmpfs tmpfs ro\n"
         );
-        assert!(!has_sandbox(&volume, 10100));
+        assert!(!has_sandbox(&volume, 10100, None));
     }
 }

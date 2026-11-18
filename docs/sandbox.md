@@ -35,10 +35,18 @@ are in place on the device.
 The sandbox applies to a uid. Packages that share a uid are sandboxed
 together, and `enable` names them.
 
-An app's sandbox directory is `/data/media/<user>/.bb_sandbox/<uid>`. It
-is kept when the app leaves the sandbox and when the module is removed, as
-it holds what the app saved. The ANDROID_ID is kept too, so an app that is
+An app's sandbox directory is `/data/media/<user>/<name>/<uid>`. It is
+kept when the app leaves the sandbox and when the module is removed, as it
+holds what the app saved. The ANDROID_ID is kept too, so an app that is
 sandboxed again is the same device to its servers.
+
+An app can read its own mounts, which show the path of its sandbox
+directory and the source of each tmpfs. Neither names the project: the
+tmpfs mounts have the usual source, `tmpfs`, and `<name>` is a hidden
+directory named at random when the first app is sandboxed. The daemon finds
+it again by a file in it that only root can see. A directory made under the
+fixed name `.bb_sandbox` by an earlier version is renamed the first time it
+is reached, with what is in it.
 
 ## How it works
 

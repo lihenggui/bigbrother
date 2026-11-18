@@ -21,19 +21,41 @@
 //! never through a link, and is changed through its own descriptor.
 
 use std::{
+    collections::BTreeMap,
     ffi::CString,
-    io,
+    fs, io,
     os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
-    path::Path,
+    path::{Path, PathBuf},
+    sync::Mutex,
 };
 
 /// Group of the files on shared storage (`media_rw`).
 pub const MEDIA_RW: u32 = 1023;
 
-/// Under `/data/media/<user>`: the sandboxes of that user's apps. Owned by
-/// root and closed to everyone else, so that an app cannot replace its own
-/// sandbox, or reach another's.
-pub const SANDBOXES: &str = ".bb_sandbox";
+// Under `/data/media/<user>` is the directory of the sandboxes of that
+// user's apps, one directory in it per app. It is owned by root and closed
+// to everyone else, so that an app cannot replace its own sandbox, or reach
+// another's.
+//
+// An app can read the mounts of its own processes, where the path of its
+// sandbox shows. So the directory is not named after the project: its name
+// is drawn at random when it is made, and it is found again by a file in it
+// (`MARK`) that only root can see.
+
+/// The name the directory of the sandboxes had before; one found under it
+/// is renamed, with everything in it.
+const EARLIER_NAME: &str = ".bb_sandbox";
+
+/// The file that marks the directory of the sandboxes as the daemon's.
+/// Nobody but root can look into that directory, so the name is not seen.
+const MARK: &str = "big_brother";
+
+/// How many names are drawn for a new directory before giving up: each is
+/// taken already only by a rare chance.
+const NAME_DRAWS: u32 = 8;
+
+/// `renameat2` fails rather than replace what is at the new name.
+const RENAME_NOREPLACE: libc::c_uint = 1;
 
 /// What Android creates on shared storage and apps expect to be there:
 /// writing a file to one that is missing fails.
@@ -123,6 +145,68 @@ impl Dir {
         dir.own(uid, gid, SHARED_MODE)?;
         Ok((dir, created))
     }
+
+    /// Whether [`MARK`] is in this directory: a file of `keeper`'s, not a
+    /// link to one.
+    fn is_marked(&self, keeper: u32) -> bool {
+        let Ok(name) = component(MARK) else {
+            return false;
+        };
+        let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+        let found = unsafe {
+            libc::fstatat(
+                self.0.as_raw_fd(),
+                name.as_ptr(),
+                stat.as_mut_ptr(),
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        } == 0;
+        // SAFETY: filled in by the successful call.
+        found && {
+            let stat = unsafe { stat.assume_init() };
+            stat.st_mode & libc::S_IFMT == libc::S_IFREG && stat.st_uid == keeper
+        }
+    }
+
+    /// Put [`MARK`] in this directory.
+    fn mark(&self) -> io::Result<()> {
+        let name = component(MARK)?;
+        let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+        let fd = unsafe {
+            libc::openat(
+                self.0.as_raw_fd(),
+                name.as_ptr(),
+                flags,
+                0o600 as libc::c_uint,
+            )
+        };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: just opened, and owned by nothing else; closed on drop.
+        drop(unsafe { OwnedFd::from_raw_fd(fd) });
+        Ok(())
+    }
+
+    /// Rename `from` in this directory to `to`, which must not be there.
+    fn rename(&self, from: &str, to: &str) -> io::Result<()> {
+        let (from, to) = (component(from)?, component(to)?);
+        let fd = self.0.as_raw_fd();
+        let rc = unsafe {
+            libc::syscall(
+                libc::SYS_renameat2,
+                fd,
+                from.as_ptr(),
+                fd,
+                to.as_ptr(),
+                RENAME_NOREPLACE,
+            )
+        };
+        if rc != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
 }
 
 impl AsRawFd for Dir {
@@ -154,14 +238,9 @@ pub fn prepare(media: &Path, uid: u32, gid: u32) -> io::Result<()> {
 /// [`prepare`], with the directory of the sandboxes given to `keeper`
 /// rather than root, which only root can give it to.
 fn prepare_under(media: &Path, keeper: (u32, u32), uid: u32, gid: u32) -> io::Result<()> {
-    let (sandboxes, created) = Dir::open(media)?.make(SANDBOXES)?;
-    // One that is there and another's is not taken over: whoever made it
-    // may hold it open still. The daemon's own is given its owner and mode
-    // again, which it lacks if the daemon stopped right after making it.
-    if !created {
-        kept_by(&sandboxes, keeper.0)?;
-    }
-    sandboxes.own(keeper.0, keeper.1, 0o700)?;
+    let top = Dir::open(media)?;
+    let (_, sandboxes) = sandboxes(media, &top, keeper.0, Some(keeper))?
+        .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
     let (sandbox, created) = sandboxes.make_shared(&uid.to_string(), uid, gid)?;
     if created {
         for name in STANDARD {
@@ -184,13 +263,155 @@ pub fn open_sandbox(media: &Path, uid: u32) -> io::Result<Dir> {
 }
 
 fn open_sandbox_kept_by(media: &Path, keeper: u32, uid: u32) -> io::Result<Dir> {
-    let sandboxes = Dir::open(media)?.open_child(SANDBOXES)?;
-    kept_by(&sandboxes, keeper)?;
+    let top = Dir::open(media)?;
+    let Some((_, sandboxes)) = sandboxes(media, &top, keeper, None)? else {
+        return Err(io::Error::from(io::ErrorKind::NotFound));
+    };
     let sandbox = sandboxes.open_child(&uid.to_string())?;
     if sandbox.owner_and_mode()?.0 != uid {
         return Err(not_the_daemons());
     }
     Ok(sandbox)
+}
+
+/// The name of the directory of the sandboxes under `media`; `None` if
+/// there is none yet, or none can be reached (before the user unlocks the
+/// device).
+pub fn sandboxes_name(media: &Path) -> io::Result<Option<String>> {
+    let top = Dir::open(media)?;
+    Ok(sandboxes(media, &top, 0, None)?.map(|(name, _)| name))
+}
+
+/// The name of the directory of the sandboxes found under each `media`.
+///
+/// Held while one is looked for, taken over or made, which the gate thread
+/// and the main loop both do: two of them at once could each make one. It
+/// is never held for longer than a few calls on the directory itself.
+static FOUND: Mutex<BTreeMap<PathBuf, String>> = Mutex::new(BTreeMap::new());
+
+/// The directory of the sandboxes in `top`, which is `media`, and its name:
+/// the one of `keeper`'s that bears the mark. One made by an earlier version
+/// under [`EARLIER_NAME`] is renamed and marked first. If there is none,
+/// one is made for `make` (its owner and group) or `None` is the answer.
+fn sandboxes(
+    media: &Path,
+    top: &Dir,
+    keeper: u32,
+    make: Option<(u32, u32)>,
+) -> io::Result<Option<(String, Dir)>> {
+    let mut found = FOUND.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(name) = found.get(media) {
+        match top.open_child(name) {
+            Ok(dir) if kept_by(&dir, keeper).is_ok() && dir.is_marked(keeper) => {
+                return Ok(Some((name.clone(), dir)));
+            }
+            // Removed, or no longer as the daemon made it: looked for anew.
+            _ => {
+                found.remove(media);
+            }
+        }
+    }
+    let sandboxes = match find_marked(media, top, keeper)? {
+        Some(marked) => Some(marked),
+        None => match take_over_earlier(top, keeper)? {
+            Some(earlier) => Some(earlier),
+            None => make.map(|keeper| make_sandboxes(top, keeper)).transpose()?,
+        },
+    };
+    if let Some((name, _)) = &sandboxes {
+        found.insert(media.to_path_buf(), name.clone());
+    }
+    Ok(sandboxes)
+}
+
+/// The hidden directory in `top` (which is `media`) that is `keeper`'s,
+/// closed to others and marked. There is one at most, being made only
+/// while [`FOUND`] is held and none is found; should there be more, the
+/// first by name, so that it is always the same one.
+fn find_marked(media: &Path, top: &Dir, keeper: u32) -> io::Result<Option<(String, Dir)>> {
+    let mut names: Vec<String> = fs::read_dir(media)?
+        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+        .filter(|name| name.starts_with('.') && name != EARLIER_NAME)
+        .collect();
+    names.sort();
+    for name in names {
+        // Not a directory, or not one to open: not the one looked for.
+        let Ok(dir) = top.open_child(&name) else {
+            continue;
+        };
+        if kept_by(&dir, keeper).is_ok() && dir.is_marked(keeper) {
+            return Ok(Some((name, dir)));
+        }
+    }
+    Ok(None)
+}
+
+/// Rename the directory of the sandboxes an earlier version made under
+/// [`EARLIER_NAME`], with what the apps saved in it, to a name drawn now,
+/// and mark it. `None` if there is none, or it is not `keeper`'s: one made
+/// through the media provider is left alone, and so is a file or a link by
+/// that name, which any app with access to shared storage can put there.
+fn take_over_earlier(top: &Dir, keeper: u32) -> io::Result<Option<(String, Dir)>> {
+    let earlier = match top.open_child(EARLIER_NAME) {
+        Ok(earlier) => earlier,
+        Err(e) if is_not_a_directory(&e) => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    if kept_by(&earlier, keeper).is_err() {
+        return Ok(None);
+    }
+    // Marked before it is renamed: if the daemon stops in between, it is
+    // still found under the earlier name and renamed then.
+    earlier.mark()?;
+    for _ in 0..NAME_DRAWS {
+        let name = draw_name()?;
+        match top.rename(EARLIER_NAME, &name) {
+            Ok(()) => return Ok(Some((name, earlier))),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(no_free_name())
+}
+
+/// A new directory of the sandboxes in `top`, `keeper`'s and marked, under
+/// a name drawn at random. A name that is taken, by a directory or by a
+/// file an app put there, is drawn again.
+fn make_sandboxes(top: &Dir, keeper: (u32, u32)) -> io::Result<(String, Dir)> {
+    for _ in 0..NAME_DRAWS {
+        let name = draw_name()?;
+        let sandboxes = match top.make(&name) {
+            Ok((sandboxes, true)) => sandboxes,
+            Ok((_, false)) => continue,
+            Err(e) if is_not_a_directory(&e) => continue,
+            Err(e) => return Err(e),
+        };
+        // Marked first, so that it is found again whatever happens next.
+        sandboxes.mark()?;
+        sandboxes.own(keeper.0, keeper.1, 0o700)?;
+        return Ok((name, sandboxes));
+    }
+    Err(no_free_name())
+}
+
+/// Whether opening a directory failed because nothing, or something else
+/// than a directory (a file, a link), is there by that name.
+fn is_not_a_directory(e: &io::Error) -> bool {
+    e.kind() == io::ErrorKind::NotFound
+        || matches!(e.raw_os_error(), Some(libc::ENOTDIR | libc::ELOOP))
+}
+
+/// A hidden name, drawn at random: one dot and eight hex digits.
+fn draw_name() -> io::Result<String> {
+    let bytes = super::random_bytes::<4>()?;
+    Ok(format!(".{:08x}", u32::from_le_bytes(bytes)))
+}
+
+fn no_free_name() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "every name drawn for the sandbox directory was taken",
+    )
 }
 
 /// Check that the directory of the sandboxes belongs to `keeper` alone:
@@ -213,7 +434,11 @@ fn not_the_daemons() -> io::Error {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, os::unix::fs::MetadataExt as _, path::PathBuf};
+    use std::{
+        fs,
+        os::unix::fs::{MetadataExt as _, PermissionsExt as _},
+        path::PathBuf,
+    };
 
     use super::*;
 
@@ -269,14 +494,30 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    /// The hidden directories in `dir`, by name.
+    fn hidden(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .filter(|name| name.starts_with('.'))
+            .collect();
+        names.sort();
+        names
+    }
+
+    fn ids() -> (u32, u32) {
+        unsafe { (libc::getuid(), libc::getgid()) }
+    }
+
     #[test]
     fn a_new_sandbox_gets_the_directories_apps_expect() {
         let dir = test_dir("dirs-prepare");
-        let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
+        let (uid, gid) = ids();
         prepare_under(&dir, (uid, gid), uid, gid).unwrap();
         let mode = |path: &Path| fs::metadata(path).unwrap().mode() & 0o7777;
-        assert_eq!(mode(&dir.join(".bb_sandbox")), 0o700);
-        let sandbox = dir.join(format!(".bb_sandbox/{uid}"));
+        let [sandboxes] = hidden(&dir).try_into().unwrap();
+        assert_eq!(mode(&dir.join(&sandboxes)), 0o700);
+        let sandbox = dir.join(format!("{sandboxes}/{uid}"));
         assert_eq!(mode(&sandbox), 0o2770);
         for name in STANDARD {
             assert_eq!(mode(&sandbox.join(name)), 0o2770, "{name}");
@@ -290,34 +531,105 @@ mod tests {
     }
 
     #[test]
-    fn a_sandbox_directory_someone_else_made_is_refused() {
-        use std::os::unix::fs::PermissionsExt as _;
+    fn the_directory_of_the_sandboxes_is_named_at_random_and_found_again() {
+        let dir = test_dir("dirs-name");
+        let (uid, gid) = ids();
+        prepare_under(&dir, (uid, gid), uid, gid).unwrap();
+        let [name] = hidden(&dir).try_into().unwrap();
+        assert_eq!(name.len(), 9, "{name}");
+        assert!(name[1..].chars().all(|c| c.is_ascii_hexdigit()), "{name}");
+        // Found again rather than made anew.
+        prepare_under(&dir, (uid, gid), uid, gid).unwrap();
+        assert_eq!(hidden(&dir), std::slice::from_ref(&name));
+        open_sandbox_kept_by(&dir, uid, uid).unwrap();
 
+        // A hidden directory of the same owner without the mark is not it.
+        fs::remove_file(dir.join(format!("{name}/{MARK}"))).unwrap();
+        let e = open_sandbox_kept_by(&dir, uid, uid).err().unwrap();
+        assert_eq!(e.kind(), io::ErrorKind::NotFound);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_earlier_directory_is_renamed_with_what_the_apps_saved() {
+        let dir = test_dir("dirs-earlier");
+        let (uid, gid) = ids();
+        let saved = format!("{EARLIER_NAME}/{uid}/Download/saved.txt");
+        fs::create_dir_all(dir.join(&saved).parent().unwrap()).unwrap();
+        fs::write(dir.join(&saved), "kept").unwrap();
+        fs::set_permissions(dir.join(EARLIER_NAME), fs::Permissions::from_mode(0o700)).unwrap();
+
+        // Found by the gate before the daemon prepares anything.
+        let sandbox = open_sandbox_kept_by(&dir, uid, uid).unwrap();
+        let [name] = hidden(&dir).try_into().unwrap();
+        assert_ne!(name, EARLIER_NAME);
+        assert_eq!(
+            fs::read_to_string(dir.join(format!("{name}/{uid}/Download/saved.txt"))).unwrap(),
+            "kept"
+        );
+        assert_eq!(sandbox.owner_and_mode().unwrap().0, uid);
+        prepare_under(&dir, (uid, gid), uid, gid).unwrap();
+        assert_eq!(hidden(&dir), [name]);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_file_or_link_under_the_earlier_name_is_left_alone() {
+        let (uid, gid) = ids();
+        for link in [false, true] {
+            let dir = test_dir(&format!("dirs-earlier-file-{link}"));
+            if link {
+                std::os::unix::fs::symlink("/", dir.join(EARLIER_NAME)).unwrap();
+            } else {
+                fs::write(dir.join(EARLIER_NAME), "").unwrap();
+            }
+            let e = open_sandbox_kept_by(&dir, uid, uid).err().unwrap();
+            assert_eq!(e.kind(), io::ErrorKind::NotFound);
+            prepare_under(&dir, (uid, gid), uid, gid).unwrap();
+            open_sandbox_kept_by(&dir, uid, uid).unwrap();
+            assert!(fs::symlink_metadata(dir.join(EARLIER_NAME)).is_ok());
+            fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_sandbox_directory_someone_else_made_is_refused() {
         let dir = test_dir("dirs-planted");
-        let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
+        let (uid, gid) = ids();
         // None yet: told apart from one that is not right.
         let e = open_sandbox_kept_by(&dir, uid, uid).err().unwrap();
         assert_eq!(e.kind(), io::ErrorKind::NotFound);
 
-        // Open to others, as a directory made through the media provider
-        // would be.
-        fs::create_dir_all(dir.join(format!(".bb_sandbox/{uid}"))).unwrap();
-        fs::set_permissions(dir.join(".bb_sandbox"), fs::Permissions::from_mode(0o770)).unwrap();
+        // Under the earlier name, open to others, as a directory made
+        // through the media provider would be: left alone, and not used.
+        fs::create_dir_all(dir.join(format!("{EARLIER_NAME}/{uid}"))).unwrap();
+        fs::set_permissions(dir.join(EARLIER_NAME), fs::Permissions::from_mode(0o770)).unwrap();
         let e = open_sandbox_kept_by(&dir, uid, uid).err().unwrap();
-        assert_eq!(e.kind(), io::ErrorKind::PermissionDenied);
-        assert!(prepare_under(&dir, (uid, gid), uid, gid).is_err());
+        assert_eq!(e.kind(), io::ErrorKind::NotFound);
+        prepare_under(&dir, (uid, gid), uid, gid).unwrap();
+        let names = hidden(&dir);
+        assert_eq!(names.len(), 2);
+        let name = names.into_iter().find(|name| name != EARLIER_NAME).unwrap();
 
+        // Marked, but open to others.
+        fs::set_permissions(dir.join(&name), fs::Permissions::from_mode(0o770)).unwrap();
+        assert!(open_sandbox_kept_by(&dir, uid, uid).is_err());
         // Closed, but another's; and the daemon's, with another's sandbox.
-        fs::set_permissions(dir.join(".bb_sandbox"), fs::Permissions::from_mode(0o700)).unwrap();
+        fs::set_permissions(dir.join(&name), fs::Permissions::from_mode(0o700)).unwrap();
         assert!(open_sandbox_kept_by(&dir, uid + 1, uid).is_err());
-        fs::create_dir(dir.join(".bb_sandbox/1")).unwrap();
+        fs::create_dir(dir.join(format!("{name}/1"))).unwrap();
         if uid != 1 {
             assert!(open_sandbox_kept_by(&dir, uid, 1).is_err());
         }
         // A link in its place.
-        fs::remove_dir(dir.join(format!(".bb_sandbox/{uid}"))).unwrap();
-        std::os::unix::fs::symlink("/", dir.join(format!(".bb_sandbox/{uid}"))).unwrap();
+        fs::remove_dir_all(dir.join(format!("{name}/{uid}"))).unwrap();
+        std::os::unix::fs::symlink("/", dir.join(format!("{name}/{uid}"))).unwrap();
         assert!(open_sandbox_kept_by(&dir, uid, uid).is_err());
+        // A link in place of the mark.
+        fs::remove_file(dir.join(format!("{name}/{MARK}"))).unwrap();
+        std::os::unix::fs::symlink("/etc/hosts", dir.join(format!("{name}/{MARK}"))).unwrap();
+        let e = open_sandbox_kept_by(&dir, uid, uid).err().unwrap();
+        assert_eq!(e.kind(), io::ErrorKind::NotFound);
         fs::remove_dir_all(dir).unwrap();
     }
 }
