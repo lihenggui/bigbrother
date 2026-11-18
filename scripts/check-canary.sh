@@ -88,12 +88,30 @@ as_root() {
     fi
 }
 
+# A system dialog (an app that crashed elsewhere, say) takes the focus the
+# canary waits for: the screen is woken and such dialogs are closed before
+# it starts and while it is waited for.
+clear_screen() {
+    adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
+    adb shell wm dismiss-keyguard >/dev/null 2>&1 || true
+    adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS >/dev/null 2>&1 || true
+}
+# Whether a window other than the canary's has the focus.
+focus_elsewhere() {
+    local focus
+    focus="$(adb shell dumpsys window windows 2>/dev/null | tr -d '\r' | sed -n 's/.*mCurrentFocus=//p')"
+    [[ -n "$focus" && "$focus" != *"$PACKAGE"* ]]
+}
+
 [[ -f "$APK" ]] || {
     echo "error: $APK not found; build it with: (cd android && ./gradlew :canary:assembleDebug)" >&2
     exit 2
 }
 
-adb install -r "$APK" >/dev/null
+# Installed afresh, so that its permissions are those granted below and
+# nothing a previous run left.
+adb uninstall "$PACKAGE" >/dev/null 2>&1 || true
+adb install "$APK" >/dev/null
 for permission in READ_CONTACTS READ_CALENDAR READ_SMS; do
     adb shell pm grant "$PACKAGE" "android.permission.$permission" 2>/dev/null || true
 done
@@ -108,11 +126,13 @@ as_root "$BBD stats" | tr ',' '\n' | grep -o '"coverage_[a-z]*":[01]' | sed 's/^
 
 adb shell am force-stop "$PACKAGE"
 adb logcat -c
+clear_screen
 adb shell am start -W -n "$PACKAGE/.MainActivity" >/dev/null
 # The probes take about 15 s: two connection timeouts and the sensors. They
 # start once the canary's window has focus, which needs the screen on.
 for ((i = 0; i < 60; i++)); do
     grep -q "BigBrotherCanary: done" <<<"$(adb logcat -d -s BigBrotherCanary:I)" && break
+    if ((i % 5 == 4)) && focus_elsewhere; then clear_screen; fi
     sleep 1
 done
 ((i < 60)) || {
@@ -132,6 +152,7 @@ check() {
         missing=$((missing + 1))
     else
         say "  absent    ${want%\"} (optional)"
+        absent=$((absent + 1))
     fi
 }
 
@@ -165,6 +186,7 @@ for ((attempt = 1; ; attempt++)); do
     records="$(as_root "$BBD files --uid $uid --hours 1 --limit 2000")"
     sessions="$(as_root "$BBD sensors --uid $uid --hours 1" || true)"
     missing=0
+    absent=0
     report=""
     say "records for uid $uid:"
     for want in "${REQUIRED[@]}"; do check "$want" yes; done
@@ -179,6 +201,8 @@ for ((attempt = 1; ; attempt++)); do
 done
 printf '%s' "$report"
 
+# What a green run did not cover, in sight.
+echo "$absent optional record(s) absent"
 if ((missing > 0)); then
     echo "$missing required record(s) missing"
     exit 1
