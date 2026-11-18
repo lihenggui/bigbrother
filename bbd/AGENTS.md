@@ -52,8 +52,9 @@ JSON.
 
 - SQLite at `/data/adb/big_brother/bb.db`, records kept 30 days.
 - The schema is `SCHEMA` in `src/store.rs`, at `SCHEMA_VERSION`. A schema
-  change edits `SCHEMA` and bumps the version; a database at another version
-  is refused, not upgraded.
+  change edits `SCHEMA` and bumps the version. The daemon sets a database at
+  another version aside (`bb.db.old`) and starts a new one; it is not
+  upgraded, and the query commands do not read it.
 
 ## Power and performance
 

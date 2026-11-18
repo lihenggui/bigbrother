@@ -36,9 +36,9 @@ once before `:app` tasks that assemble the APK.
 ## Contracts between components
 
 - No compatibility with earlier versions is kept. `bbd` output and the
-  database schema change as needed, with the app in the same commit; a
-  database at another schema version is refused (uninstalling the module
-  removes it). The app updates the module when the installed one is older
+  database schema change as needed, with the app in the same commit; the
+  daemon sets a database at another schema version aside (`bb.db.old`) and
+  starts a new one. The app updates the module when the installed one is older
   or built differently, and maps a daemon that rejects a command or option
   to "module update needed" (`RootAccessRepository`).
 - Structs in `bb-common` are read by both sides byte for byte: `#[repr(C)]`,
