@@ -69,6 +69,9 @@ internal class FakeAndroid :
     /** The sync worked out and not landed yet, while [syncsLate]. */
     private var lateSync: Map<Int, Int>? = null
 
+    /** The helper's revocations are refused, without an error, as for a permission fixed by policy. */
+    var refuseToRevoke = false
+
     private val granted = mutableMapOf<String, Boolean>()
     private val permissionFlags = mutableMapOf<String, Int>()
     private val modes = mutableMapOf<Int, Int>()
@@ -136,7 +139,9 @@ internal class FakeAndroid :
 
     override fun grant(pkg: String, permission: String, uid: Int) = pmGrant(permission)
 
-    override fun revoke(pkg: String, permission: String, uid: Int) = pmRevoke(permission)
+    override fun revoke(pkg: String, permission: String, uid: Int) {
+        if (!refuseToRevoke) pmRevoke(permission)
+    }
 
     override fun runtime(permission: String): RuntimePermissions.Runtime? = if (permission in RUNTIME) RuntimePermissions.Runtime(BACKGROUND_OF[permission]) else null
 
