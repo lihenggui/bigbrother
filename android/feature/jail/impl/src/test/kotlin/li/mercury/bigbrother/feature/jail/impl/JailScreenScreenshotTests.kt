@@ -23,6 +23,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.test.core.app.ApplicationProvider
 import li.mercury.bigbrother.core.model.InstalledApp
+import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxPart
@@ -31,8 +32,11 @@ import li.mercury.bigbrother.core.model.SandboxedApp
 import li.mercury.bigbrother.core.screenshottesting.DefaultTestDevices
 import li.mercury.bigbrother.core.screenshottesting.DemoApp
 import li.mercury.bigbrother.core.screenshottesting.DemoClockRule
+import li.mercury.bigbrother.core.screenshottesting.DemoLoadFailure
+import li.mercury.bigbrother.core.screenshottesting.assertSamplesCover
 import li.mercury.bigbrother.core.screenshottesting.captureForDevice
 import li.mercury.bigbrother.core.screenshottesting.captureMultiDevice
+import li.mercury.bigbrother.core.screenshottesting.screenshotName
 import li.mercury.bigbrother.core.testing.repository.TestAccessRepository
 import li.mercury.bigbrother.core.testing.repository.TestAppInfoRepository
 import li.mercury.bigbrother.core.testing.repository.TestUserDataRepository
@@ -169,6 +173,204 @@ class JailScreenScreenshotTests {
         }
     }
 
+    @Test
+    fun givenSandboxNotYetRead_whenShown_thenShowsLoadingIndicator() {
+        capturePhone("JailLoading") { Jail(JailUiState()) }
+    }
+
+    @Test
+    fun givenLoadFailure_whenShown_thenSaysWhy() {
+        val failure = DemoLoadFailure
+        capturePhone("JailFailure${failure.screenshotName}") { Jail(JailUiState(failure = failure)) }
+    }
+
+    @Test
+    fun givenRefreshing_whenShown_thenShowsRefreshIndicatorOverList() {
+        capturePhone("JailRefreshing") { Jail(JailUiState(apps = isolatedApps(), status = FULL_STATUS, refreshing = true)) }
+    }
+
+    @Test
+    fun givenNothingInPlace_whenShown_thenSaysWhatIsNotInEffect() {
+        capturePhone("JailNothingInPlace") { Jail(isolatedApps(), NOTHING_IN_PLACE) }
+    }
+
+    @Test
+    fun givenStatusNotYetKnown_whenShown_thenListsAppsWithoutStatus() {
+        capturePhone("JailStatusUnknown") { Jail(JailUiState(apps = isolatedApps())) }
+    }
+
+    @Test
+    fun givenAppOfAnotherUser_whenShown_thenNamesTheUser() {
+        capturePhone("JailOtherUser") {
+            val apps = isolatedApps()
+            Jail(apps.take(1) + apps.drop(1).map { it.copy(otherUser = OTHER_USER) }, FULL_STATUS)
+        }
+    }
+
+    @Test
+    fun givenEachMessage_whenShown_thenSnackbarSaysWhatHappened() {
+        for ((name, message) in messages()) {
+            capturePhone("JailMessage$name") {
+                JailScreen(
+                    state = JailUiState(apps = isolatedApps(), status = FULL_STATUS),
+                    message = message,
+                    topBar = { SearchBar() },
+                    selectedUid = null,
+                    settingsSelected = false,
+                    onRefresh = {},
+                    onOpenApp = {},
+                    onOpenSettings = {},
+                    onAdd = {},
+                    onUndo = {},
+                    onMessageDismiss = {},
+                )
+            }
+        }
+    }
+
+    @Test
+    fun givenMessageCases_whenChecked_thenEveryKindHasOne() {
+        assertSamplesCover(JailMessage::class.java, messages().map { it.second })
+    }
+
+    @Test
+    fun givenAppPageOpening_whenShown_thenShowsLoadingIndicator() {
+        capturePhone("JailAppLoading") { JailApp { JailAppUiState(packageName = it.packageName) } }
+    }
+
+    @Test
+    fun givenLoadFailureOnAppPage_whenShown_thenSaysWhy() {
+        val failure = DemoLoadFailure
+        capturePhone("JailAppFailure${failure.screenshotName}") {
+            JailApp { JailAppUiState(packageName = it.packageName, loading = false, failure = failure) }
+        }
+    }
+
+    @Test
+    fun givenAppLeftSandbox_whenShownWhileLeaving_thenShowsOnlyTitle() {
+        capturePhone("JailAppLeaving") { JailApp { JailAppUiState(packageName = it.packageName, loading = false, left = true) } }
+    }
+
+    @Test
+    fun givenPermissionsNotKnown_whenOpened_thenListsEveryItem() {
+        capturePhone("JailAppAllItems") { JailApp(expanded = null) { it.copy(requested = null) } }
+    }
+
+    @Test
+    fun givenAppOfAnotherUserWithoutOwnSettings_whenOpened_thenNamesUserWithoutReset() {
+        capturePhone("JailAppOtherUser") {
+            JailApp(expanded = null) { state -> state.copy(otherUser = OTHER_USER, app = state.app?.copy(settings = emptyMap())) }
+        }
+    }
+
+    @Test
+    fun givenChangeFailure_whenShownOnAppPage_thenSnackbarSaysWhy() {
+        val failure = DemoLoadFailure
+        capturePhone("JailAppError${failure.screenshotName}") { JailApp(expanded = null) { it.copy(error = failure) } }
+    }
+
+    @Test
+    fun givenSettingsNotYetRead_whenShown_thenShowsLoadingIndicator() {
+        capturePhone("JailSettingsLoading") { JailSettings(JailSettingsUiState()) }
+    }
+
+    @Test
+    fun givenLoadFailureOnSettings_whenShown_thenSaysWhy() {
+        val failure = DemoLoadFailure
+        capturePhone("JailSettingsFailure${failure.screenshotName}") { JailSettings(JailSettingsUiState(failure = failure)) }
+    }
+
+    @Test
+    fun givenSandboxPartsMissing_whenSettingsShownWhole_thenItemsAndStatusSayWhy() {
+        composeTestRule.captureForDevice("phone_whole", WHOLE_PAGE, "JailSettingsNothingInPlace") {
+            JailSettings(globalSettings().copy(status = NOTHING_IN_PLACE))
+        }
+    }
+
+    @Test
+    fun givenStatusNotYetKnown_whenSettingsShownWhole_thenStatusIsNeitherGoodNorBad() {
+        composeTestRule.captureForDevice("phone_whole", WHOLE_PAGE, "JailSettingsStatusUnknown") {
+            JailSettings(globalSettings().copy(status = null))
+        }
+    }
+
+    @Test
+    fun givenChangeFailed_whenSettingsShown_thenSnackbarSaysWhy() {
+        capturePhone("JailSettingsError") { JailSettings(globalSettings().copy(error = LoadFailure.NoRoot)) }
+    }
+
+    @Test
+    fun givenAppsLeftAfterReleasingAll_whenSettingsShown_thenSnackbarCountsThem() {
+        capturePhone("JailSettingsNotReleased") { JailSettings(globalSettings().copy(notReleased = 2)) }
+    }
+
+    @Test
+    fun givenInstalledAppsNotYetRead_whenAdding_thenShowsLoadingIndicator() {
+        capturePhone("JailAddAppsLoading") { AddApps(AddAppsUiState()) }
+    }
+
+    @Test
+    fun givenNoAppMatches_whenAdding_thenSaysSo() {
+        capturePhone("JailAddAppsEmpty") { AddApps(AddAppsUiState(apps = emptyList())) }
+    }
+
+    @Test
+    fun givenNothingChosen_whenAddingOnTablet_thenShownAsCardWithConfirmDisabled() {
+        composeTestRule.captureForDevice("tablet", DefaultTestDevices.TABLET.spec, "JailAddApps") {
+            AddApps(AddAppsUiState(apps = installedApps()), compact = false)
+        }
+    }
+
+    private fun capturePhone(name: String, body: @Composable () -> Unit) {
+        composeTestRule.captureForDevice("phone", DefaultTestDevices.PHONE.spec, name, body = body)
+    }
+
+    /** One of each message the jail tells in a snackbar, by the name its screenshot takes. */
+    private fun messages(): List<Pair<String, JailMessage>> {
+        val apps = installedApps()
+        val names = apps.map { it.info.label }
+        return listOf(
+            "Isolated" to JailMessage.Isolated(names.take(2), apps.take(2)),
+            "IsolatedPartly" to JailMessage.Isolated(names.take(1), apps.take(1), notIsolated = names.subList(1, 2)),
+            "IsolatedPartlyCount" to JailMessage.Isolated(names.take(1), apps.take(1), notIsolated = names.subList(1, 4)),
+            "NotIsolated" to JailMessage.NotIsolated(names.take(1), LoadFailure.ModuleOutdated),
+            "NotIsolatedCount" to JailMessage.NotIsolated(names.take(3), LoadFailure.Other("timed out")),
+            "NotReleased" to JailMessage.NotReleased(names.take(1), LoadFailure.NoRoot),
+        )
+    }
+
+    private fun installedApps(): List<InstalledApp> {
+        val locale = demoLocale()
+        return listOf(DemoApp.CHAT, DemoApp.PUZZLE, DemoApp.NEWS, DemoApp.KEYBOARD, DemoApp.NOTES, DemoApp.PHOTO_EDITOR, DemoApp.STEP_COUNTER)
+            .map { InstalledApp(it.packageName, it.uid, it.appInfo(locale)) }
+            .sortedByName { it.info.label }
+    }
+
+    private fun globalSettings() = JailSettingsUiState(
+        global = SandboxItem.entries.associateWith { SandboxMode.ON } + (SandboxItem.CLIPBOARD_ACCOUNTS to SandboxMode.OFF),
+        status = FULL_STATUS,
+        isolated = 3,
+    )
+
+    @Composable
+    private fun JailSettings(state: JailSettingsUiState) {
+        JailSettingsScreen(
+            state = state,
+            showBack = true,
+            onBack = {},
+            onRefresh = {},
+            onSetOn = { _, _ -> },
+            onChoose = { _, _ -> },
+            onReleaseAll = {},
+            onErrorDismiss = {},
+        )
+    }
+
+    @Composable
+    private fun AddApps(state: AddAppsUiState, compact: Boolean = true) {
+        AddAppsSheet(state = state, query = rememberTextFieldState(), compact = compact, onToggle = {}, onDismiss = {}, onConfirm = {})
+    }
+
     /** Three apps put in the sandbox over the last days, one with settings of its own. */
     private fun isolatedApps(): List<IsolatedApp> {
         val locale = demoLocale()
@@ -184,8 +386,13 @@ class JailScreenScreenshotTests {
 
     @Composable
     private fun Jail(apps: List<IsolatedApp>, status: SandboxStatus = FULL_STATUS) {
+        Jail(JailUiState(apps = apps, status = status))
+    }
+
+    @Composable
+    private fun Jail(state: JailUiState) {
         JailScreen(
-            state = JailUiState(apps = apps, status = status),
+            state = state,
             message = null,
             topBar = { SearchBar() },
             selectedUid = null,
@@ -203,16 +410,19 @@ class JailScreenScreenshotTests {
     private fun JailApp(
         unmet: Map<SandboxItem, Set<SandboxPart>> = emptyMap(),
         expanded: SandboxItem? = SandboxItem.LOCATION,
+        state: (JailAppUiState) -> JailAppUiState = { it },
     ) {
         val app = DemoApp.WEATHER
         val settings = mapOf(SandboxItem.LOCATION to SandboxMode.COARSE)
         JailAppScreen(
-            state = JailAppUiState(
-                packageName = app.packageName,
-                app = sandboxedApp(app, clock.todayAt(9, 12) - 2 * 24 * 60 * 60L, settings).copy(unmet = unmet),
-                info = app.appInfo(demoLocale()),
-                requested = setOf("android.permission.ACCESS_FINE_LOCATION", "android.permission.ACCESS_COARSE_LOCATION"),
-                loading = false,
+            state = state(
+                JailAppUiState(
+                    packageName = app.packageName,
+                    app = sandboxedApp(app, clock.todayAt(9, 12) - 2 * 24 * 60 * 60L, settings).copy(unmet = unmet),
+                    info = app.appInfo(demoLocale()),
+                    requested = setOf("android.permission.ACCESS_FINE_LOCATION", "android.permission.ACCESS_COARSE_LOCATION"),
+                    loading = false,
+                ),
             ),
             showBack = true,
             onBack = {},
@@ -241,6 +451,13 @@ class JailScreenScreenshotTests {
 
     private companion object {
         val FULL_STATUS = SandboxStatus(gate = true, appOps = true, androidIdHook = true, appListHook = true)
+        val NOTHING_IN_PLACE = SandboxStatus(gate = false, appOps = false, androidIdHook = false, appListHook = false)
+
+        /** An Android user other than the one the app runs as: a work profile. */
+        const val OTHER_USER = 10
+
+        /** A phone tall enough for the whole of the global settings, down to the status at their end. */
+        const val WHOLE_PAGE = "spec:shape=Normal,width=412,height=2600,unit=dp,dpi=480"
     }
 }
 

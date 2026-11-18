@@ -83,7 +83,10 @@ class DemoRecords(
     fun summary(app: DemoApp): AppSummary = apps.first { it.uid == app.uid }
 
     /** Every path [app] touched, most recent first, as AccessRepository.getAccesses gives them. */
-    fun accesses(app: DemoApp): List<Access> = events.filter { it.uid == app.uid }
+    fun accesses(app: DemoApp): List<Access> = accesses(app.uid)
+
+    /** Every path the app or process of [uid] touched, most recent first. */
+    fun accesses(uid: Int): List<Access> = events.filter { it.uid == uid }
         .groupBy { AccessKey(it.category, it.path, it.action, it.viaProvider) }
         .map { (key, events) ->
             Access(

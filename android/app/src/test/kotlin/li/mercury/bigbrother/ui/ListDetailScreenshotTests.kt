@@ -26,8 +26,12 @@ import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfoV2
 import androidx.compose.material3.adaptive.layout.AnimatedPane
 import androidx.compose.material3.adaptive.layout.ListDetailPaneScaffold
+import androidx.compose.material3.adaptive.layout.ListDetailPaneScaffoldDefaults
+import androidx.compose.material3.adaptive.layout.ListDetailPaneScaffoldRole
 import androidx.compose.material3.adaptive.layout.PaneAdaptedValue
+import androidx.compose.material3.adaptive.layout.ThreePaneScaffoldDestinationItem
 import androidx.compose.material3.adaptive.layout.ThreePaneScaffoldValue
+import androidx.compose.material3.adaptive.layout.calculateThreePaneScaffoldValue
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteItem
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.runtime.Composable
@@ -44,6 +48,7 @@ import li.mercury.bigbrother.core.screenshottesting.DemoApp
 import li.mercury.bigbrother.core.screenshottesting.DemoClockRule
 import li.mercury.bigbrother.core.screenshottesting.DemoRecords
 import li.mercury.bigbrother.core.screenshottesting.StoreScreenshotType
+import li.mercury.bigbrother.core.screenshottesting.captureMultiDevice
 import li.mercury.bigbrother.core.screenshottesting.captureStoreScreenshot
 import li.mercury.bigbrother.core.testing.repository.TestAccessRepository
 import li.mercury.bigbrother.core.testing.repository.TestUserDataRepository
@@ -109,9 +114,19 @@ class ListDetailScreenshotTests {
         composeTestRule.captureStoreScreenshot(StoreScreenshotType.TEN_INCH, "1_list_detail") { ListDetail() }
     }
 
+    @Test
+    fun givenAppListWithAppOpen_whenShownOnEachDevice_thenPanesAndNavigationFollowWindow() {
+        composeTestRule.captureMultiDevice("ListDetail") { ListDetail(fitWindow = true) }
+    }
+
+    /**
+     * The app list and the weather app's page, as panes. With [fitWindow],
+     * the window decides which are shown, as in the app with the list on
+     * top: on a phone the list alone. Otherwise both are, as on a tablet.
+     */
     @OptIn(ExperimentalMaterial3AdaptiveApi::class)
     @Composable
-    private fun ListDetail() {
+    private fun ListDetail(fitWindow: Boolean = false) {
         val records = remember { DemoRecords(clock) }
         val appInfoRepository = remember { DemoAppInfoRepository(records) }
         val listViewModel = remember {
@@ -127,6 +142,8 @@ class ListDetailScreenshotTests {
             )
         }
         val adaptiveInfo = currentWindowAdaptiveInfoV2()
+        val directive = paneDirective(adaptiveInfo)
+        val beside = !fitWindow || directive.maxHorizontalPartitions > 1
         NavigationSuiteScaffold(
             navigationItems = {
                 for (destination in TOP_LEVEL_DESTINATIONS) {
@@ -145,19 +162,27 @@ class ListDetailScreenshotTests {
             navigationSuiteType = navigationSuiteType(adaptiveInfo),
             containerColor = MaterialTheme.colorScheme.surfaceContainer,
         ) {
-            CompositionLocalProvider(LocalShowsDetailBesideList provides true) {
+            CompositionLocalProvider(LocalShowsDetailBesideList provides beside) {
                 ListDetailPaneScaffold(
-                    directive = paneDirective(adaptiveInfo),
-                    value = ThreePaneScaffoldValue(
-                        primary = PaneAdaptedValue.Expanded,
-                        secondary = PaneAdaptedValue.Expanded,
-                        tertiary = PaneAdaptedValue.Hidden,
-                    ),
+                    directive = directive,
+                    value = if (fitWindow) {
+                        calculateThreePaneScaffoldValue(
+                            maxHorizontalPartitions = directive.maxHorizontalPartitions,
+                            adaptStrategies = ListDetailPaneScaffoldDefaults.adaptStrategies(),
+                            currentDestination = ThreePaneScaffoldDestinationItem<Nothing>(ListDetailPaneScaffoldRole.List),
+                        )
+                    } else {
+                        ThreePaneScaffoldValue(
+                            primary = PaneAdaptedValue.Expanded,
+                            secondary = PaneAdaptedValue.Expanded,
+                            tertiary = PaneAdaptedValue.Hidden,
+                        )
+                    },
                     listPane = {
                         AnimatedPane {
                             AppListScreen(
                                 topBar = { SearchBar(appInfoRepository) },
-                                selectedUid = DemoApp.WEATHER.uid,
+                                selectedUid = DemoApp.WEATHER.uid.takeIf { beside },
                                 onOpenApp = { _, _, _ -> },
                                 viewModel = listViewModel,
                             )

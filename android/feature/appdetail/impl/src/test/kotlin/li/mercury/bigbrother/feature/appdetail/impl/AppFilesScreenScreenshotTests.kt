@@ -20,13 +20,18 @@ import androidx.activity.ComponentActivity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import li.mercury.bigbrother.core.model.AccessPeriod
+import li.mercury.bigbrother.core.model.Action
+import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.screenshottesting.DefaultTestDevices
 import li.mercury.bigbrother.core.screenshottesting.DemoApp
 import li.mercury.bigbrother.core.screenshottesting.DemoClockRule
+import li.mercury.bigbrother.core.screenshottesting.DemoLoadFailure
 import li.mercury.bigbrother.core.screenshottesting.DemoRecords
 import li.mercury.bigbrother.core.screenshottesting.StoreScreenshotType
 import li.mercury.bigbrother.core.screenshottesting.captureForDevice
 import li.mercury.bigbrother.core.screenshottesting.captureStoreScreenshot
+import li.mercury.bigbrother.core.screenshottesting.screenshotName
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -69,23 +74,101 @@ class AppFilesScreenScreenshotTests {
         }
     }
 
+    @Test
+    fun givenFilesRead_whenOpenedAtTop_thenListsFoldersAndMediaLibrary() {
+        capturePhone("AppFilesRoot") { Files(location = null) }
+    }
+
+    @Test
+    fun givenFilesOpened_whenLoading_thenShowsLoadingIndicator() {
+        capturePhone("AppFilesLoading") { Files { it.copy(accesses = null) } }
+    }
+
+    @Test
+    fun givenLoadFailure_whenShown_thenSaysWhy() {
+        val failure = DemoLoadFailure
+        capturePhone("AppFilesFailure${failure.screenshotName}") { Files { it.copy(accesses = null, failure = failure) } }
+    }
+
+    @Test
+    fun givenNoFileRecords_whenShown_thenSaysNothingIsRecorded() {
+        capturePhone("AppFilesEmpty") { Files(location = null) { it.copy(accesses = emptyList()) } }
+    }
+
+    @Test
+    fun givenOnlyLookups_whenShown_thenListsWhatWasLookedFor() {
+        capturePhone("AppFilesLookedOnly") { Files(DemoApp.FLASHLIGHT, location = null) }
+    }
+
+    @Test
+    fun givenMoreRecordsThanShown_whenShown_thenSaysListIsCut() {
+        capturePhone("AppFilesTruncated") { Files(DemoApp.NOTES, location = null) { it.copy(truncated = true) } }
+    }
+
+    @Test
+    fun givenFileDetailsOpening_whenShown_thenSheetShowsLoadingIndicator() {
+        capturePhone("AppFilesDetailsLoading") { Files { it.copy(fileDetails = FileDetails(PHOTO)) } }
+    }
+
+    @Test
+    fun givenFileDetailsFailed_whenShown_thenSheetSaysWhy() {
+        capturePhone("AppFilesDetailsFailure") {
+            Files { it.copy(fileDetails = FileDetails(PHOTO, failure = LoadFailure.Other("database is locked"))) }
+        }
+    }
+
+    @Test
+    fun givenFileDetails_whenShown_thenSheetListsEachAccess() {
+        capturePhone("AppFilesDetails") {
+            val periods = listOf(
+                AccessPeriod(Action.READ, viaProvider = false, allowed = 1, denied = 0, time = clock.todayAt(14, 41)),
+                AccessPeriod(Action.READ, viaProvider = false, allowed = 1, denied = 0, time = clock.todayAt(8, 30)),
+            )
+            Files { it.copy(fileDetails = FileDetails(PHOTO, periods = periods)) }
+        }
+    }
+
+    private fun capturePhone(name: String, body: @Composable () -> Unit) {
+        composeTestRule.captureForDevice("phone", DefaultTestDevices.PHONE.spec, name, body = body)
+    }
+
     /** The weather app's files, open at the camera folder, as from its page. */
     @Composable
     private fun CameraFolder() {
+        Files()
+    }
+
+    /**
+     * [app]'s files, open at [location] as from its page, in the state
+     * [state] makes of them.
+     */
+    @Composable
+    private fun Files(
+        app: DemoApp = DemoApp.WEATHER,
+        location: String? = CAMERA,
+        state: (AppFilesUiState) -> AppFilesUiState = { it },
+    ) {
         val records = remember { DemoRecords(clock) }
         AppFilesScreen(
-            state = AppFilesUiState(
-                packageName = DemoApp.WEATHER.packageName,
-                appInfo = records.appInfo.getValue(DemoApp.WEATHER.packageName),
-                accesses = records.accesses(DemoApp.WEATHER).filter { it.isFile() },
+            state = state(
+                AppFilesUiState(
+                    packageName = app.packageName,
+                    appInfo = records.appInfo.getValue(app.packageName),
+                    accesses = records.accesses(app).filter { it.isFile() },
+                ),
             ),
-            uid = DemoApp.WEATHER.uid,
-            initialLocation = "/storage/emulated/0/DCIM/Camera",
+            uid = app.uid,
+            initialLocation = location,
             onBack = {},
             onRetry = {},
             onFileDetails = {},
             onDismissFileDetails = {},
             onOpenFile = {},
         )
+    }
+
+    private companion object {
+        const val CAMERA = "/storage/emulated/0/DCIM/Camera"
+        const val PHOTO = "$CAMERA/PXL_20261005_081133.jpg"
     }
 }
