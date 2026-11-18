@@ -25,6 +25,7 @@ import androidx.test.core.app.ApplicationProvider
 import li.mercury.bigbrother.core.model.InstalledApp
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
+import li.mercury.bigbrother.core.model.SandboxPart
 import li.mercury.bigbrother.core.model.SandboxStatus
 import li.mercury.bigbrother.core.model.SandboxedApp
 import li.mercury.bigbrother.core.screenshottesting.DefaultTestDevices
@@ -104,6 +105,33 @@ class JailScreenScreenshotTests {
     }
 
     @Test
+    fun givenItemsNotInEffect_whenOpened_thenSaysWhyForEach() {
+        composeTestRule.captureForDevice("phone", DefaultTestDevices.PHONE.spec, "JailAppNotInEffect") {
+            JailApp(
+                unmet = mapOf(
+                    SandboxItem.DEVICE_IDS to setOf(SandboxPart.ANDROID_ID_HOOK),
+                    SandboxItem.STORAGE to setOf(SandboxPart.APP_OPS),
+                ),
+                expanded = null,
+            )
+        }
+    }
+
+    @Test
+    @Config(qualifiers = "zh-rCN")
+    fun givenItemsNotInEffect_whenOpenedInChinese_thenSaysWhyForEach() {
+        composeTestRule.captureForDevice("phone_zh", DefaultTestDevices.PHONE.spec, "JailAppNotInEffect") {
+            JailApp(
+                unmet = mapOf(
+                    SandboxItem.DEVICE_IDS to setOf(SandboxPart.ANDROID_ID_HOOK),
+                    SandboxItem.STORAGE to setOf(SandboxPart.APP_OPS),
+                ),
+                expanded = null,
+            )
+        }
+    }
+
+    @Test
     fun givenGlobalSettings_whenShown_thenItemsGroupedByKind() {
         composeTestRule.captureForDevice("phone", DefaultTestDevices.PHONE.spec, "JailSettings") {
             JailSettingsScreen(
@@ -172,15 +200,17 @@ class JailScreenScreenshotTests {
     }
 
     @Composable
-    private fun JailApp() {
+    private fun JailApp(
+        unmet: Map<SandboxItem, Set<SandboxPart>> = emptyMap(),
+        expanded: SandboxItem? = SandboxItem.LOCATION,
+    ) {
         val app = DemoApp.WEATHER
         val settings = mapOf(SandboxItem.LOCATION to SandboxMode.COARSE)
         JailAppScreen(
             state = JailAppUiState(
                 packageName = app.packageName,
-                app = sandboxedApp(app, clock.todayAt(9, 12) - 2 * 24 * 60 * 60L, settings),
+                app = sandboxedApp(app, clock.todayAt(9, 12) - 2 * 24 * 60 * 60L, settings).copy(unmet = unmet),
                 info = app.appInfo(demoLocale()),
-                status = FULL_STATUS,
                 requested = setOf("android.permission.ACCESS_FINE_LOCATION", "android.permission.ACCESS_COARSE_LOCATION"),
                 loading = false,
             ),
@@ -193,7 +223,7 @@ class JailScreenScreenshotTests {
             onChoose = { _, _ -> },
             onReset = {},
             onErrorDismiss = {},
-            initiallyExpanded = SandboxItem.LOCATION,
+            initiallyExpanded = expanded,
         )
     }
 

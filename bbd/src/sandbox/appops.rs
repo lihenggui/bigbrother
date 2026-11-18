@@ -53,7 +53,7 @@
 //! leaves the sandbox, whatever its items say.
 
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     io::{BufRead as _, BufReader, Write as _},
     os::fd::AsRawFd as _,
     process::ChildStdin,
@@ -113,10 +113,26 @@ fn parse_line(line: &str) -> Option<(u32, Option<Answer>)> {
         "restored" => Some(Answer::Restored),
         "applied" => Some(Answer::Applied(words.next().unwrap_or("").to_string())),
         "failed" => Some(Answer::Failed),
-        "reverted" | "verified" => None,
+        "reverted" | "verified" | "unheld" => None,
         _ => return None,
     };
     Some((uid, answer))
+}
+
+/// `unheld <uid> <op>,...` (or `-` for none): the ops of a guarded uid that
+/// the system did not keep at the mode the uid is held to, after the
+/// helper set them. Ops this Android version does not have are not named.
+fn parse_unheld(line: &str) -> Option<(u32, BTreeSet<String>)> {
+    let mut words = line.split_ascii_whitespace();
+    if words.next()? != "unheld" {
+        return None;
+    }
+    let uid = words.next()?.parse().ok()?;
+    let ops = match words.next() {
+        None | Some("-") => BTreeSet::new(),
+        Some(ops) => ops.split(',').map(str::to_string).collect(),
+    };
+    Some((uid, ops))
 }
 
 #[derive(Default)]
@@ -144,6 +160,9 @@ struct State {
     untold: bool,
     /// Answers not yet taken by who asked.
     answers: HashMap<u32, Answer>,
+    /// The ops of guarded uids that the running helper last found it could
+    /// not hold. A uid it has not reported on yet is not known to be held.
+    unheld: BTreeMap<u32, BTreeSet<String>>,
 }
 
 impl State {
@@ -500,6 +519,7 @@ impl Effect for AppOps {
             let restored = answer == Answer::Restored;
             if restored {
                 state.guarded.remove(&uid);
+                state.unheld.remove(&uid);
             }
             restored
         })?;
@@ -583,7 +603,26 @@ impl Effect for AppOps {
     }
 
     fn report(&self, status: &mut Status) {
-        status.appops = self.shared.state().input.is_some();
+        let state = self.shared.state();
+        status.appops = state.input.is_some();
+        // Without a helper nothing holds the ops: the system may already
+        // have set them back. A uid it has not reported on since it
+        // started is not known to be held either.
+        if status.appops {
+            status.held_ops = state
+                .guarded
+                .iter()
+                .filter_map(|(uid, targets)| {
+                    let unheld = state.unheld.get(uid)?;
+                    let held = names_in(targets)
+                        .into_iter()
+                        .filter(|name| !unheld.contains(*name))
+                        .map(str::to_string)
+                        .collect();
+                    Some((*uid, held))
+                })
+                .collect();
+        }
     }
 }
 
@@ -669,13 +708,20 @@ fn run_helper(shared: &Shared) -> anyhow::Error {
         shared.changed.notify_all();
     }
     for line in BufReader::new(output).lines().map_while(Result::ok) {
-        if let Some((uid, Some(answer))) = parse_line(&line) {
+        if let Some((uid, ops)) = parse_unheld(&line) {
+            shared.state().unheld.insert(uid, ops);
+        } else if let Some((uid, Some(answer))) = parse_line(&line) {
             shared.state().answers.insert(uid, answer);
             shared.changed.notify_all();
         }
     }
-    // Closes its input, if it is still there to notice.
-    shared.state().input = None;
+    // Closes its input, if it is still there to notice. The next helper
+    // reports again on every uid it is told of.
+    {
+        let mut state = shared.state();
+        state.input = None;
+        state.unheld.clear();
+    }
     shared.changed.notify_all();
     let status = match helper.wait() {
         Ok(status) => status.to_string(),
@@ -716,6 +762,19 @@ mod tests {
             parse_line("failed 10100"),
             Some((10100, Some(Answer::Failed)))
         );
+        assert_eq!(
+            parse_unheld("unheld 10100 android:camera,android:read_sms"),
+            Some((
+                10100,
+                BTreeSet::from(["android:camera".into(), "android:read_sms".into()])
+            ))
+        );
+        assert_eq!(
+            parse_unheld("unheld 10100 -"),
+            Some((10100, BTreeSet::new()))
+        );
+        assert_eq!(parse_unheld("verified 10100"), None);
+        assert_eq!(parse_line("unheld 10100 -"), Some((10100, None)));
         // What the helper did by itself answers nothing.
         assert_eq!(
             parse_line("reverted 10100 android:camera"),

@@ -307,5 +307,7 @@ internal object AppOpsGuardProtocol {
 
     fun verifiedLine(uid: Int): String = "verified $uid"
 
+    fun unheldLine(uid: Int, ops: List<String>): String = "unheld $uid ${ops.joinToString(",").ifEmpty { NONE }}"
+
     fun failedLine(uid: Int): String = "failed $uid"
 }

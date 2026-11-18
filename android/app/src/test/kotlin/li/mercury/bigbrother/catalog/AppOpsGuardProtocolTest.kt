@@ -273,4 +273,13 @@ class AppOpsGuardProtocolTest {
 
         assertEquals(emptyList(), AppOpsGuardProtocol.opsToSetAgain(states, targets))
     }
+
+    @Test
+    fun givenUnheldOps_whenReported_thenNamedOrDash() {
+        assertEquals(
+            "unheld 10100 android:camera,android:read_sms",
+            AppOpsGuardProtocol.unheldLine(10100, listOf("android:camera", "android:read_sms")),
+        )
+        assertEquals("unheld 10100 -", AppOpsGuardProtocol.unheldLine(10100, emptyList()))
+    }
 }

@@ -34,7 +34,12 @@ any way.
 | Identity | An ANDROID_ID of its own, fixed per app; no installed app other than itself and what came with the system | Hooks in system_server | LSPosed |
 
 The first three work without LSPosed. `bbd sandbox status` says which parts
-are in place on the device.
+are in place on the device. `bbd sandbox list` names, for each app, the
+items that are on but not in effect and the part each lacks: the mounts,
+the app ops (read back after they are set, and whenever the system changes
+them), or a hook. An item is in effect only with all its parts: the device
+identifiers, for one, need both the ANDROID_ID hook and the phone-state app
+ops.
 
 The sandbox applies to a uid. Packages that share a uid are sandboxed
 together, and `enable` names them.
