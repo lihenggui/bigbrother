@@ -448,10 +448,7 @@ impl Thread {
             "it shares zygote's mount namespace"
         );
 
-        let meminfo = fs::read_to_string(mounts::MEMINFO)
-            .map(|real| mounts::meminfo_template(&real))
-            .context("reading /proc/meminfo")?;
-        let files = [(mounts::CPUINFO, cpuinfo), (mounts::MEMINFO, &meminfo)];
+        let files = [(mounts::CPUINFO, cpuinfo)];
 
         let theirs = File::open(format!("/proc/{pid}/ns/mnt")).context("opening its namespace")?;
         enter(&theirs).context("entering its namespace")?;

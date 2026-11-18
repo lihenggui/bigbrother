@@ -25,7 +25,7 @@ again as it should.
 | | What the app gets | How | Needs |
 | --- | --- | --- | --- |
 | Shared storage | A directory of its own in place of `/storage/emulated/<user>`, empty at first, which it can write to. Its own `Android/data`, `obb` and `media` directories stay. Other volumes (SD cards) are empty. | Mounts made in the app's mount namespace as it starts | root |
-| Kernel information | `/proc/cpuinfo` without what names the chip; `/proc/meminfo` with the total rounded up to a common size | The same mounts | root |
+| Kernel information | `/proc/cpuinfo` without what names the chip | The same mounts | root |
 | Personal data | Nothing: contacts, calendar, messages, call log, accounts, location, clipboard, camera, microphone, body sensors, media, usage statistics, nearby devices | App ops set to "ignored" for the app's uid | root |
 | Identity | An ANDROID_ID of its own, fixed per app; no installed app other than itself and what came with the system | Hooks in system_server | LSPosed |
 

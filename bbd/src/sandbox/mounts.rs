@@ -22,7 +22,7 @@
 //!   are taken from the filesystem underneath rather than through the media
 //!   provider's FUSE mount, which answers every lookup with a round trip.
 //! - Other volumes (SD cards) are hidden.
-//! - `/proc/cpuinfo` and `/proc/meminfo` are replaced by files that say less.
+//! - `/proc/cpuinfo` is replaced by a file that does not name the chip.
 //!
 //! [`apply`] is the order of the steps; [`Sys`] is what carries them out, so
 //! that the order can be tested without being root on a device.
@@ -169,11 +169,10 @@ pub fn apply<S: Sys>(
 
 // ---- kernel information ----------------------------------------------------
 
-/// The files replaced. An app must have been able to read the real one: a
+/// The file replaced. An app must have been able to read the real one: a
 /// file that was unreadable and now has content gives the sandbox away. Not
 /// `/proc/sys/kernel/random/boot_id`: apps do not start with a made-up one.
 pub const CPUINFO: &str = "/proc/cpuinfo";
-pub const MEMINFO: &str = "/proc/meminfo";
 
 /// The lines of `/proc/cpuinfo` that are kept, by their key: how many
 /// processors there are and what instructions they have, which programs
@@ -197,39 +196,6 @@ pub fn cpuinfo_template(real: &str) -> String {
         if (blank && !out.is_empty() && !out.ends_with("\n\n")) || CPUINFO_KEPT.contains(&key) {
             out.push_str(line);
             out.push('\n');
-        }
-    }
-    out
-}
-
-/// The sizes devices are sold with, in GiB.
-const MEMORY_SIZES_GIB: &[u64] = &[1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64];
-
-/// `/proc/meminfo` with the total rounded up to a size devices are sold
-/// with: the exact number differs between models, and between devices of
-/// one model by kernel and firmware. The other lines are as they are now;
-/// they change all the time and say nothing about the device.
-pub fn meminfo_template(real: &str) -> String {
-    let mut out = String::new();
-    for line in real.lines() {
-        let total = line
-            .strip_prefix("MemTotal:")
-            .and_then(|rest| rest.trim().strip_suffix("kB"))
-            .and_then(|kb| kb.trim().parse::<u64>().ok());
-        match total {
-            Some(kb) => {
-                let rounded = MEMORY_SIZES_GIB
-                    .iter()
-                    .map(|gib| gib * 1024 * 1024)
-                    .find(|size| *size >= kb)
-                    .unwrap_or(kb);
-                // The kernel's own layout.
-                out.push_str(&format!("{:<16}{rounded:>8} kB\n", "MemTotal:"));
-            }
-            None => {
-                out.push_str(line);
-                out.push('\n');
-            }
         }
     }
     out
@@ -482,7 +448,7 @@ mod tests {
         }
     }
 
-    const FILES: &[(&str, &str)] = &[(CPUINFO, "cpu"), (MEMINFO, "mem")];
+    const FILES: &[(&str, &str)] = &[(CPUINFO, "cpu")];
 
     #[test]
     fn the_sandbox_replaces_storage_and_keeps_the_apps_own_directories() {
@@ -514,7 +480,6 @@ mod tests {
                 "attach /data/media/10/Android/media/com.b /storage/emulated/10/Android/media/com.b",
                 "empty /storage/1A2B-3C4D",
                 "replace /proc/cpuinfo",
-                "replace /proc/meminfo",
             ]
         );
     }
@@ -538,7 +503,6 @@ mod tests {
                     "clone /data/media/0/Android/data/com.a",
                     "empty /storage/emulated/0",
                     "replace /proc/cpuinfo",
-                    "replace /proc/meminfo",
                 ]
             );
         }
@@ -585,19 +549,5 @@ mod tests {
             "processor\t: 0\nflags\t\t: fpu sse2\n\n"
         );
         assert_eq!(cpuinfo_template(""), "");
-    }
-
-    #[test]
-    fn meminfo_rounds_the_total_up_to_a_common_size() {
-        let real = "MemTotal:        7652348 kB\nMemFree:          123456 kB\nSwapTotal:       4194300 kB\n";
-        assert_eq!(
-            meminfo_template(real),
-            "MemTotal:        8388608 kB\nMemFree:          123456 kB\nSwapTotal:       4194300 kB\n"
-        );
-        // Exactly a common size, and more than any of them.
-        assert!(meminfo_template("MemTotal:        2097152 kB\n").contains(" 2097152 kB"));
-        assert!(meminfo_template("MemTotal:       99999999 kB\n").contains("99999999 kB"));
-        // Not understood: left as it is.
-        assert_eq!(meminfo_template("MemTotal: lots\n"), "MemTotal: lots\n");
     }
 }
