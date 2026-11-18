@@ -1867,8 +1867,8 @@ mod tests {
         w.put_sandbox_global(&[("camera", "off"), ("location", "coarse")])
             .unwrap();
         assert_eq!(w.sandbox_global().unwrap(), "camera=off,location=coarse");
-        w.put_sandbox_global(&[("contacts", "deny")]).unwrap();
-        assert_eq!(w.sandbox_global().unwrap(), "contacts=deny");
+        w.put_sandbox_global(&[("contacts", "off")]).unwrap();
+        assert_eq!(w.sandbox_global().unwrap(), "contacts=off");
         drop(w);
         std::fs::remove_dir_all(dir).unwrap();
     }

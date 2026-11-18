@@ -133,8 +133,6 @@
     <string name="jail_item_nearby_devices_on">无设备</string>
     <string name="jail_item_nearby_devices_on_detail">蓝牙和 Wi‑Fi 扫描结果为空。</string>
 
-    <string name="jail_mode_deny">拒绝</string>
-    <string name="jail_mode_deny_detail">应用收到权限错误，可能请求授权或停止相关功能。</string>
     <string name="jail_mode_coarse">大致位置</string>
     <string name="jail_mode_coarse_detail">仅提供大致位置（街区级）。</string>
     <string name="jail_mode_off">使用真实数据</string>

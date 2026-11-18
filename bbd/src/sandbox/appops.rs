@@ -33,8 +33,8 @@
 //! put back when the app leaves the sandbox.
 //!
 //! Only the ops of the items that are on for the app are held (see
-//! `items::Settings::op_targets`), ignored or, for an item set to deny,
-//! errored. An app with none of them on is not handed to the helper.
+//! `items::Settings::op_targets`), ignored. An app with none of them on is
+//! not handed to the helper.
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -275,13 +275,17 @@ impl AppOps {
     }
 }
 
+/// `AppOpsManager.MODE_IGNORED`: the app is given an empty answer, with its
+/// permission still shown as granted.
+const MODE_IGNORED: u8 = 1;
+
 /// The ops to hold an app to, as the helper takes them: `<op>=<mode>,...`,
 /// with the mode's number. Empty if none.
 fn targets_of(items: &Settings) -> String {
     items
         .op_targets()
         .iter()
-        .map(|(op, mode)| format!("{op}={}", *mode as u8))
+        .map(|op| format!("{op}={MODE_IGNORED}"))
         .collect::<Vec<_>>()
         .join(",")
 }
@@ -654,11 +658,11 @@ mod tests {
             own.set(item, Some(Mode::Off)).unwrap();
         }
         own.set(Item::Camera, Some(Mode::On)).unwrap();
-        own.set(Item::Contacts, Some(Mode::Deny)).unwrap();
+        own.set(Item::Contacts, Some(Mode::On)).unwrap();
         let items = own.over(&Settings::default());
         assert_eq!(
             targets_of(&items),
-            "android:read_contacts=2,android:write_contacts=2,android:camera=1"
+            "android:read_contacts=1,android:write_contacts=1,android:camera=1"
         );
         assert_eq!(
             saved_modes_of(
@@ -831,7 +835,7 @@ mod tests {
             restore_line(&entry, &own.over(&Settings::default())).as_deref(),
             Some("restore 10100 android:camera=4")
         );
-        own.set(Item::Microphone, Some(Mode::Deny)).unwrap();
+        own.set(Item::Microphone, Some(Mode::On)).unwrap();
         assert_eq!(
             restore_line(&entry, &own.over(&Settings::default())).as_deref(),
             Some("restore 10100 android:camera=4,android:record_audio=default")

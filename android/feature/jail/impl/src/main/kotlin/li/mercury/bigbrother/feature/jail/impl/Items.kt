@@ -134,7 +134,6 @@ private val SandboxItem.onDetail: Int
 internal fun modeLabel(item: SandboxItem, mode: SandboxMode): String = stringResource(
     when (mode) {
         SandboxMode.ON -> item.onLabel
-        SandboxMode.DENY -> R.string.jail_mode_deny
         SandboxMode.COARSE -> R.string.jail_mode_coarse
         SandboxMode.OFF -> R.string.jail_mode_off
     },
@@ -145,7 +144,6 @@ internal fun modeLabel(item: SandboxItem, mode: SandboxMode): String = stringRes
 internal fun modeDetail(item: SandboxItem, mode: SandboxMode): String = stringResource(
     when (mode) {
         SandboxMode.ON -> item.onDetail
-        SandboxMode.DENY -> R.string.jail_mode_deny_detail
         SandboxMode.COARSE -> R.string.jail_mode_coarse_detail
         SandboxMode.OFF -> R.string.jail_mode_off_detail
     },

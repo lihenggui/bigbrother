@@ -40,7 +40,7 @@ class JailAppViewModelTest {
 
     private val sandboxRepository = TestSandboxRepository(
         apps = listOf(sandboxed(UID, PACKAGE, enabled = true)),
-        global = mapOf(SandboxItem.LOCATION to SandboxMode.DENY, SandboxItem.CAMERA to SandboxMode.OFF),
+        global = mapOf(SandboxItem.LOCATION to SandboxMode.COARSE, SandboxItem.CAMERA to SandboxMode.OFF),
     )
     private val installedAppRepository = TestInstalledAppRepository(
         permissions = mapOf(PACKAGE to setOf("android.permission.CAMERA")),
@@ -59,7 +59,7 @@ class JailAppViewModelTest {
     fun givenIsolatedApp_whenLoaded_thenGlobalModesApplyAndPermissionsKnown() = runTest {
         val viewModel = viewModel()
 
-        assertEquals(SandboxMode.DENY, viewModel.app().modeOf(SandboxItem.LOCATION))
+        assertEquals(SandboxMode.COARSE, viewModel.app().modeOf(SandboxItem.LOCATION))
         assertEquals(SandboxMode.ON, viewModel.app().modeOf(SandboxItem.CONTACTS))
         assertEquals(setOf("android.permission.CAMERA"), viewModel.uiState.value.requested)
     }
@@ -81,7 +81,7 @@ class JailAppViewModelTest {
         viewModel.setOn(SandboxItem.LOCATION, on = true)
 
         assertTrue(viewModel.app().settings.isEmpty())
-        assertEquals(SandboxMode.DENY, viewModel.app().modeOf(SandboxItem.LOCATION))
+        assertEquals(SandboxMode.COARSE, viewModel.app().modeOf(SandboxItem.LOCATION))
     }
 
     @Test
