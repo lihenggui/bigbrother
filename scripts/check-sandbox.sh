@@ -375,7 +375,12 @@ fi
 # gives an approximate location), and foreground-only leaves the camera and
 # the microphone to the app while it is in front.
 echo "with location coarse, camera and microphone foreground-only:"
-precise() { adb shell dumpsys package "$PACKAGE" | tr -d '\r' | grep -m 1 'ACCESS_FINE_LOCATION: granted' | sed 's/^ *//'; }
+# The first grant line, read to the end: a reader that stops early would end
+# dumpsys with SIGPIPE, which pipefail makes this script's exit.
+precise() {
+    adb shell dumpsys package "$PACKAGE" | tr -d '\r' |
+        awk '/ACCESS_FINE_LOCATION: granted/ && !found++ { sub(/^ +/, ""); print }'
+}
 uid_mode() { adb shell appops get --uid "$PACKAGE" "$1" | tr -d '\r' | sed -n 's/^Uid mode: [A-Z_]*: \([a-z]*\).*/\1/p'; }
 precise_before="$(precise)"
 as_root "$BBD sandbox set $PACKAGE location=coarse camera=foreground microphone=foreground" >/dev/null
