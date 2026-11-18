@@ -254,7 +254,9 @@ the mode of an op of a runtime permission, the helper notes the mode the
 system gave the op for whether the permission was granted (allowed, in
 the foreground only, or ignored). If the user granted or revoked the
 permission while the app was in the sandbox, the op is given the
-system's mode for the permission as it is then, not the one saved. The
+system's mode for the permission as it is then, not the one saved. A
+permission revoked meanwhile loses the `REVOKED_COMPAT` mark Android gave
+it while its op was held, unless the user had it so before. The
 permission is written down as perhaps taken before the helper takes it, so
 that a daemon that stopped in between still gives it back. Removing the
 module takes every app out first. Where the

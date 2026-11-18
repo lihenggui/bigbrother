@@ -473,4 +473,24 @@ class AppOpsGuardProtocolTest {
         assertEquals(before, AppOpsGuardProtocol.stateToGiveBack(sent = before, kept = null, chosen = true))
         assertNull(AppOpsGuardProtocol.stateToGiveBack(sent = null, kept = null, chosen = false))
     }
+
+    @Test
+    fun givenModeAndGrantSaved_whenItsMarksAreSetBack_thenRevokedCompatOnlyWhereTheUserLeftIt() {
+        val (allowed, ignored, foreground) = Triple(AppOpsGuardProtocol.MODE_ALLOWED, AppOpsGuardProtocol.MODE_IGNORED, AppOpsGuardProtocol.MODE_FOREGROUND)
+        // Granted, and kept from the app by the user.
+        assertTrue(AppOpsGuardProtocol.revokedCompatBefore(saved = ignored, grantThen = allowed, background = false))
+        assertTrue(AppOpsGuardProtocol.revokedCompatBefore(saved = ignored, grantThen = foreground, background = true))
+        assertTrue(AppOpsGuardProtocol.revokedCompatBefore(saved = AppOpsGuardProtocol.MODE_DEFAULT, grantThen = allowed, background = false))
+        assertTrue(AppOpsGuardProtocol.revokedCompatBefore(saved = foreground, grantThen = allowed, background = false))
+        // In the foreground, where a background permission makes that the system's own mode.
+        assertFalse(AppOpsGuardProtocol.revokedCompatBefore(saved = foreground, grantThen = allowed, background = true))
+        // Ignored because it was not granted, or not kept from the app.
+        assertFalse(AppOpsGuardProtocol.revokedCompatBefore(saved = ignored, grantThen = ignored, background = false))
+        assertFalse(AppOpsGuardProtocol.revokedCompatBefore(saved = null, grantThen = allowed, background = false))
+        assertFalse(AppOpsGuardProtocol.revokedCompatBefore(saved = allowed, grantThen = allowed, background = true))
+        // Background location granted, with location in the foreground only by the user.
+        assertTrue(AppOpsGuardProtocol.backgroundRevokedCompatBefore(saved = foreground, grantThen = allowed))
+        assertFalse(AppOpsGuardProtocol.backgroundRevokedCompatBefore(saved = null, grantThen = allowed))
+        assertFalse(AppOpsGuardProtocol.backgroundRevokedCompatBefore(saved = foreground, grantThen = foreground))
+    }
 }

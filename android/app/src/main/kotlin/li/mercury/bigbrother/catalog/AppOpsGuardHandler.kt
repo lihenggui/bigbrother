@@ -405,9 +405,53 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
                 val grantNow = if (compared) grantMode(op, uid) else null
                 AppOpsGuardProtocol.modeToRestore(saved, grantThen, grantNow) ?: default
             },
-            writeMode = { mode -> setUidMode(op, uid, mode) },
+            writeMode = { mode ->
+                setUidMode(op, uid, mode).also { set ->
+                    // The marks change with the grant: one unchanged is as
+                    // Android left it.
+                    val grantNow = if (set && compared) grantMode(op, uid) else null
+                    if (grantThen != null && grantNow != null && grantNow != grantThen) unmarkRevoked(op, uid, saved, grantThen)
+                }
+            },
             readMode = { states(uid, listOf(op)).single().uidMode ?: default },
         )
+    }
+
+    /**
+     * Leave the permission of [op], and its background permission, marked
+     * `REVOKED_COMPAT` for [uid] only where the user had them so before
+     * the uid was held ([saved] and [grantThen]), its grant having changed
+     * since. Android marks a granted
+     * permission so while its op is held ignored, and a granted background
+     * permission while the op is not allowed, but when the op is set back
+     * it updates the mark only on a permission still granted: one revoked
+     * meanwhile keeps it, and with it its op ignored, or in the foreground
+     * only, should it be granted again by any means but the settings.
+     */
+    private fun unmarkRevoked(op: GuardedOp, uid: Int, saved: Int?, grantThen: Int) {
+        val permission = op.permission ?: return
+        val connected = system.permissions ?: return
+        try {
+            val background = runtimeOf(connected, permission)?.background
+            markRevoked(connected, uid, permission, AppOpsGuardProtocol.revokedCompatBefore(saved, grantThen, background != null))
+            background?.let {
+                markRevoked(connected, uid, it, AppOpsGuardProtocol.backgroundRevokedCompatBefore(saved, grantThen))
+            }
+        } catch (e: Throwable) {
+            system.warn("marks of ${op.name} for $uid: ${system.describe(e)}")
+        }
+    }
+
+    /** Mark [permission], if it is not granted to [uid], `REVOKED_COMPAT` or not as [marked] says. */
+    private fun markRevoked(connected: RuntimePermissions, uid: Int, permission: String, marked: Boolean) {
+        if (connected.isGranted(uid, permission)) return
+        val value = if (marked) AppOpsGuardProtocol.FLAG_REVOKED_COMPAT else 0
+        for (pkg in connected.requesting(uid, permission)) {
+            system.requireOwner(uid)
+            if (connected.flags(pkg, permission, uid) and AppOpsGuardProtocol.FLAG_REVOKED_COMPAT != value) {
+                connected.setFlags(pkg, permission, uid, AppOpsGuardProtocol.FLAG_REVOKED_COMPAT, value)
+            }
+        }
     }
 
     /** The permissions this program holds revoked for a guarded uid, or took and has not given back. */
@@ -511,10 +555,11 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
      * this program's own `setUidMode` leaves while it holds the op.
      */
     private fun permissionGrantMode(connected: RuntimePermissions, uid: Int, permission: String): Int? {
-        val info = if (runtime.containsKey(permission)) runtime[permission] else connected.runtime(permission).also { runtime[permission] = it }
-        info ?: return null
+        val info = runtimeOf(connected, permission) ?: return null
         return AppOpsGuardProtocol.grantMode(connected.isGranted(uid, permission), info.background?.let { connected.isGranted(uid, it) })
     }
+
+    private fun runtimeOf(connected: RuntimePermissions, permission: String): RuntimePermissions.Runtime? = if (runtime.containsKey(permission)) runtime[permission] else connected.runtime(permission).also { runtime[permission] = it }
 
     /** The state of [permission] for [uid], `null` if no package of it requests it. */
     private fun state(uid: Int, permission: String): PermissionState? {

@@ -16,6 +16,7 @@
 
 package li.mercury.bigbrother.catalog
 
+import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.FLAG_REVOKED_COMPAT
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.FLAG_USER_FIXED
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.FLAG_USER_SET
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.MODE_ALLOWED
@@ -162,7 +163,7 @@ internal class FakeAndroid :
         if (!isGrantedToTheSettings(permission)) {
             granted[permission] = true
             allowOp(permission)
-            changeFlags(permission, REVOKED_COMPAT, 0)
+            changeFlags(permission, FLAG_REVOKED_COMPAT, 0)
         }
         // The user's choice, which the app may ask to change.
         changeFlags(permission, FLAG_USER_FIXED or FLAG_USER_SET, FLAG_USER_SET)
@@ -209,7 +210,7 @@ internal class FakeAndroid :
     }
 
     /** What the settings show: granted, and not marked `REVOKED_COMPAT`. */
-    private fun isGrantedToTheSettings(permission: String) = isGranted(permission) && !hasFlag(permission, REVOKED_COMPAT)
+    private fun isGrantedToTheSettings(permission: String) = isGranted(permission) && !hasFlag(permission, FLAG_REVOKED_COMPAT)
 
     /** `allowAppOp` of the permission controller. */
     private fun allowOp(permission: String) {
@@ -255,11 +256,11 @@ internal class FakeAndroid :
         if (!isGranted(permission)) return
         val background = BACKGROUND_OF[permission]
         if (background == null) {
-            changeFlags(permission, REVOKED_COMPAT, if (mode != MODE_ALLOWED) REVOKED_COMPAT else 0)
+            changeFlags(permission, FLAG_REVOKED_COMPAT, if (mode != MODE_ALLOWED) FLAG_REVOKED_COMPAT else 0)
             return
         }
-        if (isGranted(background)) changeFlags(background, REVOKED_COMPAT, if (mode != MODE_ALLOWED) REVOKED_COMPAT else 0)
-        changeFlags(permission, REVOKED_COMPAT, if (mode != MODE_ALLOWED && mode != MODE_FOREGROUND) REVOKED_COMPAT else 0)
+        if (isGranted(background)) changeFlags(background, FLAG_REVOKED_COMPAT, if (mode != MODE_ALLOWED) FLAG_REVOKED_COMPAT else 0)
+        changeFlags(permission, FLAG_REVOKED_COMPAT, if (mode != MODE_ALLOWED && mode != MODE_FOREGROUND) FLAG_REVOKED_COMPAT else 0)
     }
 
     /** The permission policy's sync of every permission's op. */
@@ -292,9 +293,6 @@ internal class FakeAndroid :
     companion object {
         const val PACKAGE = "com.example.app"
         const val UID = 10123
-
-        /** `PackageManager.FLAG_PERMISSION_REVOKED_COMPAT`. */
-        const val REVOKED_COMPAT = 8
 
         const val CONTACTS = "android.permission.READ_CONTACTS"
         const val CALENDAR = "android.permission.READ_CALENDAR"

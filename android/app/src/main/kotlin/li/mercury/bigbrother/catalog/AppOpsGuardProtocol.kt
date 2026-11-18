@@ -105,6 +105,34 @@ internal object AppOpsGuardProtocol {
     /** The flags of a permission that are the user's choice, saved and put back. */
     const val USER_FLAGS = FLAG_USER_SET or FLAG_USER_FIXED
 
+    /**
+     * `PackageManager.FLAG_PERMISSION_REVOKED_COMPAT`: granted, with its op
+     * kept from the app. The permission policy then keeps the op ignored.
+     */
+    const val FLAG_REVOKED_COMPAT = 8
+
+    /**
+     * Whether Android had a runtime permission marked [FLAG_REVOKED_COMPAT]
+     * before its uid was held, by the uid mode [saved] then and the mode
+     * the system gave the op for its grant ([grantThen], as [grantMode]
+     * has it): granted, with the op set by the user to a mode that keeps
+     * it from the app, as `AppOpsService.updatePermissionRevokedCompat`
+     * marks it: any but allowed, or, for a permission that has a
+     * [background] one, any but allowed and foreground. No uid mode is
+     * the op's default, allowed.
+     */
+    fun revokedCompatBefore(saved: Int?, grantThen: Int, background: Boolean): Boolean = grantThen != MODE_IGNORED &&
+        saved != null &&
+        saved != MODE_ALLOWED &&
+        !(background && saved == MODE_FOREGROUND)
+
+    /**
+     * As [revokedCompatBefore], for the background permission of the op's
+     * permission: granted then ([grantThen] allowed), with the op set to
+     * anything but allowed.
+     */
+    fun backgroundRevokedCompatBefore(saved: Int?, grantThen: Int): Boolean = grantThen == MODE_ALLOWED && saved != null && saved != MODE_ALLOWED
+
     /** What a permission is held to: revoked, and fixed as the user's choice. */
     const val REVOKED = "revoked"
 

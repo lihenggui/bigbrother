@@ -16,6 +16,7 @@
 
 package li.mercury.bigbrother.catalog
 
+import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.FLAG_REVOKED_COMPAT
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.FLAG_USER_FIXED
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.MODE_ALLOWED
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.MODE_FOREGROUND
@@ -25,7 +26,6 @@ import li.mercury.bigbrother.catalog.FakeAndroid.Companion.CAMERA
 import li.mercury.bigbrother.catalog.FakeAndroid.Companion.COARSE
 import li.mercury.bigbrother.catalog.FakeAndroid.Companion.CONTACTS
 import li.mercury.bigbrother.catalog.FakeAndroid.Companion.FINE
-import li.mercury.bigbrother.catalog.FakeAndroid.Companion.REVOKED_COMPAT
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.Parameterized
@@ -78,13 +78,13 @@ class PermissionMatrixTest(private val case: Case) {
             if (granted) "granted" else "denied",
             MODE_NAMES.getValue(mode),
             subject.reads(android),
-            "revoked_compat=${android.hasFlag(subject.permission, REVOKED_COMPAT)}",
+            "revoked_compat=${android.hasFlag(subject.permission, FLAG_REVOKED_COMPAT)}",
             "user_fixed=${android.hasFlag(subject.permission, FLAG_USER_FIXED)}",
         )
         val expected = mutableListOf(case.permission, case.mode, case.reads, "revoked_compat=${expectedRevokedCompat(case)}", "user_fixed=false")
         if (case.subject == "location") {
             // Marked for any mode but allowed, while it is granted.
-            seen += "background_revoked_compat=${android.hasFlag(BACKGROUND, REVOKED_COMPAT)}"
+            seen += "background_revoked_compat=${android.hasFlag(BACKGROUND, FLAG_REVOKED_COMPAT)}"
             expected += "background_revoked_compat=${android.isGranted(BACKGROUND) && mode != MODE_ALLOWED}"
         }
         assertEquals(expected, seen, case.name)
