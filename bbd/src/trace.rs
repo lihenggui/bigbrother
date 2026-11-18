@@ -536,8 +536,8 @@ fn start_sandbox(
     };
     sandbox.add_effect(Box::new(appops));
     sandbox.add_effect(Box::new(sandbox::identity::Identity::new(
-        sandbox.snapshot(),
-        sandbox.global(),
+        &sandbox.snapshot(),
+        &sandbox.global(),
     )));
     sandbox.add_effect(storage);
     sandbox.add_effect(Box::new(sandbox::sweep::Restart));

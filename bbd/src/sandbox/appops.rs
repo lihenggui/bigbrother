@@ -114,6 +114,14 @@ struct State {
     /// `set` takes them. A helper that starts is told of each, so that it
     /// carries on where the last one ended.
     guarded: BTreeMap<u32, String>,
+    /// The uid of the command waiting for the helper's answer. What it is
+    /// held to changes with the answer, and until then no `verify` names
+    /// it: the helper would take that `verify` after the command, and hold
+    /// the uid again to what the command took away.
+    asking: Option<u32>,
+    /// A helper started while that command was waiting, and was told of
+    /// every uid but its own: it is told of that one with the answer.
+    untold: bool,
     /// Answers not yet taken by who asked.
     answers: HashMap<u32, Answer>,
 }
@@ -131,6 +139,31 @@ impl State {
             .write_all(format!("{line}\n").as_bytes())
             .context("the app ops helper takes no commands")
     }
+
+    /// Have the helper look at the ops of `uid` and hold it to what it is
+    /// held to here. Nothing for a uid not held, or one a command is
+    /// changing.
+    fn verify(&mut self, uid: u32) {
+        if self.asking == Some(uid) {
+            return;
+        }
+        if let Some(targets) = self.guarded.get(&uid) {
+            let line = format!("verify {uid} {targets}");
+            let _ = self.send(&line);
+        }
+    }
+
+    /// Tell a helper that just started of every uid held, so that it
+    /// carries on where the last one ended.
+    fn tell_guarded(&mut self) {
+        let uids: Vec<u32> = self.guarded.keys().copied().collect();
+        for uid in uids {
+            self.verify(uid);
+        }
+        // The command waiting went to the helper before this one; what its
+        // uid is held to is known with the answer.
+        self.untold = self.asking.is_some();
+    }
 }
 
 #[derive(Default)]
@@ -147,36 +180,58 @@ impl Shared {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Send a command about `uid` and wait for the helper's answer.
-    fn ask(&self, uid: u32, line: &str) -> anyhow::Result<Answer> {
+    /// Send a command about `uid`, wait for the helper's answer, and hand
+    /// it to `settle`, which changes what the uid is held to. That is done
+    /// before the state is let go of, so that no `verify` sent in between
+    /// names what the uid was held to before the command.
+    fn ask<T>(
+        &self,
+        uid: u32,
+        line: &str,
+        settle: impl FnOnce(&mut State, Answer) -> T,
+    ) -> anyhow::Result<T> {
         let deadline = Instant::now() + ANSWER_WAIT;
         let mut state = self.state();
-        let wait = |state| {
-            let left = deadline.saturating_duration_since(Instant::now());
-            anyhow::ensure!(!left.is_zero(), "the app ops helper did not answer in time");
-            Ok(self
-                .changed
+        let wait = |state, left| {
+            self.changed
                 .wait_timeout(state, left)
                 .unwrap_or_else(|e| e.into_inner())
-                .0)
+                .0
         };
+        let late = || anyhow::anyhow!("the app ops helper did not answer in time");
         // Started for this command if it was not running, which takes a
         // second or two.
         state.wanted = true;
         state.hurry = state.input.is_none();
         self.changed.notify_all();
         while state.input.is_none() {
-            state = wait(state)?;
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err(late());
+            }
+            state = wait(state, left);
         }
         state.answers.remove(&uid);
         state.send(line)?;
-        loop {
+        state.asking = Some(uid);
+        let settled = loop {
             if let Some(answer) = state.answers.remove(&uid) {
-                return Ok(answer);
+                break Ok(settle(&mut state, answer));
             }
-            anyhow::ensure!(state.input.is_some(), "the app ops helper ended");
-            state = wait(state)?;
+            if state.input.is_none() {
+                break Err(anyhow::anyhow!("the app ops helper ended"));
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                break Err(late());
+            }
+            state = wait(state, left);
+        };
+        state.asking = None;
+        if std::mem::take(&mut state.untold) {
+            state.verify(uid);
         }
+        settled
     }
 
     /// End the helper if no app is sandboxed any more. Closing its input
@@ -211,12 +266,10 @@ impl AppOps {
     pub fn verifier(&self) -> impl Fn(u32) + Send + 'static {
         let shared = self.shared.clone();
         move |uid| {
+            // An app held at the gate for its mounts alone has no ops to
+            // look at.
             if let Ok(mut state) = shared.state.try_lock() {
-                // An app held at the gate for its mounts alone has no ops to
-                // look at.
-                if let Some(targets) = state.guarded.get(&uid).cloned() {
-                    let _ = state.send(&format!("verify {uid} {targets}"));
-                }
+                state.verify(uid);
             }
         }
     }
@@ -279,10 +332,17 @@ impl Effect for AppOps {
             return Ok(());
         }
         let uid = entry.uid;
-        match self.shared.ask(uid, &format!("set {uid} {targets}")) {
-            Ok(Answer::Saved(modes)) => {
+        let line = format!("set {uid} {targets}");
+        let saved = self.shared.ask(uid, &line, |state, answer| match answer {
+            Answer::Saved(modes) => {
+                state.guarded.insert(uid, targets);
+                Some(modes)
+            }
+            _ => None,
+        });
+        match saved {
+            Ok(Some(modes)) => {
                 entry.saved_ops = modes;
-                self.shared.state().guarded.insert(uid, targets);
                 Ok(())
             }
             failed => {
@@ -317,14 +377,16 @@ impl Effect for AppOps {
             "restore {uid} {}",
             saved_modes_of(&entry.saved_ops, &ops_in(&held))
         );
-        match self.shared.ask(uid, &line)? {
-            Answer::Restored => {
-                self.shared.state().guarded.remove(&uid);
-                self.shared.rest_if_unused();
-                Ok(())
+        let restored = self.shared.ask(uid, &line, |state, answer| {
+            let restored = answer == Answer::Restored;
+            if restored {
+                state.guarded.remove(&uid);
             }
-            _ => anyhow::bail!("the system did not take the app ops back"),
-        }
+            restored
+        })?;
+        anyhow::ensure!(restored, "the system did not take the app ops back");
+        self.shared.rest_if_unused();
+        Ok(())
     }
 
     fn update(
@@ -360,11 +422,15 @@ impl Effect for AppOps {
         };
         let uid = entry.uid;
         let line = format!("apply {uid} {holding} {}", resets(&held, &holding));
-        match self.shared.ask(uid, &line) {
-            Ok(Answer::Applied) => {
-                self.shared.state().guarded.insert(uid, holding);
-                Ok(())
+        let applied = self.shared.ask(uid, &line, |state, answer| {
+            let applied = answer == Answer::Applied;
+            if applied {
+                state.guarded.insert(uid, holding.clone());
             }
+            applied
+        });
+        match applied {
+            Ok(true) => Ok(()),
             failed => {
                 // It may have applied them all the same, or be about to:
                 // what was held is held again.
@@ -470,14 +536,7 @@ fn run_helper(shared: &Shared) -> anyhow::Error {
         state.input = Some(input);
         // Whoever was in a hurry has it now.
         state.hurry = false;
-        let guarded: Vec<String> = state
-            .guarded
-            .iter()
-            .map(|(uid, targets)| format!("verify {uid} {targets}"))
-            .collect();
-        for line in guarded {
-            let _ = state.send(&line);
-        }
+        state.tell_guarded();
         shared.changed.notify_all();
     }
     for line in BufReader::new(output).lines().map_while(Result::ok) {
@@ -543,12 +602,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_helper_is_wanted_only_while_an_app_is_sandboxed() {
-        let mut appops = AppOps {
-            shared: Arc::new(Shared::default()),
-        };
-        let entry = |uid| Entry {
+    fn sandboxed(uid: u32) -> Entry {
+        Entry {
             uid,
             package: "com.app".into(),
             enabled: true,
@@ -556,9 +611,16 @@ mod tests {
             saved_ops: String::new(),
             created: 0,
             settings: String::new(),
+        }
+    }
+
+    #[test]
+    fn the_helper_is_wanted_only_while_an_app_is_sandboxed() {
+        let mut appops = AppOps {
+            shared: Arc::new(Shared::default()),
         };
         let app = |uid, items| Resumed {
-            entry: entry(uid),
+            entry: sandboxed(uid),
             packages: vec![],
             items,
         };
@@ -618,6 +680,131 @@ mod tests {
             ]
         );
         assert!(ops_in("").is_empty());
+    }
+
+    /// Stands in for the helper: `cat`, which gives back every line it was
+    /// sent, in the order the helper would take them. Each command is
+    /// answered as the helper would answer it, after `meanwhile` was given
+    /// the state, as it is while the command waits for its answer.
+    fn stand_in(
+        shared: &Arc<Shared>,
+        mut meanwhile: impl FnMut(&mut State, u32) + Send + 'static,
+    ) -> (ChildStdin, std::thread::JoinHandle<Vec<String>>) {
+        let mut cat = std::process::Command::new("cat")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let input = cat.stdin.take().unwrap();
+        let output = cat.stdout.take().unwrap();
+        let shared = shared.clone();
+        let sent = std::thread::spawn(move || {
+            let mut sent = Vec::new();
+            for line in BufReader::new(output).lines().map_while(Result::ok) {
+                let mut words = line.split(' ');
+                let kind = words.next().unwrap().to_string();
+                let uid = words.next().unwrap().parse().unwrap();
+                sent.push(line);
+                let answer = match kind.as_str() {
+                    "set" => Answer::Saved(String::new()),
+                    "apply" => Answer::Applied,
+                    "restore" => Answer::Restored,
+                    _ => continue,
+                };
+                // Locked only once the command waits.
+                let mut state = shared.state();
+                meanwhile(&mut state, uid);
+                state.answers.insert(uid, answer);
+                shared.changed.notify_all();
+            }
+            let _ = cat.wait();
+            sent
+        });
+        (input, sent)
+    }
+
+    /// The camera and the microphone on, as `camera` says, and every other
+    /// item off.
+    fn camera_and_microphone(camera: bool) -> Settings {
+        use super::super::items::{Item, Mode};
+        let mut own = Settings::default();
+        for item in Item::ALL {
+            own.set(item, Some(Mode::Off)).unwrap();
+        }
+        let on = |yes| if yes { Mode::On } else { Mode::Off };
+        own.set(Item::Camera, Some(on(camera))).unwrap();
+        own.set(Item::Microphone, Some(Mode::On)).unwrap();
+        own.over(&Settings::default())
+    }
+
+    #[test]
+    fn an_app_starting_while_its_ops_change_is_not_held_to_what_they_were() {
+        let mut appops = AppOps {
+            shared: Arc::new(Shared::default()),
+        };
+        let (both, microphone) = (camera_and_microphone(true), camera_and_microphone(false));
+        let mut entry = sandboxed(10100);
+        appops
+            .shared
+            .state()
+            .guarded
+            .insert(10100, targets_of(&both));
+        // The app starts, and the gate has its ops looked at, while each
+        // command is on its way.
+        let (input, sent) = stand_in(&appops.shared, |state, uid| state.verify(uid));
+        appops.shared.state().input = Some(input);
+
+        // The camera turned off, then the app taken out: the last one, so
+        // the helper is told to leave.
+        appops.update(&mut entry, &[], &both, &microphone).unwrap();
+        appops.verifier()(10100);
+        appops.disable(&mut entry, &[], &microphone).unwrap();
+        assert!(!appops.shared.state().wanted);
+        assert_eq!(
+            sent.join().unwrap(),
+            [
+                "apply 10100 android:record_audio=1 android:camera=default",
+                "verify 10100 android:record_audio=1",
+                "restore 10100 android:record_audio=default",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_helper_started_while_a_command_waits_is_told_of_its_uid_with_the_answer() {
+        let mut appops = AppOps {
+            shared: Arc::new(Shared::default()),
+        };
+        let (both, microphone) = (camera_and_microphone(true), camera_and_microphone(false));
+        let mut entry = sandboxed(10100);
+        {
+            let mut state = appops.shared.state();
+            state.guarded.insert(10100, targets_of(&both));
+            state.guarded.insert(10200, targets_of(&microphone));
+        }
+        // The helper ends after it applied the change and answered, and
+        // the next one starts before the answer is taken.
+        let (next, sent_next) = stand_in(&appops.shared, |_, _| {});
+        let mut next = Some(next);
+        let (input, sent) = stand_in(&appops.shared, move |state, _| {
+            state.input = next.take();
+            state.tell_guarded();
+        });
+        appops.shared.state().input = Some(input);
+
+        appops.update(&mut entry, &[], &both, &microphone).unwrap();
+        appops.shared.state().input = None;
+        assert_eq!(
+            sent.join().unwrap(),
+            ["apply 10100 android:record_audio=1 android:camera=default"]
+        );
+        assert_eq!(
+            sent_next.join().unwrap(),
+            [
+                "verify 10200 android:record_audio=1",
+                "verify 10100 android:record_audio=1",
+            ]
+        );
     }
 
     #[test]

@@ -26,7 +26,11 @@
 //!   the effects of an enable and after those of a disable, so that whenever
 //!   any effect may be in place the row says the app is sandboxed, and a
 //!   daemon that stopped half way can finish or undo the change when it
-//!   starts again.
+//!   starts again. A change of items is written before its effects as
+//!   items that keep from the app all that the old or the new ones keep
+//!   (`items::Settings::covering`), and after them as the new ones, and so
+//!   are the global settings: an app op held anew is named before it is
+//!   held, and one let go stays named until it is.
 //! - The snapshot, in memory, says what is meant to be in effect. It changes
 //!   before the effects run, which may read it, and is shared with whatever
 //!   needs to look up a uid without waiting for the daemon's main loop.
@@ -699,6 +703,17 @@ impl Sandbox {
         }
 
         let sharing = packages.for_uid(uid).to_vec();
+        // Until the effects have run, the row covers both what was in
+        // effect and what is to be.
+        let covering = Entry {
+            settings: Settings::parse(&previous.settings)
+                .covering(&own, &self.global_read())
+                .to_text(),
+            ..previous.clone()
+        };
+        if covering != previous {
+            writer.put_sandbox(&covering)?;
+        }
         // As for enabling: what is meant to be in effect changes first.
         self.snapshot_write().insert(uid, entry.clone());
         let mut applied = self.run(&mut entry, &sharing, Change::Update(&before, &after));
@@ -716,6 +731,12 @@ impl Sandbox {
             }
         }
         if let Err(e) = applied {
+            // Left covering both if it cannot be written back.
+            if covering != previous
+                && let Err(e) = writer.put_sandbox(&previous)
+            {
+                eprintln!("bbd: sandbox: cannot write uid {uid}'s entry back: {e:#}");
+            }
             self.snapshot_write().insert(uid, previous);
             return Err(e);
         }
@@ -743,6 +764,19 @@ impl Sandbox {
         }
         if new == old {
             return Ok(self.global_items());
+        }
+        let write_global = |settings: &Settings| {
+            let pairs: Vec<(&str, &str)> = settings
+                .iter()
+                .map(|(item, mode)| (item.name(), items::mode_name(mode)))
+                .collect();
+            writer.put_sandbox_global(&pairs)
+        };
+        // As for the items of one app: until every app has changed, the
+        // row covers both what was in effect and what is to be.
+        let covering = old.covering(&new, &Settings::default());
+        if covering != old {
+            write_global(&covering)?;
         }
         let mut uids: Vec<u32> = self.snapshot_read().keys().copied().collect();
         uids.sort_unstable();
@@ -786,19 +820,13 @@ impl Sandbox {
                 }
             }
         }
-        let written = failure.is_none().then(|| {
-            let pairs: Vec<(&str, &str)> = new
-                .iter()
-                .map(|(item, mode)| (item.name(), items::mode_name(mode)))
-                .collect();
-            writer.put_sandbox_global(&pairs)
-        });
+        let written = failure.is_none().then(|| write_global(&new));
         let failure = match written {
             Some(Err(e)) => Some(e),
             _ => failure,
         };
         if let Some(e) = failure {
-            *self.global.write().unwrap_or_else(|e| e.into_inner()) = old;
+            *self.global.write().unwrap_or_else(|e| e.into_inner()) = old.clone();
             for (mut entry, sharing, before, after) in changed.into_iter().rev() {
                 let uid = entry.uid;
                 let forward = entry.clone();
@@ -813,6 +841,12 @@ impl Sandbox {
                     eprintln!("bbd: sandbox: cannot write uid {uid}'s entry: {e:#}");
                 }
                 self.snapshot_write().insert(uid, entry);
+            }
+            // Left covering both if it cannot be written back.
+            if covering != old
+                && let Err(e) = write_global(&old)
+            {
+                eprintln!("bbd: sandbox: cannot write the global settings back: {e:#}");
             }
             return Err(e.context("the global settings are as they were"));
         }
@@ -1141,6 +1175,42 @@ mod tests {
 
         fn report(&self, status: &mut Status) {
             status.gate = true;
+        }
+    }
+
+    /// Reads, while the effects of a change of items run, what a daemon
+    /// that started then would take the app up with: its row over the
+    /// global settings, as written.
+    struct Witness {
+        db: PathBuf,
+        seen: Rc<RefCell<Vec<Settings>>>,
+    }
+
+    impl Effect for Witness {
+        fn name(&self) -> &'static str {
+            "witness"
+        }
+
+        fn enable(&mut self, _: &mut Entry, _: &[String], _: &Settings) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn disable(&mut self, _: &mut Entry, _: &[String], _: &Settings) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn update(
+            &mut self,
+            entry: &mut Entry,
+            _: &[String],
+            _: &Settings,
+            _: &Settings,
+        ) -> anyhow::Result<()> {
+            let written = Writer::open(&self.db)?;
+            let row = written.sandbox_entry(entry.uid)?.context("no row")?;
+            let global = Settings::parse(&written.sandbox_global()?);
+            self.seen.borrow_mut().push(items_of(&row, &global));
+            Ok(())
         }
     }
 
@@ -1629,6 +1699,129 @@ mod tests {
         );
         assert_eq!(f.writer.sandbox_global().unwrap(), "");
         assert_eq!(sandbox.global_items().items.mode(Item::Camera), Mode::On);
+    }
+
+    #[test]
+    fn what_is_written_while_items_change_covers_them_before_and_after() {
+        let mut f = Fixture::new("sandbox-items-covered");
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let witness = || {
+            Box::new(Witness {
+                db: f.dir.join("bb.db"),
+                seen: seen.clone(),
+            })
+        };
+        let mut sandbox = f.sandbox_with(vec![witness()]);
+        sandbox
+            .enable(&f.writer, &mut f.packages, "com.app", 0, 1000)
+            .unwrap();
+        sandbox
+            .configure(
+                &f.writer,
+                &mut f.packages,
+                "com.app",
+                0,
+                &camera(Some(Mode::Off)),
+            )
+            .unwrap();
+        let held = |seen: &Settings| -> std::collections::BTreeSet<&str> {
+            seen.op_targets().into_iter().map(|(op, _)| op).collect()
+        };
+        let both = ["android:camera", "android:record_audio"];
+
+        // The camera held anew and the microphone let go: both stay named
+        // until the change is carried out.
+        let change = BTreeMap::from([
+            (Item::Camera, Some(Mode::On)),
+            (Item::Microphone, Some(Mode::Off)),
+        ]);
+        seen.borrow_mut().clear();
+        sandbox
+            .configure(&f.writer, &mut f.packages, "com.app", 0, &change)
+            .unwrap();
+        assert!(both.iter().all(|op| held(&seen.borrow()[0]).contains(op)));
+        let row = || f.writer.sandbox_entry(10100).unwrap().unwrap().settings;
+        assert_eq!(row(), "camera=on,microphone=off");
+
+        // The same for the global settings, which the app follows again.
+        let follow = BTreeMap::from([(Item::Camera, None), (Item::Microphone, None)]);
+        sandbox
+            .configure(&f.writer, &mut f.packages, "com.app", 0, &follow)
+            .unwrap();
+        let global = |item, mode| BTreeMap::from([(item, mode)]);
+        sandbox
+            .set_global(&f.writer, &mut f.packages, &global(Item::Camera, Mode::Off))
+            .unwrap();
+        seen.borrow_mut().clear();
+        let change = BTreeMap::from([(Item::Camera, Mode::On), (Item::Microphone, Mode::Off)]);
+        sandbox
+            .set_global(&f.writer, &mut f.packages, &change)
+            .unwrap();
+        assert!(both.iter().all(|op| held(&seen.borrow()[0]).contains(op)));
+        assert_eq!(
+            f.writer.sandbox_global().unwrap(),
+            "camera=on,microphone=off"
+        );
+
+        // A change that fails is written down as it was again.
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let mut failing = Recorder::new("gate", &log);
+        failing.fail_update = true;
+        let mut sandbox = f.sandbox_with(vec![witness(), failing]);
+        let microphone_on = BTreeMap::from([(Item::Microphone, Some(Mode::On))]);
+        assert!(
+            sandbox
+                .configure(&f.writer, &mut f.packages, "com.app", 0, &microphone_on)
+                .is_err()
+        );
+        assert_eq!(row(), "");
+        assert!(
+            sandbox
+                .set_global(
+                    &f.writer,
+                    &mut f.packages,
+                    &global(Item::Microphone, Mode::On)
+                )
+                .is_err()
+        );
+        assert_eq!(
+            f.writer.sandbox_global().unwrap(),
+            "camera=on,microphone=off"
+        );
+        // Both were seen covering the change while it ran.
+        assert!(
+            seen.borrow()[1..]
+                .iter()
+                .all(|seen| held(seen).contains("android:record_audio"))
+        );
+    }
+
+    #[test]
+    fn a_failed_change_of_the_global_settings_leaves_the_hook_list_as_it_was() {
+        let mut f = Fixture::new("sandbox-global-list");
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let mut failing = Recorder::new("gate", &log);
+        failing.fail_update = true;
+        let mut sandbox = f.sandbox();
+        let identity = identity::Identity::new(&sandbox.snapshot(), &sandbox.global());
+        sandbox.add_effect(Box::new(identity.at(&f.dir)));
+        sandbox.add_effect(failing);
+        for package in ["com.app", "com.shared.one"] {
+            sandbox
+                .enable(&f.writer, &mut f.packages, package, 0, 1000)
+                .unwrap();
+        }
+        let list = || std::fs::read_to_string(f.dir.join("list")).unwrap();
+        let listed = list();
+
+        // The first app's change fails after its line was written.
+        let off = BTreeMap::from([(Item::InstalledApps, Mode::Off)]);
+        assert!(
+            sandbox
+                .set_global(&f.writer, &mut f.packages, &off)
+                .is_err()
+        );
+        assert_eq!(list(), listed);
     }
 
     #[test]
