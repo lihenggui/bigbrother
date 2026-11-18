@@ -90,9 +90,14 @@ const OWN_PACKAGES: &[&str] = &["li.mercury.bigbrother"];
 /// them in.
 const LAST_USER: u32 = (i32::MAX as u32 - (PER_USER_RANGE - 1)) / PER_USER_RANGE;
 
-/// The longest taking every app out may go on for, short of what a client
-/// waits for an answer (`control::COMMAND_WAIT`).
-const DISABLE_ALL_WAIT: std::time::Duration = std::time::Duration::from_secs(6);
+/// How long after it began taking every app out (or carrying out a change
+/// of the global settings) an app may still be started on. It is checked
+/// before each app, and one app can then wait for the app ops helper for
+/// up to `appops::ANSWER_WAIT`: with a second to spare, the answer still
+/// reaches the client before it gives up (`control::COMMAND_WAIT`).
+const DISABLE_ALL_WAIT: std::time::Duration = control::COMMAND_WAIT
+    .saturating_sub(appops::ANSWER_WAIT)
+    .saturating_sub(std::time::Duration::from_secs(1));
 
 /// The sandboxed uids and their entries, enabled ones only.
 pub type Snapshot = Arc<RwLock<HashMap<u32, Entry>>>;
@@ -866,6 +871,21 @@ fn random_bytes<const N: usize>() -> std::io::Result<[u8; N]> {
     Ok(bytes)
 }
 
+/// The app ops helper's lines that give every app in the sandbox its app
+/// ops back, read from the database without the daemon: for `uninstall.sh`,
+/// which may run before the daemon has started, or after it failed to take
+/// every app out.
+pub fn restore_lines(db: &Path) -> anyhow::Result<Vec<String>> {
+    let reader = crate::store::Reader::open(db)?;
+    let global = Settings::parse(&reader.sandbox_global()?);
+    Ok(reader
+        .sandbox_entries()?
+        .iter()
+        .filter(|entry| entry.enabled)
+        .filter_map(|entry| appops::restore_line(entry, &items_of(entry, &global)))
+        .collect())
+}
+
 // ---- command line ----------------------------------------------------------
 
 /// Send `request` to the daemon and print its answer: as the JSON line the
@@ -1006,6 +1026,12 @@ mod tests {
     use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
     use super::*;
+
+    #[test]
+    fn taking_every_app_out_answers_before_the_client_gives_up() {
+        assert!(!DISABLE_ALL_WAIT.is_zero());
+        assert!(DISABLE_ALL_WAIT + appops::ANSWER_WAIT < control::COMMAND_WAIT);
+    }
 
     struct Fixture {
         dir: PathBuf,

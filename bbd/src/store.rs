@@ -606,28 +606,12 @@ impl Writer {
 
     /// Every entry, enabled or not, by uid.
     pub fn sandbox_entries(&self) -> anyhow::Result<Vec<SandboxEntry>> {
-        let mut stmt = self
-            .conn
-            .prepare(&format!("{SANDBOX_SELECT} ORDER BY uid"))?;
-        let rows = stmt.query_map([], sandbox_entry)?;
-        Ok(rows.collect::<Result<_, _>>()?)
+        sandbox_entries(&self.conn)
     }
 
     /// The global settings of the sandbox, as `item=mode,...`.
     pub fn sandbox_global(&self) -> anyhow::Result<String> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT item, mode FROM sandbox_global ORDER BY item")?;
-        let pairs = stmt
-            .query_map([], |r| {
-                Ok(format!(
-                    "{}={}",
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?
-                ))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(pairs.join(","))
+        sandbox_global(&self.conn)
     }
 
     /// Replace the global settings of the sandbox with `pairs` of item and
@@ -672,6 +656,26 @@ fn sandbox_entry(r: &rusqlite::Row<'_>) -> rusqlite::Result<SandboxEntry> {
         created: r.get(5)?,
         settings: r.get(6)?,
     })
+}
+
+fn sandbox_entries(conn: &Connection) -> anyhow::Result<Vec<SandboxEntry>> {
+    let mut stmt = conn.prepare(&format!("{SANDBOX_SELECT} ORDER BY uid"))?;
+    let rows = stmt.query_map([], sandbox_entry)?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+fn sandbox_global(conn: &Connection) -> anyhow::Result<String> {
+    let mut stmt = conn.prepare("SELECT item, mode FROM sandbox_global ORDER BY item")?;
+    let pairs = stmt
+        .query_map([], |r| {
+            Ok(format!(
+                "{}={}",
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(pairs.join(","))
 }
 
 /// Create the schema in a new database. A database at any other version
@@ -892,6 +896,16 @@ impl Reader {
         let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
             .with_context(|| format!("opening {} (has the daemon run yet?)", path.display()))?;
         Ok(Self { conn })
+    }
+
+    /// Every sandbox entry, enabled or not, by uid.
+    pub fn sandbox_entries(&self) -> anyhow::Result<Vec<SandboxEntry>> {
+        sandbox_entries(&self.conn)
+    }
+
+    /// The global settings of the sandbox, as `item=mode,...`.
+    pub fn sandbox_global(&self) -> anyhow::Result<String> {
+        sandbox_global(&self.conn)
     }
 
     /// One row per uid, most recently active first.

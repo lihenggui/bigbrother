@@ -55,7 +55,7 @@ const HELPER_CLASS: &str = "AppOpsGuard";
 /// How long the helper is given to answer. Setting thirty ops takes it a
 /// few milliseconds; while the system is still starting it does not answer
 /// at all.
-const ANSWER_WAIT: Duration = Duration::from_secs(5);
+pub const ANSWER_WAIT: Duration = Duration::from_secs(5);
 
 /// How soon the helper is started again after it ends: twice as long after
 /// each time, each start being a Java runtime's. A helper that ran for
@@ -252,6 +252,20 @@ fn saved_modes_of(saved: &str, ops: &[&str]) -> String {
         .map(|op| format!("{op}={}", saved.get(op).copied().unwrap_or("default")))
         .collect::<Vec<_>>()
         .join(",")
+}
+
+/// The helper's line that gives `entry` back the ops `items` hold it to,
+/// at the modes saved for them, as disabling it would; `None` if they hold
+/// none. For when the daemon is not there to disable it (`uninstall.sh`).
+pub fn restore_line(entry: &Entry, items: &Settings) -> Option<String> {
+    let targets = targets_of(items);
+    (!targets.is_empty()).then(|| {
+        format!(
+            "restore {} {}",
+            entry.uid,
+            saved_modes_of(&entry.saved_ops, &ops_in(&targets))
+        )
+    })
 }
 
 impl Effect for AppOps {
@@ -604,6 +618,37 @@ mod tests {
             ]
         );
         assert!(ops_in("").is_empty());
+    }
+
+    #[test]
+    fn an_app_is_given_back_the_ops_it_is_held_to_at_their_saved_modes() {
+        use super::super::items::{Item, Mode};
+        let entry = Entry {
+            uid: 10100,
+            package: "com.app".into(),
+            enabled: true,
+            android_id: String::new(),
+            saved_ops: "android:camera=4,android:read_sms=1".into(),
+            created: 0,
+            settings: String::new(),
+        };
+        let mut own = Settings::default();
+        for item in Item::ALL {
+            own.set(item, Some(Mode::Off)).unwrap();
+        }
+        // The processor information holds no op: nothing to give back.
+        own.set(Item::CpuInfo, Some(Mode::On)).unwrap();
+        assert_eq!(restore_line(&entry, &own.over(&Settings::default())), None);
+        own.set(Item::Camera, Some(Mode::On)).unwrap();
+        assert_eq!(
+            restore_line(&entry, &own.over(&Settings::default())).as_deref(),
+            Some("restore 10100 android:camera=4")
+        );
+        own.set(Item::Microphone, Some(Mode::Deny)).unwrap();
+        assert_eq!(
+            restore_line(&entry, &own.over(&Settings::default())).as_deref(),
+            Some("restore 10100 android:camera=4,android:record_audio=default")
+        );
     }
 
     #[test]

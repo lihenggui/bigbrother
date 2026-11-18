@@ -125,10 +125,11 @@ system changes them, which it does whenever the app's permissions change.
 The helper runs only while a sandboxed app has such an item on.
 
 What the ops were is kept in the database and put back when the app leaves
-the sandbox. Removing the module takes every app out first; where the root
-manager removes it at the next boot, when there is no daemon to do that, the
-ops of the apps still sandboxed are cleared instead, which leaves them as
-the system sets them by default.
+the sandbox. Removing the module takes every app out first. Where the
+daemon cannot (the root manager removes the module at the next boot, before
+the daemon starts) or does not get every app out, the helper is run by
+itself once the system is up, with what the database says each app still
+sandboxed had (`bbd sandbox-restore-lines`).
 
 ### The hook
 
