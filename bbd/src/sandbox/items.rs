@@ -317,6 +317,39 @@ impl Settings {
     pub fn iter(&self) -> impl Iterator<Item = (Item, Mode)> + '_ {
         self.0.iter().map(|(item, mode)| (*item, *mode))
     }
+
+    /// Settings that keep from an app all that `self` or `other` keeps,
+    /// both over `global`: for each item, the mode of whichever keeps more,
+    /// `self`'s where they keep as much. What is written down while an app
+    /// changes from the one to the other, so that a daemon that stopped
+    /// half way takes it up again with every app op, mount and hook
+    /// answer it may have been given.
+    pub fn covering(&self, other: &Settings, global: &Settings) -> Settings {
+        let (mine, theirs) = (self.over(global), other.over(global));
+        let mut covering = Settings::default();
+        for item in Item::ALL {
+            let wider = if keeps(theirs.mode(item)) > keeps(mine.mode(item)) {
+                other
+            } else {
+                self
+            };
+            if let Some(mode) = wider.get(item) {
+                covering.0.insert(item, mode);
+            }
+        }
+        covering
+    }
+}
+
+/// How much of an item `mode` keeps from the app, to compare two modes:
+/// what a mode keeps, one that keeps more keeps too.
+fn keeps(mode: Mode) -> u8 {
+    match mode {
+        Mode::Off => 0,
+        // All but an approximate location.
+        Mode::Coarse => 1,
+        Mode::On | Mode::Deny => 2,
+    }
 }
 
 pub fn mode_name(mode: Mode) -> &'static str {
@@ -413,6 +446,42 @@ mod tests {
             own.over(&Settings::default())
                 .op_targets()
                 .contains(&("android:wifi_scan", OpMode::Ignored))
+        );
+    }
+
+    #[test]
+    fn covering_settings_keep_all_that_either_keeps() {
+        let ops = |items: &Settings| -> std::collections::BTreeSet<&str> {
+            items.op_targets().into_iter().map(|(op, _)| op).collect()
+        };
+        let global = Settings::parse("camera=off");
+        let before = Settings::parse("location=coarse,microphone=deny");
+        let after = Settings::parse("camera=on,location=off,microphone=on");
+        let covering = before.covering(&after, &global);
+        // What follows the global settings still does.
+        assert_eq!(
+            covering.to_text(),
+            "location=coarse,camera=on,microphone=deny"
+        );
+        let held = ops(&covering.over(&global));
+        assert!(held.is_superset(&ops(&before.over(&global))));
+        assert!(held.is_superset(&ops(&after.over(&global))));
+
+        // A change that keeps nothing more is covered by what was.
+        let wide = Settings::parse("camera=on");
+        assert_eq!(
+            wide.covering(&Settings::parse("location=coarse"), &global),
+            wide
+        );
+        // The global settings, over every item on.
+        assert_eq!(
+            Settings::parse("camera=off")
+                .covering(
+                    &Settings::parse("camera=on,microphone=off"),
+                    &Settings::default()
+                )
+                .to_text(),
+            "camera=on"
         );
     }
 
