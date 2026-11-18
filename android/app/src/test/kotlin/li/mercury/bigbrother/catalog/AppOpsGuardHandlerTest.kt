@@ -34,6 +34,6 @@ class AppOpsGuardHandlerTest {
 
         repeat(3) { handler.checkAll() }
 
-        assertEquals(listOf("reverted $UID $FINE=granted+user_fixed"), android.printed.filter { it.startsWith("reverted $UID $FINE=") })
+        assertEquals(listOf("reverted $UID $FINE=granted"), android.printed.filter { it.startsWith("reverted $UID $FINE=") })
     }
 }

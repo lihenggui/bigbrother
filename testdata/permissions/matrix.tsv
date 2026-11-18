@@ -125,6 +125,7 @@ location_precise_allowed_in_settings_while_coarse	location	approximate	set:coars
 location_precise_allowed_in_settings_while_coarse_then_item_off	location	approximate	set:coarse,settings:grant:fine	off	granted	foreground	precise	both
 location_precise_allowed_in_settings_while_coarse_then_disable	location	approximate	set:coarse,settings:grant:fine	disable	granted	foreground	precise	both
 location_precise_allowed_in_settings_while_coarse_then_camera_changes	location	approximate	set:coarse,settings:grant:fine,set:camera=foreground,set:on	disable	granted	foreground	precise	both
+location_granted_with_pm_while_coarse	location	denied	set:coarse,pm:grant,set:on	disable	granted	foreground	precise	both
 location_allowed_in_settings_while_coarse	location	denied	set:coarse,settings:grant,set:on	disable	granted	foreground	precise	both
 location_coarse_through_a_helper_restart	location	granted	set:coarse,restart:helper,set:on	disable	granted	foreground	precise	both
 location_precise_allowed_in_settings_while_coarse_before_the_helper_restarts	location	approximate	set:coarse,settings:grant:fine,restart:helper,set:on	disable	granted	foreground	precise	both

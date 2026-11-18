@@ -475,6 +475,12 @@ class AppOpsGuardProtocolTest {
     }
 
     @Test
+    fun givenHeldPermissionGrantedWithPm_whenChecked_thenFoundWithoutTheFixedMarkThisProgramSet() {
+        val found = PermissionState(granted = true, flags = FLAG_USER_FIXED)
+        assertEquals(PermissionState(granted = true, flags = 0), AppOpsGuardProtocol.chosenWhileHeld(found, wasHeld = true))
+    }
+
+    @Test
     fun givenModeAndGrantSaved_whenItsMarksAreSetBack_thenRevokedCompatOnlyWhereTheUserLeftIt() {
         val (allowed, ignored, foreground) = Triple(AppOpsGuardProtocol.MODE_ALLOWED, AppOpsGuardProtocol.MODE_IGNORED, AppOpsGuardProtocol.MODE_FOREGROUND)
         // Granted, and kept from the app by the user.

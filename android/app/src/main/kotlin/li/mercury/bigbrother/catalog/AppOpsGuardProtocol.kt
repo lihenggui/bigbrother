@@ -487,9 +487,16 @@ internal object AppOpsGuardProtocol {
      * give back: granted again; or, for one this program had held
      * ([wasHeld]), no longer fixed, as the settings leave a permission
      * the user revokes. `null` for one as this program holds it, or not
-     * requested.
+     * requested. A grant keeps the fixed mark this program set unless the
+     * settings made it, which clear it: granted with `pm`, the permission
+     * is not the user's fixed choice, and goes back without it.
      */
-    fun chosenWhileHeld(found: PermissionState?, wasHeld: Boolean): PermissionState? = found?.takeIf { it.granted || (wasHeld && it.flags and FLAG_USER_FIXED == 0) }
+    fun chosenWhileHeld(found: PermissionState?, wasHeld: Boolean): PermissionState? = when {
+        found == null -> null
+        found.granted -> found.copy(flags = found.flags and FLAG_USER_FIXED.inv())
+        wasHeld && found.flags and FLAG_USER_FIXED == 0 -> found
+        else -> null
+    }
 
     /**
      * What to keep for a permission taken back after it was found granted
