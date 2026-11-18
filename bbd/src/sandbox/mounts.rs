@@ -102,8 +102,8 @@ pub fn media_of(uid: u32) -> String {
 }
 
 /// Give the namespace `sys` works in the sandbox of `uid`, under which run
-/// `packages`. `files` are the kernel information files to replace, each
-/// with its content.
+/// `packages`: its own shared storage if `storage`, and `files`, the kernel
+/// information files to replace, each with its content.
 ///
 /// The errors name the step, never a path: paths have package names in
 /// them, which are not to be logged.
@@ -112,7 +112,17 @@ pub fn apply<S: Sys>(
     uid: u32,
     packages: &[String],
     files: &[(&str, &str)],
+    storage: bool,
 ) -> anyhow::Result<()> {
+    if storage {
+        replace_storage(sys, uid, packages)?;
+    }
+    sys.replace_files(files)
+        .context("replacing kernel information files")
+}
+
+/// The storage part of [`apply`].
+fn replace_storage<S: Sys>(sys: &mut S, uid: u32, packages: &[String]) -> anyhow::Result<()> {
     let (root, media) = storage_of(uid / PER_USER_RANGE);
     sys.make_private("/storage")
         .context("detaching /storage from the system's mounts")?;
@@ -166,8 +176,7 @@ pub fn apply<S: Sys>(
                 .context("hiding a storage volume")?;
         }
     }
-    sys.replace_files(files)
-        .context("replacing kernel information files")
+    Ok(())
 }
 
 // ---- kernel information ----------------------------------------------------
@@ -465,7 +474,7 @@ mod tests {
             ..Default::default()
         };
         let packages = ["com.a".to_string(), "com.b".to_string()];
-        apply(&mut sys, 1_010_100, &packages, FILES).unwrap();
+        apply(&mut sys, 1_010_100, &packages, FILES, true).unwrap();
         assert_eq!(
             sys.steps,
             [
@@ -499,7 +508,7 @@ mod tests {
                 bind_error: Some(errno),
                 ..Default::default()
             };
-            apply(&mut sys, 10100, &["com.a".to_string()], FILES).unwrap();
+            apply(&mut sys, 10100, &["com.a".to_string()], FILES, true).unwrap();
             assert_eq!(
                 sys.steps,
                 [
@@ -513,12 +522,26 @@ mod tests {
     }
 
     #[test]
+    fn only_what_the_app_is_sandboxed_for_is_replaced() {
+        let mut sys = Recorder {
+            existing: vec!["/data/media/0/Android/data/com.a"],
+            storage: vec!["emulated", "self", "1A2B-3C4D"],
+            ..Default::default()
+        };
+        apply(&mut sys, 10100, &["com.a".to_string()], FILES, false).unwrap();
+        assert_eq!(sys.steps, ["replace /proc/cpuinfo"]);
+        let mut sys = Recorder::default();
+        apply(&mut sys, 10100, &[], &[], false).unwrap();
+        assert!(sys.steps.is_empty());
+    }
+
+    #[test]
     fn a_failed_step_fails_the_whole_and_names_no_path() {
         let mut sys = Recorder {
             bind_error: Some(libc::EACCES),
             ..Default::default()
         };
-        let e = apply(&mut sys, 10100, &["com.a".to_string()], FILES).unwrap_err();
+        let e = apply(&mut sys, 10100, &["com.a".to_string()], FILES, true).unwrap_err();
         assert_eq!(e.to_string(), "mounting the sandbox");
 
         // A symbolic link where the app's own directory is to be mounted.
@@ -527,7 +550,7 @@ mod tests {
             symlink_at: Some("data"),
             ..Default::default()
         };
-        let e = apply(&mut sys, 10100, &["com.a".to_string()], FILES).unwrap_err();
+        let e = apply(&mut sys, 10100, &["com.a".to_string()], FILES, true).unwrap_err();
         assert_eq!(e.to_string(), "making the app's own data directory");
         assert!(!format!("{e:#}").contains("com.a"));
         assert!(!sys.steps.iter().any(|step| step.starts_with("attach")));

@@ -37,6 +37,23 @@ class AppOpsGuardProtocolTest {
     }
 
     @Test
+    fun givenSetOrVerifyLineWithTargets_whenParsed_thenTargetsByOp() {
+        val targets = mapOf("android:camera" to 1, "android:read_contacts" to 2)
+        assertEquals(Command.Set(10123, targets), AppOpsGuardProtocol.parseCommand("set 10123 android:camera=1,android:read_contacts=2"))
+        assertEquals(Command.Verify(10123, targets), AppOpsGuardProtocol.parseCommand("verify 10123 android:camera=1,android:read_contacts=2"))
+    }
+
+    @Test
+    fun givenApplyLine_whenParsed_thenTargetsAndResets() {
+        assertEquals(
+            Command.Apply(10123, mapOf("android:camera" to 2), listOf("android:read_contacts" to null, "android:read_sms" to 4)),
+            AppOpsGuardProtocol.parseCommand("apply 10123 android:camera=2 android:read_contacts=default,android:read_sms=4"),
+        )
+        assertEquals(Command.Apply(10123, mapOf("android:camera" to 1), emptyList()), AppOpsGuardProtocol.parseCommand("apply 10123 android:camera=1 -"))
+        assertEquals(Command.Apply(10123, emptyMap(), listOf("android:camera" to 0)), AppOpsGuardProtocol.parseCommand("apply 10123 - android:camera=0"))
+    }
+
+    @Test
     fun givenRestoreLine_whenParsed_thenModesInOrder() {
         assertEquals(
             Command.Restore(10123, listOf("android:camera" to 4, "android:read_contacts" to null)),
@@ -54,6 +71,12 @@ class AppOpsGuardProtocolTest {
             "set -1",
             "set 10123 extra",
             "verify 10123 extra",
+            "set 10123 android:camera=0",
+            "set 10123 android:camera=default",
+            "set 10123 android:camera=1 more",
+            "apply 10123 android:camera=1",
+            "apply 10123 android:camera=3 -",
+            "apply 10123 - android:camera=x",
             "unset 10123",
             "restore 10123 android:camera",
             "restore 10123 android:camera=",
@@ -89,7 +112,7 @@ class AppOpsGuardProtocolTest {
     }
 
     @Test
-    fun givenCurrentModes_whenChecked_thenOnlyOpsNotIgnoredAreSetAgain() {
+    fun givenCurrentModes_whenChecked_thenOnlyHeldOpsWithoutTheirModeAreSetAgain() {
         val states = listOf(
             OpState("android:camera", uidMode = 1, defaultMode = 0),
             OpState("android:read_contacts", uidMode = 0, defaultMode = 0),
@@ -97,18 +120,30 @@ class AppOpsGuardProtocolTest {
             OpState("android:read_sms", uidMode = null, defaultMode = 0),
             OpState("android:get_usage_stats", uidMode = null, defaultMode = 1),
             OpState("android:wifi_scan", uidMode = null, defaultMode = null),
+            OpState("android:read_calendar", uidMode = 1, defaultMode = 0),
+            OpState("android:fine_location", uidMode = 0, defaultMode = 0),
+        )
+        val targets = mapOf(
+            "android:camera" to 1,
+            "android:read_contacts" to 1,
+            "android:record_audio" to 1,
+            "android:read_sms" to 1,
+            "android:get_usage_stats" to 1,
+            "android:wifi_scan" to 1,
+            "android:read_calendar" to 2,
         )
 
         assertEquals(
-            listOf("android:read_contacts", "android:record_audio", "android:read_sms", "android:wifi_scan"),
-            AppOpsGuardProtocol.opsToSetAgain(states),
+            listOf("android:read_contacts", "android:record_audio", "android:read_sms", "android:wifi_scan", "android:read_calendar"),
+            AppOpsGuardProtocol.opsToSetAgain(states, targets),
         )
     }
 
     @Test
     fun givenEveryOpIgnored_whenChecked_thenNothingToSetAgain() {
         val states = AppOpsGuardProtocol.GUARDED_OPS.map { OpState(it, uidMode = 1, defaultMode = 0) }
+        val targets = AppOpsGuardProtocol.GUARDED_OPS.associateWith { 1 }
 
-        assertEquals(emptyList(), AppOpsGuardProtocol.opsToSetAgain(states))
+        assertEquals(emptyList(), AppOpsGuardProtocol.opsToSetAgain(states, targets))
     }
 }

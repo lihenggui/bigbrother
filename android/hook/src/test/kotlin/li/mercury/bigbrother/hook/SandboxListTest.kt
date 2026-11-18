@@ -49,7 +49,7 @@ class SandboxListTest {
     @Test
     fun givenNoFile_whenAsked_thenNobodySandboxed() {
         val list = list()
-        assertFalse(list.isSandboxed(10_205))
+        assertFalse(list.hidesAppsFrom(10_205))
         assertTrue(errors.isEmpty())
     }
 
@@ -65,8 +65,8 @@ class SandboxListTest {
         val list = list()
         write("10206 0123456789abcdef\n", modified = 2_000_000)
         now += SECOND / 2
-        assertTrue(list.isSandboxed(10_205))
-        assertFalse(list.isSandboxed(10_206))
+        assertTrue(list.hidesAppsFrom(10_205))
+        assertFalse(list.hidesAppsFrom(10_206))
     }
 
     @Test
@@ -75,8 +75,8 @@ class SandboxListTest {
         val list = list()
         write("10206 0123456789abcdef\n", modified = 2_000_000)
         now += SECOND
-        assertFalse(list.isSandboxed(10_205))
-        assertTrue(list.isSandboxed(10_206))
+        assertFalse(list.hidesAppsFrom(10_205))
+        assertTrue(list.hidesAppsFrom(10_206))
     }
 
     @Test
@@ -93,7 +93,7 @@ class SandboxListTest {
         // A directory in its place exists but cannot be read as text.
         assertTrue(file.mkdir())
         val list = list()
-        assertFalse(list.isSandboxed(10_205))
+        assertFalse(list.hidesAppsFrom(10_205))
         assertEquals(1, errors.size)
     }
 

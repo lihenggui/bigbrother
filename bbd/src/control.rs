@@ -28,6 +28,7 @@
 //! byte.
 
 use std::{
+    collections::BTreeMap,
     fs,
     io::{self, BufRead as _, Write as _},
     os::unix::fs::PermissionsExt as _,
@@ -38,6 +39,8 @@ use std::{
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 use tokio::net::{UnixListener, UnixStream};
+
+use crate::sandbox::items::{Item, Mode};
 
 /// The longest a query waits for the daemon to write.
 const FLUSH_WAIT: Duration = Duration::from_secs(1);
@@ -184,6 +187,22 @@ pub enum Request {
     SandboxList,
     #[serde(rename = "sandbox.status")]
     SandboxStatus,
+    /// Set what the sandbox does to an app, item by item: to a mode, or
+    /// with `null` back to following the global settings. Items not named
+    /// keep what they have.
+    #[serde(rename = "sandbox.set")]
+    SandboxSet {
+        package: String,
+        #[serde(default)]
+        user: u32,
+        settings: BTreeMap<Item, Option<Mode>>,
+    },
+    /// The global settings: every item's mode for an app without its own.
+    #[serde(rename = "sandbox.global")]
+    SandboxGlobal,
+    /// Change the global settings, and the apps that follow them.
+    #[serde(rename = "sandbox.set_global")]
+    SandboxSetGlobal { settings: BTreeMap<Item, Mode> },
 }
 
 impl Request {
@@ -212,6 +231,9 @@ fn is_known(cmd: &serde_json::Value) -> bool {
                 | "sandbox.disable_all"
                 | "sandbox.list"
                 | "sandbox.status"
+                | "sandbox.set"
+                | "sandbox.global"
+                | "sandbox.set_global"
         )
     )
 }

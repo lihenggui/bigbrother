@@ -1,0 +1,418 @@
+// Copyright (C) 2026 Mercury Li
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License version 3 as
+// published by the Free Software Foundation.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+//! What the sandbox does to an app, one item at a time.
+//!
+//! Each item is a kind of data the app is kept from, and has a mode: off
+//! (the app gets what the system gives it), on (an empty, made-up or
+//! separate answer), and for some, deny (a permission error) or coarse
+//! (location only). The settings of a sandboxed app name the items it has
+//! its own mode for; every other item has the mode of the global settings,
+//! and every item is on unless set otherwise.
+
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
+
+/// A kind of data the sandbox can keep from an app.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Item {
+    /// Shared storage, and the media library behind it.
+    Storage,
+    /// What `/proc/cpuinfo` says about the chip.
+    CpuInfo,
+    Contacts,
+    /// Messages and the call log.
+    Messages,
+    Calendar,
+    /// The clipboard and the accounts on the device.
+    ClipboardAccounts,
+    Location,
+    Camera,
+    Microphone,
+    /// Body sensors and physical activity.
+    BodySensors,
+    /// ANDROID_ID, the phone number and the phone's state.
+    DeviceIds,
+    /// The installed apps, and how they are used.
+    InstalledApps,
+    /// Bluetooth and Wi-Fi devices nearby.
+    NearbyDevices,
+}
+
+/// What an item does to the app.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Mode {
+    /// Nothing: the app gets what the system gives it.
+    Off,
+    /// An empty, made-up or separate answer, with the permissions still
+    /// shown as granted.
+    On,
+    /// A permission error.
+    Deny,
+    /// For location: an approximate one, and nothing more precise.
+    Coarse,
+}
+
+/// The mode of an app op, as the app ops service numbers it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OpMode {
+    Ignored = 1,
+    Errored = 2,
+}
+
+impl Item {
+    pub const ALL: [Item; 13] = [
+        Item::Storage,
+        Item::CpuInfo,
+        Item::Contacts,
+        Item::Messages,
+        Item::Calendar,
+        Item::ClipboardAccounts,
+        Item::Location,
+        Item::Camera,
+        Item::Microphone,
+        Item::BodySensors,
+        Item::DeviceIds,
+        Item::InstalledApps,
+        Item::NearbyDevices,
+    ];
+
+    /// The name the item goes by in the database, in commands and in JSON.
+    pub fn name(self) -> &'static str {
+        match self {
+            Item::Storage => "storage",
+            Item::CpuInfo => "cpu_info",
+            Item::Contacts => "contacts",
+            Item::Messages => "messages",
+            Item::Calendar => "calendar",
+            Item::ClipboardAccounts => "clipboard_accounts",
+            Item::Location => "location",
+            Item::Camera => "camera",
+            Item::Microphone => "microphone",
+            Item::BodySensors => "body_sensors",
+            Item::DeviceIds => "device_ids",
+            Item::InstalledApps => "installed_apps",
+            Item::NearbyDevices => "nearby_devices",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Item> {
+        Item::ALL.into_iter().find(|item| item.name() == name)
+    }
+
+    /// Whether the item can be set to `mode`. Every item can be off or on.
+    /// Only data handed out by system services behind app ops can be
+    /// refused with an error, and only location made coarse.
+    pub fn allows(self, mode: Mode) -> bool {
+        match mode {
+            Mode::Off | Mode::On => true,
+            Mode::Deny => !matches!(
+                self,
+                Item::Storage | Item::CpuInfo | Item::DeviceIds | Item::InstalledApps
+            ),
+            Mode::Coarse => self == Item::Location,
+        }
+    }
+
+    /// The app ops through which the item's data is handed out. The app ops
+    /// helper (`AppOpsGuardProtocol.GUARDED_OPS`) knows every one of them.
+    pub fn ops(self) -> &'static [&'static str] {
+        match self {
+            Item::Storage => &[
+                "android:read_external_storage",
+                "android:write_external_storage",
+                "android:manage_external_storage",
+                "android:access_media_location",
+                "android:read_media_images",
+                "android:read_media_video",
+                "android:read_media_audio",
+                "android:read_media_visual_user_selected",
+            ],
+            Item::CpuInfo => &[],
+            Item::Contacts => &["android:read_contacts", "android:write_contacts"],
+            Item::Messages => &[
+                "android:read_sms",
+                "android:receive_sms",
+                "android:read_call_log",
+            ],
+            Item::Calendar => &["android:read_calendar", "android:write_calendar"],
+            Item::ClipboardAccounts => &["android:read_clipboard", "android:get_accounts"],
+            Item::Location => &[
+                "android:coarse_location",
+                "android:fine_location",
+                "android:wifi_scan",
+            ],
+            Item::Camera => &["android:camera"],
+            Item::Microphone => &["android:record_audio"],
+            Item::BodySensors => &["android:body_sensors", "android:activity_recognition"],
+            Item::DeviceIds => &["android:read_phone_state", "android:read_phone_numbers"],
+            Item::InstalledApps => &["android:get_usage_stats"],
+            Item::NearbyDevices => &[
+                "android:bluetooth_scan",
+                "android:bluetooth_connect",
+                "android:nearby_wifi_devices",
+            ],
+        }
+    }
+}
+
+/// The mode of some items: an app's own, or the global settings.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Settings(BTreeMap<Item, Mode>);
+
+/// What the sandbox mounts in an app's namespace as it starts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Mounts {
+    pub storage: bool,
+    pub cpu_info: bool,
+}
+
+impl Mounts {
+    pub fn any(self) -> bool {
+        self.storage || self.cpu_info
+    }
+}
+
+impl Settings {
+    /// Every item on: what a sandboxed app gets unless set otherwise.
+    #[cfg(test)]
+    pub fn all_on() -> Self {
+        Self(Item::ALL.into_iter().map(|item| (item, Mode::On)).collect())
+    }
+
+    /// Read settings as [`Self::to_text`] writes them. What this build does
+    /// not know, or an item cannot be set to, is left out: a later build
+    /// may have written it.
+    pub fn parse(text: &str) -> Self {
+        let mut settings = Self::default();
+        for pair in text.split(',') {
+            let Some((item, mode)) = pair.split_once('=') else {
+                continue;
+            };
+            let (Some(item), Some(mode)) = (Item::from_name(item.trim()), parse_mode(mode.trim()))
+            else {
+                continue;
+            };
+            let _ = settings.set(item, Some(mode));
+        }
+        settings
+    }
+
+    /// `item=mode,...`, by item.
+    pub fn to_text(&self) -> String {
+        self.0
+            .iter()
+            .map(|(item, mode)| format!("{}={}", item.name(), mode_name(*mode)))
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    /// Set `item` to `mode`, or, with `None`, have it follow the global
+    /// settings again. Fails for a mode the item cannot have.
+    pub fn set(&mut self, item: Item, mode: Option<Mode>) -> anyhow::Result<()> {
+        match mode {
+            Some(mode) => {
+                anyhow::ensure!(
+                    item.allows(mode),
+                    "{} cannot be {}",
+                    item.name(),
+                    mode_name(mode)
+                );
+                self.0.insert(item, mode);
+            }
+            None => {
+                self.0.remove(&item);
+            }
+        }
+        Ok(())
+    }
+
+    /// The mode `item` has here, if it has one.
+    pub fn get(&self, item: Item) -> Option<Mode> {
+        self.0.get(&item).copied()
+    }
+
+    /// What applies: these settings where they name an item, `global` where
+    /// they do not, and on for an item neither names.
+    pub fn over(&self, global: &Settings) -> Settings {
+        Self(
+            Item::ALL
+                .into_iter()
+                .map(|item| {
+                    let mode = self.get(item).or(global.get(item)).unwrap_or(Mode::On);
+                    (item, mode)
+                })
+                .collect(),
+        )
+    }
+
+    /// The mode of `item` in settings that apply ([`Self::over`]).
+    pub fn mode(&self, item: Item) -> Mode {
+        self.get(item).unwrap_or(Mode::On)
+    }
+
+    /// Whether any item does something to the app.
+    pub fn any_on(&self) -> bool {
+        Item::ALL
+            .into_iter()
+            .any(|item| self.mode(item) != Mode::Off)
+    }
+
+    pub fn mounts(&self) -> Mounts {
+        Mounts {
+            storage: self.mode(Item::Storage) != Mode::Off,
+            cpu_info: self.mode(Item::CpuInfo) != Mode::Off,
+        }
+    }
+
+    /// Whether the system server hook answers for the app: with its own
+    /// ANDROID_ID, and with no installed app but itself and the system's.
+    pub fn hooked(&self) -> (bool, bool) {
+        (
+            self.mode(Item::DeviceIds) != Mode::Off,
+            self.mode(Item::InstalledApps) != Mode::Off,
+        )
+    }
+
+    /// The app ops to hold the app to, and in which mode. Location made
+    /// coarse keeps the coarse one as the system has it.
+    pub fn op_targets(&self) -> Vec<(&'static str, OpMode)> {
+        let mut targets = Vec::new();
+        for item in Item::ALL {
+            let mode = match self.mode(item) {
+                Mode::Off => continue,
+                Mode::On | Mode::Coarse => OpMode::Ignored,
+                Mode::Deny => OpMode::Errored,
+            };
+            for op in item.ops() {
+                if self.mode(item) == Mode::Coarse && *op == "android:coarse_location" {
+                    continue;
+                }
+                targets.push((*op, mode));
+            }
+        }
+        targets
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (Item, Mode)> + '_ {
+        self.0.iter().map(|(item, mode)| (*item, *mode))
+    }
+}
+
+pub fn mode_name(mode: Mode) -> &'static str {
+    match mode {
+        Mode::Off => "off",
+        Mode::On => "on",
+        Mode::Deny => "deny",
+        Mode::Coarse => "coarse",
+    }
+}
+
+pub fn parse_mode(name: &str) -> Option<Mode> {
+    [Mode::Off, Mode::On, Mode::Deny, Mode::Coarse]
+        .into_iter()
+        .find(|mode| mode_name(*mode) == name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_are_written_and_read_back() {
+        let mut settings = Settings::default();
+        settings.set(Item::Camera, Some(Mode::Off)).unwrap();
+        settings.set(Item::Location, Some(Mode::Coarse)).unwrap();
+        let text = settings.to_text();
+        assert_eq!(text, "location=coarse,camera=off");
+        assert_eq!(Settings::parse(&text), settings);
+        assert_eq!(Settings::parse(""), Settings::default());
+    }
+
+    #[test]
+    fn what_is_not_known_or_not_allowed_is_left_out() {
+        let settings = Settings::parse(
+            "camera=off,teleport=on,storage=deny,cpu_info=coarse,x,=,contacts=deny",
+        );
+        assert_eq!(settings.to_text(), "contacts=deny,camera=off");
+        let mut settings = Settings::default();
+        assert!(settings.set(Item::DeviceIds, Some(Mode::Deny)).is_err());
+        assert!(settings.set(Item::Camera, Some(Mode::Coarse)).is_err());
+    }
+
+    #[test]
+    fn an_apps_own_settings_go_over_the_global_ones_and_the_rest_are_on() {
+        let mut global = Settings::default();
+        global.set(Item::Camera, Some(Mode::Off)).unwrap();
+        global.set(Item::Microphone, Some(Mode::Off)).unwrap();
+        let mut own = Settings::default();
+        own.set(Item::Microphone, Some(Mode::On)).unwrap();
+        let applies = own.over(&global);
+        assert_eq!(applies.mode(Item::Camera), Mode::Off);
+        assert_eq!(applies.mode(Item::Microphone), Mode::On);
+        assert_eq!(applies.mode(Item::Contacts), Mode::On);
+        assert_eq!(applies.iter().count(), Item::ALL.len());
+        // Following the global settings again.
+        own.set(Item::Microphone, None).unwrap();
+        assert_eq!(own.over(&global).mode(Item::Microphone), Mode::Off);
+    }
+
+    #[test]
+    fn with_every_item_off_nothing_is_done() {
+        let mut off = Settings::default();
+        for item in Item::ALL {
+            off.set(item, Some(Mode::Off)).unwrap();
+        }
+        let applies = off.over(&Settings::all_on());
+        assert!(!applies.any_on());
+        assert!(!applies.mounts().any());
+        assert_eq!(applies.hooked(), (false, false));
+        assert!(applies.op_targets().is_empty());
+    }
+
+    #[test]
+    fn op_targets_follow_the_modes() {
+        let mut own = Settings::default();
+        for item in Item::ALL {
+            own.set(item, Some(Mode::Off)).unwrap();
+        }
+        own.set(Item::Contacts, Some(Mode::Deny)).unwrap();
+        own.set(Item::Location, Some(Mode::Coarse)).unwrap();
+        let targets = own.over(&Settings::default()).op_targets();
+        assert_eq!(
+            targets,
+            [
+                ("android:read_contacts", OpMode::Errored),
+                ("android:write_contacts", OpMode::Errored),
+                ("android:fine_location", OpMode::Ignored),
+                ("android:wifi_scan", OpMode::Ignored),
+            ]
+        );
+    }
+
+    #[test]
+    fn items_and_modes_have_stable_names() {
+        for item in Item::ALL {
+            assert_eq!(Item::from_name(item.name()), Some(item));
+            let json = serde_json::to_string(&item).unwrap();
+            assert_eq!(json, format!("\"{}\"", item.name()));
+        }
+        assert_eq!(parse_mode("coarse"), Some(Mode::Coarse));
+        assert_eq!(serde_json::to_string(&Mode::Deny).unwrap(), "\"deny\"");
+    }
+}

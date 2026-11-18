@@ -19,8 +19,12 @@
 //! app's LSPosed module). The daemon and the hook share two files:
 //!
 //! - The list, written here: one `<uid> <android id>` line per sandboxed
-//!   app. The hook reads it again when it changes, so an app enters and
-//!   leaves the sandbox without a restart of the system.
+//!   app the hook answers for, and for one that has only one of the hook's
+//!   items on (`device_ids`, `installed_apps`), an `items <uid> <item>`
+//!   line naming it. The hook reads the list again when it changes, so an
+//!   app enters and leaves the sandbox without a restart of the system. A
+//!   hook from before the items line skips it, and answers for the uid in
+//!   both ways.
 //! - The status, written by the hook when system_server starts: which of
 //!   its hooks are in place, and the boot it wrote that in.
 //!
@@ -37,7 +41,9 @@ use std::{
 
 use anyhow::Context as _;
 
-use super::{Effect, Entry, HookStatus, Snapshot, Status};
+use super::{
+    Effect, Entry, Global, HookStatus, Resumed, Snapshot, Status, items::Settings, items_of,
+};
 
 /// Keep in sync with `SandboxHook.kt`.
 const LIST: &str = "/data/system/big_brother_sandbox";
@@ -50,34 +56,58 @@ const SYSTEM_UID: u32 = 1000;
 
 pub struct Identity {
     snapshot: Snapshot,
+    global: Global,
     list: PathBuf,
     status: PathBuf,
 }
 
+/// A line of the list: the uid, its ANDROID_ID, and whether the hook gives
+/// it that ID and hides the installed apps from it.
+type Listed = (u32, String, bool, bool);
+
+/// What the list says of `entry`, to which `items` apply; `None` if the
+/// hook has nothing to do for it.
+fn listed(entry: &Entry, items: &Settings) -> Option<Listed> {
+    let (android_id, app_list) = items.hooked();
+    (android_id || app_list).then(|| (entry.uid, entry.android_id.clone(), android_id, app_list))
+}
+
 impl Identity {
-    /// `snapshot`: the sandboxed apps, as the sandbox keeps them.
-    pub fn new(snapshot: Snapshot) -> Self {
+    /// `snapshot`: the sandboxed apps, as the sandbox keeps them, and
+    /// `global`, the global settings, which say what applies to them.
+    pub fn new(snapshot: Snapshot, global: Global) -> Self {
         Self {
             snapshot,
+            global,
             list: LIST.into(),
             status: STATUS.into(),
         }
     }
 
-    /// Write the list: the sandboxed apps, with `added` among them whether
-    /// or not it is in the snapshot yet, and without `removed`.
-    fn write(&self, added: Option<&Entry>, removed: Option<u32>) -> anyhow::Result<()> {
-        let mut apps: Vec<(u32, String)> = self
+    /// Write the list: the sandboxed apps, with `changed` as given whether
+    /// or not the snapshot has it so yet, and without `removed`.
+    fn write(
+        &self,
+        changed: Option<(&Entry, &Settings)>,
+        removed: Option<u32>,
+    ) -> anyhow::Result<()> {
+        let global = self
+            .global
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let given = changed.map(|(entry, _)| entry.uid);
+        let mut apps: Vec<Listed> = self
             .snapshot
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .values()
-            .chain(added)
-            .filter(|entry| Some(entry.uid) != removed)
-            .map(|entry| (entry.uid, entry.android_id.clone()))
+            .filter(|entry| Some(entry.uid) != given)
+            .filter_map(|entry| listed(entry, &items_of(entry, &global)))
+            .chain(changed.and_then(|(entry, items)| listed(entry, items)))
+            .filter(|(uid, ..)| Some(*uid) != removed)
             .collect();
         apps.sort();
-        apps.dedup_by_key(|(uid, _)| *uid);
         if apps.is_empty() {
             // No list: nothing is sandboxed.
             return match fs::remove_file(&self.list) {
@@ -113,10 +143,20 @@ impl Identity {
 }
 
 /// The list as the hook reads it (`parseSandboxList` in `SandboxRules.kt`).
-fn list_text(apps: &[(u32, String)]) -> String {
-    apps.iter()
-        .map(|(uid, android_id)| format!("{uid} {android_id}\n"))
-        .collect()
+fn list_text(apps: &[Listed]) -> String {
+    let mut text = String::new();
+    for (uid, android_id, own_id, hides_apps) in apps {
+        text.push_str(&format!("{uid} {android_id}\n"));
+        if !(*own_id && *hides_apps) {
+            let item = if *own_id {
+                "device_ids"
+            } else {
+                "installed_apps"
+            };
+            text.push_str(&format!("items {uid} {item}\n"));
+        }
+    }
+    text
 }
 
 impl Effect for Identity {
@@ -124,15 +164,28 @@ impl Effect for Identity {
         "identity"
     }
 
-    fn enable(&mut self, entry: &mut Entry, _: &[String]) -> anyhow::Result<()> {
-        self.write(Some(entry), None)
+    fn enable(&mut self, entry: &mut Entry, _: &[String], items: &Settings) -> anyhow::Result<()> {
+        self.write(Some((entry, items)), None)
     }
 
-    fn disable(&mut self, entry: &mut Entry, _: &[String]) -> anyhow::Result<()> {
+    fn disable(&mut self, entry: &mut Entry, _: &[String], _: &Settings) -> anyhow::Result<()> {
         self.write(None, Some(entry.uid))
     }
 
-    fn resume(&mut self, _: &[(Entry, Vec<String>)]) {
+    fn update(
+        &mut self,
+        entry: &mut Entry,
+        _: &[String],
+        before: &Settings,
+        after: &Settings,
+    ) -> anyhow::Result<()> {
+        if before.hooked() == after.hooked() {
+            return Ok(());
+        }
+        self.write(Some((entry, after)), None)
+    }
+
+    fn resume(&mut self, _: &[Resumed]) {
         if let Err(e) = self.write(None, None) {
             eprintln!("bbd: sandbox: {e:#}");
         }
@@ -171,6 +224,7 @@ impl Identity {
     fn at(snapshot: Snapshot, dir: &std::path::Path) -> Self {
         Self {
             snapshot,
+            global: Global::default(),
             list: dir.join("list"),
             status: dir.join("status"),
         }
@@ -194,6 +248,7 @@ mod tests {
             android_id: android_id.into(),
             saved_ops: String::new(),
             created: 0,
+            settings: String::new(),
         }
     }
 
@@ -212,24 +267,82 @@ mod tests {
         let list = || fs::read_to_string(dir.join("list")).unwrap();
 
         // Enabled before the snapshot has it, or after: listed once.
+        let all = Settings::all_on();
         let mut first = entry(1_010_100, "00000000000000aa");
-        identity.enable(&mut first, &[]).unwrap();
+        identity.enable(&mut first, &[], &all).unwrap();
         snapshot.write().unwrap().insert(first.uid, first.clone());
         let mut second = entry(10100, "00000000000000bb");
         snapshot.write().unwrap().insert(second.uid, second.clone());
-        identity.enable(&mut second, &[]).unwrap();
+        identity.enable(&mut second, &[], &all).unwrap();
         assert_eq!(list(), "10100 00000000000000bb\n1010100 00000000000000aa\n");
         let mode = fs::metadata(dir.join("list")).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o644);
 
         // Disabled while the snapshot still has it (a failed enable undone).
-        identity.disable(&mut second, &[]).unwrap();
+        identity.disable(&mut second, &[], &all).unwrap();
         assert_eq!(list(), "1010100 00000000000000aa\n");
         snapshot.write().unwrap().clear();
         identity.resume(&[]);
         assert!(!dir.join("list").exists());
         // Nothing to remove is not an error.
-        identity.disable(&mut first, &[]).unwrap();
+        identity.disable(&mut first, &[], &all).unwrap();
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn only_the_hooks_items_that_are_on_are_listed() {
+        use super::super::items::{Item, Mode};
+        let dir = test_dir("identity-items");
+        let snapshot: Snapshot = Arc::new(RwLock::new(HashMap::new()));
+        let mut identity = Identity::at(snapshot.clone(), &dir);
+        let list = || fs::read_to_string(dir.join("list")).unwrap_or_default();
+        let with = |pairs: &[(Item, Mode)]| {
+            let mut own = Settings::default();
+            for (item, mode) in pairs {
+                own.set(*item, Some(*mode)).unwrap();
+            }
+            own.over(&Settings::default())
+        };
+
+        let mut app = entry(10100, "00000000000000aa");
+        identity
+            .enable(&mut app, &[], &with(&[(Item::InstalledApps, Mode::Off)]))
+            .unwrap();
+        assert_eq!(list(), "10100 00000000000000aa\nitems 10100 device_ids\n");
+        let both_off = with(&[
+            (Item::InstalledApps, Mode::Off),
+            (Item::DeviceIds, Mode::Off),
+        ]);
+        let only_ids = with(&[(Item::InstalledApps, Mode::Off)]);
+        identity
+            .update(&mut app, &[], &only_ids, &both_off)
+            .unwrap();
+        assert!(!dir.join("list").exists());
+        let only_apps = with(&[(Item::DeviceIds, Mode::Off)]);
+        identity
+            .update(&mut app, &[], &both_off, &only_apps)
+            .unwrap();
+        assert_eq!(
+            list(),
+            "10100 00000000000000aa\nitems 10100 installed_apps\n"
+        );
+
+        // What the snapshot has follows the global settings.
+        app.settings = "device_ids=off".into();
+        snapshot.write().unwrap().insert(app.uid, app.clone());
+        identity.resume(&[]);
+        assert_eq!(
+            list(),
+            "10100 00000000000000aa\nitems 10100 installed_apps\n"
+        );
+        identity
+            .global
+            .write()
+            .unwrap()
+            .set(Item::InstalledApps, Some(Mode::Off))
+            .unwrap();
+        identity.resume(&[]);
+        assert!(!dir.join("list").exists());
         fs::remove_dir_all(dir).unwrap();
     }
 

@@ -18,7 +18,10 @@
 //! taken afterwards. So when an app is put in the sandbox, the processes it
 //! already has are ended, and when it is taken out, those that have one. The
 //! system starts an app again when it is next wanted, and then it starts as
-//! it should.
+//! it should. Changing an app's items ends its processes if what is mounted
+//! for it changes, or an item that was off is turned on: what the app read
+//! before, and may keep (the ANDROID_ID, for one), goes with them. Turning
+//! items off takes effect in the running process.
 //!
 //! The same is done when the daemon starts, for what started while it was
 //! not there to hold it: early in boot, or between a crash and the restart.
@@ -30,7 +33,12 @@
 
 use std::{fs, os::unix::fs::MetadataExt as _, path::Path};
 
-use super::{Effect, Entry, dirs, gate::Process, mounts};
+use super::{
+    Effect, Entry, Resumed, dirs,
+    gate::Process,
+    items::{Item, Mode, Mounts, Settings},
+    mounts,
+};
 
 /// Ends an app's processes as it enters or leaves the sandbox. The last of
 /// the effects: by then everything the next start will find is in place.
@@ -41,19 +49,43 @@ impl Effect for Restart {
         "restarting the app"
     }
 
-    fn enable(&mut self, entry: &mut Entry, _: &[String]) -> anyhow::Result<()> {
-        end(entry.uid, Which::Unsandboxed);
+    fn enable(&mut self, entry: &mut Entry, _: &[String], items: &Settings) -> anyhow::Result<()> {
+        // What the app read before is gone with the processes that hold it.
+        // Those that started since the gate held them have their mounts.
+        if items.mounts().any() {
+            end(entry.uid, Which::Lacking(items.mounts()));
+        } else if items.any_on() {
+            end(entry.uid, Which::All);
+        }
         Ok(())
     }
 
-    fn disable(&mut self, entry: &mut Entry, _: &[String]) -> anyhow::Result<()> {
-        end(entry.uid, Which::All);
+    fn disable(&mut self, entry: &mut Entry, _: &[String], items: &Settings) -> anyhow::Result<()> {
+        if items.any_on() {
+            end(entry.uid, Which::All);
+        }
         Ok(())
     }
 
-    fn resume(&mut self, entries: &[(Entry, Vec<String>)]) {
-        for (entry, _) in entries {
-            end(entry.uid, Which::Unsandboxed);
+    fn update(
+        &mut self,
+        entry: &mut Entry,
+        _: &[String],
+        before: &Settings,
+        after: &Settings,
+    ) -> anyhow::Result<()> {
+        let turned_on = Item::ALL
+            .into_iter()
+            .any(|item| before.mode(item) == Mode::Off && after.mode(item) != Mode::Off);
+        if before.mounts() != after.mounts() || turned_on {
+            end(entry.uid, Which::All);
+        }
+        Ok(())
+    }
+
+    fn resume(&mut self, apps: &[Resumed]) {
+        for app in apps.iter().filter(|app| app.items.mounts().any()) {
+            end(app.entry.uid, Which::Lacking(app.items.mounts()));
         }
     }
 }
@@ -61,8 +93,9 @@ impl Effect for Restart {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Which {
     All,
-    /// Those that started without the gate holding them.
-    Unsandboxed,
+    /// Those without the given mounts: started without the gate holding
+    /// them.
+    Lacking(Mounts),
 }
 
 /// Most passes over the processes for one uid, and the pause between two.
@@ -122,14 +155,36 @@ fn end_once(uid: u32, which: Which, sandboxes: Option<&str>) -> u32 {
         if !runs_as(uid) {
             continue;
         }
-        let sandboxed = fs::read_to_string(format!("/proc/{pid}/mountinfo"))
-            .is_ok_and(|mounts| has_sandbox(&mounts, uid, sandboxes));
-        if which == Which::All || !sandboxed {
+        let to_end = match which {
+            Which::All => true,
+            Which::Lacking(wanted) => fs::read_to_string(format!("/proc/{pid}/mountinfo"))
+                .map_or(true, |mountinfo| {
+                    !has_mounts(&mountinfo, uid, sandboxes, wanted)
+                }),
+        };
+        if to_end {
             held.signal(libc::SIGKILL);
             ended += 1;
         }
     }
     ended
+}
+
+/// Whether a process with these mounts (`/proc/<pid>/mountinfo`) of `uid`
+/// has those the sandbox gives it as `wanted` says. What else it has is
+/// not looked at: a mount on `/proc/cpuinfo` may be the system's, or
+/// another module's, in every app.
+fn has_mounts(mountinfo: &str, uid: u32, sandboxes: Option<&str>, wanted: Mounts) -> bool {
+    (!wanted.storage || has_sandbox(mountinfo, uid, sandboxes))
+        && (!wanted.cpu_info || has_cpu_info(mountinfo))
+}
+
+/// Whether a process with these mounts has something mounted on
+/// `/proc/cpuinfo`.
+fn has_cpu_info(mountinfo: &str) -> bool {
+    mountinfo
+        .lines()
+        .any(|line| line.split(' ').nth(4) == Some(mounts::CPUINFO))
 }
 
 /// Whether a process with these mounts (`/proc/<pid>/mountinfo`) was given
@@ -197,6 +252,32 @@ mod tests {
         assert!(!has_sandbox(ZYGOTE_MOUNTS, 10100, SANDBOXES));
         assert!(!has_sandbox("", 10100, SANDBOXES));
         assert!(!has_sandbox("garbage\n1 2\n", 10100, SANDBOXES));
+    }
+
+    #[test]
+    fn a_process_has_its_mounts_if_it_has_those_wanted() {
+        let cpu = "2300 2099 0:139 /cpuinfo /proc/cpuinfo rw,relatime - tmpfs tmpfs rw,size=64k\n";
+        let storage = "2200 2101 254:48 /media/0/.5f0c9a2e/10100 /storage/emulated/0 rw - ext4 /dev/block/dm-48 rw\n";
+        let both = format!("{ZYGOTE_MOUNTS}{storage}{cpu}");
+        let only_cpu = format!("{ZYGOTE_MOUNTS}{cpu}");
+        let wanted = |storage, cpu_info| Mounts { storage, cpu_info };
+        assert!(has_mounts(&both, 10100, SANDBOXES, wanted(true, true)));
+        assert!(!has_mounts(&only_cpu, 10100, SANDBOXES, wanted(true, true)));
+        assert!(has_mounts(&only_cpu, 10100, SANDBOXES, wanted(false, true)));
+        assert!(!has_mounts(
+            ZYGOTE_MOUNTS,
+            10100,
+            SANDBOXES,
+            wanted(false, true)
+        ));
+        // A /proc/cpuinfo of somebody else's is not in the way.
+        assert!(has_mounts(&both, 10100, SANDBOXES, wanted(true, false)));
+        assert!(has_mounts(
+            ZYGOTE_MOUNTS,
+            10100,
+            SANDBOXES,
+            wanted(false, false)
+        ));
     }
 
     #[test]

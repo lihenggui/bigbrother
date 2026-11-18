@@ -53,8 +53,9 @@ use aya::maps::{Array, HashMap as BpfHashMap, MapData, RingBuf};
 use bb_common::{GATE_CLOSED, GateEvent};
 
 use super::{
-    Effect, Entry, Status,
+    Effect, Entry, Resumed, Status,
     dirs::{self, MEDIA_RW},
+    items::{Mounts, Settings},
     mounts::{self, Kernel},
 };
 
@@ -100,11 +101,19 @@ impl Process {
 /// Called with the uid of an app that was let through.
 type Told = Box<dyn Fn(u32) + Send>;
 
+/// A uid held at the gate: what the thread needs to know to mount its
+/// sandbox.
+#[derive(Clone)]
+struct Gated {
+    /// The packages that run under it.
+    packages: Vec<String>,
+    mounts: Mounts,
+}
+
 /// What the gate thread and the daemon's main loop share.
 struct Shared {
-    /// The sandboxed uids, each with the packages that run under it: what
-    /// the thread needs to know to mount a sandbox.
-    apps: RwLock<HashMap<u32, Vec<String>>>,
+    /// The uids held at the gate.
+    apps: RwLock<HashMap<u32, Gated>>,
     stats: Mutex<Stats>,
     /// False once the thread has ended.
     open: AtomicBool,
@@ -189,20 +198,30 @@ impl Storage {
         Ok(Self { uids, shared })
     }
 
+    /// Stop holding starts of `uid`, if they were held.
+    fn release(&mut self, uid: u32) {
+        let _ = self.uids.remove(&uid);
+        write(&self.shared.apps).remove(&uid);
+    }
+
     /// Have `told` called, on the gate thread, with the uid of each app
     /// that was let through with its sandbox. It must not block.
     pub fn on_admitted(&self, told: impl Fn(u32) + Send + 'static) {
         *lock(&self.shared.admitted) = Some(Box::new(told));
     }
 
-    /// From now on, hold starts of `uid` and give them the sandbox. The gate
+    /// From now on, hold starts of `uid` and give them `mounts`. The gate
     /// thread is told first: a start it knows nothing of is let through.
-    fn hold(&mut self, uid: u32, packages: &[String]) -> anyhow::Result<()> {
+    fn hold(&mut self, uid: u32, packages: &[String], mounts: Mounts) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.shared.open.load(Ordering::Relaxed),
             "the gate has stopped; restart the daemon"
         );
-        write(&self.shared.apps).insert(uid, packages.to_vec());
+        let gated = Gated {
+            packages: packages.to_vec(),
+            mounts,
+        };
+        write(&self.shared.apps).insert(uid, gated);
         self.uids
             .insert(&uid, &1, 0)
             .context("adding the uid to the gate")
@@ -214,28 +233,55 @@ impl Effect for Storage {
         "storage"
     }
 
-    fn enable(&mut self, entry: &mut Entry, packages: &[String]) -> anyhow::Result<()> {
-        dirs::prepare(Path::new(&mounts::media_of(entry.uid)), entry.uid, MEDIA_RW)
-            .context("making the sandbox directory")?;
-        self.hold(entry.uid, packages)
+    fn enable(
+        &mut self,
+        entry: &mut Entry,
+        packages: &[String],
+        items: &Settings,
+    ) -> anyhow::Result<()> {
+        let mounts = items.mounts();
+        if !mounts.any() {
+            return Ok(());
+        }
+        if mounts.storage {
+            dirs::prepare(Path::new(&mounts::media_of(entry.uid)), entry.uid, MEDIA_RW)
+                .context("making the sandbox directory")?;
+        }
+        self.hold(entry.uid, packages, mounts)
     }
 
-    fn disable(&mut self, entry: &mut Entry, _: &[String]) -> anyhow::Result<()> {
-        // Not among them: it was never held.
-        let _ = self.uids.remove(&entry.uid);
-        write(&self.shared.apps).remove(&entry.uid);
+    fn disable(&mut self, entry: &mut Entry, _: &[String], _: &Settings) -> anyhow::Result<()> {
+        self.release(entry.uid);
         Ok(())
     }
 
-    fn resume(&mut self, entries: &[(Entry, Vec<String>)]) {
+    fn update(
+        &mut self,
+        entry: &mut Entry,
+        packages: &[String],
+        before: &Settings,
+        after: &Settings,
+    ) -> anyhow::Result<()> {
+        if before.mounts() == after.mounts() {
+            return Ok(());
+        }
+        if after.mounts().any() {
+            self.enable(entry, packages, after)
+        } else {
+            self.release(entry.uid);
+            Ok(())
+        }
+    }
+
+    fn resume(&mut self, apps: &[Resumed]) {
         // The directories are left alone: they were made when the app was
         // enabled, and cannot be reached before the user unlocks the device,
         // which is when the daemon usually starts.
-        for (entry, packages) in entries {
-            if let Err(e) = self.hold(entry.uid, packages) {
+        for app in apps.iter().filter(|app| app.items.mounts().any()) {
+            if let Err(e) = self.hold(app.entry.uid, &app.packages, app.items.mounts()) {
                 eprintln!(
                     "bbd: sandbox: uid {} is not held at the gate: {e:#}",
-                    entry.uid
+                    app.entry.uid
                 );
             }
         }
@@ -259,19 +305,33 @@ impl Effect for Unavailable {
         "storage"
     }
 
-    fn enable(&mut self, _: &mut Entry, _: &[String]) -> anyhow::Result<()> {
-        anyhow::bail!("this kernel cannot hold starting apps; the sandbox is not available")
-    }
-
-    fn disable(&mut self, _: &mut Entry, _: &[String]) -> anyhow::Result<()> {
+    fn enable(&mut self, _: &mut Entry, _: &[String], items: &Settings) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !items.mounts().any(),
+            "this kernel cannot hold starting apps; storage and CPU information cannot be sandboxed"
+        );
         Ok(())
     }
 
-    fn resume(&mut self, entries: &[(Entry, Vec<String>)]) {
-        if !entries.is_empty() {
+    fn disable(&mut self, _: &mut Entry, _: &[String], _: &Settings) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn update(
+        &mut self,
+        entry: &mut Entry,
+        packages: &[String],
+        _: &Settings,
+        after: &Settings,
+    ) -> anyhow::Result<()> {
+        self.enable(entry, packages, after)
+    }
+
+    fn resume(&mut self, apps: &[Resumed]) {
+        let mounted = apps.iter().filter(|app| app.items.mounts().any()).count();
+        if mounted > 0 {
             eprintln!(
-                "bbd: warning: {} sandboxed apps see the real storage: the gate is not available",
-                entries.len()
+                "bbd: warning: {mounted} sandboxed apps see the real storage: the gate is not available"
             );
         }
     }
@@ -426,7 +486,7 @@ impl Thread {
         if !is_zygote(&started_by) {
             return Ok(Held::NotOurs);
         }
-        let Some(packages) = self
+        let Some(gated) = self
             .closing
             .shared
             .apps
@@ -446,11 +506,21 @@ impl Thread {
             "it shares zygote's mount namespace"
         );
 
-        let files = [(mounts::CPUINFO, cpuinfo)];
+        let files: &[(&str, &str)] = if gated.mounts.cpu_info {
+            &[(mounts::CPUINFO, cpuinfo)]
+        } else {
+            &[]
+        };
 
         let theirs = File::open(format!("/proc/{pid}/ns/mnt")).context("opening its namespace")?;
         enter(&theirs).context("entering its namespace")?;
-        let mounted = mounts::apply(&mut self.kernel, uid, &packages, &files);
+        let mounted = mounts::apply(
+            &mut self.kernel,
+            uid,
+            &gated.packages,
+            files,
+            gated.mounts.storage,
+        );
         if let Err(e) = enter(home) {
             *lost = true;
             return Err(e).context("returning from its namespace");

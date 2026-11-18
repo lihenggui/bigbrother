@@ -29,25 +29,61 @@ internal const val PER_USER_RANGE = 100_000
 internal const val FIRST_APPLICATION_UID = 10_000
 
 /**
+ * What the hook answers differently for a sandboxed uid: its own
+ * [androidId], if [ownAndroidId], and no installed app but itself and the
+ * system's, if [hidesApps].
+ */
+internal data class SandboxedUid(
+    val androidId: String,
+    val ownAndroidId: Boolean = true,
+    val hidesApps: Boolean = true,
+)
+
+/**
  * Parses the sandbox list the daemon writes (keep in sync with
  * `bbd/src/sandbox/identity.rs`): one `<uid> <android id>` pair per line,
- * separated by white space, the id being 16 hexadecimal digits.
+ * separated by white space, the id being 16 hexadecimal digits, and for a
+ * uid that has only some of the hook's items, a line
+ * `items <uid> <item>[,<item>]` naming those (`device_ids`,
+ * `installed_apps`). A uid without such a line has them all, which is
+ * also what a hook from before the line existed makes of it.
  *
  * Lines that do not have this shape are skipped rather than failing the
  * whole list, and so are uids of system components, which the daemon never
  * sandboxes: hiding apps from them would break the system. If a uid appears
  * twice, the last line wins.
  */
-internal fun parseSandboxList(text: String): Map<Int, String> = buildMap {
+internal fun parseSandboxList(text: String): Map<Int, SandboxedUid> {
+    val ids = mutableMapOf<Int, String>()
+    val items = mutableMapOf<Int, Set<String>>()
     for (line in text.lineSequence()) {
         val fields = line.trim().split(WHITE_SPACE)
-        if (fields.size != 2) continue
-        val uid = fields[0].toIntOrNull() ?: continue
+        val uidField = when {
+            fields.size == 2 -> fields[0]
+            fields.size == 3 && fields[0] == ITEMS -> fields[1]
+            else -> continue
+        }
+        val uid = uidField.toIntOrNull() ?: continue
         if (uid < 0 || uid % PER_USER_RANGE < FIRST_APPLICATION_UID) continue
+        if (fields.size == 3) {
+            items[uid] = fields[2].split(',').toSet()
+            continue
+        }
         if (!ANDROID_ID.matches(fields[1])) continue
-        put(uid, fields[1].lowercase())
+        ids[uid] = fields[1].lowercase()
+    }
+    return ids.mapValues { (uid, androidId) ->
+        val named = items[uid] ?: return@mapValues SandboxedUid(androidId)
+        SandboxedUid(androidId, ownAndroidId = DEVICE_IDS in named, hidesApps = INSTALLED_APPS in named)
     }
 }
+
+/** The word that starts a line of items in the sandbox list. */
+private const val ITEMS = "items"
+
+/** The items of the sandbox the hook carries out (`bbd/src/sandbox/items.rs`). */
+private const val DEVICE_IDS = "device_ids"
+private const val INSTALLED_APPS = "installed_apps"
 
 /**
  * Whether the arguments of a `ContentProvider.Transport.call` are a read of

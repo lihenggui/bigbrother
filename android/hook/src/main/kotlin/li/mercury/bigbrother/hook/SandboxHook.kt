@@ -257,7 +257,7 @@ internal class SandboxHook(private val module: XposedInterface) {
     ) : FailSafeHooker(module, "app list") {
         override fun replacement(chain: XposedInterface.Chain): Any? {
             val callingUid = chain.getArg(arguments.callingUid) as Int
-            if (!list.isSandboxed(callingUid)) return null
+            if (!list.hidesAppsFrom(callingUid)) return null
             val target = chain.getArg(arguments.target) ?: return null
             val targetAppId = appIdGetter.invoke(target) as Int
             val targetIsSystem = isSystemGetter.invoke(target) as Boolean
