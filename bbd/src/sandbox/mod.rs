@@ -1632,6 +1632,34 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_change_of_the_global_settings_leaves_the_hook_list_as_it_was() {
+        let mut f = Fixture::new("sandbox-global-list");
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let mut failing = Recorder::new("gate", &log);
+        failing.fail_update = true;
+        let mut sandbox = f.sandbox();
+        let identity = identity::Identity::new(&sandbox.snapshot(), &sandbox.global());
+        sandbox.add_effect(Box::new(identity.at(&f.dir)));
+        sandbox.add_effect(failing);
+        for package in ["com.app", "com.shared.one"] {
+            sandbox
+                .enable(&f.writer, &mut f.packages, package, 0, 1000)
+                .unwrap();
+        }
+        let list = || std::fs::read_to_string(f.dir.join("list")).unwrap();
+        let listed = list();
+
+        // The first app's change fails after its line was written.
+        let off = BTreeMap::from([(Item::InstalledApps, Mode::Off)]);
+        assert!(
+            sandbox
+                .set_global(&f.writer, &mut f.packages, &off)
+                .is_err()
+        );
+        assert_eq!(list(), listed);
+    }
+
+    #[test]
     fn requests_are_answered_with_one_json_line() {
         let mut f = Fixture::new("sandbox-answer");
         let mut sandbox = f.sandbox();
