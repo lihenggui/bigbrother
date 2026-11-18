@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <!-- The jail's list of apps. -->
+    <string name="jail_section_isolated">Isolated apps</string>
+    <string name="jail_section_settings">Settings</string>
+    <string name="jail_add_apps">Add apps</string>
+    <string name="jail_global_settings">Global settings</string>
+    <string name="jail_all_items_on">Every item isolated</string>
+    <!-- %1$s: the items that are off, separated by commas. -->
+    <string name="jail_items_off">Not isolated: %1$s</string>
+    <string name="jail_no_items_on">No item isolated</string>
+    <!-- %1$s: a relative time, such as "3 days ago". -->
+    <string name="jail_empty_title">No isolated apps</string>
+    <string name="jail_empty_files_title">Files</string>
+    <string name="jail_empty_files">Only a separate, empty storage of its own</string>
+    <string name="jail_empty_permissions_title">Contacts, location, camera and more</string>
+    <string name="jail_empty_permissions">Permissions stay granted; queries return nothing</string>
+    <string name="jail_empty_device_title">Device and apps</string>
+    <string name="jail_empty_device">A virtual Android ID; only system apps are visible</string>
+    <string name="jail_hook_missing_title">Device identifiers and the app list are not hidden</string>
+    <string name="jail_hook_missing">Enable the System Framework scope for Big Brother in LSPosed, then restart the device.</string>
+    <string name="jail_gate_missing_title">Storage and processor information cannot be isolated</string>
+    <string name="jail_gate_missing">This kernel cannot hold starting apps.</string>
+
+    <!-- Messages after a change. %1$s: app names. -->
+    <string name="jail_isolated">%1$s isolated</string>
+    <string name="jail_undo">Undo</string>
+    <!-- %1$s: the reason the daemon gave. -->
+    <string name="jail_failed">Not changed: %1$s</string>
+
+    <!-- Adding apps. -->
+    <string name="jail_add_search">Search apps</string>
+    <plurals name="jail_add_confirm">
+        <item quantity="one">Isolate %d app</item>
+        <item quantity="other">Isolate %d apps</item>
+    </plurals>
+    <string name="jail_add_confirm_none">Isolate</string>
+    <string name="jail_add_restart">Running apps are closed and restarted.</string>
+    <string name="jail_add_empty">No apps to add</string>
+    <string name="jail_close">Close</string>
+
+    <!-- An app in the jail. -->
+    <string name="jail_release">End isolation</string>
+    <string name="jail_records">Records</string>
+    <string name="jail_section_items">Isolation</string>
+    <string name="jail_items_summary">Items that are on return empty or virtual data, or isolated storage. Items that are off keep the system\'s behaviour.</string>
+    <string name="jail_reset">Use global settings</string>
+    <plurals name="jail_more_items">
+        <item quantity="one">%d more item the app does not ask for</item>
+        <item quantity="other">%d more items the app does not ask for</item>
+    </plurals>
+    <string name="jail_fewer_items">Show less</string>
+    <string name="jail_restart_note">Turning an item on, or changing storage or processor information, restarts the app.</string>
+    <string name="jail_custom">Custom</string>
+    <string name="jail_not_in_effect">Not in effect on this device</string>
+
+    <!-- The global settings. -->
+    <string name="jail_settings_subtitle">For isolated apps without their own setting</string>
+    <string name="jail_group_files">Files</string>
+    <string name="jail_group_personal">Personal data</string>
+    <string name="jail_group_sensors">Location and sensors</string>
+    <string name="jail_group_device">Device and apps</string>
+    <string name="jail_section_status">Status</string>
+    <string name="jail_status_title">Components</string>
+    <string name="jail_status_ok">Storage isolation and the system framework hook in effect</string>
+    <string name="jail_status_hook_missing">System framework hook not loaded</string>
+    <string name="jail_status_gate_missing">Storage isolation not available on this kernel</string>
+    <string name="jail_release_all">End all isolation</string>
+    <string name="jail_release_all_summary">Files in isolated storage are kept</string>
+    <string name="jail_release_all_title">End all isolation?</string>
+    <plurals name="jail_release_all_body">
+        <item quantity="one">%d app gets real data again and is restarted. Files in isolated storage are kept.</item>
+        <item quantity="other">%d apps get real data again and are restarted. Files in isolated storage are kept.</item>
+    </plurals>
+    <plurals name="jail_release_all_left">
+        <item quantity="one">%d app is still isolated. Try again.</item>
+        <item quantity="other">%d apps are still isolated. Try again.</item>
+    </plurals>
+    <string name="jail_cancel">Cancel</string>
+
+    <!-- The items: a title, what the app gets with the item on, and what that means. -->
+    <string name="jail_item_storage">Files and media</string>
+    <string name="jail_item_storage_on">Isolated storage</string>
+    <string name="jail_item_storage_on_detail">A separate, empty storage of its own, where what it saves stays. Real photos, downloads and documents are not visible.</string>
+    <string name="jail_item_cpu_info">Processor information</string>
+    <string name="jail_item_cpu_info_on">Chip model hidden</string>
+    <string name="jail_item_cpu_info_on_detail">The core count and instruction set stay; the chip model and other identifiers are removed.</string>
+    <string name="jail_item_contacts">Contacts</string>
+    <string name="jail_item_contacts_on">Empty list</string>
+    <string name="jail_item_contacts_on_detail">Shown as granted; contact queries return nothing.</string>
+    <string name="jail_item_messages">Messages and call log</string>
+    <string name="jail_item_messages_on">Empty list</string>
+    <string name="jail_item_messages_on_detail">Shown as granted; message and call log queries return nothing.</string>
+    <string name="jail_item_calendar">Calendar</string>
+    <string name="jail_item_calendar_on">Empty calendar</string>
+    <string name="jail_item_calendar_on_detail">Shown as granted; calendar queries return nothing.</string>
+    <string name="jail_item_clipboard_accounts">Clipboard and accounts</string>
+    <string name="jail_item_clipboard_accounts_on">Empty</string>
+    <string name="jail_item_clipboard_accounts_on_detail">The clipboard and the account list are empty.</string>
+    <string name="jail_item_location">Location</string>
+    <string name="jail_item_location_on">No location</string>
+    <string name="jail_item_location_on_detail">Shown as granted; no location is available.</string>
+    <string name="jail_item_camera">Camera</string>
+    <string name="jail_item_camera_on">Unavailable</string>
+    <string name="jail_item_camera_on_detail">Shown as granted; no camera image is available.</string>
+    <string name="jail_item_microphone">Microphone</string>
+    <string name="jail_item_microphone_on">Silence</string>
+    <string name="jail_item_microphone_on_detail">Shown as granted; recordings are silent.</string>
+    <string name="jail_item_body_sensors">Body sensors and activity</string>
+    <string name="jail_item_body_sensors_on">No data</string>
+    <string name="jail_item_body_sensors_on_detail">Heart rate, steps and physical activity are not available.</string>
+    <string name="jail_item_device_ids">Device identifiers</string>
+    <string name="jail_item_device_ids_on">Virtual ID</string>
+    <string name="jail_item_device_ids_on_detail">A fixed virtual Android ID of its own; the phone number and phone state cannot be read.</string>
+    <string name="jail_item_installed_apps">Installed apps</string>
+    <string name="jail_item_installed_apps_on">System apps only</string>
+    <string name="jail_item_installed_apps_on_detail">The installed app list holds only system apps and itself; usage statistics cannot be read.</string>
+    <string name="jail_item_nearby_devices">Nearby devices</string>
+    <string name="jail_item_nearby_devices_on">None found</string>
+    <string name="jail_item_nearby_devices_on_detail">Bluetooth and Wi-Fi scans return nothing.</string>
+
+    <!-- The other modes of an item. -->
+    <string name="jail_mode_deny">Deny</string>
+    <string name="jail_mode_deny_detail">The app gets a permission error, and may ask for the permission or stop the feature.</string>
+    <string name="jail_mode_coarse">Approximate location</string>
+    <string name="jail_mode_coarse_detail">Only an approximate location, to the neighbourhood.</string>
+    <string name="jail_mode_off">Real data</string>
+    <string name="jail_mode_off_detail">The app gets what the system gives it.</string>
+    <string name="jail_mode_global">Use global setting</string>
+    <!-- %1$s: what the global setting is now, such as "Empty list". -->
+    <string name="jail_mode_global_detail">Now: %1$s</string>
+    <string name="jail_list_separator">, </string>
+    <string name="jail_app_not_isolated">This app is not isolated</string>
+    <string name="jail_select">Select an isolated app or the global settings</string>
+</resources>

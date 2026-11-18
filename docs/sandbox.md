@@ -4,7 +4,8 @@ An app put in the sandbox keeps running, with its permissions shown as
 granted, but is given an empty or made-up answer where it would read the
 device's files, the user's personal data or the device's identity.
 
-The sandbox is driven from a root shell:
+The app's Jail tab puts apps in the sandbox and sets its items. The same
+can be done from a root shell:
 
 ```sh
 bbd=/data/adb/modules/big_brother/bin/bbd

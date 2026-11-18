@@ -76,6 +76,8 @@ dependencies {
     implementation(projects.feature.applist.impl)
     implementation(projects.feature.appdetail.api)
     implementation(projects.feature.appdetail.impl)
+    implementation(projects.feature.jail.api)
+    implementation(projects.feature.jail.impl)
     implementation(projects.feature.overview.api)
     implementation(projects.feature.overview.impl)
     implementation(projects.feature.timeline.api)

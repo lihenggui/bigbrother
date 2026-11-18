@@ -1,0 +1,68 @@
+/*
+ * Copyright (C) 2026 Mercury Li
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 3 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
+package li.mercury.bigbrother.core.data.repository
+
+import android.content.Context
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.withContext
+import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.IO
+import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
+import li.mercury.bigbrother.core.model.AppInfo
+import li.mercury.bigbrother.core.model.InstalledApp
+import javax.inject.Inject
+
+/** The apps installed for the calling user, whether or not they left records. */
+interface InstalledAppRepository {
+    suspend fun getInstalledApps(): List<InstalledApp>
+
+    /** The permissions the app's manifest asks for; empty if it is not installed. */
+    suspend fun getRequestedPermissions(packageName: String): Set<String>
+}
+
+internal class PackageManagerInstalledAppRepository @Inject constructor(
+    @ApplicationContext context: Context,
+    @Dispatcher(IO) private val ioDispatcher: CoroutineDispatcher,
+) : InstalledAppRepository {
+    private val packageManager = context.packageManager
+
+    override suspend fun getInstalledApps(): List<InstalledApp> = withContext(ioDispatcher) {
+        packageManager.getInstalledPackages(0).mapNotNull { packageInfo ->
+            val info = packageInfo.applicationInfo ?: return@mapNotNull null
+            InstalledApp(
+                packageName = packageInfo.packageName,
+                uid = info.uid,
+                info = AppInfo(
+                    label = packageManager.getApplicationLabel(info).toString(),
+                    packageInfo = packageInfo,
+                    isSystem = info.flags and ApplicationInfo.FLAG_SYSTEM != 0,
+                ),
+            )
+        }
+    }
+
+    override suspend fun getRequestedPermissions(packageName: String): Set<String> = withContext(ioDispatcher) {
+        try {
+            packageManager.getPackageInfo(packageName, PackageManager.GET_PERMISSIONS)
+                .requestedPermissions.orEmpty().toSet()
+        } catch (_: PackageManager.NameNotFoundException) {
+            emptySet()
+        }
+    }
+}

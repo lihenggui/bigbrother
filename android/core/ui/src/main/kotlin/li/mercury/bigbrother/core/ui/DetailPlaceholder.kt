@@ -32,9 +32,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import li.mercury.bigbrother.core.designsystem.component.ShapedIcon
 
-/** What the detail pane shows beside a list before anything in it is selected. */
+/**
+ * What the detail pane shows beside a list before anything in it is
+ * selected; [text] says what can be selected there.
+ */
 @Composable
-fun DetailPlaceholder(modifier: Modifier = Modifier) {
+fun DetailPlaceholder(modifier: Modifier = Modifier, text: String = stringResource(R.string.select_app)) {
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -44,7 +47,7 @@ fun DetailPlaceholder(modifier: Modifier = Modifier) {
     ) {
         ShapedIcon(Icons.Outlined.TouchApp, size = 72.dp, iconSize = 32.dp)
         Text(
-            text = stringResource(R.string.select_app),
+            text = text,
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
