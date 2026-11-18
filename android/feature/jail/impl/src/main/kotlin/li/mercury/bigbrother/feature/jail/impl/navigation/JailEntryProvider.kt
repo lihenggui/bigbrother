@@ -26,10 +26,14 @@ import androidx.navigation3.runtime.NavKey
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.navigation.Navigator
 import li.mercury.bigbrother.core.ui.DetailPlaceholder
+import li.mercury.bigbrother.feature.appdetail.api.navigation.AppDetailNavKey
+import li.mercury.bigbrother.feature.appdetail.api.navigation.AppFilesNavKey
+import li.mercury.bigbrother.feature.appdetail.api.navigation.RecordNavKey
 import li.mercury.bigbrother.feature.appdetail.api.navigation.navigateToAppDetail
 import li.mercury.bigbrother.feature.jail.api.navigation.JailAppNavKey
 import li.mercury.bigbrother.feature.jail.api.navigation.JailNavKey
 import li.mercury.bigbrother.feature.jail.api.navigation.JailSettingsNavKey
+import li.mercury.bigbrother.feature.jail.api.navigation.closeJailApp
 import li.mercury.bigbrother.feature.jail.api.navigation.navigateToJailApp
 import li.mercury.bigbrother.feature.jail.api.navigation.navigateToJailSettings
 import li.mercury.bigbrother.feature.jail.impl.JailAppScreen
@@ -51,8 +55,7 @@ fun EntryProviderScope<NavKey>.jailEntries(navigator: Navigator, topBar: @Compos
             detailPlaceholder = { DetailPlaceholder(text = stringResource(R.string.jail_select)) },
         ),
     ) {
-        // An app's records opened over its settings leave the app selected.
-        val shown = navigator.state.currentSubStack.lastOrNull { it is JailAppNavKey || it is JailSettingsNavKey }
+        val shown = shownBesideList(navigator.state.currentSubStack)
         JailScreen(
             topBar = topBar,
             selectedUid = (shown as? JailAppNavKey)?.uid,
@@ -66,7 +69,7 @@ fun EntryProviderScope<NavKey>.jailEntries(navigator: Navigator, topBar: @Compos
         JailAppScreen(
             onBack = navigator::goBack,
             onOpenRecords = { uid, packageName -> navigator.navigateToAppDetail(uid, packageName, TimeRange.DAY) },
-            onLeave = navigator::goBack,
+            onLeave = { navigator.closeJailApp(key.uid, key.packageName) },
             viewModel = hiltViewModel<JailAppViewModel, JailAppViewModel.Factory>(key = "jail:${key.uid}") { factory ->
                 factory.create(key.uid, key.packageName)
             },
@@ -75,4 +78,26 @@ fun EntryProviderScope<NavKey>.jailEntries(navigator: Navigator, topBar: @Compos
     entry<JailSettingsNavKey>(metadata = ListDetailSceneStrategy.detailPane()) {
         JailSettingsScreen(onBack = navigator::goBack, viewModel = hiltViewModel<JailSettingsViewModel>())
     }
+}
+
+/**
+ * Which of the jail's screens the pane beside the list shows, for the list
+ * to mark it: the last one on [stack], or below it the page of the app
+ * whose records it shows, opened from there. Anything else, such as another
+ * app opened from the search, leaves nothing marked.
+ */
+internal fun shownBesideList(stack: List<NavKey>): NavKey? {
+    val index = stack.indexOfLast { it is JailAppNavKey || it is JailSettingsNavKey }
+    if (index < 0) return null
+    val shown = stack[index]
+    val above = stack.subList(index + 1, stack.size)
+    return shown.takeIf { above.all { key -> shown is JailAppNavKey && key.recordsOf() == shown.uid } }
+}
+
+/** The uid of the app whose records this screen shows, if it is one of them. */
+private fun NavKey.recordsOf(): Int? = when (this) {
+    is AppDetailNavKey -> uid
+    is AppFilesNavKey -> uid
+    is RecordNavKey -> uid
+    else -> null
 }

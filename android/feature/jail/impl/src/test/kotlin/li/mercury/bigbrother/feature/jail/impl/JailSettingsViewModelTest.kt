@@ -102,4 +102,16 @@ class JailSettingsViewModelTest {
         assertEquals(1, viewModel.uiState.value.notReleased)
         assertNull(viewModel.uiState.value.error)
     }
+
+    @Test
+    fun givenAppOpsNotHeld_whenAllReleased_thenNoLongerTold() = runTest {
+        sandboxRepository.status = sandboxRepository.status.copy(appOps = false)
+        val viewModel = viewModel()
+        assertEquals(false, viewModel.uiState.value.status?.supports(SandboxItem.CONTACTS))
+
+        viewModel.releaseAll()
+
+        assertEquals(true, viewModel.uiState.value.status?.appOps)
+        assertEquals(true, viewModel.uiState.value.status?.supports(SandboxItem.CONTACTS))
+    }
 }

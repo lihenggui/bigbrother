@@ -35,6 +35,8 @@
     <string name="jail_hook_missing">Enable the System Framework scope for Big Brother in LSPosed, then restart the device.</string>
     <string name="jail_gate_missing_title">Storage and processor information cannot be isolated</string>
     <string name="jail_gate_missing">This kernel cannot hold starting apps.</string>
+    <string name="jail_appops_missing_title">Contacts, location, camera and more are not isolated</string>
+    <string name="jail_appops_missing">The part of Big Brother that holds them back is not running. It starts again automatically.</string>
 
     <!-- Messages after a change. %1$s: app names. -->
     <string name="jail_isolated">%1$s isolated</string>
@@ -85,6 +87,11 @@
     <string name="jail_fewer_items">Show less</string>
     <string name="jail_restart_note">Turning an item on, or changing storage or processor information, restarts the app.</string>
     <string name="jail_custom">Custom</string>
+    <!-- For screen readers: whether an item's choices are shown, and what tapping the item does. -->
+    <string name="jail_choices_shown">Expanded</string>
+    <string name="jail_choices_hidden">Collapsed</string>
+    <string name="jail_show_choices">Show choices</string>
+    <string name="jail_hide_choices">Hide choices</string>
     <string name="jail_not_in_effect">Not in effect on this device</string>
 
     <!-- The global settings. -->
@@ -99,6 +106,7 @@
     <string name="jail_status_checking">Checking…</string>
     <string name="jail_status_hook_missing">System framework hook not loaded</string>
     <string name="jail_status_gate_missing">Storage isolation not available on this kernel</string>
+    <string name="jail_status_appops_missing">Contacts, location and more not in effect</string>
     <string name="jail_release_all">End all isolation</string>
     <string name="jail_release_all_summary">Files in isolated storage are kept</string>
     <string name="jail_release_all_title">End all isolation?</string>
@@ -164,6 +172,5 @@
     <!-- %1$s: what the global setting is now, such as "Empty list". -->
     <string name="jail_mode_global_detail">Now: %1$s</string>
     <string name="jail_list_separator">, </string>
-    <string name="jail_app_not_isolated">This app is not isolated</string>
     <string name="jail_select">Select an isolated app or the global settings</string>
 </resources>

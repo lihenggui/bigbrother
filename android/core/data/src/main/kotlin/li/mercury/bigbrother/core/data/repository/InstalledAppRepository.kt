@@ -32,8 +32,12 @@ import javax.inject.Inject
 interface InstalledAppRepository {
     suspend fun getInstalledApps(): List<InstalledApp>
 
-    /** The permissions the app's manifest asks for; empty if it is not installed. */
-    suspend fun getRequestedPermissions(packageName: String): Set<String>
+    /**
+     * The permissions the app's manifest asks for; null if it is not
+     * installed for the calling user. The manifest is the same for every
+     * user the app is installed for.
+     */
+    suspend fun getRequestedPermissions(packageName: String): Set<String>?
 }
 
 internal class PackageManagerInstalledAppRepository @Inject constructor(
@@ -57,12 +61,12 @@ internal class PackageManagerInstalledAppRepository @Inject constructor(
         }
     }
 
-    override suspend fun getRequestedPermissions(packageName: String): Set<String> = withContext(ioDispatcher) {
+    override suspend fun getRequestedPermissions(packageName: String): Set<String>? = withContext(ioDispatcher) {
         try {
             packageManager.getPackageInfo(packageName, PackageManager.GET_PERMISSIONS)
                 .requestedPermissions.orEmpty().toSet()
         } catch (_: PackageManager.NameNotFoundException) {
-            emptySet()
+            null
         }
     }
 }

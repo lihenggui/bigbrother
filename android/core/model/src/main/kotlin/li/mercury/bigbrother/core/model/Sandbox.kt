@@ -51,6 +51,13 @@ enum class SandboxItem(val id: String) {
     val isMounted: Boolean get() = this == STORAGE || this == CPU_INFO
 
     /**
+     * Personal data, carried out by holding the app's app ops
+     * (`bbd/src/sandbox/appops.rs`): everything neither the hook nor the
+     * mounts carry out.
+     */
+    val needsAppOps: Boolean get() = !needsHook && !isMounted
+
+    /**
      * The permissions an app has to ask for to get this data at all. Empty for
      * what every app can read: its effect is shown for every app.
      */
@@ -127,6 +134,9 @@ data class SandboxedApp(
     /** The mode of [item] that applies. */
     fun modeOf(item: SandboxItem): SandboxMode = items[item] ?: SandboxMode.ON
 
+    /** In the sandbox with personal data kept from it, which takes app ops. */
+    val needsAppOps: Boolean get() = enabled && SandboxItem.entries.any { it.needsAppOps && modeOf(it).isOn }
+
     private companion object {
         const val PER_USER_RANGE = 100_000
     }
@@ -136,7 +146,10 @@ data class SandboxedApp(
 data class SandboxStatus(
     /** Starting apps can be given their mounts (storage, processor information). */
     val gate: Boolean,
-    /** App ops can be held. */
+    /**
+     * App ops are held. The daemon runs what holds them only while an app
+     * needs them, and reports false otherwise: see [relevantTo].
+     */
     val appOps: Boolean,
     /** The hook answers ANDROID_ID. */
     val androidIdHook: Boolean,
@@ -148,8 +161,15 @@ data class SandboxStatus(
         SandboxItem.DEVICE_IDS -> androidIdHook
         SandboxItem.INSTALLED_APPS -> appListHook
         SandboxItem.STORAGE, SandboxItem.CPU_INFO -> gate
-        else -> true
+        else -> appOps
     }
+
+    /**
+     * This status as it bears on [apps]. App ops not held is a fault only
+     * while one of them needs them: otherwise the daemon has no reason to
+     * hold any, and nothing goes without.
+     */
+    fun relevantTo(apps: List<SandboxedApp>): SandboxStatus = if (apps.any { it.needsAppOps }) this else copy(appOps = true)
 }
 
 /** An app installed for the current user. */

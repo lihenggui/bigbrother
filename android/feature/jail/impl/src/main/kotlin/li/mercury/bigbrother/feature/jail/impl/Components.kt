@@ -65,7 +65,9 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import li.mercury.bigbrother.core.designsystem.component.ShapedIcon
 import li.mercury.bigbrother.core.designsystem.icon.CageIcons
@@ -73,6 +75,7 @@ import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.ui.AppIcon
+import li.mercury.bigbrother.core.ui.R as UiR
 
 /** Outer and inner corners of a row in a segmented group, as Material lists have them. */
 private val OUTER_CORNER = 16.dp
@@ -85,7 +88,10 @@ internal fun segmentShape(index: Int, count: Int): RoundedCornerShape {
     return RoundedCornerShape(topStart = top, topEnd = top, bottomStart = bottom, bottomEnd = bottom)
 }
 
-/** A row that opens something, in a segmented group. */
+/**
+ * A row that opens something, in a segmented group. [selected] is whether
+ * it is what the pane beside the list shows, null without such a pane.
+ */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 internal fun LinkRow(
@@ -96,14 +102,16 @@ internal fun LinkRow(
     count: Int,
     leading: @Composable () -> Unit,
     modifier: Modifier = Modifier,
-    selected: Boolean = false,
+    selected: Boolean? = null,
 ) {
     ListItem(
         modifier = modifier
             .clip(segmentShape(index, count))
-            .clickable(onClick = onClick),
+            .clickable(onClick = onClick)
+            // Told as selected or not only where one of the rows can be.
+            .then(if (selected != null) Modifier.semantics { this.selected = selected } else Modifier),
         shapes = ListItemDefaults.segmentedShapes(index, count),
-        colors = if (selected) {
+        colors = if (selected == true) {
             ListItemDefaults.segmentedColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
         } else {
             ListItemDefaults.segmentedColors()
@@ -113,6 +121,10 @@ internal fun LinkRow(
         verticalAlignment = Alignment.CenterVertically,
     ) { Text(title) }
 }
+
+/** An app's name, followed by its Android user if that is not the one this app runs as. */
+@Composable
+internal fun nameWithUser(name: String, otherUser: Int?): String = if (otherUser == null) name else stringResource(UiR.string.app_name_with_user, name, otherUser)
 
 /** An app's icon, with the cage that marks it as isolated. */
 @Composable
@@ -162,6 +174,8 @@ internal fun ItemRow(
     val bottom by animateDpAsState(if (expanded || index == count - 1) OUTER_CORNER else INNER_CORNER, spatial, label = "bottom")
     val turn by animateFloatAsState(if (expanded) 180f else 0f, MaterialTheme.motionScheme.fastSpatialSpec(), label = "turn")
     val title = stringResource(item.title)
+    val state = stringResource(if (expanded) R.string.jail_choices_shown else R.string.jail_choices_hidden)
+    val action = stringResource(if (expanded) R.string.jail_hide_choices else R.string.jail_show_choices)
     Surface(
         modifier = modifier.padding(vertical = if (expanded) 6.dp else 0.dp),
         shape = RoundedCornerShape(topStart = top, topEnd = top, bottomStart = bottom, bottomEnd = bottom),
@@ -173,7 +187,8 @@ internal fun ItemRow(
                     modifier = Modifier
                         .weight(1f)
                         .heightIn(min = 72.dp)
-                        .clickable(onClick = { onExpandedChange(!expanded) })
+                        .clickable(onClickLabel = action, onClick = { onExpandedChange(!expanded) })
+                        .semantics { stateDescription = state }
                         .padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(16.dp),

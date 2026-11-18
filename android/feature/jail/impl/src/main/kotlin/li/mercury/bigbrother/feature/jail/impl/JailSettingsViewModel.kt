@@ -38,6 +38,7 @@ import javax.inject.Inject
 data class JailSettingsUiState(
     /** Every item's global mode; null until read. */
     val global: Map<SandboxItem, SandboxMode>? = null,
+    /** Null until known; as it bears on the apps in the sandbox. */
     val status: SandboxStatus? = null,
     /** How many apps are in the sandbox. */
     val isolated: Int = 0,
@@ -56,14 +57,18 @@ class JailSettingsViewModel @Inject constructor(
     private val load = MutableStateFlow(JailSettingsUiState())
 
     val uiState: StateFlow<JailSettingsUiState> = combine(sandboxRepository.apps, sandboxRepository.global, load) { apps, global, loaded ->
-        loaded.copy(global = global, isolated = apps.orEmpty().count { it.enabled })
+        loaded.copy(
+            global = global,
+            status = loaded.status?.relevantTo(apps.orEmpty()),
+            isolated = apps.orEmpty().count { it.enabled },
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), JailSettingsUiState())
 
     fun refresh() {
         viewModelScope.launch {
             try {
                 if (sandboxRepository.global.value == null) sandboxRepository.refresh()
-                val status = sandboxRepository.getStatus()
+                val status = sandboxRepository.relevantStatus()
                 load.update { it.copy(status = status, failure = null) }
             } catch (e: RecordsException) {
                 load.update { it.copy(failure = e.toLoadFailure()) }

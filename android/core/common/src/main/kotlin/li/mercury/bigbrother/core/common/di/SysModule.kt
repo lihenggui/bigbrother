@@ -17,6 +17,7 @@
 package li.mercury.bigbrother.core.common.di
 
 import android.content.Context
+import android.os.Process
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -40,6 +41,14 @@ annotation class AppPackageName
 @Qualifier
 annotation class CacheDir
 
+/**
+ * The Android user this app runs as, whose apps the package manager
+ * describes: an app of another user is told apart by it.
+ */
+@Retention(AnnotationRetention.RUNTIME)
+@Qualifier
+annotation class CurrentUserId
+
 @Module
 @InstallIn(SingletonComponent::class)
 internal object SysModule {
@@ -54,4 +63,11 @@ internal object SysModule {
     @Provides
     @CacheDir
     fun providesCacheDir(@ApplicationContext context: Context): File = context.cacheDir
+
+    @Provides
+    @CurrentUserId
+    fun providesCurrentUserId(): Int = Process.myUid() / PER_USER_RANGE
+
+    /** uid = user * 100000 + app id. */
+    private const val PER_USER_RANGE = 100_000
 }

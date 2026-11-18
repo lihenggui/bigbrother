@@ -46,8 +46,12 @@ class JailAppViewModelTest {
         permissions = mapOf(PACKAGE to setOf("android.permission.CAMERA")),
     )
 
-    private fun TestScope.viewModel(): JailAppViewModel {
-        val viewModel = JailAppViewModel(UID, PACKAGE, sandboxRepository, TestAppInfoRepository(), installedAppRepository)
+    private fun TestScope.viewModel(
+        uid: Int = UID,
+        packageName: String = PACKAGE,
+        sandboxRepository: TestSandboxRepository = this@JailAppViewModelTest.sandboxRepository,
+    ): JailAppViewModel {
+        val viewModel = JailAppViewModel(uid, packageName, sandboxRepository, TestAppInfoRepository(), installedAppRepository, currentUserId = 0)
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
         viewModel.refresh()
         return viewModel
@@ -62,6 +66,18 @@ class JailAppViewModelTest {
         assertEquals(SandboxMode.DENY, viewModel.app().modeOf(SandboxItem.LOCATION))
         assertEquals(SandboxMode.ON, viewModel.app().modeOf(SandboxItem.CONTACTS))
         assertEquals(setOf("android.permission.CAMERA"), viewModel.uiState.value.requested)
+        assertNull(viewModel.uiState.value.otherUser)
+    }
+
+    @Test
+    fun givenAppOfOtherUserNotInstalledHere_whenLoaded_thenUserShownAndPermissionsUnknown() = runTest {
+        val uid = 10 * 100_000 + 10_231
+        val repository = TestSandboxRepository(apps = listOf(sandboxed(uid, "com.example.flashlight", enabled = true)))
+
+        val viewModel = viewModel(uid, "com.example.flashlight", repository)
+
+        assertEquals(10, viewModel.uiState.value.otherUser)
+        assertNull(viewModel.uiState.value.requested)
     }
 
     @Test
@@ -105,13 +121,35 @@ class JailAppViewModelTest {
     }
 
     @Test
-    fun givenIsolatedApp_whenReleased_thenTakenOutAndPageLeft() = runTest {
+    fun givenIsolatedApp_whenReleased_thenPageLeavesStraightFromTheApp() = runTest {
         val viewModel = viewModel()
+        val shown = mutableListOf<JailAppUiState>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect { shown += it } }
 
         viewModel.release()
 
         assertEquals(listOf(PACKAGE), sandboxRepository.released)
-        assertTrue(viewModel.uiState.value.released)
+        assertTrue(viewModel.uiState.value.left)
+        // Never a page without the app on the way out.
+        assertTrue(shown.all { it.app?.packageName == PACKAGE })
+    }
+
+    @Test
+    fun givenAppTakenOutElsewhere_whenShown_thenPageLeaves() = runTest {
+        val viewModel = viewModel()
+
+        // As Undo in the list does, beside this page.
+        sandboxRepository.release(PACKAGE, userId = 0)
+
+        assertTrue(viewModel.uiState.value.left)
+        assertEquals(PACKAGE, viewModel.uiState.value.app?.packageName)
+    }
+
+    @Test
+    fun givenAppNotIsolated_whenOpened_thenPageLeaves() = runTest {
+        val viewModel = viewModel(uid = 10_231, packageName = "com.example.flashlight")
+
+        assertTrue(viewModel.uiState.value.left)
         assertNull(viewModel.uiState.value.app)
     }
 
@@ -123,7 +161,7 @@ class JailAppViewModelTest {
         viewModel.release()
 
         assertEquals(listOf(PACKAGE), sandboxRepository.released)
-        assertTrue(viewModel.uiState.value.released)
+        assertTrue(viewModel.uiState.value.left)
         assertNull(viewModel.uiState.value.error)
     }
 
@@ -135,6 +173,18 @@ class JailAppViewModelTest {
         viewModel.setOn(SandboxItem.CONTACTS, on = false)
 
         assertNull(viewModel.uiState.value.error)
+    }
+
+    @Test
+    fun givenPageLeaving_whenChanged_thenNothingAskedOfDaemon() = runTest {
+        val viewModel = viewModel()
+        viewModel.release()
+
+        viewModel.setOn(SandboxItem.CONTACTS, on = false)
+        viewModel.release()
+
+        assertEquals(listOf(PACKAGE), sandboxRepository.released)
+        assertTrue(sandboxRepository.apps.value.orEmpty().single().settings.isEmpty())
     }
 
     @Test

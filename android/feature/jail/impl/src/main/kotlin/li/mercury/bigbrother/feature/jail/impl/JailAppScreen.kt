@@ -73,7 +73,6 @@ import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
-import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.relativeTime
 import li.mercury.bigbrother.core.ui.R as UiR
@@ -92,7 +91,7 @@ fun JailAppScreen(
         viewModel.refresh()
         onPauseOrDispose {}
     }
-    LaunchedEffect(state.released) { if (state.released) onLeave() }
+    LaunchedEffect(state.left) { if (state.left) onLeave() }
     JailAppScreen(
         state = state,
         showBack = !LocalShowsDetailBesideList.current,
@@ -134,7 +133,7 @@ internal fun JailAppScreen(
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             MediumFlexibleTopAppBar(
-                title = { Text(state.name) },
+                title = { Text(nameWithUser(state.name, state.otherUser)) },
                 subtitle = { Text(state.packageName) },
                 navigationIcon = {
                     if (showBack) {
@@ -157,16 +156,15 @@ internal fun JailAppScreen(
 
             state.loading -> BigBrotherLoadingIndicator(Modifier.fillMaxSize().padding(padding))
 
-            app == null -> Message(
-                title = stringResource(R.string.jail_app_not_isolated),
-                body = "",
-                modifier = Modifier.padding(padding),
-            )
+            // Only while the page leaves, for an app that was not in the
+            // sandbox when it opened.
+            app == null -> Unit
 
             else -> {
                 var expanded by rememberSaveable { mutableStateOf(initiallyExpanded) }
                 var showAll by rememberSaveable { mutableStateOf(false) }
-                val concerned = ITEM_ORDER.filter { it.concerns(state.requested) }
+                // Not knowing what the app asks for, every item is listed as concerning it.
+                val concerned = state.requested?.let { requested -> ITEM_ORDER.filter { it.concerns(requested) } } ?: ITEM_ORDER
                 val others = ITEM_ORDER - concerned.toSet()
                 val row: LazyListScope.(List<SandboxItem>) -> Unit = { items ->
                     items.forEachIndexed { index, item ->
