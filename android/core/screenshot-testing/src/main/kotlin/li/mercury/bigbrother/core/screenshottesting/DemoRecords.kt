@@ -40,6 +40,7 @@ import li.mercury.bigbrother.core.screenshottesting.DemoApp.STEP_COUNTER
 import li.mercury.bigbrother.core.screenshottesting.DemoApp.WEATHER
 import org.robolectric.RuntimeEnvironment
 import java.time.Instant
+import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
@@ -105,6 +106,15 @@ class DemoRecords(
         // The daemon names the record of each access when several are asked
         // for; only the clipboard's rows show it.
         .map { AccessPeriod(it.action, it.viaProvider, it.allowed, it.denied, it.time, it.time, it.path.takeIf { topic == "clipboard" }) }
+
+    /**
+     * [history] at the same times of [day]. For screens that show the date
+     * of each access: today's would read differently every day.
+     */
+    fun history(app: DemoApp, topic: String, day: LocalDate): List<AccessPeriod> {
+        val shift = clock.at(day.atStartOfDay()) - clock.todayAt(0, 0)
+        return history(app, topic).map { it.copy(firstSeen = it.firstSeen + shift, lastSeen = it.lastSeen + shift) }
+    }
 
     /**
      * When [app] had each sensor on, most recent first, as
