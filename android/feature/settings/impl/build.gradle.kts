@@ -17,10 +17,12 @@
 plugins {
     alias(libs.plugins.bigbrother.android.feature.impl)
     alias(libs.plugins.bigbrother.android.library.compose)
+    alias(libs.plugins.roborazzi)
 }
 
 android {
     namespace = "li.mercury.bigbrother.feature.settings.impl"
+    testOptions.unitTests.isIncludeAndroidResources = true
 }
 
 dependencies {
@@ -28,4 +30,7 @@ dependencies {
     implementation(projects.feature.settings.api)
 
     implementation(libs.androidx.core.ktx)
+
+    testImplementation(libs.robolectric)
+    testImplementation(projects.core.screenshotTesting)
 }

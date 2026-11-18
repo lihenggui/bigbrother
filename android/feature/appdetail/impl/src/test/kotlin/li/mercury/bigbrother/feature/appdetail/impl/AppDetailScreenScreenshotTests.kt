@@ -20,14 +20,18 @@ import androidx.activity.ComponentActivity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.screenshottesting.DefaultTestDevices
 import li.mercury.bigbrother.core.screenshottesting.DemoApp
 import li.mercury.bigbrother.core.screenshottesting.DemoClockRule
+import li.mercury.bigbrother.core.screenshottesting.DemoLoadFailure
 import li.mercury.bigbrother.core.screenshottesting.DemoRecords
 import li.mercury.bigbrother.core.screenshottesting.StoreScreenshotType
 import li.mercury.bigbrother.core.screenshottesting.captureForDevice
+import li.mercury.bigbrother.core.screenshottesting.captureMultiDevice
 import li.mercury.bigbrother.core.screenshottesting.captureStoreScreenshot
+import li.mercury.bigbrother.core.screenshottesting.screenshotName
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -94,17 +98,73 @@ class AppDetailScreenScreenshotTests {
         }
     }
 
-    /** The weather app's page, the demo app that did the most, or another [app]'s. */
+    @Test
+    fun givenAppThatReadPhotos_whenShownOnEachDevice_thenMatchesGolden() {
+        composeTestRule.captureMultiDevice("AppDetail") { AppPage() }
+    }
+
+    @Test
+    fun givenPageJustOpened_whenShown_thenShowsLoadingIndicator() {
+        capturePhone("AppDetailLoading") {
+            AppPage { AppDetailUiState(app = AppSummary(it.app.uid, it.app.packageName, emptyMap(), 0)) }
+        }
+    }
+
+    @Test
+    fun givenLoadFailure_whenShown_thenSaysWhy() {
+        val failure = DemoLoadFailure
+        capturePhone("AppDetailFailure${failure.screenshotName}") { AppPage { it.copy(accesses = null, failure = failure) } }
+    }
+
+    @Test
+    fun givenNoRecordsInRange_whenShown_thenSaysNothingIsRecordedAboveAppInfo() {
+        capturePhone("AppDetailEmpty") { AppPage { it.copy(accesses = emptyList()) } }
+    }
+
+    @Test
+    fun givenMoreRecordsThanShown_whenScrolledToEnd_thenSaysListIsCut() {
+        capturePhone("AppDetailTruncated") { AppPage(DemoApp.FLASHLIGHT) { it.copy(truncated = true, packageDetails = null) } }
+    }
+
+    @Test
+    fun givenAppNoLongerInstalled_whenShown_thenNamedByPackage() {
+        capturePhone("AppDetailUninstalled") { AppPage(DemoApp.NEWS) { it.copy(appInfo = null, packageDetails = null) } }
+    }
+
+    @Test
+    fun givenProcessWithoutPackage_whenShown_thenNamedByUid() {
+        capturePhone("AppDetailNoPackage") {
+            val records = remember { DemoRecords(clock) }
+            val app = records.apps.first { it.packageName.isEmpty() }
+            AppDetailScreen(
+                state = AppDetailUiState(app = app, accesses = records.accesses(app.uid)),
+                focusCategory = null,
+                openRecord = null,
+                onBack = {},
+                onRetry = {},
+                onOpenFiles = {},
+                onOpenRecord = { _, _ -> },
+            )
+        }
+    }
+
+    private fun capturePhone(name: String, body: @Composable () -> Unit) {
+        composeTestRule.captureForDevice("phone", DefaultTestDevices.PHONE.spec, name, body = body)
+    }
+
+    /** The weather app's page, the demo app that did the most, or another [app]'s, in the state [state] makes of it. */
     @Composable
-    private fun AppPage(app: DemoApp = DemoApp.WEATHER) {
+    private fun AppPage(app: DemoApp = DemoApp.WEATHER, state: (AppDetailUiState) -> AppDetailUiState = { it }) {
         val records = remember { DemoRecords(clock) }
         AppDetailScreen(
-            state = AppDetailUiState(
-                app = records.summary(app),
-                appInfo = records.appInfo.getValue(app.packageName),
-                accesses = records.accesses(app),
-                range = TimeRange.DAY,
-                packageDetails = records.packageDetails,
+            state = state(
+                AppDetailUiState(
+                    app = records.summary(app),
+                    appInfo = records.appInfo.getValue(app.packageName),
+                    accesses = records.accesses(app),
+                    range = TimeRange.DAY,
+                    packageDetails = records.packageDetails,
+                ),
             ),
             focusCategory = null,
             openRecord = null,
