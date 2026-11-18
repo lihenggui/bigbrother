@@ -78,6 +78,8 @@
     <string name="jail_not_in_effect">在此设备上未生效</string>
 
     <string name="jail_settings_subtitle">适用于未单独设置的已隔离应用</string>
+    <string name="jail_auto_isolate">自动隔离新安装的应用</string>
+    <string name="jail_auto_isolate_summary">首次启动前按以下设置隔离</string>
     <string name="jail_group_files">文件</string>
     <string name="jail_group_personal">个人数据</string>
     <string name="jail_group_sensors">位置与传感器</string>

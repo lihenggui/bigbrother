@@ -96,6 +96,8 @@
 
     <!-- The global settings. -->
     <string name="jail_settings_subtitle">For isolated apps without their own setting</string>
+    <string name="jail_auto_isolate">Isolate newly installed apps</string>
+    <string name="jail_auto_isolate_summary">Before their first start, with the settings below</string>
     <string name="jail_group_files">Files</string>
     <string name="jail_group_personal">Personal data</string>
     <string name="jail_group_sensors">Location and sensors</string>

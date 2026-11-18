@@ -21,6 +21,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.RecordsException
+import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.testing.MainDispatcherRule
@@ -28,7 +29,9 @@ import li.mercury.bigbrother.core.testing.repository.TestSandboxRepository
 import org.junit.Rule
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class JailSettingsViewModelTest {
     @get:Rule
@@ -77,6 +80,29 @@ class JailSettingsViewModelTest {
 
         viewModel.setOn(SandboxItem.MICROPHONE, on = false)
         assertEquals(SandboxMode.OFF, viewModel.uiState.value.global?.get(SandboxItem.MICROPHONE))
+    }
+
+    @Test
+    fun givenAutoIsolateOff_whenTurnedOnAndOff_thenStateFollows() = runTest {
+        val viewModel = viewModel()
+        assertFalse(viewModel.uiState.value.autoIsolate)
+
+        viewModel.setAutoIsolate(on = true)
+        assertTrue(viewModel.uiState.value.autoIsolate)
+
+        viewModel.setAutoIsolate(on = false)
+        assertFalse(viewModel.uiState.value.autoIsolate)
+    }
+
+    @Test
+    fun givenOutdatedModule_whenAutoIsolateTurnedOn_thenToldAndStillOff() = runTest {
+        val viewModel = viewModel()
+        sandboxRepository.failure = RecordsException.ModuleOutdated()
+
+        viewModel.setAutoIsolate(on = true)
+
+        assertFalse(viewModel.uiState.value.autoIsolate)
+        assertEquals(LoadFailure.ModuleOutdated, viewModel.uiState.value.error)
     }
 
     @Test

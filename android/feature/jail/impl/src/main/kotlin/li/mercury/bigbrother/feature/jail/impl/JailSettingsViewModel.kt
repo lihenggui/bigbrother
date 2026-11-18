@@ -38,6 +38,8 @@ import javax.inject.Inject
 data class JailSettingsUiState(
     /** Every item's global mode; null until read. */
     val global: Map<SandboxItem, SandboxMode>? = null,
+    /** Whether apps installed from now on are isolated with these settings. */
+    val autoIsolate: Boolean = false,
     /** Null until known; as it bears on the apps in the sandbox. */
     val status: SandboxStatus? = null,
     /** How many apps are in the sandbox. */
@@ -56,9 +58,15 @@ class JailSettingsViewModel @Inject constructor(
 ) : ViewModel() {
     private val load = MutableStateFlow(JailSettingsUiState())
 
-    val uiState: StateFlow<JailSettingsUiState> = combine(sandboxRepository.apps, sandboxRepository.global, load) { apps, global, loaded ->
+    val uiState: StateFlow<JailSettingsUiState> = combine(
+        sandboxRepository.apps,
+        sandboxRepository.global,
+        sandboxRepository.autoIsolate,
+        load,
+    ) { apps, global, autoIsolate, loaded ->
         loaded.copy(
             global = global,
+            autoIsolate = autoIsolate == true,
             status = loaded.status?.relevantTo(apps.orEmpty()),
             isolated = apps.orEmpty().count { it.enabled },
         )
@@ -82,6 +90,10 @@ class JailSettingsViewModel @Inject constructor(
 
     fun choose(item: SandboxItem, mode: SandboxMode) {
         change { sandboxRepository.setGlobal(mapOf(item to mode)) }
+    }
+
+    fun setAutoIsolate(on: Boolean) {
+        change { sandboxRepository.setAutoIsolate(on) }
     }
 
     fun releaseAll() {

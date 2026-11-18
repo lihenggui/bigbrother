@@ -35,6 +35,7 @@ class TestSandboxRepository(
     apps: List<SandboxedApp> = emptyList(),
     global: Map<SandboxItem, SandboxMode> = emptyMap(),
     var status: SandboxStatus = SandboxStatus(gate = true, appOps = true, androidIdHook = true, appListHook = true),
+    autoIsolate: Boolean = false,
 ) : SandboxRepository {
     /** Thrown by every call while set. */
     var failure: RecordsException? = null
@@ -57,6 +58,7 @@ class TestSandboxRepository(
 
     private val globalModes = global.toMutableMap()
     private val stored = apps.toMutableList()
+    private var autoIsolateOn = autoIsolate
 
     private val _apps = MutableStateFlow<List<SandboxedApp>?>(null)
     override val apps: StateFlow<List<SandboxedApp>?> = _apps
@@ -64,11 +66,15 @@ class TestSandboxRepository(
     private val _global = MutableStateFlow<Map<SandboxItem, SandboxMode>?>(null)
     override val global: StateFlow<Map<SandboxItem, SandboxMode>?> = _global
 
+    private val _autoIsolate = MutableStateFlow<Boolean?>(null)
+    override val autoIsolate: StateFlow<Boolean?> = _autoIsolate
+
     override suspend fun refresh() {
         check()
         refreshFailure?.let { throw it }
         _apps.value = stored.map { it.copy(items = applies(it.settings)) }
         _global.value = applies(emptyMap())
+        _autoIsolate.value = autoIsolateOn
     }
 
     override suspend fun getStatus(): SandboxStatus {
@@ -119,6 +125,12 @@ class TestSandboxRepository(
     override suspend fun setGlobal(changes: Map<SandboxItem, SandboxMode>) {
         check()
         globalModes += changes
+        refreshAfterChange()
+    }
+
+    override suspend fun setAutoIsolate(on: Boolean) {
+        check()
+        autoIsolateOn = on
         refreshAfterChange()
     }
 

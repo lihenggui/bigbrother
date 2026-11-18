@@ -117,6 +117,7 @@ class JailScreenScreenshotTests {
                 onRefresh = {},
                 onSetOn = { _, _ -> },
                 onChoose = { _, _ -> },
+                onSetAutoIsolate = {},
                 onReleaseAll = {},
                 onErrorDismiss = {},
             )
