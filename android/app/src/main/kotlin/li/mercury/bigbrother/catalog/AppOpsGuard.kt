@@ -17,6 +17,7 @@
 package li.mercury.bigbrother.catalog
 
 import android.annotation.SuppressLint
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.os.Binder
@@ -79,6 +80,9 @@ import kotlin.system.exitProcess
  *   <uid>`. A uid not guarded yet is guarded from then on, so that the
  *   daemon can resume after this program was restarted without saving what
  *   it set itself.
+ * - `kind <uid> <package>`: prints `library <uid>` if the package manager
+ *   has the package, one of the uid's, as a static shared library or an SDK
+ *   library, which nothing runs as, and `app <uid>` otherwise.
  *
  * In `<values>` an op has a mode, the framework's number for it, or
  * `default` for an op that had no uid mode, which `restore` removes again;
@@ -119,6 +123,12 @@ import kotlin.system.exitProcess
 object AppOpsGuard {
     /** How often to look again for a system service not registered yet. */
     private const val SERVICE_POLL_MS = 1000L
+
+    /** `PackageManager.MATCH_STATIC_SHARED_AND_SDK_LIBRARIES`. */
+    private const val MATCH_STATIC_SHARED_AND_SDK_LIBRARIES = 0x04000000
+
+    /** `PackageManager.MATCH_UNINSTALLED_PACKAGES`. */
+    private const val MATCH_UNINSTALLED_PACKAGES = 0x00002000
 
     /** How often every guarded uid is checked without being asked. */
     private const val CHECK_EVERY_MS = 60_000L
@@ -389,6 +399,8 @@ object AppOpsGuard {
                 verify(uid)
                 emit(AppOpsGuardProtocol.verifiedLine(uid))
             }
+
+            is Command.Kind -> emit(AppOpsGuardProtocol.kindLine(uid, isLibrary(command.packageName, uid)))
         }
     }
 
@@ -399,6 +411,43 @@ object AppOpsGuard {
     private fun statesBefore(uid: Int, names: Set<String>, known: Map<String, PermissionState>): Map<String, PermissionState> = names.mapNotNull { name ->
         (known[name] ?: permissions().state(uid, name))?.let { name to it }
     }.toMap()
+
+    /**
+     * Whether [packageName], one of [uid]'s packages, is a library rather
+     * than an app, by the flags the package manager keeps for it.
+     */
+    private fun isLibrary(packageName: String, uid: Int): Boolean {
+        val manager = packageManager()
+        val managerType = Class.forName("android.content.pm.IPackageManager")
+
+        @Suppress("UNCHECKED_CAST")
+        val packages = managerType.getMethod("getPackagesForUid", Int::class.javaPrimitiveType!!)
+            .invoke(manager, uid) as Array<String>?
+        if (packages == null || packageName !in packages) error("not a package of the uid")
+        // Libraries are left out of what the package manager answers unless
+        // asked for.
+        val flags = MATCH_STATIC_SHARED_AND_SDK_LIBRARIES or MATCH_UNINSTALLED_PACKAGES
+        val userId = uid / PER_USER_RANGE
+        // The flags are a long from Android 13 on.
+        val int = Int::class.javaPrimitiveType!!
+        val withLong = managerType.optionalMethod("getApplicationInfo", String::class.java, Long::class.javaPrimitiveType!!, int)
+        val info = if (withLong != null) {
+            withLong.invoke(manager, packageName, flags.toLong(), userId)
+        } else {
+            managerType.getMethod("getApplicationInfo", String::class.java, int, int).invoke(manager, packageName, flags, userId)
+        } as ApplicationInfo? ?: error("no such package")
+        return info.isFlagged("isStaticSharedLibrary") || info.isFlagged("isSdkLibrary")
+    }
+
+    /** Whether [method], a flag this Android version may not have, is set. */
+    private fun ApplicationInfo.isFlagged(method: String): Boolean = javaClass.optionalMethod(method)?.invoke(this) as Boolean? ?: false
+
+    private fun packageManager(): Any {
+        val binder = systemService("package") ?: error("no package service")
+        return Class.forName("android.content.pm.IPackageManager\$Stub")
+            .getMethod("asInterface", IBinder::class.java)
+            .invoke(null, binder)!!
+    }
 
     /** Whether this device knows the op [name]. */
     private fun isKnown(name: String): Boolean = ops.any { it.name == name }

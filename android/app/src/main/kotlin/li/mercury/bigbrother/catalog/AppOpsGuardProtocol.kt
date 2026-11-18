@@ -152,6 +152,9 @@ internal object AppOpsGuardProtocol {
          * [resets] names back to the values given, which is not held.
          */
         data class Apply(override val uid: Int, val targets: Targets, val resets: Values) : Command
+
+        /** Whether [packageName], a package of [uid], is a library rather than an app. */
+        data class Kind(override val uid: Int, val packageName: String) : Command
     }
 
     /**
@@ -178,6 +181,8 @@ internal object AppOpsGuardProtocol {
 
             "release" -> if (words.size == 2) Command.Release(uid) else null
 
+            "kind" -> if (words.size == 3 && isPackageName(words[2])) Command.Kind(uid, words[2]) else null
+
             "restore" -> when (words.size) {
                 // A device that knows none of the ops saved none.
                 2 -> Command.Restore(uid, Values.NONE)
@@ -190,6 +195,9 @@ internal object AppOpsGuardProtocol {
             else -> null
         }
     }
+
+    /** Whether [name] has only what Android allows in a package name. */
+    fun isPackageName(name: String): Boolean = name.isNotEmpty() && name.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '.' || it == '_' }
 
     /**
      * `<name>=<value>,...`, the form `saved` prints and `restore` takes: the
@@ -308,4 +316,6 @@ internal object AppOpsGuardProtocol {
     fun verifiedLine(uid: Int): String = "verified $uid"
 
     fun failedLine(uid: Int): String = "failed $uid"
+
+    fun kindLine(uid: Int, library: Boolean): String = if (library) "library $uid" else "app $uid"
 }

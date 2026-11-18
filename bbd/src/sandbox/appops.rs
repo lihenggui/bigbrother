@@ -98,6 +98,10 @@ enum Answer {
     Restored,
     /// To `apply`: the states of the permissions it took anew.
     Applied(String),
+    /// To `kind`: whether the package is a library rather than an app.
+    Kind {
+        library: bool,
+    },
     Failed,
 }
 
@@ -113,6 +117,8 @@ fn parse_line(line: &str) -> Option<(u32, Option<Answer>)> {
         "restored" => Some(Answer::Restored),
         "applied" => Some(Answer::Applied(words.next().unwrap_or("").to_string())),
         "failed" => Some(Answer::Failed),
+        "library" => Some(Answer::Kind { library: true }),
+        "app" => Some(Answer::Kind { library: false }),
         "reverted" | "verified" => None,
         _ => return None,
     };
@@ -283,6 +289,13 @@ impl AppOps {
     /// looked at then: the system may set them back as an app starts. Never
     /// waits, and does nothing if the helper is busy or away, which looks
     /// again on its own every minute.
+    /// What tells, through the helper, libraries from apps (see `auto`).
+    pub fn librarian(&self) -> Librarian {
+        Librarian {
+            shared: self.shared.clone(),
+        }
+    }
+
     pub fn verifier(&self) -> impl Fn(u32) + Send + 'static {
         let shared = self.shared.clone();
         move |uid| {
@@ -292,6 +305,43 @@ impl AppOps {
                 state.verify(uid);
             }
         }
+    }
+}
+
+/// Asks the helper, which asks the package manager, whether a package is a
+/// library rather than an app: by the flags the package manager keeps for
+/// it, which the package cannot set.
+pub struct Librarian {
+    shared: Arc<Shared>,
+}
+
+impl super::auto::Libraries for Librarian {
+    fn is_library(&self, uid: u32, package: &str) -> Option<bool> {
+        // A name the line could not carry is not one Android gives.
+        let valid = !package.is_empty()
+            && package
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_');
+        if !valid {
+            return None;
+        }
+        self.shared
+            .ask(
+                uid,
+                &format!("kind {uid} {package}"),
+                |_, answer| match answer {
+                    Answer::Kind { library } => Some(library),
+                    _ => None,
+                },
+            )
+            .ok()
+            .flatten()
+    }
+
+    fn done(&self) {
+        // Started for the questions, the helper is let go again unless an
+        // app is sandboxed.
+        self.shared.rest_if_unused();
     }
 }
 
@@ -735,6 +785,14 @@ mod tests {
                     "android.permission.ACCESS_FINE_LOCATION=granted+user_set".into()
                 ))
             ))
+        );
+        assert_eq!(
+            parse_line("library 10240"),
+            Some((10240, Some(Answer::Kind { library: true })))
+        );
+        assert_eq!(
+            parse_line("app 10240"),
+            Some((10240, Some(Answer::Kind { library: false })))
         );
         for line in ["", "saved", "saved x", "hello 10100", "restored -1"] {
             assert_eq!(parse_line(line), None, "{line:?}");

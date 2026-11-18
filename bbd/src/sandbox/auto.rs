@@ -49,15 +49,14 @@
 //! reads only the switch.
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     ffi::CString,
-    io::{self, Read as _},
+    io,
     os::{
         fd::{AsRawFd, FromRawFd, OwnedFd},
         unix::ffi::OsStrExt as _,
     },
     path::{Path, PathBuf},
-    process::{Command, Stdio},
     time::{Duration, Instant},
 };
 
@@ -89,10 +88,6 @@ const FAILURE_LOG_INTERVAL: Duration = Duration::from_secs(60);
 const RETRY_FIRST: Duration = Duration::from_secs(10);
 const RETRY_MAX: Duration = Duration::from_secs(300);
 
-/// How long the package manager is given to say whether a package is a
-/// library. It answers in tens of milliseconds.
-const LIBRARY_CHECK_WAIT: Duration = Duration::from_secs(2);
-
 /// The answer to `sandbox.auto` and `sandbox.set_auto`.
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Switch {
@@ -114,11 +109,31 @@ pub struct Auto {
     retries: BTreeMap<u32, Retry>,
     /// How many new apps the last look left out of the sandbox.
     pending: u32,
-    /// Whether a package is a library rather than an app.
-    library: fn(&str) -> bool,
+    /// What tells libraries from apps, where there is something to ask.
+    libraries: Option<Box<dyn Libraries>>,
+    /// What it told of packages, by app id and package, for as long as the
+    /// package is there under that app id.
+    kinds: HashMap<(u32, String), bool>,
     /// How long into a look apps are still put in.
     look_wait: Duration,
     failures: FailureLog,
+}
+
+/// Tells libraries from apps.
+///
+/// A static shared library (Play installs a new one with each update of
+/// Chrome or the WebView) or an SDK library has an app id, a line in the
+/// package list and a data directory, but nothing runs as its uid, and it is
+/// not put in the sandbox. What tells it is a flag the package manager keeps
+/// for the package, which the package cannot set: never its name or any
+/// text it controls.
+pub trait Libraries {
+    /// Whether `package`, one of `uid`'s, is a library; `None` if that
+    /// cannot be told, and it counts as an app.
+    fn is_library(&self, uid: u32, package: &str) -> Option<bool>;
+
+    /// Called after the questions of a look.
+    fn done(&self) {}
 }
 
 /// When to try again to put in an app that could not be.
@@ -151,7 +166,8 @@ impl Auto {
             held: false,
             retries: BTreeMap::new(),
             pending: 0,
-            library: is_library,
+            libraries: None,
+            kinds: HashMap::new(),
             look_wait: DISABLE_ALL_WAIT,
             failures: FailureLog::default(),
         })
@@ -174,6 +190,24 @@ impl Auto {
                 false
             }
         };
+    }
+
+    /// Whether `package`, one of `uid`'s, is a library, as told once for as
+    /// long as it is there. One that cannot be told about counts as an app.
+    fn is_library(&mut self, uid: u32, package: &str) -> bool {
+        let key = (uid % PER_USER_RANGE, package.to_string());
+        if let Some(library) = self.kinds.get(&key) {
+            return *library;
+        }
+        let Some(told) = self
+            .libraries
+            .as_ref()
+            .and_then(|libraries| libraries.is_library(uid, package))
+        else {
+            return false;
+        };
+        self.kinds.insert(key, told);
+        told
     }
 
     pub(super) fn report(&self, status: &mut super::Status) {
@@ -458,7 +492,11 @@ impl Sandbox {
         });
         let mut known = plan.known;
         let mut isolated = Vec::new();
-        let mut libraries: BTreeMap<u32, bool> = BTreeMap::new();
+        // What was told of packages that are gone, or under another app id
+        // now, is told again if they come back.
+        self.auto
+            .kinds
+            .retain(|(app_id, package), _| packages.packages_of(*app_id).contains(package));
         // The new apps this look leaves out, and when to try them again.
         let mut left = 0;
         let mut retries = BTreeMap::new();
@@ -466,25 +504,19 @@ impl Sandbox {
         // records: as when taking every app out, the rest are left for the
         // next look past a point. Their starts are held meanwhile.
         let until = started + self.auto.look_wait;
-        for (uid, names) in plan.isolate {
-            let app_id = uid % PER_USER_RANGE;
-            let Some(package) = names.first().cloned() else {
-                continue;
-            };
+        for (uid, mut names) in plan.isolate {
             let retry = self.auto.retries.get(&uid).copied();
             if retry.is_some_and(|retry| retry.at > Instant::now()) || Instant::now() > until {
                 retries.extend(retry.map(|retry| (uid, retry)));
                 left += 1;
                 continue;
             }
-            let library = self.auto.library;
-            if *libraries.entry(app_id).or_insert_with(|| library(&package)) {
-                known.apps.insert(
-                    app_id,
-                    packages.packages_of(app_id).iter().cloned().collect(),
-                );
+            // A library is left alone, and not known: what else is ever
+            // given its app id is new.
+            names.retain(|name| !self.auto.is_library(uid, name));
+            let Some(package) = names.first().cloned() else {
                 continue;
-            }
+            };
             match self.enable(
                 writer,
                 packages,
@@ -504,6 +536,9 @@ impl Sandbox {
                     self.auto.failures.log(uid, &e);
                 }
             }
+        }
+        if let Some(libraries) = &self.auto.libraries {
+            libraries.done();
         }
         self.auto.pending = left;
         self.auto.retries = retries;
@@ -527,6 +562,11 @@ impl Sandbox {
             self.auto.known = known;
             self.auto.sync();
         }
+    }
+
+    /// Tell libraries from apps with `libraries` (see [`Libraries`]).
+    pub fn tell_libraries_with(&mut self, libraries: Box<dyn Libraries>) {
+        self.auto.libraries = Some(libraries);
     }
 
     /// Take up the putting of new apps in the sandbox in a daemon that just
@@ -566,62 +606,6 @@ impl Sandbox {
         self.user_data
             .as_ref()
             .is_none_or(|dir| dir.join(user.to_string()).join(package).exists())
-    }
-}
-
-/// Whether the package manager has `package` as a library rather than an
-/// app: a static shared library, such as Play installs with each update of
-/// Chrome or the WebView under a name of its own, or an SDK library. Such a
-/// package has an app id and a data directory, but nothing of it runs as
-/// its uid, and it is not put in the sandbox. Asked of `dumpsys`, which
-/// starts no Java runtime; a package it cannot tell about counts as an app.
-fn is_library(package: &str) -> bool {
-    let mut dumpsys = Command::new("/system/bin/dumpsys");
-    dumpsys.arg("package").arg(package);
-    output_within(dumpsys, LIBRARY_CHECK_WAIT).is_some_and(|dump| dump_names_library(&dump))
-}
-
-/// Whether `dumpsys package <package>` says the package is a library: it
-/// gives such a package a section of its own.
-fn dump_names_library(dump: &str) -> bool {
-    dump.lines().map(str::trim).any(|line| {
-        line.eq_ignore_ascii_case("static library:") || line.eq_ignore_ascii_case("sdk library:")
-    })
-}
-
-/// What `command` prints, if it succeeds within `wait`; it is killed if it
-/// does not.
-fn output_within(mut command: Command, wait: Duration) -> Option<String> {
-    let mut child = command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    let mut stdout = child.stdout.take()?;
-    // Read as it comes, so that the command never waits for room in the
-    // pipe.
-    let reader = std::thread::spawn(move || {
-        let mut printed = String::new();
-        let _ = stdout.read_to_string(&mut printed);
-        printed
-    });
-    let deadline = Instant::now() + wait;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                let printed = reader.join().ok()?;
-                return status.success().then_some(printed);
-            }
-            Ok(None) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-        }
     }
 }
 
@@ -1523,63 +1507,104 @@ mod tests {
         assert_eq!(sandbox.status().new_apps_pending, 0);
     }
 
+    /// The package manager as the helper reaches it: the packages it keeps
+    /// flagged as libraries, and the questions it was asked.
+    struct PackageManager {
+        libraries: Vec<&'static str>,
+        /// None of its answers arrive.
+        silent: bool,
+        asked: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+    }
+
+    impl Libraries for PackageManager {
+        fn is_library(&self, _: u32, package: &str) -> Option<bool> {
+            self.asked.borrow_mut().push(package.to_string());
+            (!self.silent).then(|| self.libraries.contains(&package))
+        }
+    }
+
+    fn package_manager(
+        libraries: Vec<&'static str>,
+        silent: bool,
+    ) -> (
+        Box<PackageManager>,
+        std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+    ) {
+        let asked = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let manager = PackageManager {
+            libraries,
+            silent,
+            asked: asked.clone(),
+        };
+        (Box::new(manager), asked)
+    }
+
+    /// A version of Chrome's library, as Play installs it with an update of
+    /// Chrome: a package of its own, with an app id and a data directory.
+    const LIBRARY: &str = "com.google.android.trichromelibrary_700000000";
+
+    fn library_line(package: &str, app_id: u32) -> String {
+        format!(
+            "{package} {app_id} 0 /d default:targetSdkVersion=34 none 0 700000000 1 com.android.vending"
+        )
+    }
+
     #[test]
-    fn a_library_is_not_put_in() {
+    fn a_library_is_left_alone_and_its_app_id_is_not() {
         let mut f = Fixture::new("auto-library");
         let mut sandbox = f.sandbox();
-        sandbox.auto.library = |package| package.starts_with("com.google.android.trichromelibrary");
+        let (manager, asked) = package_manager(vec![LIBRARY], false);
+        sandbox.tell_libraries_with(manager);
         sandbox.set_auto(&f.writer, &mut f.packages, true).unwrap();
-        // An update of Chrome from Play brings a new version of its library,
-        // a package of its own, with a data directory.
-        let library = "com.google.android.trichromelibrary_700000000";
-        f.list(&[&format!(
-            "{library} 10240 0 /d default:targetSdkVersion=34 none 0 700000000 1 com.android.vending"
-        )]);
-        f.install(0, library);
+        f.list(&[&library_line(LIBRARY, 10240)]);
+        f.install(0, LIBRARY);
         sandbox.isolate_new(&f.writer, &mut f.packages);
         assert!(sandboxed(&sandbox).is_empty());
         assert_eq!(sandbox.status().new_apps_pending, 0);
+        // Not known: nothing is written of it.
         let (_, known) = f.writer.sandbox_auto().unwrap();
-        assert!(
-            known
-                .iter()
-                .any(|row| row.app_id == 10240 && row.user.is_none())
-        );
+        assert!(known.iter().all(|row| row.app_id != 10240));
+        // Asked once for as long as it is there.
+        sandbox.isolate_new(&f.writer, &mut f.packages);
+        assert_eq!(*asked.borrow(), [LIBRARY]);
+
+        // Uninstalled, and its app id given to an app: that app is new.
+        f.list(&[NEW.replace("10230", "10240").as_str()]);
+        f.uninstall(0, LIBRARY);
+        f.install(0, "com.example.new");
+        sandbox.isolate_new(&f.writer, &mut f.packages);
+        assert_eq!(sandboxed(&sandbox), [10240]);
     }
 
     #[test]
-    fn the_package_manager_says_which_packages_are_libraries() {
-        // As `dumpsys package` prints a static library and an app (cut).
-        let library = "Packages:\n  Package [com.google.android.trichromelibrary_636771938] (1b8656c):\n    \
-                       versionCode=636771938 minSdk=29 targetSdk=34\n    \
-                       privateFlags=[ ALLOW_AUDIO_PLAYBACK_CAPTURE STATIC_SHARED_LIBRARY PRODUCT ]\n    \
-                       static library:\n      name:com.google.android.trichromelibrary version:636771938\n";
-        let app = "Packages:\n  Package [com.android.chrome] (2c1a3f0):\n    \
-                   privateFlags=[ ALLOW_AUDIO_PLAYBACK_CAPTURE ]\n    \
-                   usesStaticLibraries:\n      com.google.android.trichromelibrary version:636771938\n";
-        assert!(dump_names_library(library));
-        assert!(!dump_names_library(app));
-        assert!(!dump_names_library(""));
-        // Without the package manager, a package counts as an app.
-        assert!(!is_library("com.example.new"));
+    fn an_app_is_told_from_a_library_by_the_package_manager_alone() {
+        let mut f = Fixture::new("auto-library-name");
+        let mut sandbox = f.sandbox();
+        // Named as a library is, and with a library's version in its line:
+        // the package manager does not have it as one.
+        let lookalike = "com.google.android.trichromelibrary_700000001";
+        let (manager, asked) = package_manager(vec![LIBRARY], false);
+        sandbox.tell_libraries_with(manager);
+        sandbox.set_auto(&f.writer, &mut f.packages, true).unwrap();
+        f.list(&[&library_line(lookalike, 10241)]);
+        f.install(0, lookalike);
+        sandbox.isolate_new(&f.writer, &mut f.packages);
+        assert_eq!(sandboxed(&sandbox), [10241]);
+        assert_eq!(*asked.borrow(), [lookalike]);
     }
 
     #[test]
-    fn a_command_is_given_only_so_long() {
-        let mut echo = Command::new("sh");
-        echo.args(["-c", "echo printed"]);
-        assert_eq!(
-            output_within(echo, Duration::from_secs(5)).as_deref(),
-            Some("printed\n")
-        );
-        let mut failing = Command::new("sh");
-        failing.args(["-c", "echo printed; exit 1"]);
-        assert_eq!(output_within(failing, Duration::from_secs(5)), None);
-        let started = Instant::now();
-        let mut slow = Command::new("sleep");
-        slow.arg("10");
-        assert_eq!(output_within(slow, Duration::from_millis(100)), None);
-        assert!(started.elapsed() < Duration::from_secs(5));
+    fn a_package_that_cannot_be_told_about_counts_as_an_app() {
+        let mut f = Fixture::new("auto-library-silent");
+        let mut sandbox = f.sandbox();
+        let (manager, asked) = package_manager(vec![LIBRARY], true);
+        sandbox.tell_libraries_with(manager);
+        sandbox.set_auto(&f.writer, &mut f.packages, true).unwrap();
+        f.list(&[&library_line(LIBRARY, 10240)]);
+        f.install(0, LIBRARY);
+        sandbox.isolate_new(&f.writer, &mut f.packages);
+        assert_eq!(sandboxed(&sandbox), [10240]);
+        assert_eq!(asked.borrow().len(), 1);
     }
 
     #[test]

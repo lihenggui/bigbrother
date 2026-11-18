@@ -43,6 +43,16 @@ class AppOpsGuardProtocolTest {
     }
 
     @Test
+    fun givenKindLine_whenParsed_thenPackageOfUid() {
+        assertEquals(Command.Kind(10240, "com.example.app_2"), AppOpsGuardProtocol.parseCommand("kind 10240 com.example.app_2"))
+        assertNull(AppOpsGuardProtocol.parseCommand("kind 10240"))
+        assertNull(AppOpsGuardProtocol.parseCommand("kind 10240 com.example.app extra"))
+        assertNull(AppOpsGuardProtocol.parseCommand("kind 10240 com/example"))
+        assertEquals("library 10240", AppOpsGuardProtocol.kindLine(10240, library = true))
+        assertEquals("app 10240", AppOpsGuardProtocol.kindLine(10240, library = false))
+    }
+
+    @Test
     fun givenSetOrVerifyLine_whenParsed_thenTargetsByOp() {
         val targets = ops("android:camera" to 1, "android:read_contacts" to 1)
         assertEquals(Command.Set(10123, targets), AppOpsGuardProtocol.parseCommand("set 10123 android:camera=1,android:read_contacts=1"))

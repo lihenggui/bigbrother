@@ -591,6 +591,9 @@ fn start_sandbox(
             Box::new(sandbox::gate::Unavailable)
         }
     };
+    // Libraries are told from apps by the package manager, through the
+    // helper, which is started for that only when a new app is found.
+    sandbox.tell_libraries_with(Box::new(appops.librarian()));
     sandbox.add_effect(Box::new(appops));
     sandbox.add_effect(Box::new(sandbox::identity::Identity::new(
         &sandbox.snapshot(),
