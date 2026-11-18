@@ -297,6 +297,12 @@ pub struct Status {
     /// Starts of newly installed apps ended before they were in the
     /// sandbox (see [`auto`]).
     pub new_apps_stopped: u64,
+    /// Newly installed apps not in the sandbox yet: not put in by the last
+    /// look, or failed to be and waiting to be tried again.
+    pub new_apps_pending: u32,
+    /// Whether starts of newly installed apps not in the sandbox yet are
+    /// held.
+    pub new_apps_held: bool,
     /// How long starts were held, 95th percentile, in microseconds.
     pub hold_p95_us: u64,
 }
@@ -505,8 +511,11 @@ impl Sandbox {
         }
 
         let before = writer.sandbox_entry(uid)?;
-        let mut entry = match &before {
-            // The identity it had stays.
+        // The identity and the settings it had stay. An entry another app
+        // left under the uid, which Android gave this one after it was
+        // uninstalled, is not this app's: it is written over.
+        let own = before.as_ref().filter(|old| sharing.contains(&old.package));
+        let mut entry = match own {
             Some(old) => Entry {
                 package: package.to_string(),
                 enabled: true,
@@ -657,6 +666,7 @@ impl Sandbox {
         for effect in &self.effects {
             effect.report(&mut status);
         }
+        self.auto.report(&mut status);
         status
     }
 
@@ -703,12 +713,16 @@ impl Sandbox {
         changes: &BTreeMap<Item, Option<Mode>>,
     ) -> anyhow::Result<Configured> {
         let uid = self.uid_of_entry(writer, packages, package, user)?;
-        let mut entry = match self.snapshot_read().get(&uid).cloned() {
-            Some(entry) => entry,
-            None => writer
-                .sandbox_entry(uid)?
-                .with_context(|| format!("{package} is not in the sandbox"))?,
+        let entry = match self.snapshot_read().get(&uid).cloned() {
+            Some(entry) => Some(entry),
+            None => writer.sandbox_entry(uid)?,
         };
+        // Not the entry of an app that had the uid before this one.
+        let mut entry = entry
+            .filter(|entry| {
+                entry.package == package || packages.for_uid(uid).contains(&entry.package)
+            })
+            .with_context(|| format!("{package} is not in the sandbox"))?;
         let mut own = Settings::parse(&entry.settings);
         for (item, mode) in changes {
             own.set(*item, *mode)?;
@@ -1106,7 +1120,9 @@ fn print_status(out: &mut impl std::io::Write, status: &Status) -> std::io::Resu
     writeln!(out, "App list hook:     {}", on(status.hook.app_list))?;
     writeln!(out, "Starts admitted:   {}", status.admitted)?;
     writeln!(out, "Starts failed:     {}", status.failed)?;
+    writeln!(out, "New apps held:     {}", on(status.new_apps_held))?;
     writeln!(out, "New apps stopped:  {}", status.new_apps_stopped)?;
+    writeln!(out, "New apps pending:  {}", status.new_apps_pending)?;
     writeln!(out, "Hold time p95:     {} us", status.hold_p95_us)
 }
 
@@ -1607,6 +1623,49 @@ mod tests {
         std::fs::remove_file(f.dir.join("packages.list")).unwrap();
         restarted.resume(&f.writer, &mut f.packages);
         assert_eq!(enabled(&restarted), [10200]);
+    }
+
+    #[test]
+    fn an_app_given_a_uid_another_left_has_none_of_its_entry() {
+        let mut f = Fixture::new("sandbox-reused-uid");
+        let mut sandbox = f.sandbox();
+        sandbox
+            .enable(&f.writer, &mut f.packages, "com.app", 0, 1000)
+            .unwrap();
+        sandbox
+            .configure(
+                &f.writer,
+                &mut f.packages,
+                "com.app",
+                0,
+                &camera(Some(Mode::Off)),
+            )
+            .unwrap();
+        let left = f.writer.sandbox_entry(10100).unwrap().unwrap();
+        // com.app was uninstalled, and its uid given to an app installed
+        // after it.
+        std::fs::write(f.dir.join("packages.list"), "com.newcomer 10100 0 /d x\n").unwrap();
+        let mut restarted = f.sandbox();
+        restarted.resume(&f.writer, &mut f.packages);
+
+        // Neither its settings nor its identity are the newcomer's.
+        let e = restarted
+            .configure(&f.writer, &mut f.packages, "com.newcomer", 0, &camera(None))
+            .unwrap_err();
+        assert_eq!(e.to_string(), "com.newcomer is not in the sandbox");
+        restarted
+            .enable(&f.writer, &mut f.packages, "com.newcomer", 0, 2000)
+            .unwrap();
+        let entry = f.writer.sandbox_entry(10100).unwrap().unwrap();
+        assert_eq!(
+            (
+                entry.package.as_str(),
+                entry.settings.as_str(),
+                entry.created
+            ),
+            ("com.newcomer", "", 2000)
+        );
+        assert_ne!(entry.android_id, left.android_id);
     }
 
     #[test]
@@ -2276,7 +2335,8 @@ mod tests {
             serde_json::json!({
                 "ok": true, "gate": false, "appops": false,
                 "hook": {"android_id": false, "app_list": false},
-                "admitted": 0, "failed": 0, "new_apps_stopped": 0, "hold_p95_us": 0,
+                "admitted": 0, "failed": 0, "new_apps_stopped": 0, "new_apps_pending": 0,
+                "new_apps_held": false, "hold_p95_us": 0,
             })
         );
         assert_eq!(

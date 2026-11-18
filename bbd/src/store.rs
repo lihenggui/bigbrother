@@ -147,9 +147,10 @@ const FILE_OPEN: Mode = MODE_READ | MODE_WRITE;
 ///
 /// `sandbox_known` is what the isolation of newly installed apps knows of
 /// the installed ones (see `sandbox::auto`); it is empty while that is off,
-/// which the `sandbox_auto` key of `meta` says. A row with user -1 is an app
-/// id left alone for every Android user; one with a user is a uid of an app
-/// installed since, already dealt with.
+/// which the `sandbox_auto` key of `meta` says. Rows with user -1 are an app
+/// id left alone for every Android user; rows with a user are a uid of an
+/// app installed since, already dealt with. There is a row for each package
+/// of the app id or uid.
 const SCHEMA: &str = "
 CREATE TABLE access (
     hour     INTEGER NOT NULL,   -- unix time / 3600
@@ -219,9 +220,9 @@ CREATE TABLE sandbox_global (
 CREATE TABLE sandbox_known (
     app_id  INTEGER NOT NULL,
     user    INTEGER NOT NULL,   -- the Android user; -1 for every user
-    package TEXT    NOT NULL,   -- one of its packages: tells it apart from an app
-                                -- given the app id once this one is uninstalled
-    PRIMARY KEY (app_id, user)
+    package TEXT    NOT NULL,   -- known while one of its packages is installed: tells it
+                                -- apart from an app given the app id after this one
+    PRIMARY KEY (app_id, user, package)
 ) WITHOUT ROWID;
 ";
 
@@ -731,9 +732,9 @@ impl Writer {
     /// installed ones.
     pub fn sandbox_auto(&self) -> anyhow::Result<(bool, Vec<KnownApp>)> {
         let on = self.meta(SANDBOX_AUTO)?.is_some_and(|on| on != 0);
-        let mut stmt = self
-            .conn
-            .prepare("SELECT app_id, user, package FROM sandbox_known ORDER BY app_id, user")?;
+        let mut stmt = self.conn.prepare(
+            "SELECT app_id, user, package FROM sandbox_known ORDER BY app_id, user, package",
+        )?;
         let rows = stmt.query_map([], |r| {
             Ok(KnownApp {
                 app_id: r.get(0)?,
@@ -1968,6 +1969,7 @@ mod tests {
         };
         let rows = [
             known(10100, None, "com.a"),
+            known(10100, None, "com.b"),
             known(10230, Some(0), "com.new"),
             known(10230, Some(10), "com.new"),
         ];
