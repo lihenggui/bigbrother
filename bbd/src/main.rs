@@ -32,6 +32,7 @@ mod personal;
 mod protocol_cases;
 mod rules;
 mod sandbox;
+mod selftest;
 mod sensors;
 mod spool;
 mod store;
@@ -146,6 +147,9 @@ enum Command {
     },
     /// Database and daemon counters.
     Stats,
+    /// Attach the probes and check that each fires; exits non-zero if one
+    /// does not. Requires root.
+    Selftest,
     /// Put apps in the sandbox and take them out again. Needs the daemon.
     Sandbox {
         /// Print the daemon's answer as JSON.
@@ -282,7 +286,10 @@ fn main() -> anyhow::Result<()> {
     // now and then. The sandbox commands do not read them.
     if !matches!(
         cli.command,
-        Command::Run { .. } | Command::Sandbox { .. } | Command::SandboxRestoreLines
+        Command::Run { .. }
+            | Command::Sandbox { .. }
+            | Command::SandboxRestoreLines
+            | Command::Selftest
     ) {
         control::request_flush(&cli.db);
     }
@@ -345,6 +352,12 @@ fn main() -> anyhow::Result<()> {
             stats: store::Reader::open(&cli.db)?.stats()?,
             daemon_running: control::daemon_running(&cli.db),
         }),
+        Command::Selftest => {
+            if !selftest::command()? {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
         Command::Sandbox { json, command } => sandbox::command(&cli.db, command.into(), json),
         Command::SandboxRestoreLines => {
             for line in sandbox::restore_lines(&cli.db)? {

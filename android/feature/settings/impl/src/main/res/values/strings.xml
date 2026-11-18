@@ -25,6 +25,7 @@
     <string name="retention">Records kept for 30 days</string>
     <!-- Kinds of activity the kernel of this device does not let the daemon observe. -->
     <string name="coverage_title">Not supported on this device</string>
+    <string name="feature_files">Files opened</string>
     <string name="feature_exec">Command execution</string>
     <string name="feature_network">Local network connections</string>
     <string name="feature_process">Process memory access</string>

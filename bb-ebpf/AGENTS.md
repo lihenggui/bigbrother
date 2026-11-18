@@ -13,7 +13,9 @@ stay `GPL`, which the GPL-only helpers require.
 - Only the `file_open` probe (on the `file_open` security hook) is
   required. Every other probe must be optional: the daemon attaches what
   the kernel allows and reports the rest as unavailable (`coverage_*` in
-  `bbd stats`).
+  `bbd stats`). A probe that attaches but does not fire for the daemon's
+  self-check (`bbd/src/selftest.rs`) counts as unavailable too: the check
+  runs as uid 70000, which `should_trace` must keep tracing.
 - Probe security hooks at SELinux's hook function (`selinux_*`), not at the
   `security_*` wrapper: link-time optimization can inline the wrapper, and
   a probe on it then attaches but never fires (`bbd/src/syscalls.rs`).
