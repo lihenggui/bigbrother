@@ -22,6 +22,9 @@ import android.app.ActivityManager
 import android.app.AppOpsManager
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ComponentName
+import android.content.Intent
+import android.content.ServiceConnection
 import android.content.pm.ApplicationInfo
 import android.hardware.Sensor
 import android.hardware.SensorEvent
@@ -31,10 +34,12 @@ import android.location.LocationManager
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Bundle
+import android.os.IBinder
 import android.os.Process
 import android.provider.CalendarContract
 import android.provider.CallLog
 import android.provider.ContactsContract
+import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.provider.Settings
 import android.provider.Telephony
@@ -48,6 +53,8 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.Socket
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 import kotlin.math.roundToInt
 
@@ -72,6 +79,32 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         output = TextView(this).apply { setPadding(32, 96, 32, 32) }
         setContentView(ScrollView(this).apply { addView(output) })
+        if (intent.getBooleanExtra(EXTRA_PICK, false)) {
+            // Asked for a file instead of the probes: the check picks the
+            // marker, and the app keeps the grant to it.
+            started = true
+            startActivityForResult(
+                Intent(Intent.ACTION_OPEN_DOCUMENT)
+                    .addCategory(Intent.CATEGORY_OPENABLE)
+                    .setType("text/plain")
+                    .putExtra(DocumentsContract.EXTRA_INITIAL_URI, DOWNLOADS),
+                PICK,
+            )
+        }
+    }
+
+    @Deprecated("The probes need nothing newer.")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        val uri = data?.data
+        if (requestCode == PICK && uri != null) {
+            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            // Read at once, through the grant of the moment.
+            view("picked_file") { contentResolver.openInputStream(uri)?.use { it.reader().readText().trim() } }
+        } else {
+            report("not picked")
+        }
+        finish()
     }
 
     // Only an app with focus may read the clipboard, so the probes start
@@ -145,6 +178,7 @@ class MainActivity : Activity() {
             contentResolver.query(Telephony.Sms.CONTENT_URI, null, null, null, null)?.use { it.count }
         }
         reportView()
+        reportIsolated()
         report("done")
     }
 
@@ -198,6 +232,13 @@ class MainActivity : Activity() {
         }
         view("accounts") { AccountManager.get(this).accounts.size }
         view("location") { lastLocation() }
+        // A file picked through the system, and kept, before any sandbox:
+        // whether it can still be read, through the grant.
+        view("granted_file") {
+            contentResolver.persistedUriPermissions.firstOrNull()?.uri?.let { uri ->
+                contentResolver.openInputStream(uri)?.use { it.reader().readText().trim() }
+            } ?: "none"
+        }
         // The mode the system applies to each app op the check asks about
         // (the `ops` extra): what holds the rest of the personal data back.
         view("ops") {
@@ -230,6 +271,22 @@ class MainActivity : Activity() {
         // What must keep working in the sandbox: packages of the system.
         view("system_apps") {
             packageManager.getInstalledApplications(0).count { it.flags and ApplicationInfo.FLAG_SYSTEM != 0 }
+        }
+    }
+
+    /**
+     * Has an isolated process of this app report what it sees
+     * ([IsolatedProbe]), and waits for it to have.
+     */
+    private fun reportIsolated() {
+        val reported = CountDownLatch(1)
+        val connection = object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName, service: IBinder) = reported.countDown()
+            override fun onServiceDisconnected(name: ComponentName) = Unit
+        }
+        if (bindService(Intent(this, IsolatedProbe::class.java), connection, BIND_AUTO_CREATE)) {
+            reported.await(ISOLATED_WAIT_S, TimeUnit.SECONDS)
+            unbindService(connection)
         }
     }
 
@@ -291,6 +348,13 @@ class MainActivity : Activity() {
 
         /** The app ops `scripts/check-sandbox.sh` asks about, comma-separated. */
         const val EXTRA_OPS = "ops"
+
+        /** Set by `scripts/check-sandbox.sh` to have a file picked rather than the probes run. */
+        const val EXTRA_PICK = "pick"
+        const val PICK = 1
+        val DOWNLOADS: Uri = DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:Download")
+
+        const val ISOLATED_WAIT_S = 10L
 
         /** How long the sensors stay on: a known length for the recorded sessions. */
         const val SENSORS_ON_MS = 10_000L

@@ -182,6 +182,33 @@ run_canary() {
     view="$(sed -n 's/.*BigBrotherCanary: sandbox //p' <<<"$log")"
 }
 
+# Have the canary ask for a file and pick the marker for it in the system's
+# file picker; it keeps the grant (persists it) and reads the file at once.
+# Sets `picked`: what it read, or nothing if the marker was not to be found
+# in the picker.
+pick_marker() {
+    local dump bounds i
+    adb shell am force-stop "$PACKAGE"
+    adb logcat -c
+    adb shell am start -W -n "$PACKAGE/.MainActivity" --ez pick true >/dev/null
+    picked=""
+    for ((i = 0; i < 10; i++)); do
+        sleep 1
+        dump="$(adb exec-out uiautomator dump /dev/tty 2>/dev/null || true)"
+        bounds="$(grep -o "text=\"${MARKER##*/}\"[^>]*bounds=\"[^\"]*\"" <<<"$dump" |
+            grep -o '\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]' | head -n 1 | tr '[],' '   ')" || true
+        [[ -n "$bounds" ]] && break
+    done
+    [[ -n "$bounds" ]] || return 0
+    set -- $bounds
+    adb shell input tap $((($1 + $3) / 2)) $((($2 + $4) / 2))
+    for ((i = 0; i < 10; i++)); do
+        picked="$(adb logcat -d -s BigBrotherCanary:I | tr -d '\r' | sed -n 's/.*BigBrotherCanary: sandbox picked_file=//p')"
+        [[ -n "$picked" ]] && break
+        sleep 1
+    done
+}
+
 # Whether every process of the canary has its sandbox directory mounted as
 # shared storage (the entry of /proc/<pid>/mountinfo for it). One that ended
 # since it was listed, as the last start's does, is not looked at.
@@ -342,6 +369,15 @@ done
 check_if "$location" "$NO_LOCATION" "a location is had ($(seen "$outside" location))" grep -q '^accuracy:' <<<"$(seen "$outside" location)"
 check "the real storage is visible" [ "$(seen "$outside" marker)" = real ]
 check "the chip is named in /proc/cpuinfo" [ "$(seen "$outside" cpu_named)" = true ]
+pick_marker
+if [[ -n "$picked" ]]; then
+    run_canary
+    outside="$view"
+    check "a file picked through the system can be read again ($(seen "$outside" granted_file))" \
+        [ "$(seen "$outside" granted_file)" = real ]
+else
+    skip "picked files: the marker was not found in the file picker"
+fi
 
 echo "enabling the sandbox:"
 enabled="$(as_root "$BBD sandbox enable $PACKAGE --json")"
@@ -377,6 +413,14 @@ volumes="$(seen "$inside" volumes)"
 check "no other storage volume is listed ($volumes)" \
     [ "$volumes" = null -o "$volumes" = "emulated,self" ]
 check "the chip is not named in /proc/cpuinfo" [ "$(seen "$inside" cpu_named)" = false ]
+# The processes of the app under uids of their own, which the gate does not
+# hold: the system gives them no storage.
+check "an isolated process finds no storage ($(seen "$inside" isolated_storage))" \
+    [ "$(seen "$inside" isolated_storage)" = null ]
+check "nor the real files ($(seen "$inside" isolated_marker))" \
+    grep -q '^refused' <<<"$(seen "$inside" isolated_marker)"
+check "nor the Android ID ($(seen "$inside" isolated_android_id))" \
+    grep -q '^refused' <<<"$(seen "$inside" isolated_android_id)"
 check "the processors are all there ($(seen "$inside" cpu_count))" \
     [ "$(seen "$inside" cpu_count)" = "$(seen "$outside" cpu_count)" ]
 check "the memory is reported as it is ($(seen "$inside" mem_total_kb) kB)" \
@@ -393,6 +437,18 @@ check "no accounts ($(seen "$outside" accounts) outside)" [ "$(seen "$inside" ac
 check_if "$location" "$NO_LOCATION" "no location ($(seen "$inside" location))" [ "$(seen "$inside" location)" = none ]
 not_held="$(ops_not_held "$inside" "${!ITEM_OPS[@]}")"
 check "every item's app ops are ignored${not_held:+ (not:$not_held)}" [ -z "$not_held" ]
+
+# Files picked through the system, which needs the LSPosed hook.
+if [[ -z "$picked" ]]; then
+    skip "picked files: none was picked"
+elif [[ "$(status_field uri_grants)" == true ]]; then
+    check "a file picked before is out of reach ($(seen "$inside" granted_file))" \
+        grep -q '^refused' <<<"$(seen "$inside" granted_file)"
+    pick_marker
+    check "a file picked now is open to the app ($picked)" [ "$picked" = real ]
+else
+    skip "picked files: the hook is not in place"
+fi
 
 # Layer 4: identity, which needs the LSPosed hook.
 if [[ "$(status_field android_id)" == true ]]; then
@@ -496,6 +552,9 @@ as_root "$BBD sandbox disable $PACKAGE" >/dev/null
 run_canary
 after="$view"
 check "the real storage is back" [ "$(seen "$after" marker)" = real ]
+if [[ -n "$picked" ]]; then
+    check "and so is the file picked before" [ "$(seen "$after" granted_file)" = real ]
+fi
 check "the chip is named again" [ "$(seen "$after" cpu_named)" = true ]
 check "the Android ID is the real one" [ "$(seen "$after" android_id)" = "$(seen "$outside" android_id)" ]
 check "the installed apps are visible again" [ "$(seen "$after" apps)" = "$(seen "$outside" apps)" ]
