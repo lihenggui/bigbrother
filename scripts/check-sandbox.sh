@@ -218,7 +218,7 @@ has_sandbox() {
         mounts="$(as_root "cat /proc/$pid/mountinfo 2>/dev/null")"
         [[ -n "$mounts" ]] || continue
         looked=$((looked + 1))
-        grep -qE " /[^ ]+/$uid /storage/emulated/0 " <<<"$mounts" || return 1
+        grep -qE " /[^ ]+/$uid-[0-9a-f]{32} /storage/emulated/0 " <<<"$mounts" || return 1
     done
     ((looked > 0))
 }

@@ -1241,6 +1241,10 @@ fn try_gate(ctx: &ProbeContext) -> Result<(), i32> {
     // that of the pool of spare processes it was taken from ("usap32",
     // "usap64"). Anything else taking the uid (`su`, `run-as`) is not an app
     // starting, and has no mount namespace of its own to change.
+    let task_id = bpf_get_current_pid_tgid();
+    if task_id as u32 != (task_id >> 32) as u32 {
+        return Ok(());
+    }
     let comm = bpf_get_current_comm().map_err(|e| e as i32)?;
     let zygote_child =
         (comm[0] == b'm' && comm[1] == b'a' && comm[2] == b'i' && comm[3] == b'n' && comm[4] == 0)
@@ -1254,8 +1258,16 @@ fn try_gate(ctx: &ProbeContext) -> Result<(), i32> {
     let waiting = GATE_WAITING_SINCE.get_ptr_mut(0).ok_or(-1)?;
     let since = unsafe { *waiting };
     let now = unsafe { bpf_ktime_get_ns() };
+    let task = unsafe { aya_ebpf::helpers::bpf_get_current_task() } as *const u8;
+    let Ok(start) = (unsafe { read_at::<u64>(task, OFFSETS.load()[bb_common::OFF_TASK_START]) })
+    else {
+        kill();
+        return Ok(());
+    };
     let event = GateEvent {
-        pid: (bpf_get_current_pid_tgid() >> 32) as u32,
+        start_low: start as u32,
+        start_high: (start >> 32) as u32,
+        pid: task_id as u32,
         uid,
         at_ns_low: now as u32,
         at_ns_high: (now >> 32) as u32,

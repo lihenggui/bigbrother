@@ -20,7 +20,9 @@ MODDIR=${0%/*}
 DATA=/data/adb/big_brother
 LOG=$DATA/bbd.log
 
-mkdir -p "$DATA"
+# Root managers and adb shells can supply different inherited umasks.
+umask 077
+mkdir -p "$DATA" && chmod 700 "$DATA" || exit 1
 . "$MODDIR/stop.sh"
 
 # Boot guard. A marker is left while the system boots and removed once it has
@@ -45,6 +47,19 @@ if [ "$(getprop sys.boot_completed)" != 1 ]; then
         done
         rm -f "$BOOT_MARKER"
     ) &
+fi
+
+# Finish saved restores from an earlier removal before enabling fresh guards.
+# Run after boot, when app_process can reach the package and app-op services.
+set -- /data/adb/big_brother_recovery/pending.*
+if [ -d "$1" ]; then
+    (while [ "$(getprop sys.boot_completed)" != 1 ]; do sleep 5; done
+     if sh "$MODDIR/uninstall.sh" --recover; then
+         sh "$MODDIR/service.sh"
+     else
+         echo "sandbox recovery still pending" >>"$LOG"
+     fi) </dev/null >/dev/null 2>&1 &
+    exit 0
 fi
 
 # Start a new log once the old one passes 1 MiB. Checked at each start only.

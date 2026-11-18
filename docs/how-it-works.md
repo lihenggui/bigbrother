@@ -67,6 +67,14 @@ app      reads the daemon's JSON output as root
   what an app was actually given; the app marks these as permission records.
 - For personal data, only the collection asked for is kept
   (`content://sms/inbox`), never which person or message.
+- PackageManager identifies preinstalled provider UIDs. The daemon opens
+  spools relative to verified directory descriptors and accepts regular,
+  single-link files owned by the provider. The hook drops personal item
+  identifiers before queueing a record.
+- Telemetry has a 4 MiB buffer budget. Recording pauses at a 256 MiB
+  database watermark or below 64 MiB of free space. A full buffer drops new
+  samples. Existing history follows its retention period, and sandbox
+  recovery writes have a separate allowance.
 - The LSPosed hook intercepts `ContentProvider.Transport` in the provider
   processes and takes the caller's uid from Binder. The observed apps are not
   hooked.

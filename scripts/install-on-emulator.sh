@@ -32,10 +32,6 @@ cd "$(dirname "$0")/.."
 
 MODPATH=/data/adb/modules/big_brother
 BBD=$MODPATH/bin/bbd
-DEVICE_ZIP=/data/local/tmp/big_brother_module.zip
-DEVICE_SCRIPT=/data/local/tmp/big_brother_install.sh
-DEVICE_CUSTOMIZE=/data/local/tmp/big_brother_customize.sh
-
 version="$(sed -n 's/^version=//p' module/module.prop)"
 zip="${1:-out/big_brother-$version.zip}"
 [[ -f "$zip" ]] || {
@@ -66,6 +62,12 @@ done
     exit 2
 }
 
+stage=$(adb shell 'umask 077; mkdir -p /data/adb && mktemp -d /data/adb/.bb-emulator.XXXXXX' | tr -d '\r')
+[[ $stage =~ ^/data/adb/\.bb-emulator\.[[:alnum:]]+$ ]] || exit 2
+trap 'adb shell "rm -rf $stage" >/dev/null' EXIT
+DEVICE_ZIP=$stage/module.zip
+DEVICE_SCRIPT=$stage/install.sh
+DEVICE_CUSTOMIZE=$stage/customize.sh
 adb push "$zip" "$DEVICE_ZIP" >/dev/null
 # What the installers of Magisk and KernelSU define before they source
 # customize.sh (their util_functions.sh). KSU because, like KernelSU, the

@@ -84,9 +84,22 @@ impl Process {
         Ok(Self(unsafe { OwnedFd::from_raw_fd(fd as i32) }))
     }
 
+    /// A pidfd becomes readable when this process exits, including before it is reaped.
+    pub fn exited(&self, timeout_ms: i32) -> io::Result<bool> {
+        let mut pfd = libc::pollfd {
+            fd: self.0.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        if unsafe { libc::poll(&mut pfd, 1, timeout_ms) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(pfd.revents & (libc::POLLIN | libc::POLLHUP) != 0)
+    }
+
     /// Send `signal`. A process that has ended in the meantime gets none.
-    pub fn signal(&self, signal: i32) {
-        unsafe {
+    pub fn signal(&self, signal: i32) -> io::Result<()> {
+        let result = unsafe {
             libc::syscall(
                 libc::SYS_pidfd_send_signal,
                 self.0.as_raw_fd(),
@@ -95,6 +108,11 @@ impl Process {
                 0,
             )
         };
+        if result < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -105,6 +123,8 @@ type Told = Box<dyn Fn(u32) + Send>;
 /// sandbox.
 #[derive(Clone)]
 struct Gated {
+    package: String,
+    install_id: String,
     /// The packages that run under it.
     packages: Vec<String>,
     mounts: Mounts,
@@ -212,19 +232,24 @@ impl Storage {
 
     /// From now on, hold starts of `uid` and give them `mounts`. The gate
     /// thread is told first: a start it knows nothing of is let through.
-    fn hold(&mut self, uid: u32, packages: &[String], mounts: Mounts) -> anyhow::Result<()> {
+    fn hold(&mut self, entry: &Entry, packages: &[String], mounts: Mounts) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.shared.open.load(Ordering::Relaxed),
             "the gate has stopped; restart the daemon"
         );
+        let uid = entry.uid;
         let gated = Gated {
+            package: entry.package.clone(),
+            install_id: entry.install_id.clone(),
             packages: packages.to_vec(),
             mounts,
         };
-        write(&self.shared.apps).insert(uid, gated);
+        let mut apps = write(&self.shared.apps);
         self.uids
             .insert(&uid, &1, 0)
-            .context("adding the uid to the gate")
+            .context("adding the uid to the gate")?;
+        apps.insert(uid, gated);
+        Ok(())
     }
 }
 
@@ -244,10 +269,15 @@ impl Effect for Storage {
             return Ok(());
         }
         if mounts.storage {
-            dirs::prepare(Path::new(&mounts::media_of(entry.uid)), entry.uid, MEDIA_RW)
-                .context("making the sandbox directory")?;
+            dirs::prepare(
+                Path::new(&mounts::media_of(entry.uid)),
+                entry.uid,
+                MEDIA_RW,
+                &format!("{}-{}", entry.uid, entry.install_id),
+            )
+            .context("making the sandbox directory")?;
         }
-        self.hold(entry.uid, packages, mounts)
+        self.hold(entry, packages, mounts)
     }
 
     fn disable(&mut self, entry: &mut Entry, _: &[String], _: &Settings) -> anyhow::Result<()> {
@@ -278,7 +308,7 @@ impl Effect for Storage {
         // enabled, and cannot be reached before the user unlocks the device,
         // which is when the daemon usually starts.
         for app in apps.iter().filter(|app| app.items.mounts().any()) {
-            if let Err(e) = self.hold(app.entry.uid, &app.packages, app.items.mounts()) {
+            if let Err(e) = self.hold(&app.entry, &app.packages, app.items.mounts()) {
                 eprintln!(
                     "bbd: sandbox: uid {} is not held at the gate: {e:#}",
                     app.entry.uid
@@ -287,7 +317,19 @@ impl Effect for Storage {
         }
     }
 
+    fn forget(&mut self, uid: u32) {
+        self.release(uid);
+    }
+
     fn report(&self, status: &mut Status) {
+        status.gated_uids.extend(
+            self.shared
+                .apps
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .keys()
+                .copied(),
+        );
         let stats = lock(&self.shared.stats);
         status.gate = self.shared.open.load(Ordering::Relaxed);
         status.admitted = stats.admitted;
@@ -427,6 +469,7 @@ impl Thread {
                 if lost {
                     return;
                 }
+                self.closing.shared.open.store(true, Ordering::Relaxed);
             }
         }
     }
@@ -437,20 +480,50 @@ impl Thread {
         let pid = event.pid as i32;
         // The process is stopped and cannot end by itself; if something
         // killed it, there is nothing left to do.
-        let Ok(process) = Process::open(pid) else {
-            return Ok(());
+        let process = loop {
+            match Process::open(pid) {
+                Ok(process) => break process,
+                Err(e) if e.raw_os_error() == Some(libc::ESRCH) => return Ok(()),
+                Err(e) => {
+                    self.failures.log(event.uid, &e.into());
+                    self.closing.shared.open.store(false, Ordering::Relaxed);
+                    // Keep the original event. The kernel closes subsequent starts
+                    // while the reader is unable to acquire a process descriptor.
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            }
         };
+        let start = (u64::from(event.start_high) << 32) | u64::from(event.start_low);
+        let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+        let ticks = (u128::from(start) * hz as u128 / 1_000_000_000) as u64;
+        loop {
+            match process.signal(0) {
+                Ok(()) => match crate::sensors::process_start(event.pid) {
+                    Some(actual) if actual == ticks => break,
+                    Some(_) => return Ok(()),
+                    None => self.failures.log(
+                        event.uid,
+                        &anyhow::anyhow!("process generation unavailable"),
+                    ),
+                },
+                Err(e) if e.raw_os_error() == Some(libc::ESRCH) => return Ok(()),
+                Err(e) => self.failures.log(event.uid, &e.into()),
+            }
+            self.closing.shared.open.store(false, Ordering::Relaxed);
+            std::thread::sleep(Duration::from_millis(100));
+        }
         let mut lost = false;
-        let held = self
-            .set_up(pid, event.uid, home, cpuinfo, &mut lost)
-            // Let go only once it has stopped: the stop takes effect as the
-            // process leaves the system call, and a process told to continue
-            // before that stays stopped for good.
-            .and_then(|held| wait_stopped(pid).map(|()| held));
+        let held = wait_stopped(pid)
+            .and_then(|()| self.set_up(&process, pid, event.uid, home, cpuinfo, &mut lost))
+            .and_then(|held| {
+                process
+                    .signal(libc::SIGCONT)
+                    .context("continuing held process")?;
+                Ok(held)
+            });
         let shared = &self.closing.shared;
         match held {
             Ok(held) => {
-                process.signal(libc::SIGCONT);
                 if matches!(held, Held::Sandboxed) {
                     let held_us = monotonic_ns().saturating_sub(event.at_ns()) / 1000;
                     lock(&shared.stats).admit(held_us);
@@ -460,9 +533,18 @@ impl Thread {
                 }
             }
             Err(e) => {
-                process.signal(libc::SIGKILL);
                 lock(&shared.stats).failed += 1;
                 self.failures.log(event.uid, &e);
+                // Keep the descriptor until termination is confirmed or the
+                // task is gone. A numeric PID cannot safely recover this case.
+                while let Err(e) = process.signal(libc::SIGKILL) {
+                    if e.raw_os_error() == Some(libc::ESRCH) {
+                        break;
+                    }
+                    shared.open.store(false, Ordering::Relaxed);
+                    self.failures.log(event.uid, &e.into());
+                    std::thread::sleep(Duration::from_millis(100));
+                }
             }
         }
         if lost { Err(Lost) } else { Ok(()) }
@@ -470,6 +552,7 @@ impl Thread {
 
     fn set_up(
         &mut self,
+        process: &Process,
         pid: i32,
         uid: u32,
         home: &File,
@@ -483,7 +566,8 @@ impl Thread {
         // started it has to be known for that, though.
         let started_by =
             fs::read_link(format!("/proc/{parent}/exe")).context("reading what started it")?;
-        if !is_zygote(&started_by) {
+        let parent_status = fs::read_to_string(format!("/proc/{parent}/status"))?;
+        if !is_zygote(&started_by) || real_uid(&parent_status) != Some(0) {
             return Ok(Held::NotOurs);
         }
         let Some(gated) = self
@@ -499,20 +583,43 @@ impl Thread {
         };
         // Mounting in a namespace the process shares with zygote would
         // change what every app sees.
-        let namespace = |pid: i32| fs::read_link(format!("/proc/{pid}/ns/mnt"));
+        use std::os::unix::fs::MetadataExt;
+        let theirs =
+            File::open(format!("/proc/{pid}/ns/mnt")).context("opening the app namespace")?;
+        let zygote =
+            File::open(format!("/proc/{parent}/ns/mnt")).context("opening the parent namespace")?;
+        let identity = |file: &File| -> io::Result<(u64, u64)> {
+            let stat = file.metadata()?;
+            Ok((stat.dev(), stat.ino()))
+        };
+        let target = identity(&theirs)?;
+        for protected in [&zygote, home, &File::open("/proc/1/ns/mnt")?] {
+            anyhow::ensure!(
+                target != identity(protected)?,
+                "shared system mount namespace"
+            );
+        }
+        let status = fs::read_to_string(format!("/proc/{pid}/status"))?;
         anyhow::ensure!(
-            namespace(pid).context("reading its namespace")?
-                != namespace(parent).context("reading zygote's namespace")?,
-            "it shares zygote's mount namespace"
+            real_uid(&status) == Some(uid),
+            "unexpected process credentials"
         );
-
+        process.signal(0)?;
+        if !dirs::matches_install(
+            Path::new("/data/user_de"),
+            &gated.package,
+            uid,
+            &gated.install_id,
+        )? {
+            return Ok(Held::NotOurs);
+        }
+        self.kernel.generation = format!("{}-{}", uid, gated.install_id);
         let files: &[(&str, &str)] = if gated.mounts.cpu_info {
             &[(mounts::CPUINFO, cpuinfo)]
         } else {
             &[]
         };
 
-        let theirs = File::open(format!("/proc/{pid}/ns/mnt")).context("opening its namespace")?;
         enter(&theirs).context("entering its namespace")?;
         let mounted = mounts::apply(
             &mut self.kernel,
@@ -532,8 +639,20 @@ impl Thread {
 /// Whether a program is zygote, which is `app_process` under one of its
 /// names (`app_process64`, `app_process32`).
 fn is_zygote(exe: &Path) -> bool {
-    exe.file_name()
-        .is_some_and(|name| name.to_string_lossy().starts_with("app_process"))
+    matches!(
+        exe.to_str(),
+        Some("/system/bin/app_process64" | "/system/bin/app_process32" | "/system/bin/app_process")
+    )
+}
+
+fn real_uid(status: &str) -> Option<u32> {
+    status
+        .lines()
+        .find_map(|line| line.strip_prefix("Uid:"))?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
 }
 
 /// Prepare the calling thread to visit other mount namespaces, and return
@@ -651,6 +770,7 @@ mod tests {
     fn only_app_process_counts_as_zygote() {
         assert!(is_zygote(Path::new("/system/bin/app_process64")));
         assert!(is_zygote(Path::new("/system/bin/app_process32")));
+        assert!(!is_zygote(Path::new("/data/local/tmp/app_process64")));
         assert!(!is_zygote(Path::new("/system/bin/sh")));
         assert!(!is_zygote(Path::new("/system/bin/run-as")));
         assert!(!is_zygote(Path::new("/")));
@@ -679,11 +799,14 @@ mod tests {
             .spawn()
             .unwrap();
         let held = Process::open(child.id() as i32).unwrap();
-        held.signal(libc::SIGKILL);
+        assert!(!held.exited(0).unwrap());
+        held.signal(libc::SIGKILL).unwrap();
+        assert!(held.exited(5000).unwrap());
         assert!(!child.wait().unwrap().success());
+        assert!(held.exited(0).unwrap());
         // Gone: the signal goes nowhere, and a pid that is not there cannot
         // be opened.
-        held.signal(libc::SIGKILL);
+        assert!(held.signal(libc::SIGKILL).is_err());
         assert!(Process::open(i32::MAX).is_err());
     }
 }

@@ -40,13 +40,17 @@ internal class SandboxList(
     private val onError: (Throwable) -> Unit,
     private val checkIntervalNanos: Long = CHECK_INTERVAL_NANOS,
     private val clock: () -> Long = System::nanoTime,
+    private val owners: HookInstallations? = null,
 ) {
     @Volatile
     private var entries: Map<Int, SandboxedUid> = emptyMap()
 
-    /** Modification time and size of the file [entries] came from; null to force a read. */
-    @Volatile
-    private var stamp: Pair<Long, Long>? = null
+    private var stamp: java.nio.file.attribute.BasicFileAttributes? = null
+
+    var revision: String = "none"
+        private set
+
+    var onLoaded: (() -> Unit)? = null
 
     /** Whether the last look at the file went well; a missing file counts. */
     @Volatile
@@ -71,7 +75,8 @@ internal class SandboxList(
 
     private fun entryOf(uid: Int): SandboxedUid? {
         refresh()
-        return entries[uid]
+        if (uid !in entries) return null
+        return synchronized(this) { entries[uid]?.takeIf { owners?.matches(uid) != false } }
     }
 
     private fun refresh() {
@@ -80,22 +85,35 @@ internal class SandboxList(
         // Compare by difference: nanoTime may be negative or wrap.
         if (now - due < 0) return
         if (!nextCheck.compareAndSet(due, now + checkIntervalNanos)) return
-        reload()
+        reload(force = false)
     }
 
-    private fun reload() {
+    @Synchronized
+    fun reload(force: Boolean = true) {
+        val previous = revision
+        val wasReadable = readable
         try {
-            // lastModified() and length() return 0 for a missing file.
-            val current = file.lastModified() to file.length()
-            if (current == stamp) return
-            entries = if (file.exists()) parseSandboxList(file.readText()) else emptyMap()
-            stamp = current
+            val text = try {
+                val attrs = java.nio.file.Files.readAttributes(file.toPath(), java.nio.file.attribute.BasicFileAttributes::class.java)
+                val last = stamp
+                if (!force && last != null && attrs.fileKey() != null && attrs.fileKey() == last.fileKey() && attrs.lastModifiedTime() == last.lastModifiedTime() && attrs.size() == last.size()) return
+                file.readText().also { stamp = attrs }
+            } catch (_: java.nio.file.NoSuchFileException) {
+                stamp = null
+                ""
+            }
+            val nextRevision = text.lineSequence().firstOrNull()?.removePrefix("# ")?.takeIf { text.startsWith("# ") } ?: "none"
+            val parsed = parseSandboxList(text)
+            if (previous != nextRevision || !wasReadable || force) owners?.replace(text, parsed.keys)
+            entries = parsed
+            revision = nextRevision
             readable = true
-        } catch (e: Throwable) {
-            readable = false
+        } catch (e: Exception) {
             stamp = null
+            readable = false
             onError(e)
         }
+        if (previous != revision || wasReadable != readable) onLoaded?.invoke()
     }
 
     private companion object {

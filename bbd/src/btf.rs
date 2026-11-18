@@ -261,6 +261,11 @@ impl Btf {
         for (slot, name, path) in [
             (OFF_SOCK_PROTOCOL, "sock", &["sk_protocol"][..]),
             (OFF_SKB_DATA, "sk_buff", &["data"]),
+            (
+                bb_common::OFF_TASK_START,
+                "task_struct",
+                &["start_boottime"],
+            ),
         ] {
             offsets[slot] = self.offset_of(name, path).unwrap_or(OFF_MISSING);
         }

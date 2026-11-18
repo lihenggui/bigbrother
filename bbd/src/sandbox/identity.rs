@@ -65,6 +65,9 @@ const BOOT_ID: &str = "/proc/sys/kernel/random/boot_id";
 const SYSTEM_UID: u32 = 1000;
 
 pub struct Identity {
+    user_data: Option<PathBuf>,
+    pins: std::cell::RefCell<Vec<super::dirs::Dir>>,
+    revision: String,
     /// What the list says, or is to say once written: the line of each uid
     /// the hook answers for.
     listed: BTreeMap<u32, Listed>,
@@ -75,6 +78,8 @@ pub struct Identity {
 /// What the list says of a uid.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Listed {
+    package: String,
+    install_id: String,
     android_id: String,
     /// Whether the hook gives it its ANDROID_ID.
     own_id: bool,
@@ -90,6 +95,8 @@ fn listed(entry: &Entry, items: &Settings) -> Option<Listed> {
     let (own_id, hides_apps) = items.hooked();
     let storage = items.mode(Item::Storage) != Mode::Off;
     (own_id || hides_apps || storage).then(|| Listed {
+        package: entry.package.clone(),
+        install_id: entry.install_id.clone(),
         android_id: entry.android_id.clone(),
         own_id,
         hides_apps,
@@ -117,9 +124,34 @@ impl Identity {
             .collect();
         Self {
             listed,
+            user_data: Some("/data/user_de".into()),
+            pins: Default::default(),
+            revision: String::new(),
             list: LIST.into(),
             status: STATUS.into(),
         }
+    }
+
+    fn live_status(&self) -> Option<String> {
+        let text = fs::read_to_string(&self.status).ok()?;
+        let pid: u32 = text
+            .lines()
+            .find_map(|l| l.strip_prefix("pid="))?
+            .parse()
+            .ok()?;
+        let boot = fs::read_to_string(BOOT_ID).ok()?;
+        if !text
+            .lines()
+            .any(|s| s.strip_prefix("boot=") == Some(boot.trim()))
+        {
+            return None;
+        }
+        let comm = fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+        (comm.trim() == "system_server" && text.lines().any(|l| l == "list=1")).then_some(text)
+    }
+
+    fn acknowledged(&self, text: &str) -> bool {
+        text.lines().find_map(|l| l.strip_prefix("revision=")) == Some(self.revision.as_str())
     }
 
     /// Write the list with `line` as the line of `uid`, or without one.
@@ -130,22 +162,59 @@ impl Identity {
             Some(line) => listed.insert(uid, line),
             None => listed.remove(&uid),
         };
-        self.write_list(&listed)?;
+        let active = self.live_status().is_some();
+        let revision = self.write_list(&listed)?;
+        self.revision = revision;
+        if active {
+            let until = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            loop {
+                if self.live_status().is_some_and(|s| self.acknowledged(&s)) {
+                    break;
+                }
+                if std::time::Instant::now() >= until {
+                    self.revision = self.write_list(&self.listed)?;
+                    anyhow::bail!("the system hook did not load the new sandbox list");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        }
         self.listed = listed;
         Ok(())
     }
 
-    fn write_list(&self, apps: &BTreeMap<u32, Listed>) -> anyhow::Result<()> {
+    fn write_list(&self, apps: &BTreeMap<u32, Listed>) -> anyhow::Result<String> {
         if apps.is_empty() {
             // No list: nothing is sandboxed.
+            self.pins.borrow_mut().clear();
             return match fs::remove_file(&self.list) {
                 Err(e) if e.kind() != io::ErrorKind::NotFound => {
                     Err(e).context("removing the sandbox list")
                 }
-                _ => Ok(()),
+                _ => Ok("none".into()),
             };
         }
         // Renamed into place, so that the hook never reads half a list.
+        let revision = super::new_android_id()?;
+        let mut owners = String::new();
+        let mut pins = Vec::new();
+        if let Some(root) = &self.user_data {
+            use std::fmt::Write as _;
+            writeln!(owners, "boot {}", fs::read_to_string(BOOT_ID)?.trim())?;
+            for (uid, item) in apps {
+                let (dir, id) = super::dirs::pin_install(root, &item.package, *uid, false)?;
+                anyhow::ensure!(
+                    id == item.install_id,
+                    "installation changed while publishing hook policy"
+                );
+                let stat = dir.stat()?;
+                writeln!(
+                    owners,
+                    "owner {uid} {} {} {}",
+                    item.package, stat.st_dev, stat.st_ino
+                )?;
+                pins.push(dir);
+            }
+        }
         let temporary = self.list.with_extension("new");
         // Created, not opened: the directory is the system's to write in,
         // and what it may have put under this name is not written through.
@@ -157,6 +226,8 @@ impl Identity {
             .mode(0o644)
             .open(&temporary)
             .and_then(|mut file| {
+                writeln!(file, "# {revision}")?;
+                file.write_all(owners.as_bytes())?;
                 file.write_all(list_text(apps).as_bytes())?;
                 file.set_permissions(fs::Permissions::from_mode(0o644))?;
                 // system_server is not root: the list must be its own to
@@ -166,7 +237,9 @@ impl Identity {
                 Ok(())
             })
             .and_then(|()| fs::rename(&temporary, &self.list))
-            .context("writing the sandbox list")
+            .context("writing the sandbox list")?;
+        self.pins.replace(pins);
+        Ok(revision)
     }
 }
 
@@ -225,14 +298,23 @@ impl Effect for Identity {
             .iter()
             .filter_map(|app| Some((app.entry.uid, listed(&app.entry, &app.items)?)))
             .collect();
-        if let Err(e) = self.write_list(&self.listed) {
+        self.revision = self.write_list(&self.listed).unwrap_or_else(|e| {
             eprintln!("bbd: sandbox: {e:#}");
+            String::new()
+        });
+    }
+
+    fn forget(&mut self, uid: u32) {
+        if self.write(uid, None).is_err() {
+            eprintln!("bbd: cannot retire sandbox hook entry");
         }
     }
 
     fn report(&self, status: &mut Status) {
         let boot = fs::read_to_string(BOOT_ID).unwrap_or_default();
-        status.hook = fs::read_to_string(&self.status)
+        status.hook = self
+            .live_status()
+            .filter(|text| self.acknowledged(text))
             .map(|text| parse_status(&text, boot.trim()))
             .unwrap_or_default();
     }
@@ -265,6 +347,7 @@ impl Identity {
     /// Written in `dir` rather than where the hook reads it.
     pub(super) fn at(self, dir: &std::path::Path) -> Self {
         Self {
+            user_data: None,
             list: dir.join("list"),
             status: dir.join("status"),
             ..self
@@ -283,6 +366,7 @@ mod tests {
             enabled: true,
             android_id: android_id.into(),
             saved_ops: String::new(),
+            install_id: String::new(),
             saved_permissions: String::new(),
             created: 0,
             settings: String::new(),
@@ -300,7 +384,14 @@ mod tests {
     fn the_list_names_every_sandboxed_uid_with_its_android_id() {
         let dir = test_dir("identity-list");
         let mut identity = Identity::new(&Snapshot::default(), &Global::default()).at(&dir);
-        let list = || fs::read_to_string(dir.join("list")).unwrap();
+        let list = || {
+            fs::read_to_string(dir.join("list"))
+                .unwrap()
+                .split_once('\n')
+                .unwrap()
+                .1
+                .to_owned()
+        };
 
         let all = Settings::all_on();
         let mut first = entry(1_010_100, "00000000000000aa");
@@ -332,7 +423,13 @@ mod tests {
         use super::super::items::{Item, Mode};
         let dir = test_dir("identity-items");
         let mut identity = Identity::new(&Snapshot::default(), &Global::default()).at(&dir);
-        let list = || fs::read_to_string(dir.join("list")).unwrap_or_default();
+        let list = || {
+            fs::read_to_string(dir.join("list"))
+                .unwrap_or_default()
+                .split_once('\n')
+                .map(|(_, list)| list.to_owned())
+                .unwrap_or_default()
+        };
         let with = |pairs: &[(Item, Mode)]| {
             let mut own = Settings::default();
             own.set(Item::Storage, Some(Mode::Off)).unwrap();
@@ -396,7 +493,13 @@ mod tests {
     fn an_app_with_its_storage_isolated_is_listed_for_it() {
         let dir = test_dir("identity-storage");
         let mut identity = Identity::new(&Snapshot::default(), &Global::default()).at(&dir);
-        let list = || fs::read_to_string(dir.join("list")).unwrap_or_default();
+        let list = || {
+            fs::read_to_string(dir.join("list"))
+                .unwrap_or_default()
+                .split_once('\n')
+                .map(|(_, list)| list.to_owned())
+                .unwrap_or_default()
+        };
         let only = |on: &[Item]| {
             let mut own = Settings::default();
             for item in Item::ALL {
@@ -455,6 +558,8 @@ mod tests {
                     let android_id = parts.next().unwrap().to_string();
                     let items: Vec<&str> = parts.collect();
                     let listed = Listed {
+                        package: String::new(),
+                        install_id: String::new(),
                         android_id,
                         own_id: items.contains(&"device_ids"),
                         hides_apps: items.contains(&"installed_apps"),

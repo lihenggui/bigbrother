@@ -104,7 +104,7 @@ pub const GATE: Feature = Feature {
     name: "sandbox",
     table: GATE_TABLE,
     with_return: false,
-    offsets: &[],
+    offsets: &[bb_common::OFF_TASK_START],
     alternatives: false,
 };
 

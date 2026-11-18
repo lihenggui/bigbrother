@@ -369,8 +369,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
             // The kernel side's buffer is filling up.
             guard = ring.readable_mut() => {
                 let mut guard = guard?;
-                tracer.drain(guard.get_inner_mut());
-                guard.clear_ready();
+                if tracer.drain(guard.get_inner_mut()) { guard.clear_ready(); }
                 continue;
             }
         };
@@ -395,6 +394,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         }
         tracer.settle_sensors(SENSOR_LIST_WAIT);
         if let Some(sandbox) = sandbox.as_mut() {
+            sandbox.release_reassigned(&tracer.writer, &mut tracer.packages);
             sandbox.keep_found(&tracer.writer);
         }
         // A failed write (disk full, database busy) keeps the batch for the
@@ -504,7 +504,7 @@ fn start_sandbox(
     db: &Path,
 ) -> Option<Sandbox> {
     // Where every user's apps keep their data.
-    let user_data = Path::new("/data/user");
+    let user_data = Path::new("/data/user_de");
     let mut sandbox = match Sandbox::load(&tracer.writer, Vec::new(), Some(user_data)) {
         Ok(sandbox) => sandbox,
         Err(e) => {
@@ -1094,12 +1094,25 @@ impl Tracer {
         self.writer.set_meta("coverage_binder", covered).ok();
     }
 
-    /// Take in everything waiting in the ring buffer.
-    fn drain(&mut self, ring: &mut RingBuf<MapData>) {
+    /// Yield to control requests even when the kernel keeps producing.
+    fn drain(&mut self, ring: &mut RingBuf<MapData>) -> bool {
         let clock = EventClock::now();
-        while let Some(item) = ring.next() {
+        for _ in 0..1024 {
+            let Some(item) = ring.next() else { return true };
             self.on_event(&item, &clock);
         }
+        false
+    }
+
+    fn hold_result(&mut self, tid: u32, event: Held) {
+        if self.awaiting_result.len() < 1024 || self.awaiting_result.contains_key(&tid) {
+            let waiting = self.awaiting_result.entry(tid).or_default();
+            if waiting.len() < 16 {
+                waiting.push(event);
+                return;
+            }
+        }
+        self.counters.unresolved += 1;
     }
 
     fn on_event(&mut self, bytes: &[u8], clock: &EventClock) {
@@ -1121,12 +1134,12 @@ impl Tracer {
                 // different, wrong file.
                 if ev.truncated != 0 {
                     self.counters.unresolved += 1;
-                    self.explain("file", "truncated");
+                    self.explain("file");
                     return;
                 }
                 let Some(path) = self.file_path(&ev) else {
                     self.counters.unresolved += 1;
-                    self.explain("file", "unresolved");
+                    self.explain("file");
                     return;
                 };
                 let opened = Opened {
@@ -1137,10 +1150,7 @@ impl Tracer {
                     ts,
                 };
                 if ev.in_syscall != 0 {
-                    self.awaiting_result
-                        .entry(hdr.tid)
-                        .or_default()
-                        .push(Held::File(opened));
+                    self.hold_result(hdr.tid, Held::File(opened));
                 } else {
                     self.record(&opened, true);
                 }
@@ -1170,7 +1180,7 @@ impl Tracer {
                         Some(p) => p,
                         None => {
                             self.counters.unresolved += 1;
-                            self.explain("path-relative", &raw);
+                            self.explain("path-relative");
                             return;
                         }
                     }
@@ -1203,20 +1213,20 @@ impl Tracer {
                     .map(|slot| lossy(slot.split(|&b| b == 0).next().unwrap_or_default()))
                     .collect();
                 let Some(subject) = commands::subject(&path, &args) else {
-                    self.explain("exec", &path);
+                    self.explain("exec");
                     return;
                 };
                 let (uid, origin) = self.owner_uid(hdr.uid, hdr.pid);
-                self.awaiting_result
-                    .entry(hdr.tid)
-                    .or_default()
-                    .push(Held::Command {
+                self.hold_result(
+                    hdr.tid,
+                    Held::Command {
                         uid,
                         pid: hdr.pid,
                         subject,
                         origin,
                         ts,
-                    });
+                    },
+                );
             }
             EV_PROCESS => {
                 let Some(ev) = cast::<ProcessEvent>(bytes) else {
@@ -1230,7 +1240,7 @@ impl Tracer {
                 // the app looking at itself. A process that is already gone
                 // can't be attributed and is skipped.
                 if uid_of_pid(ev.target).is_none_or(|owner| owner == hdr.uid) {
-                    self.explain("process", "<own or gone>");
+                    self.explain("process");
                     return;
                 }
                 let mode = match ev.how {
@@ -1239,16 +1249,16 @@ impl Tracer {
                     _ => MODE_WATCH,
                 };
                 let (uid, origin) = self.owner_uid(hdr.uid, hdr.pid);
-                self.awaiting_result
-                    .entry(hdr.tid)
-                    .or_default()
-                    .push(Held::Record {
+                self.hold_result(
+                    hdr.tid,
+                    Held::Record {
                         uid,
                         cat: Category::Process,
                         subject: subject.to_string(),
                         mode: mode | origin,
                         ts,
-                    });
+                    },
+                );
             }
             EV_BINDER => {
                 let Some(ev) = cast::<BinderEvent>(bytes) else {
@@ -1299,7 +1309,7 @@ impl Tracer {
                     )
                 });
                 let Some(mut subject) = subject else {
-                    self.explain("binder", "<about itself, or not watched>");
+                    self.explain("binder");
                     return;
                 };
                 // Whether the app asked about is there is known only now: by
@@ -1331,16 +1341,16 @@ impl Tracer {
                     return;
                 };
                 let (uid, origin) = self.owner_uid(hdr.uid, hdr.pid);
-                self.awaiting_result
-                    .entry(hdr.tid)
-                    .or_default()
-                    .push(Held::Record {
+                self.hold_result(
+                    hdr.tid,
+                    Held::Record {
                         uid,
                         cat: Category::Network,
                         subject: subject.to_string(),
                         mode: MODE_READ | origin,
                         ts,
-                    });
+                    },
+                );
             }
             EV_CONNECT => {
                 let Some(ev) = cast::<ConnectEvent>(bytes) else {
@@ -1354,7 +1364,7 @@ impl Tracer {
                 // socket tables are compared by the uid the kernel sees.
                 if destination.is_loopback() && self.listeners.owned_by(destination.port(), hdr.uid)
                 {
-                    self.explain("connect", "<own port>");
+                    self.explain("connect");
                     return;
                 }
                 let (uid, origin) = self.owner_uid(hdr.uid, hdr.pid);
@@ -1487,9 +1497,9 @@ impl Tracer {
         Some(format!("{base}/{relative}"))
     }
 
-    fn explain(&self, source: &str, path: &str) {
+    fn explain(&self, source: &str) {
         if self.explain_discards {
-            println!("discard {source} {path}");
+            println!("discard {source}");
         }
     }
 
@@ -1505,7 +1515,7 @@ impl Tracer {
         let pkgs = self.packages.for_uid(uid);
         let (cat, path) = match paths::canonicalize(&opened.path, uid / PER_USER_RANGE) {
             Some(path) if paths::is_own_dir(&path, pkgs) => {
-                self.explain(source, "<own app directory>");
+                self.explain(source);
                 return;
             }
             Some(path) => (Category::Storage, path),
@@ -1515,7 +1525,7 @@ impl Tracer {
             None => match rules::classify(&opened.path, opened.uid, uid_of_pid) {
                 Some(hit) => hit,
                 None => {
-                    self.explain(source, &opened.path);
+                    self.explain(source);
                     return;
                 }
             },
@@ -1565,8 +1575,7 @@ impl Tracer {
         if !self.ingest_provider_events {
             return;
         }
-        let hosts = spool::hosts(|listed| self.packages.sharing_uid_with(listed));
-        for ev in self.spool.collect(&hosts) {
+        for ev in self.spool.collect() {
             self.counters.seen += 1;
             // Calls between system components are not app behaviour.
             if ev.uid % PER_USER_RANGE < FIRST_APPLICATION_UID {
@@ -1646,8 +1655,7 @@ impl Tracer {
         self.counters.kept += 1;
         if self.verbose {
             println!(
-                "uid={uid} pkg={} cat={} how={} {} {path}",
-                if pkg.is_empty() { "?" } else { pkg },
+                "cat={} how={} {}",
                 cat.as_str(),
                 mode_label(mode),
                 if ok { "ok" } else { "failed" },

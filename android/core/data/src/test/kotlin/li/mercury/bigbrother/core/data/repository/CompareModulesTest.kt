@@ -42,8 +42,8 @@ class CompareModulesTest {
     }
 
     @Test
-    fun givenSameVersionWithoutDigest_whenCompared_thenCurrent() {
+    fun givenSameVersionWithoutDigest_whenCompared_thenOutdated() {
         // Without a digest there is nothing to tell them apart by.
-        assertEquals(InstalledModule.CURRENT, compareModules(8, null, 8, "abc"))
+        assertEquals(InstalledModule.OUTDATED, compareModules(8, null, 8, "abc"))
     }
 }
