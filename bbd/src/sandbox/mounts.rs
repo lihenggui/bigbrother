@@ -46,9 +46,13 @@ const OWN_KINDS: &[&str] = &["data", "obb", "media"];
 /// storage of each user, and the links to the current user's.
 const NOT_VOLUMES: &[&str] = &["emulated", "self"];
 
-/// Named as the source of the sandbox's own tmpfs mounts, which is how the
-/// processes that have them are told from those that do not (`sweep`).
-pub const TMPFS_SOURCE: &str = "bb_sandbox";
+/// The source of the sandbox's own tmpfs mounts, which an app can list: the
+/// one every tmpfs has unless told otherwise, so that they name nothing.
+const TMPFS_SOURCE: &str = "tmpfs";
+
+/// The size of the empty stand-in for a storage the app is not to see,
+/// which is how `sweep` tells it from any other read-only tmpfs.
+pub const STAND_IN_SIZE: &str = "size=4k";
 
 /// The mounts as carried out. On a device this is [`Kernel`].
 pub trait Sys {
@@ -86,16 +90,15 @@ fn storage_of(user: u32) -> (String, String) {
     )
 }
 
-/// The sandbox directory of `uid`.
-#[cfg(test)]
-fn sandbox_of(uid: u32) -> String {
-    let (_, media) = storage_of(uid / PER_USER_RANGE);
-    format!("{media}/{}/{uid}", dirs::SANDBOXES)
-}
-
 /// Where the sandbox of `uid` is mounted.
 pub fn storage_root_of(uid: u32) -> String {
     storage_of(uid / PER_USER_RANGE).0
+}
+
+/// The directory behind the shared storage of the user of `uid`, where
+/// the directory of the sandboxes is.
+pub fn media_of(uid: u32) -> String {
+    storage_of(uid / PER_USER_RANGE).1
 }
 
 /// Give the namespace `sys` works in the sandbox of `uid`, under which run
@@ -303,7 +306,7 @@ impl Sys for Kernel {
             onto,
             Some("tmpfs"),
             libc::MS_RDONLY,
-            Some(&format!("size=4k,mode=0555,{TMPFS_LABEL}")),
+            Some(&format!("{STAND_IN_SIZE},mode=0555,{TMPFS_LABEL}")),
         )
     }
 
@@ -409,7 +412,8 @@ mod tests {
             if let Some(errno) = self.bind_error {
                 return Err(io::Error::from_raw_os_error(errno));
             }
-            self.steps.push(format!("bind {} {onto}", sandbox_of(uid)));
+            self.steps
+                .push(format!("bind the sandbox of {uid} to {onto}"));
             Ok(())
         }
 
@@ -469,7 +473,7 @@ mod tests {
                 // Before the sandbox is mounted over them.
                 "clone /data/media/10/Android/data/com.a",
                 "clone /data/media/10/Android/media/com.b",
-                "bind /data/media/10/.bb_sandbox/1010100 /storage/emulated/10",
+                "bind the sandbox of 1010100 to /storage/emulated/10",
                 "mkdir /storage/emulated/10/Android 1010100",
                 "mkdir /storage/emulated/10/Android/data 1010100",
                 "mkdir /storage/emulated/10/Android/data/com.a 1010100",

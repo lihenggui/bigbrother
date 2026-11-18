@@ -541,11 +541,15 @@ fn uid_of(packages: &mut Packages, package: &str, user: u32) -> anyhow::Result<u
 /// A new ANDROID_ID: 64 random bits as 16 lowercase hex digits, the form
 /// Android gives it.
 fn new_android_id() -> anyhow::Result<String> {
-    let mut bytes = [0; 8];
-    File::open("/dev/urandom")
-        .and_then(|mut random| random.read_exact(&mut bytes))
-        .context("reading /dev/urandom")?;
+    let bytes = random_bytes::<8>().context("reading /dev/urandom")?;
     Ok(format!("{:016x}", u64::from_ne_bytes(bytes)))
+}
+
+/// `N` random bytes, from the kernel's generator.
+fn random_bytes<const N: usize>() -> std::io::Result<[u8; N]> {
+    let mut bytes = [0; N];
+    File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+    Ok(bytes)
 }
 
 // ---- command line ----------------------------------------------------------
