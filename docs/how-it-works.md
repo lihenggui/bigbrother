@@ -1,11 +1,11 @@
 # How Big Brother works
 
 ```
-kernel   kprobe on security_file_open            the file actually opened
+kernel   kprobe on selinux_file_open             the file actually opened
          kprobes on file-related syscalls        return values, stat/access/inotify
          kprobes on execve, connect, sendto      programs run, local destinations
          kprobes on ptrace, process_vm_*         access to other processes
-         kprobe on security_netlink_send         network configuration requests
+         kprobe on selinux_netlink_send          network configuration requests
          tracepoint binder_ioctl                 requests to system services
            | ring buffer
 daemon   bbd: classify, aggregate, store in SQLite
@@ -15,10 +15,15 @@ hook     LSPosed, inside the provider processes  who queried or opened what
 app      reads the daemon's JSON output as root
 ```
 
-- Opens are observed at `security_file_open`, after path resolution. The
-  recorded path is rebuilt from the dentry chain, so `..`, symlinks and
-  `/proc/self/root` do not hide a file. Shared storage is identified by
-  filesystem type (FUSE), not by path prefix.
+- Opens are observed at the `file_open` security hook, after path
+  resolution. The recorded path is rebuilt from the dentry chain, so `..`,
+  symlinks and `/proc/self/root` do not hide a file. Shared storage is
+  identified by filesystem type (FUSE), not by path prefix.
+- The probes on security hooks attach to SELinux's hook functions, which
+  the kernel calls through its table of security modules. The
+  `security_*` functions that call them can be inlined into their callers,
+  as they are on android13-5.15 kernels, and a probe on an inlined function
+  attaches but never fires.
 - Kernel struct offsets are read from BTF at startup and passed to the eBPF
   programs, so one binary works across kernel versions.
 - Network destinations are classified in the kernel; only loopback, private,
