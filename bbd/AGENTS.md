@@ -8,8 +8,7 @@ JSON.
 ## Output is an interface
 
 - The app parses this output. Change it together with the app, in the same
-  commit; no compatibility with earlier versions is kept (see the root
-  `AGENTS.md`).
+  commit (see the root `AGENTS.md`).
 - Every query first asks the running daemon to write what it holds
   (`control::request_flush`, over `bbd.sock`), waiting at most one second.
   `main` does this for every subcommand except `run`; a new subcommand that
@@ -55,9 +54,12 @@ JSON.
 
 - SQLite at `/data/adb/big_brother/bb.db`, records kept 30 days.
 - The schema is `SCHEMA` in `src/store.rs`, at `SCHEMA_VERSION`. A schema
-  change edits `SCHEMA` and bumps the version. The daemon sets a database at
-  another version aside (`bb.db.old`) and starts a new one; it is not
-  upgraded, and the query commands do not read it.
+  change edits `SCHEMA`, bumps the version and adds the step from the
+  previous version to `MIGRATIONS`, with a test that a database of the
+  previous release keeps its records and sandbox. Steps exist from released
+  versions only (v0.2.0 wrote version 3). The daemon migrates a database
+  when it starts; one at a version with no step is set aside (`bb.db.old`)
+  and a new one started. The query commands read the current version only.
 
 ## Power and performance
 

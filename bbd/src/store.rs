@@ -18,7 +18,11 @@
 //! (hour, uid, path, access mode) with success/failure counters. An app that
 //! reads the same photo 500 times in an hour costs one row.
 
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    time::{Duration, SystemTime},
+};
 
 use anyhow::Context as _;
 use rusqlite::{Connection, OpenFlags, OptionalExtension as _, params};
@@ -99,9 +103,49 @@ impl Category {
     }
 }
 
-/// Schema version stored in SQLite's `user_version`. A database at any
-/// other version is refused: bump it whenever `SCHEMA` changes.
+/// Schema version stored in SQLite's `user_version`. Bump it whenever
+/// `SCHEMA` changes, and add the step from the previous version to
+/// `MIGRATIONS`.
 const SCHEMA_VERSION: i32 = 7;
+
+/// How a database written by a released build is brought to
+/// `SCHEMA_VERSION`: (from, to, statements), applied one after another.
+/// Versions that only development builds wrote have no step; such a
+/// database is set aside. v0.2.0 wrote version 3.
+const MIGRATIONS: &[(i32, i32, &str)] = &[(3, 7, MIGRATE_3_TO_7)];
+
+/// v0.2.0 had the accesses and individual accesses: the sensor sessions and
+/// the sandbox, added since, start empty.
+const MIGRATE_3_TO_7: &str = "
+CREATE TABLE sensor_session (
+    uid        INTEGER NOT NULL,
+    pid        INTEGER NOT NULL,
+    proc_start INTEGER NOT NULL,
+    connection INTEGER NOT NULL,
+    handle     INTEGER NOT NULL,
+    sensor     TEXT    NOT NULL,
+    continuous INTEGER NOT NULL,
+    period_ns  INTEGER NOT NULL,
+    start_ts   INTEGER NOT NULL,
+    end_ts     INTEGER,
+    PRIMARY KEY (uid, pid, connection, handle, start_ts)
+) WITHOUT ROWID;
+CREATE INDEX sensor_session_end ON sensor_session (end_ts);
+CREATE TABLE sandbox (
+    uid        INTEGER PRIMARY KEY,
+    package    TEXT    NOT NULL,
+    enabled    INTEGER NOT NULL,
+    android_id TEXT    NOT NULL,
+    saved_ops  TEXT    NOT NULL,
+    saved_permissions TEXT NOT NULL,
+    created    INTEGER NOT NULL,
+    settings   TEXT    NOT NULL
+) WITHOUT ROWID;
+CREATE TABLE sandbox_global (
+    item TEXT PRIMARY KEY,
+    mode TEXT NOT NULL
+) WITHOUT ROWID;
+";
 
 /// Most entries returned for one path's history.
 const HISTORY_LIMIT: u32 = 2000;
@@ -269,6 +313,8 @@ struct EventKey {
 
 pub struct Writer {
     conn: Connection,
+    /// Where the database is, to find the one set aside next to it.
+    path: PathBuf,
     pending: HashMap<Key, Agg>,
     /// Individual accesses not yet written: (allowed, refused) per key.
     events: HashMap<EventKey, (u32, u32)>,
@@ -279,10 +325,12 @@ pub struct Writer {
 }
 
 impl Writer {
-    /// Open the database at `path`, creating it if new. One at another
-    /// schema version is neither upgraded nor read with the wrong layout:
-    /// it is set aside as `<path>.old`, over the one set aside before, and
-    /// recording starts over in a new one.
+    /// Open the database at `path`, creating it if new. One that a
+    /// released build wrote at an earlier schema version is migrated,
+    /// keeping the records and the sandbox. One at a version with no
+    /// migration (a development build's, or a newer build's) is not read
+    /// with the wrong layout: it is set aside as `<path>.old`, over the one
+    /// set aside before, and recording starts over in a new one.
     pub fn open(path: &Path) -> anyhow::Result<Self> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
@@ -290,12 +338,16 @@ impl Writer {
         let open = || Connection::open(path).with_context(|| format!("opening {}", path.display()));
         let mut conn = open()?;
         if let Some(version) = other_version(&conn)? {
-            drop(conn);
-            set_aside(path)?;
-            eprintln!(
-                "bbd: the database was version {version}, not {SCHEMA_VERSION}: set aside, starting a new one"
-            );
-            conn = open()?;
+            if migrate(&mut conn, version)? {
+                eprintln!("bbd: the database was version {version}: migrated to {SCHEMA_VERSION}");
+            } else {
+                drop(conn);
+                set_aside(path)?;
+                eprintln!(
+                    "bbd: the database was version {version}, not {SCHEMA_VERSION}: set aside, starting a new one"
+                );
+                conn = open()?;
+            }
         }
         // WAL lets `bbd` query commands read while the daemon writes.
         conn.pragma_update(None, "journal_mode", "WAL")?;
@@ -303,6 +355,7 @@ impl Writer {
         create_schema(&mut conn)?;
         Ok(Self {
             conn,
+            path: path.to_owned(),
             pending: HashMap::new(),
             events: HashMap::new(),
             sessions: Vec::new(),
@@ -541,6 +594,10 @@ impl Writer {
     /// Delete rows older than `days`. Returns the number removed.
     pub fn prune(&self, days: u32, now: i64) -> anyhow::Result<usize> {
         let cutoff = now - i64::from(days) * 86_400;
+        // Not removing it is no reason to keep the records here past their time.
+        if let Err(e) = remove_set_aside_before(&self.path, cutoff) {
+            eprintln!("bbd: could not remove the database set aside: {e:#}");
+        }
         self.conn
             .execute("DELETE FROM event WHERE ts < ?1", params![cutoff])?;
         self.conn.execute(
@@ -738,6 +795,70 @@ fn set_aside(path: &Path) -> anyhow::Result<()> {
                 let _ = std::fs::remove_file(&to);
             }
             result => result.with_context(|| format!("setting {} aside", path.display()))?,
+        }
+    }
+    Ok(())
+}
+
+/// Bring a database at `from` to `SCHEMA_VERSION` with the steps of
+/// `MIGRATIONS`, in one transaction. False, with nothing changed, if there
+/// is no way from `from`.
+fn migrate(conn: &mut Connection, from: i32) -> anyhow::Result<bool> {
+    let mut steps = Vec::new();
+    let mut version = from;
+    while version != SCHEMA_VERSION {
+        let Some(&(_, to, statements)) = MIGRATIONS.iter().find(|(f, _, _)| *f == version) else {
+            return Ok(false);
+        };
+        steps.push(statements);
+        version = to;
+    }
+    // user_version is in the database header and written with the
+    // transaction: a migration stopped half way leaves the old version.
+    let tx = conn.transaction()?;
+    for statements in steps {
+        tx.execute_batch(statements)
+            .with_context(|| format!("migrating the database from version {from}"))?;
+    }
+    tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    tx.commit()?;
+    Ok(true)
+}
+
+/// Remove the database set aside next to `path` once all of it is older
+/// than `cutoff` (unix time). Nothing writes to it after it is set aside,
+/// so its last change, in the file or in its log (which holds the newest
+/// writes until they are copied into the file), is when its newest record
+/// was.
+fn remove_set_aside_before(path: &Path, cutoff: i64) -> anyhow::Result<()> {
+    let mut old = path.as_os_str().to_owned();
+    old.push(".old");
+    let modified = |suffix: &str| {
+        let mut file = old.clone();
+        file.push(suffix);
+        std::fs::metadata(&file).and_then(|m| m.modified())
+    };
+    let mut newest = match modified("") {
+        Ok(modified) => modified,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e).context("reading the database set aside"),
+    };
+    if let Ok(log) = modified("-wal") {
+        newest = newest.max(log);
+    }
+    let cutoff = SystemTime::UNIX_EPOCH + Duration::from_secs(cutoff.max(0).unsigned_abs());
+    if newest >= cutoff {
+        return Ok(());
+    }
+    // The file last: what is left after a failure is found and removed again.
+    for suffix in ["-wal", "-shm", ""] {
+        let mut file = old.clone();
+        file.push(suffix);
+        match std::fs::remove_file(&file) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                return Err(e).context("removing the database set aside");
+            }
+            _ => {}
         }
     }
     Ok(())
@@ -947,8 +1068,8 @@ pub struct Reader {
 
 impl Reader {
     /// Open the database at `path` to read. One at another schema version
-    /// is not read: its layout is not this build's, and the daemon sets it
-    /// aside when it starts.
+    /// is not read: its layout is not this build's, and the daemon migrates
+    /// it or sets it aside when it starts.
     pub fn open(path: &Path) -> anyhow::Result<Self> {
         let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
             .with_context(|| format!("opening {} (has the daemon run yet?)", path.display()))?;
@@ -959,7 +1080,7 @@ impl Reader {
                 path.display()
             ),
             version => anyhow::bail!(
-                "{} is version {version}, not {SCHEMA_VERSION}: the daemon starts a new one when it starts",
+                "{} is version {version}, not {SCHEMA_VERSION}: the daemon brings it up to date when it starts",
                 path.display()
             ),
         }
@@ -1833,8 +1954,9 @@ mod tests {
         drop(w);
         assert!(!old.exists());
 
-        // Neither upgraded nor misread: an older database and a newer one
-        // are each set aside whole, and recording starts over.
+        // Neither upgraded nor misread: a database at a version no released
+        // build wrote, and a newer one, are each set aside whole, and
+        // recording starts over.
         for other in [SCHEMA_VERSION - 1, SCHEMA_VERSION + 1] {
             let w = Writer::open(&db).unwrap();
             w.put_sandbox_global(&[("camera", "off")]).unwrap();
@@ -1879,6 +2001,137 @@ mod tests {
         assert_eq!(w.sandbox_global().unwrap(), "camera=off,location=coarse");
         w.put_sandbox_global(&[("contacts", "off")]).unwrap();
         assert_eq!(w.sandbox_global().unwrap(), "contacts=off");
+        drop(w);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The tables of v0.2.0's database (version 3), as it created them.
+    const V0_2_0_SCHEMA: &str = "
+CREATE TABLE access (
+    hour     INTEGER NOT NULL,
+    uid      INTEGER NOT NULL,
+    pkg      TEXT    NOT NULL,
+    cat      TEXT    NOT NULL,
+    path     TEXT    NOT NULL,
+    mode     INTEGER NOT NULL,
+    ok       INTEGER NOT NULL,
+    fail     INTEGER NOT NULL,
+    first_ts INTEGER NOT NULL,
+    last_ts  INTEGER NOT NULL,
+    items    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (hour, uid, path, mode)
+) WITHOUT ROWID;
+CREATE INDEX access_uid_last ON access (uid, last_ts);
+CREATE INDEX access_last ON access (last_ts);
+CREATE TABLE meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL) WITHOUT ROWID;
+CREATE TABLE path (
+    id   INTEGER PRIMARY KEY,
+    path TEXT NOT NULL UNIQUE
+);
+CREATE TABLE event (
+    uid     INTEGER NOT NULL,
+    path_id INTEGER NOT NULL REFERENCES path (id),
+    mode    INTEGER NOT NULL,
+    ts      INTEGER NOT NULL,
+    ok      INTEGER NOT NULL,
+    fail    INTEGER NOT NULL,
+    PRIMARY KEY (uid, path_id, mode, ts)
+) WITHOUT ROWID;
+CREATE INDEX event_ts ON event (ts);
+PRAGMA user_version = 3;
+";
+
+    /// Every column of every table, and every index, of the database at
+    /// `path`, in an order that does not depend on how they were created.
+    fn layout(path: &Path) -> Vec<String> {
+        let conn = Connection::open(path).unwrap();
+        let mut layout: Vec<String> = conn
+            .prepare(
+                "SELECT m.type || ' ' || m.name || ' ' || coalesce(p.name || ' ' || p.type || ' ' \
+                 || p.\"notnull\" || ' ' || p.pk, '') \
+                 FROM sqlite_master m LEFT JOIN pragma_table_info(m.name) p ON m.type = 'table' \
+                 WHERE m.name NOT LIKE 'sqlite_%'",
+            )
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        layout.sort();
+        layout
+    }
+
+    #[test]
+    fn a_v0_2_0_database_is_migrated_with_its_records() {
+        let dir = std::env::temp_dir().join(format!("bbd-test-migrate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("bb.db");
+        let fresh = dir.join("fresh.db");
+        let conn = Connection::open(&db).unwrap();
+        conn.execute_batch(V0_2_0_SCHEMA).unwrap();
+        conn.execute(
+            "INSERT INTO access VALUES (1, 10100, 'com.a', 'storage', '/sdcard/a.jpg', 1, 2, 0, 3600, 3601, 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute("INSERT INTO path VALUES (1, '/sdcard/a.jpg')", [])
+            .unwrap();
+        conn.execute("INSERT INTO event VALUES (10100, 1, 1, 3600, 2, 0)", [])
+            .unwrap();
+        drop(conn);
+
+        let w = Writer::open(&db).unwrap();
+        assert!(!dir.join("bb.db.old").exists());
+        assert_eq!(version_of(&w.conn).unwrap(), SCHEMA_VERSION);
+        let kept: (i64, i64) = w
+            .conn
+            .query_row(
+                "SELECT (SELECT count(*) FROM access), (SELECT count(*) FROM event)",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(kept, (1, 1));
+        // The sandbox works in it as in a new one.
+        w.put_sandbox(&sandbox_entry_for(10100)).unwrap();
+        assert!(w.sandbox_entry(10100).unwrap().is_some());
+        drop(w);
+        drop(Writer::open(&fresh).unwrap());
+        assert_eq!(layout(&db), layout(&fresh));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_database_set_aside_is_removed_once_its_records_are_out_of_date() {
+        let dir = std::env::temp_dir().join(format!("bbd-test-old-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let db = dir.join("bb.db");
+        let old = dir.join("bb.db.old");
+        let w = Writer::open(&db).unwrap();
+        std::fs::write(&old, "").unwrap();
+        std::fs::write(dir.join("bb.db.old-wal"), "").unwrap();
+        let day = 86_400;
+        let set_aside_at = 100 * day;
+        let touch = |path: &Path, at: i64| {
+            std::fs::File::options()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(at as u64))
+                .unwrap();
+        };
+        touch(&old, set_aside_at - 10 * day);
+        // The newest records are in the log, not yet in the file.
+        touch(&dir.join("bb.db.old-wal"), set_aside_at);
+
+        w.prune(30, set_aside_at + 29 * day).unwrap();
+        assert!(old.exists());
+        w.prune(30, set_aside_at + 31 * day).unwrap();
+        assert!(!old.exists());
+        assert!(!dir.join("bb.db.old-wal").exists());
+        // Nothing set aside: nothing to do.
+        w.prune(30, set_aside_at + 31 * day).unwrap();
         drop(w);
         std::fs::remove_dir_all(dir).unwrap();
     }
