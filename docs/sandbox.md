@@ -115,22 +115,44 @@ $bbd sandbox auto on    # or off; without an argument, says which it is
   and for a user it is installed for later. Each is put in once: an app taken
   out of the sandbox stays out.
 - An update is not a new app. An app uninstalled and installed again is.
+  Packages that share an app id count as one app, for as long as any of
+  them is installed.
+- A library that comes as a package of its own (a static shared library,
+  such as Play installs with each update of Chrome or the WebView) is not
+  an app, and is left alone. The package manager says which packages are
+  libraries, by flags the package cannot set.
 
-Android writes its package list (`/data/system/packages.list`) on every
-install, update and removal. While the switch is on, the daemon watches its
-directory for that (inotify) and puts the new app in the sandbox. The app
-may start first, when the installer opens it at once: the gate also holds
-the start of an app the daemon has not dealt with yet, and the daemon ends
-that start, as it ends any start it cannot give its sandbox, and puts the
-app in. Its next start is held as a sandboxed app's. So none of a new app's
-code runs outside the sandbox.
+Android writes its package list (`/data/system/packages.list`) when it
+installs, updates or removes an app, and then makes the app's data
+directory for each user (`/data/user_de/<user>/<package>`). While the
+switch is on, the daemon watches for both (inotify) and puts the new app in
+the sandbox.
+
+The app may start first, when the installer opens it at once. While the
+gate is in place, it also holds the start of an app the daemon has not
+dealt with yet; the daemon ends that start, as it ends any start it cannot
+give its sandbox, and puts the app in, and the next start is held as a
+sandboxed app's. So no code of a new app runs outside the sandbox while the
+daemon runs and holds such starts, which `bbd sandbox status` reports as
+`new_apps_held`. Holding stops, and the daemon logs why, where the kernel
+side cannot be given what the daemon knows (more than 1024 apps installed
+since the switch was turned on); new apps are then still put in the
+sandbox as the daemon finds them. Apps installed while no daemon runs are
+put in when it starts, and any of their processes then running are ended.
+
+An app that cannot be put in, as when the app ops helper does not answer,
+is tried again after 10 seconds, then at longer intervals up to 5 minutes,
+and its starts are held meanwhile. `bbd sandbox status` reports how many
+new apps are not in the sandbox yet (`new_apps_pending`), and the global
+settings' status row says so.
 
 What the daemon knows of the installed apps is kept in the database, and
 forgotten when the switch is turned off. While it is off, nothing is
 watched, and a start of an app that is not sandboxed reads one value more.
 While it is on, such a start of an app installed before costs a bit test,
-and one of an app installed since a hash lookup more; the daemon wakes only
-when a file is written to `/data/system`.
+and one of an app installed since a hash lookup more. The daemon wakes when
+a file is written to `/data/system`, or a directory is made in a user's
+`/data/user_de`, which happens when apps are installed.
 
 ## How it works
 
