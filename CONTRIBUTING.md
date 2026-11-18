@@ -97,6 +97,15 @@ shell file has a license header.
 
 ## Releasing
 
+Every release must upgrade from the ones before it without losing records.
+In the commit that sets the new `version` in `module/module.prop`, add a
+database as the release writes it to `bbd/testdata/db/<version>.sql`: the
+statements of `SCHEMA` in `bbd/src/store.rs`, the schema version
+(`PRAGMA user_version`) and sample rows in every table, sandbox entries
+and settings included. List it in `RELEASES` in the tests of `store.rs`.
+`cargo test` fails until it is there, and from then on fails for a schema
+change that has no migration from it.
+
 Push a tag that matches `version` in `module/module.prop`, such as `v0.2.0`.
 `release.yml` builds the signed `.zip` and publishes it, with the R8
 mapping, as a GitHub release. It needs the repository secrets

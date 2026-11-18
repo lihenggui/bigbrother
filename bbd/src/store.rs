@@ -2005,42 +2005,6 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    /// The tables of v0.2.0's database (version 3), as it created them.
-    const V0_2_0_SCHEMA: &str = "
-CREATE TABLE access (
-    hour     INTEGER NOT NULL,
-    uid      INTEGER NOT NULL,
-    pkg      TEXT    NOT NULL,
-    cat      TEXT    NOT NULL,
-    path     TEXT    NOT NULL,
-    mode     INTEGER NOT NULL,
-    ok       INTEGER NOT NULL,
-    fail     INTEGER NOT NULL,
-    first_ts INTEGER NOT NULL,
-    last_ts  INTEGER NOT NULL,
-    items    INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (hour, uid, path, mode)
-) WITHOUT ROWID;
-CREATE INDEX access_uid_last ON access (uid, last_ts);
-CREATE INDEX access_last ON access (last_ts);
-CREATE TABLE meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL) WITHOUT ROWID;
-CREATE TABLE path (
-    id   INTEGER PRIMARY KEY,
-    path TEXT NOT NULL UNIQUE
-);
-CREATE TABLE event (
-    uid     INTEGER NOT NULL,
-    path_id INTEGER NOT NULL REFERENCES path (id),
-    mode    INTEGER NOT NULL,
-    ts      INTEGER NOT NULL,
-    ok      INTEGER NOT NULL,
-    fail    INTEGER NOT NULL,
-    PRIMARY KEY (uid, path_id, mode, ts)
-) WITHOUT ROWID;
-CREATE INDEX event_ts ON event (ts);
-PRAGMA user_version = 3;
-";
-
     /// Every column of every table, and every index, of the database at
     /// `path`, in an order that does not depend on how they were created.
     fn layout(path: &Path) -> Vec<String> {
@@ -2061,45 +2025,284 @@ PRAGMA user_version = 3;
         layout
     }
 
+    /// A released version, the schema version of the database it wrote, and
+    /// a database it could have written: the statements of `bbd/testdata/db/`.
+    struct Release {
+        version: &'static str,
+        schema: i32,
+        fixture: &'static str,
+    }
+
+    /// Every release, oldest first. Each release adds itself here, with a
+    /// fixture (CONTRIBUTING.md), so that every later schema change has to
+    /// bring its database along.
+    const RELEASES: &[Release] = &[Release {
+        version: "v0.2.0",
+        schema: 3,
+        fixture: include_str!("../testdata/db/v0.2.0.sql"),
+    }];
+
+    /// The tables of the database, by name, each with its columns.
+    fn tables(conn: &Connection) -> Vec<(String, Vec<String>)> {
+        let names: Vec<String> = conn
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type = 'table' \
+                 AND name NOT LIKE 'sqlite_%' ORDER BY name",
+            )
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        names
+            .into_iter()
+            .map(|table| {
+                let columns = conn
+                    .prepare("SELECT name FROM pragma_table_info(?1) ORDER BY cid")
+                    .unwrap()
+                    .query_map([&table], |r| r.get(0))
+                    .unwrap()
+                    .map(Result::unwrap)
+                    .collect();
+                (table, columns)
+            })
+            .collect()
+    }
+
+    /// Every row of `table`, of the given columns only, sorted.
+    fn rows(conn: &Connection, table: &str, columns: &[String]) -> Vec<String> {
+        let mut stmt = conn
+            .prepare(&format!("SELECT {} FROM \"{table}\"", columns.join(", ")))
+            .unwrap();
+        let mut rows: Vec<String> = stmt
+            .query_map([], |r| {
+                (0..columns.len())
+                    .map(|i| r.get::<_, rusqlite::types::Value>(i))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(|values| format!("{values:?}"))
+            })
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        rows.sort();
+        rows
+    }
+
     #[test]
-    fn a_v0_2_0_database_is_migrated_with_its_records() {
-        let dir = std::env::temp_dir().join(format!("bbd-test-migrate-{}", std::process::id()));
+    fn the_database_of_every_release_is_migrated_with_everything_in_it() {
+        for release in RELEASES {
+            let version = release.version;
+            let dir = std::env::temp_dir()
+                .join(format!("bbd-test-release-{version}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let db = dir.join("bb.db");
+            let fresh = dir.join("fresh.db");
+
+            let conn = Connection::open(&db).unwrap();
+            conn.execute_batch(release.fixture).unwrap();
+            assert_eq!(
+                version_of(&conn).unwrap(),
+                release.schema,
+                "the fixture of {version} is at another schema version"
+            );
+            let before: Vec<(String, Vec<String>, Vec<String>)> = tables(&conn)
+                .into_iter()
+                .map(|(table, columns)| {
+                    let rows = rows(&conn, &table, &columns);
+                    (table, columns, rows)
+                })
+                .collect();
+            for (table, _, rows) in &before {
+                assert!(
+                    !rows.is_empty(),
+                    "the fixture of {version} has no rows in {table}"
+                );
+            }
+            drop(conn);
+
+            let w = Writer::open(&db).unwrap();
+            assert!(
+                !dir.join("bb.db.old").exists(),
+                "the database of {version} was set aside"
+            );
+            assert_eq!(version_of(&w.conn).unwrap(), SCHEMA_VERSION);
+            // Every row of every table it had, with every value, and nothing
+            // in the tables added since.
+            for (table, columns, rows_before) in &before {
+                assert_eq!(
+                    &rows(&w.conn, table, columns),
+                    rows_before,
+                    "{table} of {version} changed"
+                );
+            }
+            for (table, columns) in tables(&w.conn) {
+                if !before.iter().any(|(t, _, _)| *t == table) {
+                    assert!(
+                        rows(&w.conn, &table, &columns).is_empty(),
+                        "{table} has rows the database of {version} did not"
+                    );
+                }
+            }
+            drop(w);
+            drop(Writer::open(&fresh).unwrap());
+            assert_eq!(layout(&db), layout(&fresh), "{version}");
+
+            // Opened again, it is left as it is, and the sandbox works in it
+            // as in a new one.
+            let w = Writer::open(&db).unwrap();
+            for (table, columns, rows_before) in &before {
+                assert_eq!(&rows(&w.conn, table, columns), rows_before, "{version}");
+            }
+            w.put_sandbox(&sandbox_entry_for(10999)).unwrap();
+            assert_eq!(
+                w.sandbox_entry(10999).unwrap(),
+                Some(sandbox_entry_for(10999))
+            );
+            drop(w);
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn the_records_of_v0_2_0_read_as_they_were_recorded() {
+        let dir = std::env::temp_dir().join(format!("bbd-test-v0.2.0-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let db = dir.join("bb.db");
-        let fresh = dir.join("fresh.db");
-        let conn = Connection::open(&db).unwrap();
-        conn.execute_batch(V0_2_0_SCHEMA).unwrap();
-        conn.execute(
-            "INSERT INTO access VALUES (1, 10100, 'com.a', 'storage', '/sdcard/a.jpg', 1, 2, 0, 3600, 3601, 0)",
-            [],
-        )
-        .unwrap();
-        conn.execute("INSERT INTO path VALUES (1, '/sdcard/a.jpg')", [])
+        Connection::open(&db)
+            .unwrap()
+            .execute_batch(RELEASES[0].fixture)
             .unwrap();
-        conn.execute("INSERT INTO event VALUES (10100, 1, 1, 3600, 2, 0)", [])
-            .unwrap();
-        drop(conn);
+        drop(Writer::open(&db).unwrap());
+        let r = Reader::open(&db).unwrap();
 
-        let w = Writer::open(&db).unwrap();
-        assert!(!dir.join("bb.db.old").exists());
-        assert_eq!(version_of(&w.conn).unwrap(), SCHEMA_VERSION);
-        let kept: (i64, i64) = w
-            .conn
-            .query_row(
-                "SELECT (SELECT count(*) FROM access), (SELECT count(*) FROM event)",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
+        let stats = r.stats().unwrap();
+        assert_eq!((stats.rows, stats.apps), (14, 4));
+        assert_eq!(
+            (stats.oldest_ts, stats.newest_ts),
+            (Some(1_760_004_000), Some(1_760_007_705))
+        );
+        assert_eq!(stats.meta.len(), 13);
+        assert_eq!(stats.meta["events_seen"], 1_234_567);
+        assert_eq!(stats.meta["last_flush"], 1_760_007_710);
+        assert_eq!(stats.meta["coverage_netlink"], 0);
+        assert_eq!(stats.meta["coverage_binder"], -1);
+
+        let apps = r.apps(0).unwrap();
+        let app = |uid: u32| apps.iter().find(|a| a.uid == uid).unwrap();
+        assert_eq!(apps.len(), 4);
+        let gallery = app(10123);
+        assert_eq!(gallery.pkg, "com.example.gallery");
+        assert_eq!((gallery.storage, gallery.provider), (2, 1));
+        assert_eq!(gallery.last_ts, 1_760_007_705);
+        let tracker = app(10124);
+        assert_eq!(
+            [
+                tracker.device,
+                tracker.system,
+                tracker.process,
+                tracker.network,
+                tracker.command,
+                tracker.personal,
+                tracker.service,
+                tracker.permission,
+            ],
+            [1; 8]
+        );
+        assert_eq!(app(10200).pkg, "");
+        assert_eq!(app(1_010_123).storage, 1);
+
+        let photo = "/storage/emulated/0/DCIM/Camera/IMG_0001.jpg";
+        let files = r
+            .files(&[10123], &[Category::Storage], None, None, 0, 50, 0)
             .unwrap();
-        assert_eq!(kept, (1, 1));
-        // The sandbox works in it as in a new one.
-        w.put_sandbox(&sandbox_entry_for(10100)).unwrap();
-        assert!(w.sandbox_entry(10100).unwrap().is_some());
-        drop(w);
-        drop(Writer::open(&fresh).unwrap());
-        assert_eq!(layout(&db), layout(&fresh));
+        assert_eq!(files.len(), 2);
+        let merged = files.iter().find(|f| f.path == photo).unwrap();
+        assert_eq!((merged.mode, merged.ok, merged.fail), (MODE_READ, 4, 1));
+        assert_eq!(
+            (merged.first_ts, merged.last_ts),
+            (1_760_004_010, 1_760_007_705)
+        );
+        let document = files.iter().find(|f| f.path != photo).unwrap();
+        assert_eq!(
+            document.path,
+            "/storage/emulated/0/Documents/O'Brien résumé.pdf"
+        );
+        assert_eq!(document.mode, MODE_READ | MODE_VIA_PROVIDER);
+        let queried = r
+            .files(&[], &[Category::Personal], None, None, 0, 50, 0)
+            .unwrap();
+        assert_eq!(queried.len(), 1);
+        assert_eq!((queried[0].mode, queried[0].items), (MODE_QUERY, 120));
+
+        let history = r.history(10123, photo, 0).unwrap();
+        assert_eq!(
+            history
+                .iter()
+                .map(|h| (h.ts, h.ok, h.fail))
+                .collect::<Vec<_>>(),
+            [
+                (1_760_007_705, 0, 1),
+                (1_760_007_700, 1, 0),
+                (1_760_004_050, 1, 0),
+                (1_760_004_010, 2, 0),
+            ]
+        );
+        assert_eq!(
+            r.history(1_010_123, "/storage/emulated/10/Pictures/a.png", 0)
+                .unwrap()[0]
+                .mode,
+            MODE_WRITE
+        );
+        assert!(
+            !r.timeline(0, 1_760_010_000, 100)
+                .unwrap()
+                .entries
+                .is_empty()
+        );
+        assert!(r.sandbox_entries().unwrap().is_empty());
+        assert_eq!(r.sandbox_global().unwrap(), "");
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_current_version_and_every_release_schema_have_a_way_to_this_one() {
+        // The version is raised when a release is made: the release has to
+        // add itself to RELEASES, with the database it writes.
+        let prop = include_str!("../../module/module.prop");
+        let current = prop
+            .lines()
+            .find_map(|line| line.strip_prefix("version="))
+            .unwrap()
+            .trim();
+        assert!(
+            RELEASES.iter().any(|r| r.version == current),
+            "{current} has no fixture in RELEASES (see CONTRIBUTING.md)"
+        );
+        for pair in RELEASES.windows(2) {
+            assert!(pair[0].schema <= pair[1].schema, "RELEASES is not in order");
+        }
+        // The steps from each release's schema, followed as `migrate` does,
+        // reach this one.
+        for release in RELEASES {
+            let mut version = release.schema;
+            for _ in 0..=MIGRATIONS.len() {
+                if version == SCHEMA_VERSION {
+                    break;
+                }
+                let Some(&(_, to, _)) = MIGRATIONS.iter().find(|(from, _, _)| *from == version)
+                else {
+                    break;
+                };
+                version = to;
+            }
+            assert_eq!(
+                version, SCHEMA_VERSION,
+                "the steps in MIGRATIONS from schema {} of {} end at {version}, not {SCHEMA_VERSION}",
+                release.schema, release.version
+            );
+        }
     }
 
     #[test]

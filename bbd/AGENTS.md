@@ -55,11 +55,13 @@ JSON.
 - SQLite at `/data/adb/big_brother/bb.db`, records kept 30 days.
 - The schema is `SCHEMA` in `src/store.rs`, at `SCHEMA_VERSION`. A schema
   change edits `SCHEMA`, bumps the version and adds the step from the
-  previous version to `MIGRATIONS`, with a test that a database of the
-  previous release keeps its records and sandbox. Steps exist from released
-  versions only (v0.2.0 wrote version 3). The daemon migrates a database
-  when it starts; one at a version with no step is set aside (`bb.db.old`)
-  and a new one started. The query commands read the current version only.
+  previous version to `MIGRATIONS`. The database of every release
+  (`testdata/db/`, `RELEASES` in the tests of `store.rs`) must migrate
+  with all its records and sandbox; a release adds its own
+  (CONTRIBUTING.md). Steps exist from released versions only (v0.2.0 wrote
+  version 3). The daemon migrates a database when it starts; one at a
+  version with no step is set aside (`bb.db.old`) and a new one started.
+  The query commands read the current version only.
 
 ## Power and performance
 
