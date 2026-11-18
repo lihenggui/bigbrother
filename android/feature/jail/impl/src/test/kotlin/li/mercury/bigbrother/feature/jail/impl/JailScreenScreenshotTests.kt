@@ -41,6 +41,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.annotation.LooperMode
@@ -125,7 +126,7 @@ class JailScreenScreenshotTests {
     @Test
     fun givenInstalledApps_whenAdding_thenListedByNameWithChoiceCounted() {
         composeTestRule.captureForDevice("phone", DefaultTestDevices.PHONE.spec, "JailAddApps") {
-            val locale = Locale.getDefault()
+            val locale = demoLocale()
             val apps = listOf(DemoApp.CHAT, DemoApp.PUZZLE, DemoApp.NEWS, DemoApp.KEYBOARD, DemoApp.NOTES, DemoApp.PHOTO_EDITOR, DemoApp.STEP_COUNTER)
                 .map { InstalledApp(it.packageName, it.uid, it.appInfo(locale)) }
                 .sortedByName { it.info.label }
@@ -142,7 +143,7 @@ class JailScreenScreenshotTests {
 
     /** Three apps put in the sandbox over the last days, one with settings of its own. */
     private fun isolatedApps(): List<IsolatedApp> {
-        val locale = Locale.getDefault()
+        val locale = demoLocale()
         val day = 24 * 60 * 60L
         return listOf(
             Triple(DemoApp.WEATHER, clock.todayAt(9, 12) - 2 * day, mapOf(SandboxItem.LOCATION to SandboxMode.COARSE)),
@@ -178,7 +179,7 @@ class JailScreenScreenshotTests {
             state = JailAppUiState(
                 packageName = app.packageName,
                 app = sandboxedApp(app, clock.todayAt(9, 12) - 2 * 24 * 60 * 60L, settings),
-                info = app.appInfo(Locale.getDefault()),
+                info = app.appInfo(demoLocale()),
                 status = FULL_STATUS,
                 requested = setOf("android.permission.ACCESS_FINE_LOCATION", "android.permission.ACCESS_COARSE_LOCATION"),
                 loading = false,
@@ -204,6 +205,9 @@ class JailScreenScreenshotTests {
         settings = settings,
         items = SandboxItem.entries.associateWith { settings[it] ?: SandboxMode.ON },
     )
+
+    /** The language the screenshot is taken in, as the test's qualifiers set it. */
+    private fun demoLocale(): Locale = RuntimeEnvironment.getApplication().resources.configuration.locales[0]
 
     private companion object {
         val FULL_STATUS = SandboxStatus(gate = true, appOps = true, androidIdHook = true, appListHook = true)
