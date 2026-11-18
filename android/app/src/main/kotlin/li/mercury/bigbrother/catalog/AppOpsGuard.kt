@@ -87,6 +87,12 @@ import kotlin.system.exitProcess
  * daemon does not know it: then the state saved here is put back, and
  * where there is none the permission only loses its `user_fixed` flag.
  *
+ * Before the answer to `set`, `apply` and `verify`, and whenever a check
+ * finds it changed, it prints `unheld <uid> <name>,...` (`-` for none):
+ * what the uid is held to that the system did not keep even after it was
+ * set again, ops at their mode and permissions revoked. Ops this device
+ * does not have are not named.
+ *
  * A command that fails is answered with `failed <uid>`, and the reason goes
  * to the error output. So is one the system took none of: a `set` after
  * which no op has its mode must not pass for one that worked, and a
@@ -149,6 +155,9 @@ object AppOpsGuard {
 
     /** The guarded uids. */
     private val guarded = mutableMapOf<Int, Guard>()
+
+    /** The unheld ops last printed for each guarded uid. */
+    private val reported = mutableMapOf<Int, List<String>>()
 
     private val changes = LinkedBlockingQueue<Unit>()
 
@@ -313,6 +322,7 @@ object AppOpsGuard {
                 // Ops this Android version doesn't have are nothing to hold.
                 if (targets.ops.keys.any(::isKnown) && taken == 0) error("the system took none of the modes")
                 for (permission in targets.permissions) permissions().hold(uid, permission)
+                reportUnheld(uid, verify(uid), always = true)
                 emit(AppOpsGuardProtocol.savedLine(uid, Values(saved, found.toList())))
             }
 
@@ -337,6 +347,7 @@ object AppOpsGuard {
                 val known = command.resets.ops.any { (name, _) -> isKnown(name) } || targets.ops.keys.any(::isKnown)
                 if (known && taken == 0) error("the system took none of the modes")
                 for (permission in targets.permissions) permissions().hold(uid, permission)
+                reportUnheld(uid, verify(uid), always = true)
                 emit(AppOpsGuardProtocol.appliedLine(uid, found.toList()))
             }
 
@@ -362,6 +373,7 @@ object AppOpsGuard {
                     permissions().putBack(uid, permission, state ?: guard?.tookPermissions?.get(permission))
                 }
                 guarded.remove(uid)
+                reported.remove(uid)
                 emit(AppOpsGuardProtocol.restoredLine(uid))
             }
 
@@ -369,6 +381,7 @@ object AppOpsGuard {
                 // The daemon gave up on a `set` it got no answer to, and does
                 // not have what was saved: put that back from here.
                 val guard = guarded.remove(uid)
+                reported.remove(uid)
                 for ((name, mode) in guard?.saved.orEmpty()) {
                     val op = ops.find { it.name == name } ?: continue
                     setUidMode(name, op.code, uid, mode ?: op.defaultMode ?: MODE_DEFAULT)
@@ -386,7 +399,7 @@ object AppOpsGuard {
             is Command.Verify -> {
                 val guard = guarded[uid]
                 guarded[uid] = Guard(guard?.saved, command.targets, guard?.tookPermissions.orEmpty())
-                verify(uid)
+                reportUnheld(uid, verify(uid), always = true)
                 emit(AppOpsGuardProtocol.verifiedLine(uid))
             }
         }
@@ -409,21 +422,38 @@ object AppOpsGuard {
         return setUidMode(name, op.code, uid, mode)
     }
 
-    /** Set what [uid] is held to again where it no longer is. */
-    private fun verify(uid: Int) {
-        val targets = guarded[uid]?.targets ?: return
-        for (name in AppOpsGuardProtocol.opsToSetAgain(states(uid), targets.ops)) {
+    /**
+     * Set what [uid] is held to again where it no longer is. Returns what
+     * still is not after that: the ops the system did not keep at their
+     * mode, and the permissions it did not keep revoked.
+     */
+    private fun verify(uid: Int): List<String> {
+        val targets = guarded[uid]?.targets ?: return emptyList()
+        val again = AppOpsGuardProtocol.opsToSetAgain(states(uid), targets.ops)
+        for (name in again) {
             if (setKnown(name, uid, targets.ops.getValue(name))) {
                 emit(AppOpsGuardProtocol.revertedLine(uid, name))
             }
         }
+        // Read again only when something was set again: otherwise every op
+        // was found as it is held.
+        val unheld = if (again.isEmpty()) mutableListOf() else AppOpsGuardProtocol.opsToSetAgain(states(uid), targets.ops).toMutableList()
         for (permission in targets.permissions) {
             try {
                 if (permissions().hold(uid, permission)) emit(AppOpsGuardProtocol.revertedLine(uid, permission))
             } catch (e: Throwable) {
                 System.err.println("holding $permission for $uid: ${describe(e)}")
+                unheld += permission
             }
         }
+        return unheld
+    }
+
+    /** Print [unheld] for [uid]: [always], or if it changed since last printed. */
+    private fun reportUnheld(uid: Int, unheld: List<String>, always: Boolean) {
+        if (!always && reported[uid] == unheld) return
+        reported[uid] = unheld
+        emit(AppOpsGuardProtocol.unheldLine(uid, unheld))
     }
 
     /** The guarded ops' uid modes for [uid], as the service reports them. */
@@ -500,7 +530,7 @@ object AppOpsGuard {
             synchronized(lock) {
                 for (uid in guarded.keys.toList()) {
                     try {
-                        verify(uid)
+                        reportUnheld(uid, verify(uid), always = false)
                     } catch (e: Throwable) {
                         System.err.println("checking $uid: ${describe(e)}")
                     }

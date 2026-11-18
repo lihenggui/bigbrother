@@ -69,6 +69,9 @@ internal object AppOpsGuardProtocol {
         "android:record_audio",
         "android:body_sensors",
         "android:activity_recognition",
+        "android:read_heart_rate",
+        "android:read_skin_temperature",
+        "android:read_oxygen_saturation",
         "android:get_usage_stats",
         "android:read_external_storage",
         "android:write_external_storage",
@@ -306,6 +309,8 @@ internal object AppOpsGuardProtocol {
     fun revertedLine(uid: Int, name: String): String = "reverted $uid $name"
 
     fun verifiedLine(uid: Int): String = "verified $uid"
+
+    fun unheldLine(uid: Int, ops: List<String>): String = "unheld $uid ${ops.joinToString(",").ifEmpty { NONE }}"
 
     fun failedLine(uid: Int): String = "failed $uid"
 }

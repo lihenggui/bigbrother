@@ -174,7 +174,7 @@ internal fun JailAppScreen(
                                 mode = app.modeOf(item),
                                 choice = app.settings[item],
                                 globalMode = state.global[item] ?: SandboxMode.ON,
-                                inEffect = state.status?.supports(item) ?: true,
+                                unmet = app.unmet[item].orEmpty(),
                                 expanded = expanded == item,
                                 onExpandedChange = { open -> expanded = if (open) item else null },
                                 onCheckedChange = { on -> onSetOn(item, on) },

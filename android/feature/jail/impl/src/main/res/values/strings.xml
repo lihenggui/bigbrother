@@ -92,7 +92,9 @@
     <string name="jail_choices_hidden">Collapsed</string>
     <string name="jail_show_choices">Show choices</string>
     <string name="jail_hide_choices">Hide choices</string>
-    <string name="jail_not_in_effect">Not in effect on this device</string>
+    <string name="jail_not_in_effect_hook">Not in effect: enable System Framework in LSPosed and restart</string>
+    <string name="jail_not_in_effect_mounts">Not in effect: storage isolation is not running</string>
+    <string name="jail_not_in_effect_app_ops">Not in effect: the restriction is not held</string>
 
     <!-- The global settings. -->
     <string name="jail_settings_subtitle">For isolated apps without their own setting</string>

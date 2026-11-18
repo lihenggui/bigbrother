@@ -34,7 +34,12 @@ any way.
 | Identity | An ANDROID_ID of its own, fixed per app; no installed app other than itself and what came with the system | Hooks in system_server | LSPosed |
 
 The first three work without LSPosed. `bbd sandbox status` says which parts
-are in place on the device.
+are in place on the device. `bbd sandbox list` names, for each app, the
+items that are on but not in effect and the part each lacks: the mounts,
+the app ops (read back after they are set, and whenever the system changes
+them), or a hook. An item is in effect only with all its parts: the device
+identifiers, for one, need both the ANDROID_ID hook and the phone-state app
+ops.
 
 The sandbox applies to a uid. Packages that share a uid are sandboxed
 together, and `enable` names them.
@@ -69,7 +74,7 @@ Android's "only while using the app" does:
 | `location` | No location; with coarse, an approximate one only, as with precise location turned off | off, on, coarse, foreground |
 | `camera` | No camera image | off, on, foreground |
 | `microphone` | Silence | off, on, foreground |
-| `body_sensors` | No body sensor or activity data | off, on |
+| `body_sensors` | No body sensor or activity data, nor, from Android 16, heart rate, skin temperature or oxygen saturation | off, on |
 | `device_ids` | An ANDROID_ID of its own; no phone number or phone state | off, on |
 | `installed_apps` | No installed app but itself and the system's; no usage statistics | off, on |
 | `nearby_devices` | No Bluetooth or Wi-Fi devices nearby | off, on |

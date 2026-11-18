@@ -25,6 +25,7 @@ import li.mercury.bigbrother.core.data.root.RootShell
 import li.mercury.bigbrother.core.data.root.shellQuoted
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
+import li.mercury.bigbrother.core.model.SandboxPart
 import li.mercury.bigbrother.core.model.SandboxStatus
 import li.mercury.bigbrother.core.model.SandboxedApp
 import org.json.JSONException
@@ -157,7 +158,15 @@ internal class RootSandboxRepository @Inject constructor(
         created = getLong("created"),
         settings = getJSONObject("settings").toModes(),
         items = getJSONObject("items").toModes(),
+        unmet = optJSONObject("unmet")?.toParts().orEmpty(),
     )
+
+    /** Items and the parts of each not in place; what this build doesn't know is left out. */
+    private fun JSONObject.toParts(): Map<SandboxItem, Set<SandboxPart>> = keys().asSequence().mapNotNull { key ->
+        val item = SandboxItem.fromId(key) ?: return@mapNotNull null
+        val names = getJSONArray(key)
+        item to List(names.length()) { names.getString(it) }.mapNotNullTo(mutableSetOf(), SandboxPart::fromId)
+    }.toMap()
 
     /** Items and modes by name; what this build doesn't know is left out. */
     private fun JSONObject.toModes(): Map<SandboxItem, SandboxMode> = keys().asSequence().mapNotNull { key ->

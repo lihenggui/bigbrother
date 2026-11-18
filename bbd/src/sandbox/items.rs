@@ -163,7 +163,14 @@ impl Item {
             ],
             Item::Camera => &["android:camera"],
             Item::Microphone => &["android:record_audio"],
-            Item::BodySensors => &["android:body_sensors", "android:activity_recognition"],
+            Item::BodySensors => &[
+                "android:body_sensors",
+                "android:activity_recognition",
+                // From Android 16, which splits the body sensors permission.
+                "android:read_heart_rate",
+                "android:read_skin_temperature",
+                "android:read_oxygen_saturation",
+            ],
             Item::DeviceIds => &["android:read_phone_state", "android:read_phone_numbers"],
             Item::InstalledApps => &["android:get_usage_stats"],
             Item::NearbyDevices => &[
@@ -191,6 +198,38 @@ const SWITCHED_WITH_ANOTHER: &[&str] = &["android:wifi_scan"];
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Settings(BTreeMap<Item, Mode>);
+
+/// What carries out an item. Most items are only app ops; storage is app
+/// ops and mounts, the device identifiers and the installed apps are app
+/// ops and an answer of the system server hook.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Part {
+    Mounts,
+    AppOps,
+    AndroidIdHook,
+    AppListHook,
+}
+
+impl Part {
+    pub fn name(self) -> &'static str {
+        match self {
+            Part::Mounts => "mounts",
+            Part::AppOps => "app_ops",
+            Part::AndroidIdHook => "android_id_hook",
+            Part::AppListHook => "app_list_hook",
+        }
+    }
+}
+
+/// Which parts that serve every app are in place on the device. Whether
+/// an app's ops are held is the app's own.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct InPlace {
+    pub mounts: bool,
+    pub android_id_hook: bool,
+    pub app_list_hook: bool,
+}
 
 /// What the sandbox mounts in an app's namespace as it starts.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -311,22 +350,69 @@ impl Settings {
     /// foreground. Location made coarse holds none of its ops: it takes a
     /// permission instead ([`Self::taken_permissions`]).
     pub fn op_targets(&self) -> Vec<(&'static str, OpMode)> {
-        let mut targets = Vec::new();
+        Item::ALL
+            .into_iter()
+            .flat_map(|item| self.op_targets_of(item))
+            .collect()
+    }
+
+    /// The app ops `item` holds the app to in its mode here.
+    fn op_targets_of(&self, item: Item) -> Vec<(&'static str, OpMode)> {
+        match self.mode(item) {
+            Mode::On => item.ops().iter().map(|op| (*op, OpMode::Ignored)).collect(),
+            // An op switched with another is held through that one:
+            // holding it as well would set the same uid mode twice.
+            Mode::Foreground => item
+                .ops()
+                .iter()
+                .filter(|op| !SWITCHED_WITH_ANOTHER.contains(op))
+                .map(|op| (*op, OpMode::Foreground))
+                .collect(),
+            Mode::Off | Mode::Coarse => Vec::new(),
+        }
+    }
+
+    /// What the app ops helper holds for `item` in its mode here, by name:
+    /// its app ops, and the permissions it takes.
+    fn held_for(&self, item: Item) -> Vec<&'static str> {
+        let mut names: Vec<&'static str> = self
+            .op_targets_of(item)
+            .into_iter()
+            .map(|(op, _)| op)
+            .collect();
+        if item == Item::Location && self.mode(item) == Mode::Coarse {
+            names.push(PRECISE_LOCATION);
+        }
+        names
+    }
+
+    /// The parts of each item that is on that are not in place for an app
+    /// with these settings: an item is in effect only with all its parts.
+    /// `held` says whether the helper holds the app to an op or permission.
+    pub fn unmet(&self, parts: &InPlace, held: impl Fn(&str) -> bool) -> BTreeMap<Item, Vec<Part>> {
+        let mut unmet = BTreeMap::new();
         for item in Item::ALL {
-            match self.mode(item) {
-                Mode::On => targets.extend(item.ops().iter().map(|op| (*op, OpMode::Ignored))),
-                // An op switched with another is held through that one:
-                // holding it as well would set the same uid mode twice.
-                Mode::Foreground => targets.extend(
-                    item.ops()
-                        .iter()
-                        .filter(|op| !SWITCHED_WITH_ANOTHER.contains(op))
-                        .map(|op| (*op, OpMode::Foreground)),
-                ),
-                Mode::Off | Mode::Coarse => {}
+            if self.mode(item) == Mode::Off {
+                continue;
+            }
+            let mut missing = Vec::new();
+            if matches!(item, Item::Storage | Item::CpuInfo) && !parts.mounts {
+                missing.push(Part::Mounts);
+            }
+            if self.held_for(item).into_iter().any(|name| !held(name)) {
+                missing.push(Part::AppOps);
+            }
+            if item == Item::DeviceIds && !parts.android_id_hook {
+                missing.push(Part::AndroidIdHook);
+            }
+            if item == Item::InstalledApps && !parts.app_list_hook {
+                missing.push(Part::AppListHook);
+            }
+            if !missing.is_empty() {
+                unmet.insert(item, missing);
             }
         }
-        targets
+        unmet
     }
 
     /// The runtime permissions to keep revoked: the precise location while
@@ -446,6 +532,56 @@ mod tests {
         // Following the global settings again.
         own.set(Item::Microphone, None).unwrap();
         assert_eq!(own.over(&global).mode(Item::Microphone), Mode::Off);
+    }
+
+    #[test]
+    fn an_item_is_in_effect_only_with_all_its_parts() {
+        let all = InPlace {
+            mounts: true,
+            android_id_hook: true,
+            app_list_hook: true,
+        };
+        let items = Settings::all_on();
+        assert!(items.unmet(&all, |_| true).is_empty());
+
+        // The ANDROID_ID answered but the phone's state not held: the
+        // device identifiers are not in effect, for that part only.
+        let unmet = items.unmet(&all, |op| op != "android:read_phone_state");
+        assert_eq!(unmet.len(), 1);
+        assert_eq!(unmet[&Item::DeviceIds], [Part::AppOps]);
+
+        let none = InPlace::default();
+        let unmet = items.unmet(&none, |_| false);
+        assert_eq!(unmet[&Item::Storage], [Part::Mounts, Part::AppOps]);
+        assert_eq!(unmet[&Item::CpuInfo], [Part::Mounts]);
+        assert_eq!(unmet[&Item::DeviceIds], [Part::AppOps, Part::AndroidIdHook]);
+        assert_eq!(
+            unmet[&Item::InstalledApps],
+            [Part::AppOps, Part::AppListHook]
+        );
+        assert_eq!(unmet[&Item::Camera], [Part::AppOps]);
+    }
+
+    #[test]
+    fn items_that_are_off_coarse_or_foreground_ask_only_for_what_they_do() {
+        let mut own = Settings::default();
+        for item in Item::ALL {
+            own.set(item, Some(Mode::Off)).unwrap();
+        }
+        own.set(Item::Location, Some(Mode::Coarse)).unwrap();
+        let items = own.over(&Settings::default());
+        // Coarse takes the precise location permission and holds no op: the
+        // location ops not being held is nothing missing.
+        let held = |name: &str| name == PRECISE_LOCATION;
+        assert!(items.unmet(&InPlace::default(), held).is_empty());
+        let unmet = items.unmet(&InPlace::default(), |_| false);
+        assert_eq!(unmet.keys().copied().collect::<Vec<_>>(), [Item::Location]);
+
+        // Foreground holds the camera op, at another mode.
+        own.set(Item::Camera, Some(Mode::Foreground)).unwrap();
+        let items = own.over(&Settings::default());
+        let unmet = items.unmet(&InPlace::default(), |name| name == PRECISE_LOCATION);
+        assert_eq!(unmet.keys().copied().collect::<Vec<_>>(), [Item::Camera]);
     }
 
     #[test]

@@ -67,7 +67,7 @@ mod mounts;
 pub mod sweep;
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fs::File,
     io::{Read as _, Write as _},
     path::{Path, PathBuf},
@@ -84,7 +84,7 @@ use crate::{
 };
 
 pub use crate::store::SandboxEntry as Entry;
-use items::{Item, Mode, Settings};
+use items::{InPlace, Item, Mode, Part, Settings};
 
 /// App ids from here up belong to installed apps. Below are the system's
 /// own uids, which are shared by many components and cannot be sandboxed.
@@ -255,6 +255,10 @@ pub struct ListedApp {
     pub settings: Settings,
     /// What applies to it: its own settings over the global ones.
     pub items: Settings,
+    /// For an app in the sandbox, the items that are on but not in effect,
+    /// each with the parts that are not in place.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub unmet: BTreeMap<Item, Vec<Part>>,
 }
 
 /// The answer to `sandbox.global` and `sandbox.set_global`: every item,
@@ -289,6 +293,10 @@ pub struct Status {
     pub failed: u64,
     /// How long starts were held, 95th percentile, in microseconds.
     pub hold_p95_us: u64,
+    /// The ops each sandboxed uid is held to and the system keeps, by uid:
+    /// what [`Sandbox::list`] reports per app.
+    #[serde(skip)]
+    pub held_ops: BTreeMap<u32, BTreeSet<String>>,
 }
 
 /// What the system server hook reports it has in place.
@@ -646,13 +654,27 @@ impl Sandbox {
     /// Every entry, enabled or not.
     fn list(&self, writer: &Writer) -> anyhow::Result<Listed> {
         let global = self.global_read();
+        let status = self.status();
+        let in_place = InPlace {
+            mounts: status.gate,
+            android_id_hook: status.hook.android_id,
+            app_list_hook: status.hook.app_list,
+        };
         let apps = writer
             .sandbox_entries()?
             .into_iter()
             .map(|entry| {
                 let settings = Settings::parse(&entry.settings);
+                let items = settings.over(&global);
+                let unmet = if entry.enabled {
+                    let held = status.held_ops.get(&entry.uid);
+                    items.unmet(&in_place, |op| held.is_some_and(|held| held.contains(op)))
+                } else {
+                    BTreeMap::new()
+                };
                 ListedApp {
-                    items: settings.over(&global),
+                    unmet,
+                    items,
                     uid: entry.uid,
                     package: entry.package,
                     enabled: entry.enabled,
@@ -1037,6 +1059,16 @@ fn print_list(out: &mut impl std::io::Write, listed: &Listed) -> std::io::Result
             format!(" ({})", not_on.join(", "))
         };
         writeln!(out, "{:<10} {state:<9} {}{not_on}", app.uid, app.package)?;
+        for (item, parts) in &app.unmet {
+            let parts: Vec<&str> = parts.iter().map(|part| part.name()).collect();
+            writeln!(
+                out,
+                "{:<20} {} not in effect, missing {}",
+                "",
+                item.name(),
+                parts.join(", ")
+            )?;
+        }
     }
     Ok(())
 }
@@ -2289,6 +2321,7 @@ mod tests {
                         created: 0,
                         settings: Settings::default(),
                         items: Settings::default(),
+                        unmet: BTreeMap::new(),
                     },
                     ListedApp {
                         uid: 10200,
@@ -2298,6 +2331,10 @@ mod tests {
                         settings: Settings::parse("camera=off"),
                         items: Settings::parse("camera=off")
                             .over(&Settings::parse("location=coarse")),
+                        unmet: BTreeMap::from([(
+                            Item::DeviceIds,
+                            vec![Part::AppOps, Part::AndroidIdHook],
+                        )]),
                     },
                 ],
             },
@@ -2311,6 +2348,7 @@ mod tests {
              UID        STATE     PACKAGE\n\
              10100      disabled  com.app\n\
              10200      enabled   com.shared.one (location coarse, camera off)\n\
+             \x20                    device_ids not in effect, missing app_ops, android_id_hook\n\
              No apps in the sandbox.\n"
         );
     }

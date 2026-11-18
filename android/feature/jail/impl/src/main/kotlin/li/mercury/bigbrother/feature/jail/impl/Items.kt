@@ -36,6 +36,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
+import li.mercury.bigbrother.core.model.SandboxPart
 
 /** The items by what they keep from the app, as the global settings list them. */
 internal enum class ItemGroup(@StringRes val title: Int, val items: List<SandboxItem>) {
@@ -139,6 +140,17 @@ internal fun modeLabel(item: SandboxItem, mode: SandboxMode): String = stringRes
         SandboxMode.OFF -> R.string.jail_mode_off
     },
 )
+
+/**
+ * Why an item is not in effect, from the parts of it not in place: what the
+ * user can do about it first, then what nobody can.
+ */
+@StringRes
+internal fun notInEffect(unmet: Set<SandboxPart>): Int = when {
+    SandboxPart.ANDROID_ID_HOOK in unmet || SandboxPart.APP_LIST_HOOK in unmet -> R.string.jail_not_in_effect_hook
+    SandboxPart.MOUNTS in unmet -> R.string.jail_not_in_effect_mounts
+    else -> R.string.jail_not_in_effect_app_ops
+}
 
 /** What [mode] of [item] means for the app. */
 @Composable
