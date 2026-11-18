@@ -407,6 +407,9 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
             }
         }
         tracer.settle_sensors(SENSOR_LIST_WAIT);
+        if let Some(sandbox) = sandbox.as_mut() {
+            sandbox.keep_found(&tracer.writer);
+        }
         // A failed write (disk full, database busy) keeps the batch for the
         // next attempt; it is not a reason to stop recording.
         let written = match request {
@@ -433,6 +436,9 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     tracer.settle_sensors(Duration::from_secs(2));
     tracer.counters.dropped = dropped_events();
     tracer.expire(i64::MAX);
+    if let Some(sandbox) = sandbox.as_mut() {
+        sandbox.keep_found(&tracer.writer);
+    }
     tracer.writer.flush(&tracer.counters, now())?;
     // Sensors still on when it stopped were on at least until now; the next
     // run ends them here if their apps have ended by then.

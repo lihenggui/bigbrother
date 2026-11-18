@@ -412,6 +412,18 @@ check "the app ops are as they were${changed:+ (changed:$changed)}" [ -z "$chang
 check "the messages are back" [ "$(seen "$after" sms)" = "$(seen "$outside" sms)" ]
 check "the location is back ($(seen "$after" location))" [ "$(seen "$after" location)" = "$(seen "$outside" location)" ]
 
+# A permission granted while in the sandbox is the app's once it is out.
+echo "with contacts granted while in the sandbox:"
+adb shell pm revoke "$PACKAGE" android.permission.READ_CONTACTS
+as_root "$BBD sandbox enable $PACKAGE" >/dev/null
+adb shell pm grant "$PACKAGE" android.permission.READ_CONTACTS
+as_root "$BBD sandbox disable $PACKAGE" >/dev/null
+run_canary
+granted="$view"
+check "the contacts op is allowed ($(op_mode "$granted" android:read_contacts))" \
+    [ "$(op_mode "$granted" android:read_contacts)" = 0 ]
+check "the contacts are back ($(seen "$granted" contacts))" [ "$(seen "$granted" contacts)" = "$(seen "$outside" contacts)" ]
+
 if ((failed > 0)); then
     echo "$failed check(s) failed"
     exit 1

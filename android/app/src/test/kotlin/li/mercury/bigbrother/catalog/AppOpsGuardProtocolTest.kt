@@ -179,6 +179,85 @@ class AppOpsGuardProtocolTest {
     }
 
     @Test
+    fun givenModesSavedWithTheirGrants_whenEncodedAndDecoded_thenGrantsKeptByOp() {
+        val values = Values(
+            listOf("android:read_contacts" to 1, "android:camera" to null, "android:read_clipboard" to 1),
+            listOf(fine to PermissionState(granted = true, flags = 0)),
+            mapOf("android:read_contacts" to 1, "android:camera" to 4),
+        )
+        val text = AppOpsGuardProtocol.encodeValues(values)
+
+        assertEquals("android:read_contacts=1/1,android:camera=default/4,android:read_clipboard=1,$fine=granted", text)
+        assertEquals(values, AppOpsGuardProtocol.decodeValues(text))
+        assertEquals(
+            Command.Restore(10123, Values(listOf("android:read_contacts" to 1), emptyList(), mapOf("android:read_contacts" to 1))),
+            AppOpsGuardProtocol.parseCommand("restore 10123 android:read_contacts=1/1"),
+        )
+    }
+
+    @Test
+    fun givenModesSavedBeforeGrantsWere_whenDecoded_thenModesWithoutGrants() {
+        assertEquals(
+            Values(listOf("android:read_contacts" to 1, "android:camera" to null), emptyList()),
+            AppOpsGuardProtocol.decodeValues("android:read_contacts=1,android:camera=default"),
+        )
+    }
+
+    @Test
+    fun givenMalformedGrant_whenDecoded_thenNull() {
+        listOf(
+            "android:camera=1/",
+            "android:camera=1/x",
+            "android:camera=1/-1",
+            "android:camera=/1",
+            "android:camera=1/1/1",
+        ).forEach { assertNull(AppOpsGuardProtocol.decodeValues(it), it) }
+        assertNull(AppOpsGuardProtocol.parseCommand("set 10123 android:camera=1/1"))
+    }
+
+    @Test
+    fun givenPermissionGrants_whenTheirOpsMode_thenAllowedForegroundOrIgnored() {
+        assertEquals(AppOpsGuardProtocol.MODE_ALLOWED, AppOpsGuardProtocol.grantMode(granted = true, background = null))
+        assertEquals(AppOpsGuardProtocol.MODE_ALLOWED, AppOpsGuardProtocol.grantMode(granted = true, background = true))
+        assertEquals(AppOpsGuardProtocol.MODE_FOREGROUND, AppOpsGuardProtocol.grantMode(granted = true, background = false))
+        assertEquals(AppOpsGuardProtocol.MODE_IGNORED, AppOpsGuardProtocol.grantMode(granted = false, background = null))
+        assertEquals(AppOpsGuardProtocol.MODE_IGNORED, AppOpsGuardProtocol.grantMode(granted = false, background = true))
+    }
+
+    @Test
+    fun givenPermissionGrantedWhileHeld_whenRestored_thenSystemsModeForTheGrant() {
+        val ignored = AppOpsGuardProtocol.MODE_IGNORED
+        // Contacts not granted when saved, granted since.
+        assertEquals(AppOpsGuardProtocol.MODE_ALLOWED, AppOpsGuardProtocol.modeToRestore(ignored, ignored, AppOpsGuardProtocol.MODE_ALLOWED))
+        // The camera granted while in use, the background camera not being one's to have.
+        assertEquals(AppOpsGuardProtocol.MODE_FOREGROUND, AppOpsGuardProtocol.modeToRestore(ignored, ignored, AppOpsGuardProtocol.MODE_FOREGROUND))
+        // Location while in use when saved, all the time since.
+        assertEquals(AppOpsGuardProtocol.MODE_ALLOWED, AppOpsGuardProtocol.modeToRestore(4, 4, AppOpsGuardProtocol.MODE_ALLOWED))
+    }
+
+    @Test
+    fun givenPermissionRevokedWhileHeld_whenRestored_thenIgnored() {
+        assertEquals(AppOpsGuardProtocol.MODE_IGNORED, AppOpsGuardProtocol.modeToRestore(null, AppOpsGuardProtocol.MODE_ALLOWED, AppOpsGuardProtocol.MODE_IGNORED))
+    }
+
+    @Test
+    fun givenGrantAsWhenSaved_whenRestored_thenSavedMode() {
+        val allowed = AppOpsGuardProtocol.MODE_ALLOWED
+        // Ignored by the user's choice with the permission granted.
+        assertEquals(AppOpsGuardProtocol.MODE_IGNORED, AppOpsGuardProtocol.modeToRestore(AppOpsGuardProtocol.MODE_IGNORED, allowed, allowed))
+        assertNull(AppOpsGuardProtocol.modeToRestore(null, 4, 4))
+        assertEquals(1, AppOpsGuardProtocol.modeToRestore(1, 1, 1))
+    }
+
+    @Test
+    fun givenGrantNotKnown_whenRestored_thenSavedMode() {
+        // Saved before grants were, or with the permissions out of reach.
+        assertEquals(1, AppOpsGuardProtocol.modeToRestore(1, null, AppOpsGuardProtocol.MODE_ALLOWED))
+        assertEquals(1, AppOpsGuardProtocol.modeToRestore(1, 1, null))
+        assertNull(AppOpsGuardProtocol.modeToRestore(null, null, null))
+    }
+
+    @Test
     fun givenEveryPermissionState_whenEncoded_thenReadBackTheSame() {
         for (granted in listOf(true, false)) {
             for (flags in 0..AppOpsGuardProtocol.USER_FLAGS) {
@@ -281,5 +360,65 @@ class AppOpsGuardProtocolTest {
             AppOpsGuardProtocol.unheldLine(10100, listOf("android:camera", "android:read_sms")),
         )
         assertEquals("unheld 10100 -", AppOpsGuardProtocol.unheldLine(10100, emptyList()))
+    }
+
+    @Test
+    fun givenPermissionHeldByTheGuard_whenRestoringItsOp_thenGrantNotCompared() {
+        // Location made coarse: the precise permission is revoked by the guard, not the user.
+        assertFalse(AppOpsGuardProtocol.comparesGrant(fine, setOf(fine)))
+        assertTrue(AppOpsGuardProtocol.comparesGrant("android.permission.READ_CONTACTS", setOf(fine)))
+        assertFalse(AppOpsGuardProtocol.comparesGrant(null, emptySet()))
+    }
+
+    @Test
+    fun givenPermissionTakenAnewByApply_whenItsOpIsSetBack_thenGrantStillCompared() {
+        // Location on, then coarse: the precise permission is a target of the
+        // `apply` and taken only after the location ops are set back.
+        val command = AppOpsGuardProtocol.parseCommand(
+            "apply 10123 $fine=revoked android:coarse_location=1/1,android:fine_location=1/1",
+        ) as Command.Apply
+        val held = AppOpsGuardProtocol.heldWhileSettingBack(emptySet(), command.resets)
+
+        assertTrue(AppOpsGuardProtocol.comparesGrant(fine, held))
+    }
+
+    @Test
+    fun givenPermissionHeldOrGivenBack_whenItsOpIsSetBack_thenGrantNotCompared() {
+        val camera = "android.permission.CAMERA"
+        val resets = Values(listOf("android:camera" to 4), listOf(camera to null))
+        val held = AppOpsGuardProtocol.heldWhileSettingBack(setOf(fine), resets)
+
+        assertEquals(setOf(fine, camera), held)
+        assertFalse(AppOpsGuardProtocol.comparesGrant(fine, held))
+        assertFalse(AppOpsGuardProtocol.comparesGrant(camera, held))
+    }
+
+    @Test
+    fun givenHeldPermissionFoundGrantedAgain_whenReverted_thenItsStateIsReported() {
+        val found = PermissionState(granted = true, flags = FLAG_USER_SET)
+        assertEquals(found, AppOpsGuardProtocol.regranted(found))
+        assertNull(AppOpsGuardProtocol.regranted(PermissionState(granted = false, flags = 0)))
+        assertNull(AppOpsGuardProtocol.regranted(null))
+        assertEquals("reverted 10123 $fine=granted+user_set", AppOpsGuardProtocol.revertedLine(10123, fine, found))
+        assertEquals("reverted 10123 $fine", AppOpsGuardProtocol.revertedLine(10123, fine))
+        assertEquals("reverted 10123 android:camera", AppOpsGuardProtocol.revertedLine(10123, "android:camera"))
+    }
+
+    @Test
+    fun givenPermissionGrantedAgainWhileHeld_whenGivenBack_thenAsFoundWhateverTheDaemonSent() {
+        val before = PermissionState(granted = false, flags = FLAG_USER_SET)
+        val found = PermissionState(granted = true, flags = FLAG_USER_SET)
+        assertEquals(found, AppOpsGuardProtocol.stateToGiveBack(sent = before, kept = found, regranted = true))
+        assertEquals(found, AppOpsGuardProtocol.stateToGiveBack(sent = null, kept = found, regranted = true))
+    }
+
+    @Test
+    fun givenPermissionNotGrantedAgain_whenGivenBack_thenAsTheDaemonSentOrAsKept() {
+        val before = PermissionState(granted = false, flags = FLAG_USER_SET)
+        val kept = PermissionState(granted = true, flags = 0)
+        assertEquals(before, AppOpsGuardProtocol.stateToGiveBack(sent = before, kept = kept, regranted = false))
+        assertEquals(kept, AppOpsGuardProtocol.stateToGiveBack(sent = null, kept = kept, regranted = false))
+        assertEquals(before, AppOpsGuardProtocol.stateToGiveBack(sent = before, kept = null, regranted = true))
+        assertNull(AppOpsGuardProtocol.stateToGiveBack(sent = null, kept = null, regranted = false))
     }
 }

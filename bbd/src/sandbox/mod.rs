@@ -170,6 +170,13 @@ pub trait Effect {
 
     /// Fill in what the effect knows about its own state.
     fn report(&self, _status: &mut Status) {}
+
+    /// Bring the enabled `entries` up to date with what the effect found
+    /// changed by the user while their apps were sandboxed, since it was
+    /// last asked; the uids of the entries it changed, which are written.
+    fn found(&mut self, _entries: &mut HashMap<u32, Entry>) -> Vec<u32> {
+        Vec::new()
+    }
 }
 
 /// A sandboxed app taken up again by a daemon that just started.
@@ -434,12 +441,36 @@ impl Sandbox {
         self.snapshot.write().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// Keep in the entries, and write, what the effects found changed by
+    /// the user while the apps were sandboxed (`Effect::found`): called
+    /// with every write of the records, and before every command, which
+    /// may give back what the entries hold.
+    pub fn keep_found(&mut self, writer: &Writer) {
+        let snapshot = self.snapshot.clone();
+        let mut entries = snapshot.write().unwrap_or_else(|e| e.into_inner());
+        let mut changed: Vec<u32> = Vec::new();
+        for effect in &mut self.effects {
+            changed.extend(effect.found(&mut entries));
+        }
+        changed.sort_unstable();
+        changed.dedup();
+        for uid in changed {
+            if let Some(entry) = entries.get(&uid)
+                && let Err(e) = writer.put_sandbox(entry)
+            {
+                // Kept here all the same, and written with the next change.
+                eprintln!("bbd: sandbox: cannot write what was found for uid {uid}: {e:#}");
+            }
+        }
+    }
+
     /// Answer a request line from `bbd.ctl`.
     pub fn answer(&mut self, line: &str, writer: &Writer, packages: &mut Packages) -> String {
         let request = match Request::parse(line) {
             Ok(request) => request,
             Err(e) => return control::failure(&e),
         };
+        self.keep_found(writer);
         if !matches!(request, Request::SandboxStatus) {
             self.release_reassigned(writer, packages);
         }
@@ -1238,6 +1269,16 @@ mod tests {
         fn report(&self, status: &mut Status) {
             status.gate = true;
         }
+
+        /// Finds every entry's permission granted.
+        fn found(&mut self, entries: &mut HashMap<u32, Entry>) -> Vec<u32> {
+            let mut changed = Vec::new();
+            for entry in entries.values_mut() {
+                entry.saved_permissions = format!("{}=granted", self.name);
+                changed.push(entry.uid);
+            }
+            changed
+        }
     }
 
     /// Reads, while the effects of a change of items run, what a daemon
@@ -1490,6 +1531,29 @@ mod tests {
         sandbox.disable(&f.writer, &mut gone, "com.app", 0).unwrap();
         assert!(enabled(&sandbox).is_empty());
         assert!(!f.writer.sandbox_entry(10100).unwrap().unwrap().enabled);
+    }
+
+    #[test]
+    fn what_the_effects_find_changed_is_kept_and_written() {
+        let mut f = Fixture::new("sandbox-found");
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let mut sandbox = f.sandbox_with(vec![Recorder::new("appops", &log)]);
+        sandbox
+            .enable(&f.writer, &mut f.packages, "com.app", 0, 1000)
+            .unwrap();
+        sandbox.keep_found(&f.writer);
+        assert_eq!(
+            sandbox.snapshot_read()[&10100].saved_permissions,
+            "appops=granted"
+        );
+        assert_eq!(
+            f.writer
+                .sandbox_entry(10100)
+                .unwrap()
+                .unwrap()
+                .saved_permissions,
+            "appops=granted"
+        );
     }
 
     #[test]
