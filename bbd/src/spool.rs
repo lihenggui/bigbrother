@@ -32,9 +32,24 @@
 //! resolved to, when known.
 
 use std::{
-    fs,
-    path::{Path, PathBuf},
+    collections::BTreeMap,
+    fs::{self, File},
+    io::Read as _,
+    os::{
+        fd::{AsRawFd, FromRawFd},
+        unix::fs::MetadataExt as _,
+    },
+    path::PathBuf,
+    process::Command,
+    thread::JoinHandle,
+    time::{Duration, Instant},
 };
+
+use crate::{packages::PER_USER_RANGE, sandbox::dirs::Dir};
+
+const MAX_FILE: u64 = 4 * 1024 * 1024;
+const MAX_EVENTS: usize = 8192;
+const MAX_LINE: usize = 8192;
 
 /// Packages whose processes the hook is injected into. Must match the
 /// module's scope (`android/hook/src/main/resources/META-INF/xposed/scope.list`).
@@ -67,8 +82,10 @@ pub const PERSONAL_PACKAGES: &[&str] = &[
 /// the first unlock, unlike `/data/user`.
 const DATA_ROOT: &str = "/data/user_de";
 const SPOOL_DIR: &str = "big_brother";
+#[cfg(test)]
 const SPOOL_FILE: &str = "events.log";
 /// A spool file claimed for reading; see [`Spool::collect`].
+#[cfg(test)]
 const CLAIMED_FILE: &str = "events.log.ingest";
 const FORMAT_VERSION: &str = "1";
 
@@ -150,8 +167,17 @@ pub fn normalize_uri(uri: &str) -> String {
     out.chars().take(MAX_LEN).collect()
 }
 
+struct Host {
+    package: String,
+    app_id: u32,
+    storage: bool,
+}
+
 pub struct Spool {
     data_root: PathBuf,
+    trusted: Vec<Host>,
+    lookup: Option<JoinHandle<Vec<Host>>>,
+    retry: Option<Instant>,
 }
 
 impl Spool {
@@ -162,81 +188,183 @@ impl Spool {
     fn at(data_root: impl Into<PathBuf>) -> Self {
         Self {
             data_root: data_root.into(),
+            trusted: Vec::new(),
+            lookup: None,
+            retry: None,
         }
     }
 
-    /// Existing spool directories, and whether each is a storage provider's.
-    /// `hosts` lists the packages to look under, with that flag.
-    fn spool_dirs(&self, hosts: &[(String, bool)]) -> Vec<(PathBuf, bool)> {
-        let Ok(users) = fs::read_dir(&self.data_root) else {
-            return Vec::new();
-        };
-        users
-            .flatten()
-            .flat_map(|user| {
-                hosts.iter().map(move |(package, storage)| {
-                    (user.path().join(package).join(SPOOL_DIR), *storage)
-                })
-            })
-            .filter(|(dir, _)| dir.is_dir())
-            .collect()
+    pub fn collect(&mut self) -> Vec<ProviderEvent> {
+        if self.lookup.as_ref().is_some_and(JoinHandle::is_finished) {
+            self.trusted = self.lookup.take().unwrap().join().unwrap_or_default();
+        }
+        if self.trusted.is_empty()
+            && self.lookup.is_none()
+            && self
+                .retry
+                .is_none_or(|t| t.elapsed() >= Duration::from_secs(30))
+        {
+            self.retry = Some(Instant::now());
+            self.lookup = Some(std::thread::spawn(|| {
+                let Ok(result) = Command::new("/system/bin/cmd")
+                    .args([
+                        "package", "list", "packages", "-s", "-u", "-U", "--user", "0",
+                    ])
+                    .output()
+                else {
+                    return Vec::new();
+                };
+                if !result.status.success() {
+                    return Vec::new();
+                }
+                system_hosts(&String::from_utf8_lossy(&result.stdout))
+            }));
+        }
+        self.read_hosts()
     }
 
-    /// Return the events ready to be ingested. Call this periodically.
-    ///
-    /// The hook appends to the spool file while we read, so a file is taken
-    /// in two steps a call apart: first it is renamed (claimed), which makes
-    /// the hook start a fresh one; only on the next call is the claimed file
-    /// read and deleted. A writer that had the old file open across the
-    /// rename finishes its append long before then, so nothing is lost.
-    ///
-    /// `hosts` are the packages whose data directories may hold a spool, and
-    /// whether each belongs to a storage provider (see [`hosts`]).
-    pub fn collect(&mut self, hosts: &[(String, bool)]) -> Vec<ProviderEvent> {
+    fn read_hosts(&self) -> Vec<ProviderEvent> {
         let mut events = Vec::new();
-        for (dir, storage_provider) in self.spool_dirs(hosts) {
-            let claimed = dir.join(CLAIMED_FILE);
-            if let Ok(text) = fs::read_to_string(&claimed) {
-                events.extend(
-                    text.lines()
-                        .filter_map(|line| parse_line(line, storage_provider)),
-                );
+        let Ok(root) = Dir::open(&self.data_root) else {
+            return events;
+        };
+        let Ok(users) = fs::read_dir(&self.data_root) else {
+            return events;
+        };
+        for user in users.flatten() {
+            let name = user.file_name();
+            let Some(name) = name.to_str() else { continue };
+            let Ok(user_id) = name.parse::<u32>() else {
+                continue;
+            };
+            let Some(base) = user_id.checked_mul(PER_USER_RANGE) else {
+                continue;
+            };
+            let Ok(user_dir) = root.open_child(name) else {
+                continue;
+            };
+            for host in &self.trusted {
+                let Some(uid) = base.checked_add(host.app_id) else {
+                    continue;
+                };
+                let Ok(pkg) = user_dir.open_child(&host.package) else {
+                    continue;
+                };
+                let Ok(dir) = pkg.open_child(SPOOL_DIR) else {
+                    continue;
+                };
+                let trusted = |dir: &Dir| {
+                    dir.stat()
+                        .is_ok_and(|s| trusted_owner(uid, s.st_uid, s.st_gid, s.st_mode))
+                };
+                if !trusted(&pkg) || !trusted(&dir) {
+                    continue;
+                }
+                collect_dir(&dir, uid, host.storage, &mut events);
             }
-            // Delete even if unreadable: a file we can't parse now won't
-            // become parseable, and leaving it would block the spool.
-            remove_if_exists(&claimed);
-            let _ = fs::rename(dir.join(SPOOL_FILE), &claimed);
         }
         events
     }
 }
 
-/// The packages a spool may be found under: the provider packages and those
-/// sharing a uid with them, as `sharing_uid` reports for a list of packages.
-pub fn hosts(sharing_uid: impl Fn(&[&str]) -> Vec<String>) -> Vec<(String, bool)> {
-    let mut hosts: Vec<(String, bool)> = Vec::new();
-    for (packages, storage) in [(PROVIDER_PACKAGES, true), (PERSONAL_PACKAGES, false)] {
-        let listed = packages.iter().map(|p| p.to_string());
-        for package in listed.chain(sharing_uid(packages)) {
-            if !hosts.iter().any(|(known, _)| *known == package) {
-                hosts.push((package, storage));
+// Only packages the system identifies as preinstalled can establish a
+// provider UID. Its preinstalled siblings may host the same process.
+fn system_hosts(output: &str) -> Vec<Host> {
+    let mut installed = BTreeMap::new();
+    for line in output.lines() {
+        let mut words = line.split_ascii_whitespace();
+        let Some(name) = words.next().and_then(|w| w.strip_prefix("package:")) else {
+            continue;
+        };
+        let Some(uid) = words.find_map(|w| w.strip_prefix("uid:")?.parse::<u32>().ok()) else {
+            continue;
+        };
+        if uid < PER_USER_RANGE {
+            installed.insert(name, uid);
+        }
+    }
+    let mut providers = BTreeMap::new();
+    for (packages, storage) in [(PERSONAL_PACKAGES, false), (PROVIDER_PACKAGES, true)] {
+        for name in packages {
+            if let Some(uid) = installed.get(name) {
+                providers.insert(*uid, storage);
             }
         }
     }
-    hosts
+    installed
+        .into_iter()
+        .filter_map(|(name, app_id)| {
+            Some(Host {
+                storage: *providers.get(&app_id)?,
+                app_id,
+                package: name.to_owned(),
+            })
+        })
+        .collect()
 }
 
-fn remove_if_exists(path: &Path) {
-    if let Err(e) = fs::remove_file(path)
-        && e.kind() != std::io::ErrorKind::NotFound
-    {
-        eprintln!("bbd: cannot remove {}: {e}", path.display());
+fn trusted_owner(uid: u32, owner: u32, group: u32, mode: libc::mode_t) -> bool {
+    owner == uid
+        && mode & 0o002 == 0
+        && (mode & 0o020 == 0 || group == uid || matches!(group, 0 | 1000))
+}
+
+fn collect_dir(dir: &Dir, uid: u32, storage: bool, events: &mut Vec<ProviderEvent>) {
+    let parent = dir.as_raw_fd();
+    let claimed = c"events.log.ingest";
+    // O_PATH takes a reference without opening a device or waiting on a FIFO.
+    let fd = unsafe {
+        libc::openat(
+            parent,
+            claimed.as_ptr(),
+            libc::O_PATH | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if fd >= 0 {
+        let pinned = unsafe { File::from_raw_fd(fd) };
+        if pinned.metadata().is_ok_and(|m| {
+            m.is_file()
+                && trusted_owner(uid, m.uid(), m.gid(), m.mode())
+                && m.nlink() == 1
+                && m.len() <= MAX_FILE
+        }) && events.len() < MAX_EVENTS
+            && let Ok(file) = File::open(format!("/proc/self/fd/{}", pinned.as_raw_fd()))
+        {
+            let mut data = String::new();
+            if file.take(MAX_FILE + 1).read_to_string(&mut data).is_ok()
+                && data.len() as u64 <= MAX_FILE
+            {
+                events.extend(
+                    data.lines()
+                        .filter(|l| l.len() <= MAX_LINE)
+                        .filter_map(|l| parse_line(l, storage))
+                        .take(MAX_EVENTS - events.len()),
+                );
+            }
+        }
+    }
+    unsafe {
+        libc::unlinkat(parent, claimed.as_ptr(), 0);
+        libc::renameat(parent, c"events.log".as_ptr(), parent, claimed.as_ptr());
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_authenticated_system_packages_can_nominate_provider_uids() {
+        let hosts = system_hosts(
+            "package:com.android.providers.contacts uid:10400\npackage:com.vendor.sibling uid:10400\npackage:com.example.other uid:10401",
+        );
+        assert_eq!(
+            hosts.iter().map(|h| h.package.as_str()).collect::<Vec<_>>(),
+            ["com.android.providers.contacts", "com.vendor.sibling"]
+        );
+        assert!(hosts.iter().all(|h| !h.storage && h.app_id == 10400));
+        assert!(system_hosts("package:com.vendor.sibling uid:10400").is_empty());
+    }
 
     #[test]
     fn every_line_of_the_hook_is_read_as_it_writes_it() {
@@ -319,14 +447,20 @@ mod tests {
 
         let mut spool = Spool::at(&root);
         // Nothing shares a uid with a provider here, bar one package.
-        let hosts = hosts(|listed| {
-            if listed.contains(&PERSONAL_PACKAGES[0]) {
-                vec!["com.android.providers.blockednumber".to_string()]
-            } else {
-                Vec::new()
-            }
-        });
-        let mut collect = move || spool.collect(&hosts);
+        let uid = unsafe { libc::getuid() };
+        spool.trusted = vec![
+            Host {
+                package: PROVIDER_PACKAGES[0].into(),
+                app_id: uid,
+                storage: true,
+            },
+            Host {
+                package: "com.android.providers.blockednumber".into(),
+                app_id: uid,
+                storage: false,
+            },
+        ];
+        let collect = || spool.read_hosts();
         // First call only claims the file.
         assert!(collect().is_empty());
         assert!(!dir.join(SPOOL_FILE).exists());

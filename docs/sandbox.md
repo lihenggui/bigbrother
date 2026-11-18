@@ -44,7 +44,7 @@ ops.
 The sandbox applies to a uid. Packages that share a uid are sandboxed
 together, and `enable` names them.
 
-An app's sandbox directory is `/data/media/<user>/<name>/<uid>`. It is
+An app's sandbox directory is `/data/media/<user>/<name>/<uid>-<installation>`. It is
 kept when the app leaves the sandbox and when the module is removed, as it
 holds what the app saved. The ANDROID_ID is kept too, so an app that is
 sandboxed again is the same device to its servers.
@@ -53,7 +53,12 @@ An app can read its own mounts, which show the path of its sandbox
 directory and the source of each tmpfs. Neither names the project: the
 tmpfs mounts have the usual source, `tmpfs`, and `<name>` is a hidden
 directory named at random when the first app is sandboxed. The daemon finds
-it again by a file in it that only root can see.
+it again by a file in it that only root can see. Root creates a random installation
+identifier in a privileged extended attribute on the package's device-encrypted
+data directory. Enabling the sandbox requires that the identifier can be read
+back. Replacing the installation gives it fresh settings, storage and identity.
+If an Android user's data directory is temporarily unavailable on restart, the daemon retains the entry and retries when it can verify the installation again.
+Superseded installation records are archived in the root-only database. An older development entry without this identifier cannot authorize a restore.
 
 ## Items
 
@@ -170,7 +175,11 @@ module takes every app out first. Where the
 daemon cannot (the root manager removes the module at the next boot, before
 the daemon starts) or does not get every app out, the helper is run by
 itself once the system is up, with what the database says each app still
-sandboxed had (`bbd sandbox-restore-lines`).
+sandboxed had (`bbd sandbox-restore-lines`). A root-only recovery directory
+under `/data/adb/big_brother_recovery` retains each pending request and the
+helper. Each restored item is checked and journaled. The boot worker retries
+outstanding requests and removes the batch after acknowledgement. The helper
+rechecks the installation before changing an app op or permission.
 
 ### The hook
 
@@ -198,7 +207,7 @@ The daemon lists the uids with `device_ids`, `installed_apps` or `storage`
 on in `/data/system/big_brother_sandbox`, with an `items` line naming them
 unless a uid has the first two and not `storage`; the hook reads the list
 again when it changes, so no restart is needed. The
-hook writes which of its hooks are in place to
+hook pins each verified installation directory and checks its identity before answering for a UID. It acknowledges the revision it loaded and writes which hooks attached to
 `/data/system/big_brother_sandbox.status`.
 
 The hook needs the `system` scope in the LSPosed manager: enable that scope

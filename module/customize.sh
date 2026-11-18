@@ -85,14 +85,14 @@ if unzip -l "$ZIPFILE" AndroidManifest.xml >/dev/null 2>&1; then
         ui_print "- App already installed"
     else
         ui_print "- Installing the Big Brother app"
-        # The package manager cannot read the installer's temporary files.
-        apk=/data/local/tmp/big_brother.apk
-        if cp "$ZIPFILE" "$apk" && chmod 644 "$apk" && pm install -r "$apk" >&2; then
+        # Binder can pass a pipe to PackageManager even when SELinux
+        # prevents it receiving the installer's archive descriptor.
+        size=$(wc -c <"$ZIPFILE")
+        if cat "$ZIPFILE" | pm install -r -S "$size" >&2; then
             ui_print "- App installed"
         else
             ui_print "! Could not install the app; rename this .zip to .apk and install it"
         fi
-        rm -f "$apk"
     fi
 fi
 

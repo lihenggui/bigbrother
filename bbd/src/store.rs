@@ -106,13 +106,37 @@ impl Category {
 /// Schema version stored in SQLite's `user_version`. Bump it whenever
 /// `SCHEMA` changes, and add the step from the previous version to
 /// `MIGRATIONS`.
-const SCHEMA_VERSION: i32 = 7;
+const SCHEMA_VERSION: i32 = 9;
 
 /// How a database written by a released build is brought to
 /// `SCHEMA_VERSION`: (from, to, statements), applied one after another.
 /// Versions that only development builds wrote have no step; such a
 /// database is set aside. v0.2.0 wrote version 3.
-const MIGRATIONS: &[(i32, i32, &str)] = &[(3, 7, MIGRATE_3_TO_7)];
+const MIGRATIONS: &[(i32, i32, &str)] = &[
+    (3, 7, MIGRATE_3_TO_7),
+    (
+        7,
+        8,
+        "ALTER TABLE sandbox ADD COLUMN install_id TEXT NOT NULL DEFAULT '';",
+    ),
+    (8, 9, RETIRED_SANDBOX),
+];
+
+// The old install's settings and saved grants remain available to the owner
+// for recovery. Only the live sandbox table is ever used to authorize work.
+const RETIRED_SANDBOX: &str = "
+CREATE TABLE sandbox_retired AS
+    SELECT uid, package, enabled, android_id, saved_ops, saved_permissions, created, settings, install_id
+    FROM sandbox WHERE 0;
+CREATE UNIQUE INDEX retired_install ON sandbox_retired(uid, package, install_id, android_id);
+CREATE TRIGGER retain_replaced_install BEFORE UPDATE OF install_id ON sandbox
+WHEN OLD.install_id != NEW.install_id
+BEGIN
+    INSERT OR REPLACE INTO sandbox_retired
+    VALUES(OLD.uid, OLD.package, OLD.enabled, OLD.android_id, OLD.saved_ops,
+           OLD.saved_permissions, OLD.created, OLD.settings, OLD.install_id);
+END;
+";
 
 /// v0.2.0 had the accesses and individual accesses: the sensor sessions and
 /// the sandbox, added since, start empty.
@@ -248,7 +272,8 @@ CREATE TABLE sandbox (
                                       -- taken, each with its state before, or 'default'
                                       -- where that is not known: 'permission=state,...'
     created    INTEGER NOT NULL,
-    settings   TEXT    NOT NULL       -- 'item=mode,...'
+    settings   TEXT    NOT NULL,      -- 'item=mode,...'
+    install_id TEXT NOT NULL DEFAULT ''
 ) WITHOUT ROWID;
 CREATE TABLE sandbox_global (
     item TEXT PRIMARY KEY,
@@ -311,7 +336,16 @@ struct EventKey {
     ts: i64,
 }
 
+// Bound telemetry independently of the state required to undo sandbox changes.
+const BUFFER_BYTES: usize = 4 * 1024 * 1024;
+const DB_BYTES: u64 = 256 * 1024 * 1024;
+const FREE_RESERVE: u64 = 64 * 1024 * 1024;
+
 pub struct Writer {
+    recording_pages: u32,
+    recovery_pages: u32,
+    buffered_bytes: usize,
+    dropped: u64,
     conn: Connection,
     /// Where the database is, to find the one set aside next to it.
     path: PathBuf,
@@ -352,10 +386,22 @@ impl Writer {
         // WAL lets `bbd` query commands read while the daemon writes.
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
+        conn.pragma_update(None, "journal_size_limit", 8 * 1024 * 1024)?;
         create_schema(&mut conn)?;
+        let page_size: u32 = conn.pragma_query_value(None, "page_size", |r| r.get(0))?;
+        let pages: u32 = conn.pragma_query_value(None, "page_count", |r| r.get(0))?;
+        // A transaction can overshoot the telemetry watermark. Preserve room
+        // for sandbox recovery on devices that already have a larger database.
+        let limit = u64::from(pages).max(DB_BYTES / u64::from(page_size))
+            + FREE_RESERVE / u64::from(page_size);
+        conn.pragma_update(None, "max_page_count", limit as i64)?;
         Ok(Self {
             conn,
             path: path.to_owned(),
+            recording_pages: (DB_BYTES / u64::from(page_size)) as u32,
+            recovery_pages: limit.min(u64::from(u32::MAX)) as u32,
+            buffered_bytes: 0,
+            dropped: 0,
             pending: HashMap::new(),
             events: HashMap::new(),
             sessions: Vec::new(),
@@ -366,7 +412,18 @@ impl Writer {
     /// Write a sensor session with the next flush, over what was written of
     /// it before.
     pub fn sensor_session(&mut self, session: SensorSession) {
-        self.sessions.push(session);
+        if self.reserve_sample(session.sensor.len() + 128) {
+            self.sessions.push(session);
+        }
+    }
+
+    fn reserve_sample(&mut self, bytes: usize) -> bool {
+        if bytes > BUFFER_BYTES - self.buffered_bytes {
+            self.dropped = self.dropped.saturating_add(1);
+            return false;
+        }
+        self.buffered_bytes += bytes;
+        true
     }
 
     /// The sensor sessions not ended: those a previous run left open.
@@ -415,27 +472,38 @@ impl Writer {
         ts: i64,
         items: u32,
     ) {
-        let counts = self
-            .events
-            .entry(EventKey {
-                uid,
-                path: path.clone(),
-                mode,
-                ts,
-            })
-            .or_default();
-        if ok {
-            counts.0 += 1;
-        } else {
-            counts.1 += 1;
+        if path.len() > BUFFER_BYTES {
+            self.dropped = self.dropped.saturating_add(1);
+            return;
         }
-
+        let event = EventKey {
+            uid,
+            path: path.clone(),
+            mode,
+            ts,
+        };
         let key = Key {
             hour: ts / 3600,
             uid,
             path,
             mode,
         };
+        let mut bytes = 0;
+        if !self.events.contains_key(&event) {
+            bytes += 128 + event.path.capacity();
+        }
+        if !self.pending.contains_key(&key) {
+            bytes += 128 + key.path.capacity() + pkg.len();
+        }
+        if !self.reserve_sample(bytes) {
+            return;
+        }
+        let counts = self.events.entry(event).or_default();
+        if ok {
+            counts.0 = counts.0.saturating_add(1);
+        } else {
+            counts.1 = counts.1.saturating_add(1);
+        }
         let agg = self.pending.entry(key).or_insert_with(|| Agg {
             pkg: pkg.to_string(),
             cat,
@@ -447,9 +515,9 @@ impl Writer {
         });
         agg.items = agg.items.max(items);
         if ok {
-            agg.ok += 1;
+            agg.ok = agg.ok.saturating_add(1);
         } else {
-            agg.fail += 1;
+            agg.fail = agg.fail.saturating_add(1);
         }
         // Events from different sources are not strictly ordered in time.
         agg.first_ts = agg.first_ts.min(ts);
@@ -480,6 +548,29 @@ impl Writer {
     }
 
     fn write(&mut self, counters: &Counters, now: i64) -> anyhow::Result<()> {
+        if !self.room_for_records()? {
+            self.dropped = self.dropped.saturating_add(
+                self.events
+                    .values()
+                    .map(|(ok, fail)| u64::from(*ok) + u64::from(*fail))
+                    .sum::<u64>()
+                    + self.sessions.len() as u64,
+            );
+            self.pending.clear();
+            self.events.clear();
+            self.sessions.clear();
+            self.buffered_bytes = 0;
+            return Ok(());
+        }
+        self.conn
+            .pragma_update(None, "max_page_count", self.recording_pages)?;
+        let result = self.write_batch(counters, now);
+        self.conn
+            .pragma_update(None, "max_page_count", self.recovery_pages)?;
+        result
+    }
+
+    fn write_batch(&mut self, counters: &Counters, now: i64) -> anyhow::Result<()> {
         let tx = self.conn.transaction()?;
         {
             let mut upsert = tx.prepare_cached(
@@ -566,7 +657,10 @@ impl Writer {
                 ("events_seen", counters.seen as i64),
                 ("events_kept", counters.kept as i64),
                 ("events_unresolved", counters.unresolved as i64),
-                ("events_dropped", counters.dropped as i64),
+                (
+                    "events_dropped",
+                    counters.dropped.saturating_add(self.dropped) as i64,
+                ),
                 ("last_flush", now),
             ] {
                 meta.execute(params![key, value])?;
@@ -578,8 +672,34 @@ impl Writer {
         self.pending.clear();
         self.events.clear();
         self.sessions.clear();
+        self.buffered_bytes = 0;
         self.written = Some(counters.clone());
         Ok(())
+    }
+
+    fn room_for_records(&self) -> anyhow::Result<bool> {
+        let page_size: u64 = self
+            .conn
+            .pragma_query_value(None, "page_size", |r| r.get::<_, u32>(0).map(u64::from))?;
+        let pages: u64 = self
+            .conn
+            .pragma_query_value(None, "page_count", |r| r.get::<_, u32>(0).map(u64::from))?;
+        let free: u64 = self.conn.pragma_query_value(None, "freelist_count", |r| {
+            r.get::<_, u32>(0).map(u64::from)
+        })?;
+        let mut wal = self.path.as_os_str().to_owned();
+        wal.push("-wal");
+        let wal_bytes = std::fs::metadata(wal).map_or(0, |m| m.len());
+        if pages.saturating_sub(free).saturating_mul(page_size) + wal_bytes >= DB_BYTES {
+            return Ok(false);
+        }
+        let path = std::ffi::CString::new(self.path.as_os_str().as_encoded_bytes())?;
+        let mut space = std::mem::MaybeUninit::uninit();
+        if unsafe { libc::statvfs(path.as_ptr(), space.as_mut_ptr()) } != 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        let space = unsafe { space.assume_init() };
+        Ok((space.f_bavail as u128) * (space.f_frsize as u128) >= u128::from(FREE_RESERVE))
     }
 
     pub fn set_meta(&self, key: &str, value: i64) -> anyhow::Result<()> {
@@ -629,13 +749,13 @@ impl Writer {
     pub fn put_sandbox(&self, entry: &SandboxEntry) -> anyhow::Result<()> {
         self.conn.execute(
             "INSERT INTO sandbox (uid, package, enabled, android_id, saved_ops, saved_permissions,
-                                  created, settings)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                                  created, settings, install_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT (uid) DO UPDATE SET
                  package = excluded.package, enabled = excluded.enabled,
                  android_id = excluded.android_id, saved_ops = excluded.saved_ops,
                  saved_permissions = excluded.saved_permissions,
-                 created = excluded.created, settings = excluded.settings",
+                 created = excluded.created, settings = excluded.settings, install_id = excluded.install_id",
             params![
                 entry.uid,
                 entry.package,
@@ -644,7 +764,7 @@ impl Writer {
                 entry.saved_ops,
                 entry.saved_permissions,
                 entry.created,
-                entry.settings
+                entry.settings, entry.install_id
             ],
         )?;
         self.sync()
@@ -708,6 +828,7 @@ impl Writer {
 /// One app in the sandbox: a `sandbox` row.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SandboxEntry {
+    pub install_id: String,
     pub uid: u32,
     pub package: String,
     pub enabled: bool,
@@ -722,7 +843,7 @@ pub struct SandboxEntry {
 }
 
 const SANDBOX_SELECT: &str = "SELECT uid, package, enabled, android_id, saved_ops, \
-     saved_permissions, created, settings FROM sandbox";
+     saved_permissions, created, settings, install_id FROM sandbox";
 
 fn sandbox_entry(r: &rusqlite::Row<'_>) -> rusqlite::Result<SandboxEntry> {
     Ok(SandboxEntry {
@@ -734,6 +855,7 @@ fn sandbox_entry(r: &rusqlite::Row<'_>) -> rusqlite::Result<SandboxEntry> {
         saved_permissions: r.get(5)?,
         created: r.get(6)?,
         settings: r.get(7)?,
+        install_id: r.get(8)?,
     })
 }
 
@@ -873,6 +995,7 @@ fn create_schema(conn: &mut Connection) -> anyhow::Result<()> {
         return Ok(());
     }
     conn.execute_batch(SCHEMA)?;
+    conn.execute_batch(RETIRED_SANDBOX)?;
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     conn.commit()?;
     Ok(())
@@ -1503,6 +1626,58 @@ mod tests {
     use super::*;
 
     #[test]
+    fn telemetry_over_budget_leaves_room_for_sandbox_recovery() {
+        let dir = std::env::temp_dir().join(format!("bbd-buffer-limit-{}", std::process::id()));
+        let mut w = Writer::open(&dir.join("bb.db")).unwrap();
+        w.record(
+            10100,
+            "example",
+            Category::Storage,
+            "x".repeat(BUFFER_BYTES),
+            MODE_READ,
+            true,
+            1,
+            0,
+        );
+        assert!(w.events.is_empty() && w.pending.is_empty());
+        assert_eq!(w.dropped, 1);
+        w.put_sandbox(&sandbox_entry_for(10100)).unwrap();
+        assert!(w.sandbox_entry(10100).unwrap().is_some());
+        drop(w);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_full_telemetry_transaction_preserves_the_sandbox_write_allowance() {
+        let dir = std::env::temp_dir().join(format!("bbd-recording-pages-{}", std::process::id()));
+        let mut w = Writer::open(&dir.join("bb.db")).unwrap();
+        let normal = w.recording_pages;
+        w.recording_pages = w
+            .conn
+            .pragma_query_value(None, "page_count", |row| row.get(0))
+            .unwrap();
+        w.record(
+            10100,
+            "example",
+            Category::Storage,
+            "a".repeat(64 * 1024),
+            MODE_READ,
+            true,
+            1,
+            0,
+        );
+        assert!(w.flush(&Counters::default(), 1).is_err());
+        assert_eq!(w.events.len(), 1);
+        w.put_sandbox(&sandbox_entry_for(10100)).unwrap();
+        w.recording_pages = normal;
+        w.flush(&Counters::default(), 2).unwrap();
+        assert!(w.events.is_empty());
+        assert!(w.sandbox_entry(10100).unwrap().is_some());
+        drop(w);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn aggregates_and_queries() {
         let dir = std::env::temp_dir().join(format!("bbd-test-{}", std::process::id()));
         let db = dir.join("bb.db");
@@ -1957,7 +2132,7 @@ mod tests {
         // Neither upgraded nor misread: a database at a version no released
         // build wrote, and a newer one, are each set aside whole, and
         // recording starts over.
-        for other in [SCHEMA_VERSION - 1, SCHEMA_VERSION + 1] {
+        for other in [6, SCHEMA_VERSION + 1] {
             let w = Writer::open(&db).unwrap();
             w.put_sandbox_global(&[("camera", "off")]).unwrap();
             w.conn.pragma_update(None, "user_version", other).unwrap();
@@ -1982,9 +2157,7 @@ mod tests {
         let db = dir.join("bb.db");
         let w = Writer::open(&db).unwrap();
         assert!(Reader::open(&db).is_ok());
-        w.conn
-            .pragma_update(None, "user_version", SCHEMA_VERSION - 1)
-            .unwrap();
+        w.conn.pragma_update(None, "user_version", 6).unwrap();
         assert!(Reader::open(&db).is_err());
         drop(w);
         std::fs::remove_dir_all(dir).unwrap();
@@ -2346,10 +2519,35 @@ mod tests {
             enabled: true,
             android_id: "0123456789abcdef".into(),
             saved_ops: "android:camera=default".into(),
+            install_id: "test".into(),
             saved_permissions: "android.permission.ACCESS_FINE_LOCATION=granted+user_set".into(),
             created: 1000,
             settings: String::new(),
         }
+    }
+
+    #[test]
+    fn replacing_an_installation_archives_its_previous_recovery_state() {
+        let dir = std::env::temp_dir().join(format!("bbd-retired-install-{}", std::process::id()));
+        let w = Writer::open(&dir.join("bb.db")).unwrap();
+        let old = sandbox_entry_for(10100);
+        let mut new = old.clone();
+        new.install_id = "replacement".into();
+        new.saved_permissions.clear();
+        w.put_sandbox(&old).unwrap();
+        w.put_sandbox(&new).unwrap();
+        let kept: String = w
+            .conn
+            .query_row(
+                "SELECT saved_permissions FROM sandbox_retired WHERE uid=?1 AND install_id=?2",
+                params![old.uid, old.install_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(kept, old.saved_permissions);
+        assert_eq!(w.sandbox_entries().unwrap(), [new]);
+        drop(w);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

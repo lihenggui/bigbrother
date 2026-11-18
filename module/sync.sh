@@ -12,36 +12,54 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-# Run by the app, as root, to bring the installed module up to date with
-# the app without a reboot. The app stages the module files it carries in
-# $1 (the daemon for this device as bbd) and passes its APK as $2: the same
-# files customize.sh installs. Each file is replaced in one rename, so a
-# running script or daemon keeps the file it opened.
+# $1 is private staging space on the module filesystem. The APK belongs
+# to PackageManager. Finish every copy before stopping the live generation.
+set -eu
 STAGED=$1
 APK=$2
+DAEMON=$3
 MODDIR=/data/adb/modules/big_brother
 UPDATE=/data/adb/modules_update/big_brother
-
-[ -d "$MODDIR" ] || {
-    echo "Module not installed"
-    exit 1
-}
-
-# replace <source> <target> <mode>
-replace() {
-    cp "$1" "$2.new" && chmod "$3" "$2.new" && mv -f "$2.new" "$2" || {
-        rm -f "$2.new"
-        echo "Could not replace $2"
-        exit 1
-    }
-}
-
+NEXT=$STAGED/module
+exec 9>/data/adb/.big_brother_update.lock
+flock -x 0 <&9
+[ -d "$MODDIR" ] && [ ! -e "$MODDIR/remove" ] && [ ! -e "$MODDIR/disable" ] || exit 1
+cp -a "$MODDIR" "$NEXT"
 for file in module.prop service.sh supervise.sh stop.sh uninstall.sh action.sh; do
-    replace "$STAGED/$file" "$MODDIR/$file" 644
+    rm -f "$NEXT/$file"
+    unzip -p "$APK" "$file" > "$NEXT/$file" && [ -s "$NEXT/$file" ] || exit 1
+    chmod 644 "$NEXT/$file"
 done
-replace "$STAGED/bbd" "$MODDIR/bin/bbd" 755
-replace "$APK" "$MODDIR/helper.apk" 644
-
+rm -f "$NEXT/bin/bbd" "$NEXT/helper.apk"
+unzip -p "$APK" "$DAEMON" > "$NEXT/bin/bbd" && [ -s "$NEXT/bin/bbd" ] || exit 1
+chmod 755 "$NEXT/bin/bbd"
+cp "$APK" "$NEXT/helper.apk"
+chmod 644 "$NEXT/helper.apk"
+cmp -s "$APK" "$NEXT/helper.apk"
+# Keep the previous payload even if power is lost just after publication.
+# A downgrade may need a database migration and is never started implicitly.
+DATA=/data/adb/big_brother
+BACKUP=$DATA/previous-module
+mkdir -p "$DATA"
+chmod 700 "$DATA"
+cp -a "$MODDIR" "$STAGED/previous"
+if [ -d "$BACKUP" ]; then
+    "$NEXT/bin/bbd" module-exchange "$STAGED/previous" "$BACKUP"
+else
+    mv "$STAGED/previous" "$BACKUP"
+fi
+sync
+[ ! -e "$MODDIR/remove" ] && [ ! -e "$MODDIR/disable" ] || exit 1
+"$NEXT/bin/bbd" module-stop "$MODDIR"
+if ! "$NEXT/bin/bbd" module-exchange "$NEXT" "$MODDIR"; then
+    sh "$MODDIR/service.sh" 9>&- </dev/null >/dev/null 2>&1
+    exit 1
+fi
+sync
+for flag in disable remove; do
+    if [ -e "$NEXT/$flag" ]; then touch "$MODDIR/$flag"; fi
+done
+[ ! -e "$MODDIR/disable" ] && [ ! -e "$MODDIR/remove" ] || exit 1
 # An update the root manager staged that is not newer than these files
 # would only bring them back at the next boot.
 if [ -d "$UPDATE" ]; then
@@ -53,4 +71,17 @@ if [ -d "$UPDATE" ]; then
 fi
 
 # Stops the running daemon and starts the new one, as at boot.
-sh "$MODDIR/service.sh" </dev/null >/dev/null 2>&1
+sh "$MODDIR/service.sh" 9>&- </dev/null >/dev/null 2>&1
+# Report startup failures after publishing a complete generation.
+i=0
+while [ "$i" -lt 10 ]; do
+    pid=$(cat /data/adb/big_brother/bbd.pid 2>/dev/null) || pid=
+    if [ -n "$pid" ] && [ "/proc/$pid/exe" -ef "$MODDIR/bin/bbd" ] &&
+        "$MODDIR/bin/bbd" stats 2>/dev/null | grep -q '"daemon_running":true'; then
+        exit 0
+    fi
+    i=$((i + 1))
+    sleep 1
+done
+echo "Module updated; daemon startup was not confirmed"
+exit 1

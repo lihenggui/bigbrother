@@ -80,6 +80,18 @@ class SandboxListTest {
     }
 
     @Test
+    fun givenReplacementWithSameTimestampAndLength_whenNotified_thenNewRevisionAcknowledged() {
+        write("# abc\n10205 0000000000000001\n", modified = 1_000_000)
+        val list = list()
+        val receipts = mutableListOf<String>()
+        list.onLoaded = { receipts += list.revision }
+        write("# def\n10205 0000000000000002\n", modified = 1_000_000)
+        list.reload()
+        assertEquals(listOf("def"), receipts)
+        assertEquals("0000000000000002", list.androidIdOf(10_205))
+    }
+
+    @Test
     fun givenRemovedFile_whenAskedAfterASecond_thenNobodySandboxed() {
         write("10205 0123456789abcdef\n", modified = 1_000_000)
         val list = list()

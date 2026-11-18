@@ -30,7 +30,9 @@
 use std::{
     ffi::CString,
     fs, io,
+    io::Write as _,
     os::fd::{AsRawFd, FromRawFd, OwnedFd},
+    os::unix::fs::PermissionsExt as _,
     path::{Path, PathBuf},
 };
 
@@ -227,6 +229,7 @@ const TMPFS_LABEL: &str = "context=u:object_r:fuse:s0";
 /// The mounts made with system calls, in the mount namespace of the calling
 /// thread.
 pub struct Kernel {
+    pub generation: String,
     /// An empty directory of the daemon's, where the replaced files are
     /// assembled before each is mounted in its place.
     scratch: PathBuf,
@@ -235,6 +238,7 @@ pub struct Kernel {
 impl Kernel {
     pub fn new(scratch: &Path) -> Self {
         Self {
+            generation: String::new(),
             scratch: scratch.to_path_buf(),
         }
     }
@@ -304,7 +308,7 @@ impl Sys for Kernel {
         // Opened and checked first, then mounted by its descriptor: what is
         // mounted is what was checked, whatever is done to the path since.
         let (_, media) = storage_of(uid / PER_USER_RANGE);
-        let sandbox = dirs::open_sandbox(Path::new(&media), uid)?;
+        let sandbox = dirs::open_sandbox(Path::new(&media), uid, &self.generation)?;
         let by_descriptor = format!("/proc/thread-self/fd/{}", sandbox.as_raw_fd());
         mount(Some(&by_descriptor), onto, None, libc::MS_BIND, None)
     }
@@ -364,10 +368,13 @@ impl Sys for Kernel {
             let name = Path::new(target)
                 .file_name()
                 .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
-            let file = self.scratch.join(name);
-            fs::write(&file, content)?;
+            let path = self.scratch.join(name);
+            let mut file = fs::File::create_new(&path)?;
+            file.write_all(content.as_bytes())?;
+            // Apps must be able to read the substitute under the daemon's private umask.
+            file.set_permissions(fs::Permissions::from_mode(0o444))?;
             mount(
-                Some(&file.to_string_lossy()),
+                Some(&path.to_string_lossy()),
                 target,
                 None,
                 libc::MS_BIND,

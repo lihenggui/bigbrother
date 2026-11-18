@@ -76,14 +76,14 @@ class ProviderHook : XposedModule() {
             // Device-protected storage is usable before the first unlock.
             val directory = File(param.applicationInfo.deviceProtectedDataDir, SPOOL_DIR)
             if (!StartGuard(directory).allowStart()) {
-                log(Log.WARN, TAG, "start guard tripped in ${param.packageName}; hooks not installed")
+                log(Log.WARN, TAG, "provider start guard tripped")
                 return
             }
             val spool = EventSpool(directory)
             val hooked = hookTransport(spool)
-            log(Log.INFO, TAG, "hooked $hooked provider entry points in ${param.packageName}")
+            log(Log.INFO, TAG, "hooked $hooked provider entry points")
         } catch (e: Throwable) {
-            log(Log.ERROR, TAG, "could not install hooks in ${param.packageName}", e)
+            log(Log.ERROR, TAG, "could not install provider hooks", e)
         }
     }
 
@@ -155,7 +155,7 @@ class ProviderHook : XposedModule() {
             val uri = args.firstNotNullOfOrNull { it as? Uri } ?: return
             write(uid, uri.toString())
         } catch (e: Throwable) {
-            log(Log.WARN, TAG, "could not record a provider call", e)
+            log(Log.WARN, TAG, "could not record a provider call (${e.javaClass.simpleName})")
         }
     }
 

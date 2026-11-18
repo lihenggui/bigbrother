@@ -60,17 +60,28 @@ import java.util.concurrent.atomic.AtomicBoolean
 internal class SandboxHook(private val module: XposedInterface) {
     private val listErrorLogged = AtomicBoolean(false)
 
+    private var observer: android.os.FileObserver? = null
+
     fun install(classLoader: ClassLoader) {
         if (!StartGuard(File(GUARD_DIR)).allowStart()) {
             module.log(Log.WARN, TAG, "start guard tripped in system_server; sandbox hooks not installed")
             writeStatus(androidId = false, appList = false, uriGrants = false, listReadable = false)
             return
         }
-        val list = SandboxList(File(LIST_PATH), ::onListError)
+        val list = SandboxList(File(LIST_PATH), ::onListError, owners = HookInstallations(File(BOOT_ID_PATH)))
         val androidId = attach("ANDROID_ID") { hookAndroidId(list) }
         val appList = attach("app list") { hookAppList(classLoader, list) }
         val uriGrants = attach("file grants") { hookUriGrants(classLoader, list) }
-        writeStatus(androidId, appList, uriGrants, list.readable)
+        val publish = { writeStatus(androidId, appList, uriGrants, list.readable, list.revision) }
+        list.onLoaded = publish
+        val file = File(LIST_PATH)
+        observer = object : android.os.FileObserver(file.parentFile!!, MOVED_TO or DELETE or MOVED_FROM) {
+            override fun onEvent(event: Int, path: String?) {
+                if (path == file.name) list.reload()
+            }
+        }.also { it.startWatching() }
+        list.reload()
+        publish()
     }
 
     /** Runs one hook installation; a failure leaves the other hook unaffected. */
@@ -182,12 +193,13 @@ internal class SandboxHook(private val module: XposedInterface) {
     }
 
     /** Written by rename, so the daemon never reads half a file. */
-    private fun writeStatus(androidId: Boolean, appList: Boolean, uriGrants: Boolean, listReadable: Boolean) {
+    @Synchronized
+    private fun writeStatus(androidId: Boolean, appList: Boolean, uriGrants: Boolean, listReadable: Boolean, revision: String = "none") {
         try {
             val status = File(STATUS_PATH)
             val temporary = File("$STATUS_PATH.tmp")
             val bootId = File(BOOT_ID_PATH).readText().trim()
-            temporary.writeText(sandboxStatusText(androidId, appList, uriGrants, Build.VERSION.SDK_INT, listReadable, bootId))
+            temporary.writeText(sandboxStatusText(androidId, appList, uriGrants, Build.VERSION.SDK_INT, listReadable, bootId) + "revision=$revision\npid=${android.os.Process.myPid()}\n")
             if (!temporary.renameTo(status)) error("rename failed")
         } catch (e: Throwable) {
             module.log(Log.ERROR, TAG, "could not write the sandbox status", e)

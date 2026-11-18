@@ -23,6 +23,7 @@ mod btf;
 mod commands;
 mod control;
 mod helper;
+mod lifecycle;
 mod mounts;
 mod net;
 mod packages;
@@ -163,6 +164,12 @@ enum Command {
     /// the daemon.
     #[command(hide = true)]
     SandboxRestoreLines,
+    /// Stop the module processes before an update or removal.
+    #[command(hide = true)]
+    ModuleStop { module: PathBuf },
+    /// Publish a fully prepared module directory with one filesystem operation.
+    #[command(hide = true)]
+    ModuleExchange { staged: PathBuf, installed: PathBuf },
 }
 
 #[derive(Subcommand)]
@@ -288,6 +295,8 @@ fn main() -> anyhow::Result<()> {
         cli.command,
         Command::Run { .. }
             | Command::Sandbox { .. }
+            | Command::ModuleStop { .. }
+            | Command::ModuleExchange { .. }
             | Command::SandboxRestoreLines
             | Command::Selftest
     ) {
@@ -359,6 +368,25 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Sandbox { json, command } => sandbox::command(&cli.db, command.into(), json),
+        Command::ModuleStop { module } => lifecycle::stop(&module),
+        Command::ModuleExchange { staged, installed } => {
+            let staged = std::ffi::CString::new(staged.as_os_str().as_encoded_bytes())?;
+            let installed = std::ffi::CString::new(installed.as_os_str().as_encoded_bytes())?;
+            if unsafe {
+                libc::syscall(
+                    libc::SYS_renameat2,
+                    libc::AT_FDCWD,
+                    staged.as_ptr(),
+                    libc::AT_FDCWD,
+                    installed.as_ptr(),
+                    2, /* RENAME_EXCHANGE */
+                )
+            } != 0
+            {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            Ok(())
+        }
         Command::SandboxRestoreLines => {
             for line in sandbox::restore_lines(&cli.db)? {
                 println!("{line}");

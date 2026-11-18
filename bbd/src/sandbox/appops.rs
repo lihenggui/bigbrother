@@ -174,6 +174,7 @@ struct State {
     /// `set` takes them. A helper that starts is told of each, so that it
     /// carries on where the last one ended.
     guarded: BTreeMap<u32, String>,
+    owners: BTreeMap<u32, (String, String)>,
     /// The uid of the command waiting for the helper's answer. What it is
     /// held to changes with the answer, and until then no `verify` names
     /// it: the helper would take that `verify` after the command, and hold
@@ -197,6 +198,18 @@ impl State {
     /// a pipe that does not block, and a line is short enough to be written
     /// whole or not at all.
     fn send(&mut self, line: &str) -> anyhow::Result<()> {
+        let uid = line
+            .split_ascii_whitespace()
+            .nth(1)
+            .and_then(|word| word.parse::<u32>().ok())
+            .context("invalid helper command")?;
+        let line = match self.owners.get(&uid) {
+            Some((package, id)) if !id.is_empty() => format!("bound {package} {id} {line}"),
+            #[cfg(test)]
+            _ => line.to_owned(),
+            #[cfg(not(test))]
+            _ => anyhow::bail!("missing installation identity"),
+        };
         let input = self
             .input
             .as_mut()
@@ -542,6 +555,10 @@ impl Effect for AppOps {
     }
 
     fn enable(&mut self, entry: &mut Entry, _: &[String], items: &Settings) -> anyhow::Result<()> {
+        self.shared
+            .state()
+            .owners
+            .insert(entry.uid, (entry.package.clone(), entry.install_id.clone()));
         let targets = targets_of(items);
         if targets.is_empty() {
             return Ok(());
@@ -668,13 +685,32 @@ impl Effect for AppOps {
 
     fn resume(&mut self, apps: &[Resumed]) {
         let mut state = self.shared.state();
+        state.owners.extend(apps.iter().map(|app| {
+            (
+                app.entry.uid,
+                (app.entry.package.clone(), app.entry.install_id.clone()),
+            )
+        }));
         // The helper is told of them as it starts.
         state.guarded.extend(apps.iter().filter_map(|app| {
             let targets = targets_of(&app.items);
             (!targets.is_empty()).then_some((app.entry.uid, targets))
         }));
         state.wanted = !state.guarded.is_empty();
+        if state.input.is_some() {
+            state.tell_guarded();
+        }
         self.shared.changed.notify_all();
+    }
+
+    fn forget(&mut self, uid: u32) {
+        let mut state = self.shared.state();
+        state.owners.remove(&uid);
+        state.guarded.remove(&uid);
+        state.unheld.remove(&uid);
+        state.found.retain(|(id, _)| *id != uid);
+        drop(state);
+        self.shared.rest_if_unused();
     }
 
     fn report(&self, status: &mut Status) {
@@ -960,6 +996,7 @@ mod tests {
             enabled: true,
             android_id: String::new(),
             saved_ops: String::new(),
+            install_id: String::new(),
             saved_permissions: String::new(),
             created: 0,
             settings: String::new(),
@@ -1114,6 +1151,7 @@ mod tests {
         assert_eq!(
             sent.join().unwrap(),
             [
+                "verify 10100 android:coarse_location=1,android:fine_location=1,android:wifi_scan=1,android:camera=1".to_owned(),
                 // The Wi-Fi scan goes back to what it was, and then with
                 // the coarse location, its switch op, to the foreground.
                 "apply 10100 android:coarse_location=4,android:fine_location=4,\
@@ -1372,7 +1410,7 @@ mod tests {
         assert_eq!(entry.saved_permissions, "");
         assert_eq!(
             sent.join().unwrap(),
-            [format!(
+            ["verify 10100 android:coarse_location=1,android:fine_location=1,android:wifi_scan=1".to_owned(), format!(
                 "restore 10100 android:coarse_location=default,android:fine_location=default,\
                  android:wifi_scan=default,{FINE}=default"
             )]

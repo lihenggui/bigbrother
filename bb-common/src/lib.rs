@@ -71,7 +71,8 @@ pub const OFF_SB_MAGIC: usize = 7; //     struct super_block -> s_magic
 pub const OFF_SB_DEV: usize = 8; //       struct super_block -> s_dev
 pub const OFF_SOCK_PROTOCOL: usize = 9; // struct sock   -> sk_protocol
 pub const OFF_SKB_DATA: usize = 10; //     struct sk_buff -> data
-pub const OFF_COUNT: usize = 11;
+pub const OFF_TASK_START: usize = 11;
+pub const OFF_COUNT: usize = 12;
 
 /// Stands in for an offset the running kernel's BTF does not have. Only the
 /// offsets of optional probes may be missing; such a probe is not attached.
@@ -411,6 +412,8 @@ assert_no_padding!(BinderEvent {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct GateEvent {
+    pub start_low: u32,
+    pub start_high: u32,
     pub pid: u32,
     /// The uid it is taking.
     pub uid: u32,
@@ -421,6 +424,8 @@ pub struct GateEvent {
 }
 
 assert_no_padding!(GateEvent {
+    start_low,
+    start_high,
     pid,
     uid,
     at_ns_low,
