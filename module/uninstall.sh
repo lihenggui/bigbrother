@@ -18,13 +18,14 @@
 MODDIR=${0%/*}
 BBD=$MODDIR/bin/bbd
 
-# Sandboxed apps are given their app ops back first; left as they are, the
-# apps would be refused their data for good. The daemon does it where it is
+# Sandboxed apps are given their app ops, and the precise location taken
+# from those with coarse location, back first; left as they are, the apps
+# would be refused their data for good. The daemon does it where it is
 # still running and gets every app out. Otherwise (most root managers run
 # this script at the next boot, before anything of the module has started)
-# the lines that give each app still sandboxed its ops back are read from the
-# database, and the app ops helper is run with them by itself once the system
-# is up, from a copy of its own.
+# the lines that give each app still sandboxed its ops and permissions back
+# are read from the database, and the app ops helper is run with them by
+# itself once the system is up, from a copy of its own.
 released_all() {
     answer=$("$BBD" sandbox disable --all --json 2>/dev/null) || return 1
     case "$answer" in

@@ -141,7 +141,7 @@
     <string name="jail_item_nearby_devices_on_detail">蓝牙和 Wi‑Fi 扫描结果为空。</string>
 
     <string name="jail_mode_coarse">大致位置</string>
-    <string name="jail_mode_coarse_detail">仅提供大致位置（街区级）。</string>
+    <string name="jail_mode_coarse_detail">确切位置已关闭，仅能获取大致位置。</string>
     <string name="jail_mode_off">使用真实数据</string>
     <string name="jail_mode_off_detail">应用获得系统提供的数据。</string>
     <string name="jail_mode_global">跟随全局设置</string>

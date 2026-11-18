@@ -156,10 +156,12 @@ impl Item {
     }
 }
 
-/// The location ops that location made coarse leaves to the system. The
-/// system keeps the Wi-Fi scan op's mode under the coarse location op (its
-/// switch op): holding the scan would refuse the coarse location as well.
-const COARSE_KEPT: &[&str] = &["android:coarse_location", "android:wifi_scan"];
+/// The runtime permission location made coarse takes from the app. The
+/// system's own "approximate location" is this permission revoked with the
+/// coarse one kept, and no mode of the app ops gives the same: with the
+/// precise location op ignored, the location service still takes the app
+/// for one with precise location, and gives it none at all.
+pub const PRECISE_LOCATION: &str = "android.permission.ACCESS_FINE_LOCATION";
 
 /// The mode of some items: an app's own, or the global settings.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -280,23 +282,25 @@ impl Settings {
         )
     }
 
-    /// The app ops to hold the app to, ignored. Location made coarse holds
-    /// only the precise location ([`COARSE_KEPT`]).
+    /// The app ops to hold the app to, ignored: those of the items on.
+    /// Location made coarse holds none of its ops: it takes a permission
+    /// instead ([`Self::taken_permissions`]).
     pub fn op_targets(&self) -> Vec<&'static str> {
-        let mut targets = Vec::new();
-        for item in Item::ALL {
-            let mode = self.mode(item);
-            if mode == Mode::Off {
-                continue;
-            }
-            for op in item.ops() {
-                if mode == Mode::Coarse && COARSE_KEPT.contains(op) {
-                    continue;
-                }
-                targets.push(*op);
-            }
+        Item::ALL
+            .into_iter()
+            .filter(|item| self.mode(*item) == Mode::On)
+            .flat_map(|item| item.ops().iter().copied())
+            .collect()
+    }
+
+    /// The runtime permissions to keep revoked: the precise location while
+    /// location is coarse.
+    pub fn taken_permissions(&self) -> Vec<&'static str> {
+        if self.mode(Item::Location) == Mode::Coarse {
+            vec![PRECISE_LOCATION]
+        } else {
+            Vec::new()
         }
-        targets
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (Item, Mode)> + '_ {
@@ -406,6 +410,7 @@ mod tests {
         assert!(!applies.mounts().any());
         assert_eq!(applies.hooked(), (false, false));
         assert!(applies.op_targets().is_empty());
+        assert!(applies.taken_permissions().is_empty());
     }
 
     #[test]
@@ -416,22 +421,18 @@ mod tests {
         }
         own.set(Item::Contacts, Some(Mode::On)).unwrap();
         own.set(Item::Location, Some(Mode::Coarse)).unwrap();
-        let targets = own.over(&Settings::default()).op_targets();
+        let coarse = own.over(&Settings::default());
+        // Coarse holds no location op: it takes the precise location
+        // permission.
         assert_eq!(
-            targets,
-            [
-                "android:read_contacts",
-                "android:write_contacts",
-                // Coarse: the precise location only.
-                "android:fine_location",
-            ]
+            coarse.op_targets(),
+            ["android:read_contacts", "android:write_contacts"]
         );
+        assert_eq!(coarse.taken_permissions(), [PRECISE_LOCATION]);
         own.set(Item::Location, Some(Mode::On)).unwrap();
-        assert!(
-            own.over(&Settings::default())
-                .op_targets()
-                .contains(&"android:wifi_scan")
-        );
+        let on = own.over(&Settings::default());
+        assert!(on.op_targets().contains(&"android:wifi_scan"));
+        assert!(on.taken_permissions().is_empty());
     }
 
     #[test]
@@ -451,6 +452,10 @@ mod tests {
         let held = ops(&covering.over(&global));
         assert!(held.is_superset(&ops(&before.over(&global))));
         assert!(held.is_superset(&ops(&after.over(&global))));
+        assert_eq!(
+            covering.over(&global).taken_permissions(),
+            [PRECISE_LOCATION]
+        );
 
         // A change that keeps nothing more is covered by what was.
         let wide = Settings::parse("camera=on");

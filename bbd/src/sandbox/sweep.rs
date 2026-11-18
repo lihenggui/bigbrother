@@ -23,6 +23,13 @@
 //! before, and may keep (the ANDROID_ID, for one), goes with them. Turning
 //! items off takes effect in the running process.
 //!
+//! Location made coarse takes the precise location permission away, and
+//! Android ends the processes of an app whenever it revokes a runtime
+//! permission the app had: the app starts again with the approximate
+//! location only, and nothing is ended for it here. An app that did not
+//! have the permission keeps running, as nothing changes for it, and one
+//! given the permission back keeps running too.
+//!
 //! The same is done when the daemon starts, for what started while it was
 //! not there to hold it: early in boot, or between a crash and the restart.
 //!

@@ -163,7 +163,7 @@
 
     <!-- The other modes of an item. -->
     <string name="jail_mode_coarse">Approximate location</string>
-    <string name="jail_mode_coarse_detail">Only an approximate location, to the neighbourhood.</string>
+    <string name="jail_mode_coarse_detail">Precise location turned off; only an approximate location is available.</string>
     <string name="jail_mode_off">Real data</string>
     <string name="jail_mode_off_detail">The app gets what the system gives it.</string>
     <string name="jail_mode_global">Use global setting</string>

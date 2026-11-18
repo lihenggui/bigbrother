@@ -32,6 +32,7 @@ internal object AppOpsGuardProtocol {
      * Written for an op that has no uid mode of its own, and read back as
      * "remove the uid mode again". Every mode that is set is written as its
      * number, so that an explicit `MODE_DEFAULT` stays distinct from none.
+     * For a permission, it stands for a state that is not known.
      */
     const val NO_UID_MODE = "default"
 
@@ -73,25 +74,74 @@ internal object AppOpsGuardProtocol {
         "android:wifi_scan",
     )
 
+    /**
+     * `PackageManager.FLAG_PERMISSION_USER_SET`: the user chose the
+     * permission's state, and the app may ask again.
+     */
+    const val FLAG_USER_SET = 1
+
+    /**
+     * `PackageManager.FLAG_PERMISSION_USER_FIXED`: the user chose the state
+     * for good. The system refuses the app's requests without asking.
+     */
+    const val FLAG_USER_FIXED = 2
+
+    /** The flags of a permission that are the user's choice, saved and put back. */
+    const val USER_FLAGS = FLAG_USER_SET or FLAG_USER_FIXED
+
+    /** What a permission is held to: revoked, and fixed as the user's choice. */
+    const val REVOKED = "revoked"
+
+    private const val GRANTED = "granted"
+    private const val DENIED = "denied"
+    private const val USER_SET = "user_set"
+    private const val USER_FIXED = "user_fixed"
+
+    /** Whether [name] names a permission rather than an op (`android:camera`). */
+    fun isPermission(name: String): Boolean = name.startsWith("android.permission.")
+
+    /** What to hold a uid to: [ops] at their modes, and [permissions] revoked. */
+    data class Targets(val ops: Map<String, Int>, val permissions: Set<String>) {
+        companion object {
+            val NONE = Targets(emptyMap(), emptySet())
+        }
+    }
+
+    /**
+     * A runtime permission's state for a uid: whether it is granted, and
+     * the flags among [USER_FLAGS] it has.
+     */
+    data class PermissionState(val granted: Boolean, val flags: Int)
+
+    /**
+     * What to set back: [ops] to uid modes, `null` for none; [permissions]
+     * to states, `null` where the state is not known.
+     */
+    data class Values(val ops: List<Pair<String, Int?>>, val permissions: List<Pair<String, PermissionState?>>) {
+        fun isEmpty(): Boolean = ops.isEmpty() && permissions.isEmpty()
+
+        companion object {
+            val NONE = Values(emptyList(), emptyList())
+        }
+    }
+
     sealed interface Command {
         val uid: Int
 
-        /** [targets] maps the ops to hold the uid to to their modes. */
-        data class Set(override val uid: Int, val targets: Map<String, Int>) : Command
+        data class Set(override val uid: Int, val targets: Targets) : Command
 
-        /** [modes] maps op names to uid modes, `null` for none. */
-        data class Restore(override val uid: Int, val modes: List<Pair<String, Int?>>) : Command
+        data class Restore(override val uid: Int, val values: Values) : Command
 
         /** As [Set]. */
-        data class Verify(override val uid: Int, val targets: Map<String, Int>) : Command
+        data class Verify(override val uid: Int, val targets: Targets) : Command
 
         data class Release(override val uid: Int) : Command
 
         /**
-         * Hold a guarded uid to [targets] from now on, after setting the ops
-         * in [resets] back to the modes given, which are not held.
+         * Hold a guarded uid to [targets] from now on, after setting what
+         * [resets] names back to the values given, which is not held.
          */
-        data class Apply(override val uid: Int, val targets: Map<String, Int>, val resets: List<Pair<String, Int?>>) : Command
+        data class Apply(override val uid: Int, val targets: Targets, val resets: Values) : Command
     }
 
     /**
@@ -111,8 +161,8 @@ internal object AppOpsGuardProtocol {
 
             "apply" -> {
                 if (words.size != 4) return null
-                val targets = if (words[2] == NONE) emptyMap() else decodeTargets(words[2]) ?: return null
-                val resets = if (words[3] == NONE) emptyList() else decodeModes(words[3]) ?: return null
+                val targets = if (words[2] == NONE) Targets.NONE else decodeTargets(words[2]) ?: return null
+                val resets = if (words[3] == NONE) Values.NONE else decodeValues(words[3]) ?: return null
                 Command.Apply(uid, targets, resets)
             }
 
@@ -120,9 +170,9 @@ internal object AppOpsGuardProtocol {
 
             "restore" -> when (words.size) {
                 // A device that knows none of the ops saved none.
-                2 -> Command.Restore(uid, emptyList())
+                2 -> Command.Restore(uid, Values.NONE)
 
-                3 -> decodeModes(words[2])?.let { Command.Restore(uid, it) }
+                3 -> decodeValues(words[2])?.let { Command.Restore(uid, it) }
 
                 else -> null
             }
@@ -131,32 +181,84 @@ internal object AppOpsGuardProtocol {
         }
     }
 
-    /** `<op>=<mode>,...`, the form `saved` prints and `restore` takes. */
-    fun encodeModes(modes: List<Pair<String, Int?>>): String = modes.joinToString(",") { (name, mode) -> "$name=${mode ?: NO_UID_MODE}" }
+    /**
+     * `<name>=<value>,...`, the form `saved` prints and `restore` takes: the
+     * ops first, each at its uid mode's number or `default` for none, then
+     * the permissions, each at its state, or `default` where that is not
+     * known.
+     */
+    fun encodeValues(values: Values): String = (
+        values.ops.map { (name, mode) -> "$name=${mode ?: NO_UID_MODE}" } +
+            values.permissions.map { (name, state) -> "$name=${state?.let(::encodeState) ?: NO_UID_MODE}" }
+        ).joinToString(",")
 
-    /** The pairs [encodeModes] wrote, or `null` if [text] is not in that form. */
-    fun decodeModes(text: String): List<Pair<String, Int?>>? = text.split(',').map { pair ->
-        val name = pair.substringBefore('=', missingDelimiterValue = "")
-        val value = pair.substringAfter('=')
-        if (name.isEmpty() || name.any { it.isWhitespace() }) return null
-        val mode = when (value) {
-            NO_UID_MODE -> null
-            else -> value.toIntOrNull()?.takeIf { it >= 0 } ?: return null
+    /** What [encodeValues] wrote, or `null` if [text] is not in that form. */
+    fun decodeValues(text: String): Values? {
+        val ops = mutableListOf<Pair<String, Int?>>()
+        val permissions = mutableListOf<Pair<String, PermissionState?>>()
+        for ((name, value) in decodePairs(text) ?: return null) {
+            if (isPermission(name)) {
+                permissions += name to if (value == NO_UID_MODE) null else decodeState(value) ?: return null
+            } else {
+                ops += name to if (value == NO_UID_MODE) null else value.toIntOrNull()?.takeIf { it >= 0 } ?: return null
+            }
         }
-        name to mode
+        return Values(ops, permissions)
     }
 
-    /** Written in place of an empty list of ops. */
+    /** `granted` or `denied`, then `+user_set` and `+user_fixed` for the flags it has. */
+    fun encodeState(state: PermissionState): String = buildString {
+        append(if (state.granted) GRANTED else DENIED)
+        if (state.flags and FLAG_USER_SET != 0) append("+$USER_SET")
+        if (state.flags and FLAG_USER_FIXED != 0) append("+$USER_FIXED")
+    }
+
+    /** The state [encodeState] wrote, or `null` for anything else. */
+    fun decodeState(text: String): PermissionState? {
+        val words = text.split('+')
+        val granted = when (words[0]) {
+            GRANTED -> true
+            DENIED -> false
+            else -> return null
+        }
+        var flags = 0
+        for (word in words.drop(1)) {
+            flags = flags or when (word) {
+                USER_SET -> FLAG_USER_SET
+                USER_FIXED -> FLAG_USER_FIXED
+                else -> return null
+            }
+        }
+        return PermissionState(granted, flags)
+    }
+
+    /** The `<name>=<value>` pairs of [text], or `null` if one is not a pair. */
+    private fun decodePairs(text: String): List<Pair<String, String>>? = text.split(',').map { pair ->
+        val name = pair.substringBefore('=', missingDelimiterValue = "")
+        if (name.isEmpty() || name.any { it.isWhitespace() }) return null
+        name to pair.substringAfter('=')
+    }
+
+    /** Written in place of an empty list. */
     private const val NONE = "-"
 
     /**
-     * The ops to hold a uid to, in the form [encodeModes] writes, each
-     * ignored; `null` for anything else.
+     * What to hold a uid to: ops each ignored, in the form [encodeValues]
+     * writes, and permissions each `revoked`; `null` for anything else.
      */
-    fun decodeTargets(text: String): Map<String, Int>? {
-        val modes = decodeModes(text) ?: return null
-        if (modes.any { (_, mode) -> mode != MODE_IGNORED }) return null
-        return modes.associate { (name, mode) -> name to mode!! }
+    fun decodeTargets(text: String): Targets? {
+        val ops = mutableMapOf<String, Int>()
+        val permissions = mutableSetOf<String>()
+        for ((name, value) in decodePairs(text) ?: return null) {
+            if (isPermission(name)) {
+                if (value != REVOKED) return null
+                permissions += name
+            } else {
+                if (value.toIntOrNull() != MODE_IGNORED) return null
+                ops[name] = MODE_IGNORED
+            }
+        }
+        return Targets(ops, permissions)
     }
 
     /** What `set` saves: each op's own uid mode, `null` where it has none. */
@@ -170,13 +272,28 @@ internal object AppOpsGuardProtocol {
      */
     fun opsToSetAgain(states: List<OpState>, targets: Map<String, Int>): List<String> = states.filter { state -> targets[state.name]?.let { (state.uidMode ?: state.defaultMode) != it } ?: false }.map { it.name }
 
-    fun savedLine(uid: Int, modes: List<Pair<String, Int?>>): String = if (modes.isEmpty()) "saved $uid" else "saved $uid ${encodeModes(modes)}"
+    /** Whether a permission with these [flags] is held: revoked, and fixed so. */
+    fun isHeld(granted: Boolean, flags: Int): Boolean = !granted && flags and FLAG_USER_FIXED != 0
+
+    /**
+     * Whether a permission with these [flags] was put back to [state]; with
+     * no state known, whether it is no longer fixed.
+     */
+    fun isPutBack(state: PermissionState?, granted: Boolean, flags: Int): Boolean = if (state == null) {
+        flags and FLAG_USER_FIXED == 0
+    } else {
+        granted == state.granted && flags and USER_FLAGS == state.flags
+    }
+
+    fun savedLine(uid: Int, values: Values): String = if (values.isEmpty()) "saved $uid" else "saved $uid ${encodeValues(values)}"
 
     fun restoredLine(uid: Int): String = "restored $uid"
 
-    fun appliedLine(uid: Int): String = "applied $uid"
+    /** With the states of the permissions taken anew, in the form [encodeValues] writes. */
+    fun appliedLine(uid: Int, found: List<Pair<String, PermissionState>>): String = if (found.isEmpty()) "applied $uid" else "applied $uid ${encodeValues(Values(emptyList(), found))}"
 
-    fun revertedLine(uid: Int, op: String): String = "reverted $uid $op"
+    /** [name] is an op's or a permission's. */
+    fun revertedLine(uid: Int, name: String): String = "reverted $uid $name"
 
     fun verifiedLine(uid: Int): String = "verified $uid"
 
