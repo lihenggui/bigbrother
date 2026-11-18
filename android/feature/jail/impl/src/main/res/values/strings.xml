@@ -173,6 +173,6 @@
     <string name="jail_mode_global">Use global setting</string>
     <!-- %1$s: what the global setting is now, such as "Empty list". -->
     <string name="jail_mode_global_detail">Now: %1$s</string>
-    <string name="jail_list_separator">, </string>
+    <string name="jail_list_separator">", "</string>
     <string name="jail_select">Select an isolated app or the global settings</string>
 </resources>
