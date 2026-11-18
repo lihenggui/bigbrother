@@ -170,6 +170,11 @@ impl Item {
     }
 }
 
+/// The location ops that location made coarse leaves to the system. The
+/// system keeps the Wi-Fi scan op's mode under the coarse location op (its
+/// switch op): holding the scan would refuse the coarse location as well.
+const COARSE_KEPT: &[&str] = &["android:coarse_location", "android:wifi_scan"];
+
 /// The mode of some items: an app's own, or the global settings.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -290,7 +295,7 @@ impl Settings {
     }
 
     /// The app ops to hold the app to, and in which mode. Location made
-    /// coarse keeps the coarse one as the system has it.
+    /// coarse holds only the precise location ([`COARSE_KEPT`]).
     pub fn op_targets(&self) -> Vec<(&'static str, OpMode)> {
         let mut targets = Vec::new();
         for item in Item::ALL {
@@ -300,7 +305,7 @@ impl Settings {
                 Mode::Deny => OpMode::Errored,
             };
             for op in item.ops() {
-                if self.mode(item) == Mode::Coarse && *op == "android:coarse_location" {
+                if self.mode(item) == Mode::Coarse && COARSE_KEPT.contains(op) {
                     continue;
                 }
                 targets.push((*op, mode));
@@ -399,9 +404,15 @@ mod tests {
             [
                 ("android:read_contacts", OpMode::Errored),
                 ("android:write_contacts", OpMode::Errored),
+                // Coarse: the precise location only.
                 ("android:fine_location", OpMode::Ignored),
-                ("android:wifi_scan", OpMode::Ignored),
             ]
+        );
+        own.set(Item::Location, Some(Mode::On)).unwrap();
+        assert!(
+            own.over(&Settings::default())
+                .op_targets()
+                .contains(&("android:wifi_scan", OpMode::Ignored))
         );
     }
 
