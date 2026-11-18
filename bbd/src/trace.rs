@@ -316,9 +316,17 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     let mut sigterm = signal(SignalKind::terminate())?;
     let mut write_errors = RecurringLog::default();
     let mut sensor_check = SensorCheck::default();
+    // The package list, watched while newly installed apps are sandboxed.
+    let mut package_watch = sandbox::auto::Watch::default();
 
     loop {
         sensor_check.arm(tracer.sensors.any_on());
+        if let Some(sandbox) = sandbox.as_mut()
+            && package_watch.arm(sandbox.auto_on(), Path::new(sandbox::auto::PACKAGE_DIR))
+        {
+            // What was installed before the watch began.
+            sandbox.isolate_new(&tracer.writer, &mut tracer.packages);
+        }
         // Every branch that does not end in a flush continues the loop.
         let request = tokio::select! {
             _ = sigint.recv() => break,
@@ -366,6 +374,18 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
                 if let (Ok(Some((stream, line))), Some(sandbox)) = (read, sandbox.as_mut()) {
                     let answer = sandbox.answer(&line, &tracer.writer, &mut tracer.packages);
                     control::send_answer(stream, answer);
+                }
+                continue;
+            }
+            // An app was installed, updated or removed.
+            changed = package_watch.changed(), if package_watch.armed() => {
+                match changed {
+                    Ok(()) => {
+                        if let Some(sandbox) = sandbox.as_mut() {
+                            sandbox.isolate_new(&tracer.writer, &mut tracer.packages);
+                        }
+                    }
+                    Err(e) => package_watch.give_up(&e),
                 }
                 continue;
             }
@@ -505,8 +525,9 @@ fn start_sandbox(
     tracer: &mut Tracer,
     db: &Path,
 ) -> Option<Sandbox> {
-    // Where every user's apps keep their data.
-    let user_data = Path::new("/data/user");
+    // Where every user's apps keep the data they can reach before the user
+    // unlocks the device: there for every installed app from the start.
+    let user_data = Path::new("/data/user_de");
     let mut sandbox = match Sandbox::load(&tracer.writer, Vec::new(), Some(user_data)) {
         Ok(sandbox) => sandbox,
         Err(e) => {

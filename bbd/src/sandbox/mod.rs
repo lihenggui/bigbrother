@@ -57,8 +57,11 @@
 //! What each effect does depends on the app's [`items`]: the items the app
 //! has a mode of its own for, over the global settings. An item is on unless
 //! set otherwise, and an app with every item off has nothing done to it.
+//!
+//! Apps can also be put in as they are installed ([`auto`]).
 
 pub mod appops;
+pub mod auto;
 mod dirs;
 pub mod gate;
 pub mod identity;
@@ -262,6 +265,10 @@ pub struct ListedApp {
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GlobalItems {
     pub items: Settings,
+    /// Whether apps installed from now on are put in the sandbox with them
+    /// (see [`auto`]).
+    #[serde(default)]
+    pub auto: bool,
 }
 
 /// The answer to `sandbox.set`.
@@ -303,9 +310,11 @@ pub struct Sandbox {
     global: Global,
     effects: Vec<Box<dyn Effect>>,
     /// Where each Android user's apps keep their data, a directory per user
-    /// and package (`/data/user`): how an app is known to be installed for a
-    /// user. Not checked when `None`.
+    /// and package (`/data/user_de`, which can be read before the user
+    /// unlocks the device): how an app is known to be installed for a user.
+    /// Not checked when `None`.
     user_data: Option<PathBuf>,
+    auto: auto::Auto,
 }
 
 impl Sandbox {
@@ -329,6 +338,7 @@ impl Sandbox {
             global: Arc::new(RwLock::new(global)),
             effects,
             user_data: user_data.map(Path::to_path_buf),
+            auto: auto::Auto::load(writer)?,
         })
     }
 
@@ -456,6 +466,10 @@ impl Sandbox {
             Request::SandboxSetGlobal { settings } => self
                 .set_global(writer, packages, &settings)
                 .map(control::success),
+            Request::SandboxAuto => Ok(control::success(self.auto_switch())),
+            Request::SandboxSetAuto { on } => {
+                self.set_auto(writer, packages, on).map(control::success)
+            }
         };
         answer.unwrap_or_else(|e| control::failure(&format!("{e:#}")))
     }
@@ -668,6 +682,7 @@ impl Sandbox {
     fn global_items(&self) -> GlobalItems {
         GlobalItems {
             items: self.global_read().over(&Settings::default()),
+            auto: self.auto_switch().auto,
         }
     }
 
@@ -984,7 +999,13 @@ pub fn command(db: &Path, request: Request, json: bool) -> anyhow::Result<()> {
         }
         Request::SandboxGlobal | Request::SandboxSetGlobal { .. } => {
             let global: GlobalItems = serde_json::from_value(answer)?;
-            print_items(&mut out, &global.items, |_| "")
+            print_items(&mut out, &global.items, |_| "")?;
+            writeln!(out)?;
+            auto::print(&mut out, global.auto)
+        }
+        Request::SandboxAuto | Request::SandboxSetAuto { .. } => {
+            let switch: auto::Switch = serde_json::from_value(answer)?;
+            auto::print(&mut out, switch.auto)
         }
     }?;
     Ok(())

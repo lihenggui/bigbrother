@@ -101,7 +101,7 @@ impl Category {
 
 /// Schema version stored in SQLite's `user_version`. A database at any
 /// other version is refused: bump it whenever `SCHEMA` changes.
-const SCHEMA_VERSION: i32 = 7;
+const SCHEMA_VERSION: i32 = 8;
 
 /// Most entries returned for one path's history.
 const HISTORY_LIMIT: u32 = 2000;
@@ -144,6 +144,12 @@ const FILE_OPEN: Mode = MODE_READ | MODE_WRITE;
 /// the app has a mode of its own for; `sandbox_global` holds the settings
 /// every other item follows (see `sandbox::items`). An item named in neither
 /// is on.
+///
+/// `sandbox_known` is what the isolation of newly installed apps knows of
+/// the installed ones (see `sandbox::auto`); it is empty while that is off,
+/// which the `sandbox_auto` key of `meta` says. A row with user -1 is an app
+/// id left alone for every Android user; one with a user is a uid of an app
+/// installed since, already dealt with.
 const SCHEMA: &str = "
 CREATE TABLE access (
     hour     INTEGER NOT NULL,   -- unix time / 3600
@@ -209,6 +215,13 @@ CREATE TABLE sandbox (
 CREATE TABLE sandbox_global (
     item TEXT PRIMARY KEY,
     mode TEXT NOT NULL
+) WITHOUT ROWID;
+CREATE TABLE sandbox_known (
+    app_id  INTEGER NOT NULL,
+    user    INTEGER NOT NULL,   -- the Android user; -1 for every user
+    package TEXT    NOT NULL,   -- one of its packages: tells it apart from an app
+                                -- given the app id once this one is uninstalled
+    PRIMARY KEY (app_id, user)
 ) WITHOUT ROWID;
 ";
 
@@ -698,6 +711,64 @@ fn sandbox_global(conn: &Connection) -> anyhow::Result<String> {
         })?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(pairs.join(","))
+}
+
+/// What the isolation of newly installed apps knows of one installed app
+/// (see `sandbox::auto`): a `sandbox_known` row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KnownApp {
+    pub app_id: u32,
+    /// The Android user it was dealt with for; `None` for every user.
+    pub user: Option<u32>,
+    pub package: String,
+}
+
+/// The `meta` key that says whether newly installed apps are isolated.
+const SANDBOX_AUTO: &str = "sandbox_auto";
+
+impl Writer {
+    /// Whether newly installed apps are isolated, and what is known of the
+    /// installed ones.
+    pub fn sandbox_auto(&self) -> anyhow::Result<(bool, Vec<KnownApp>)> {
+        let on = self.meta(SANDBOX_AUTO)?.is_some_and(|on| on != 0);
+        let mut stmt = self
+            .conn
+            .prepare("SELECT app_id, user, package FROM sandbox_known ORDER BY app_id, user")?;
+        let rows = stmt.query_map([], |r| {
+            Ok(KnownApp {
+                app_id: r.get(0)?,
+                user: u32::try_from(r.get::<_, i64>(1)?).ok(),
+                package: r.get(2)?,
+            })
+        })?;
+        Ok((on, rows.collect::<Result<_, _>>()?))
+    }
+
+    /// Replace both at once, written through to the disk as the sandbox's
+    /// entries are: what is known decides which apps are put in the
+    /// sandbox.
+    pub fn put_sandbox_auto(&self, on: bool, known: &[KnownApp]) -> anyhow::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "INSERT INTO meta (key, value) VALUES (?1, ?2)
+             ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            params![SANDBOX_AUTO, on],
+        )?;
+        tx.execute("DELETE FROM sandbox_known", [])?;
+        {
+            let mut insert = tx
+                .prepare("INSERT INTO sandbox_known (app_id, user, package) VALUES (?1, ?2, ?3)")?;
+            for app in known {
+                insert.execute(params![
+                    app.app_id,
+                    app.user.map_or(-1, i64::from),
+                    app.package
+                ])?;
+            }
+        }
+        tx.commit()?;
+        self.sync()
+    }
 }
 
 fn has_tables(conn: &Connection) -> rusqlite::Result<bool> {
@@ -1879,6 +1950,34 @@ mod tests {
         assert_eq!(w.sandbox_global().unwrap(), "camera=off,location=coarse");
         w.put_sandbox_global(&[("contacts", "off")]).unwrap();
         assert_eq!(w.sandbox_global().unwrap(), "contacts=off");
+        drop(w);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn what_auto_isolation_knows_is_written_over_and_survives_reopening() {
+        let dir = std::env::temp_dir().join(format!("bbd-test-known-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let db = dir.join("bb.db");
+        let w = Writer::open(&db).unwrap();
+        assert_eq!(w.sandbox_auto().unwrap(), (false, vec![]));
+        let known = |app_id, user, package: &str| KnownApp {
+            app_id,
+            user,
+            package: package.into(),
+        };
+        let rows = [
+            known(10100, None, "com.a"),
+            known(10230, Some(0), "com.new"),
+            known(10230, Some(10), "com.new"),
+        ];
+        w.put_sandbox_auto(true, &rows).unwrap();
+        drop(w);
+        let w = Writer::open(&db).unwrap();
+        assert_eq!(w.sandbox_auto().unwrap(), (true, rows.to_vec()));
+        // Turned off, nothing is known.
+        w.put_sandbox_auto(false, &[]).unwrap();
+        assert_eq!(w.sandbox_auto().unwrap(), (false, vec![]));
         drop(w);
         std::fs::remove_dir_all(dir).unwrap();
     }
