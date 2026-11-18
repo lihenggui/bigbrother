@@ -196,7 +196,7 @@ object AppOpsGuard {
             connectPermissions()
             thread(isDaemon = true, name = "check") { checkLoop() }
         } catch (e: Throwable) {
-            System.err.println(e)
+            System.err.println(describe(e))
             exitProcess(1)
         }
         while (true) {
@@ -210,7 +210,7 @@ object AppOpsGuard {
                 try {
                     handle(command)
                 } catch (e: Throwable) {
-                    System.err.println("${line.text.trim().substringBefore(' ')} ${command.uid}: $e")
+                    System.err.println("${line.text.trim().substringBefore(' ')} ${command.uid}: ${describe(e)}")
                     emit(AppOpsGuardProtocol.failedLine(command.uid))
                 }
             }
@@ -451,7 +451,7 @@ object AppOpsGuard {
             .invoke(service, code, uid, mode)
         true
     } catch (e: Throwable) {
-        System.err.println("setting $name for $uid: ${e.cause ?: e}")
+        System.err.println("setting $name for $uid: ${describe(e)}")
         false
     }
 
@@ -475,7 +475,7 @@ object AppOpsGuard {
                 startWatching.invoke(service, code, null, asInterface.invoke(null, ChangeWatcher()))
             }
         } catch (e: Throwable) {
-            System.err.println("not watching mode changes, checking every minute only: ${e.cause ?: e}")
+            System.err.println("not watching mode changes, checking every minute only: ${describe(e)}")
         }
     }
 
@@ -502,7 +502,7 @@ object AppOpsGuard {
                     try {
                         verify(uid)
                     } catch (e: Throwable) {
-                        System.err.println("checking $uid: $e")
+                        System.err.println("checking $uid: ${describe(e)}")
                     }
                 }
             }
@@ -693,8 +693,18 @@ object AppOpsGuard {
         throw IllegalStateException("$name: ${e.cause?.javaClass?.simpleName}")
     }
 
-    /** What [e] says without what the system put in it. */
-    private fun describe(e: Throwable): String = if (e is IllegalStateException || e is NoSuchMethodException) e.toString() else e.javaClass.simpleName
+    /**
+     * What [e] says without what the system put in it, which may name
+     * packages: its kind, and the message only of this program's own. A
+     * call made by reflection is told by the exception the system threw
+     * (say, DeadObjectException when system_server has gone), not the
+     * wrapper around it.
+     */
+    private fun describe(e: Throwable): String = when {
+        e is InvocationTargetException -> (e.targetException ?: e).javaClass.simpleName
+        e is IllegalStateException || e is NoSuchMethodException -> e.toString()
+        else -> e.javaClass.simpleName
+    }
 
     private fun Class<*>.optionalMethod(name: String, vararg types: Class<*>) = try {
         getMethod(name, *types)
