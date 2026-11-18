@@ -243,7 +243,7 @@ CREATE TABLE sandbox (
     enabled    INTEGER NOT NULL,
     android_id TEXT    NOT NULL,      -- 16 hex digits, drawn on the first enable
     saved_ops  TEXT    NOT NULL,      -- the uid's app-op modes before it was enabled,
-                                      -- 'op=mode,...', restored when it is disabled
+                                      -- 'op=mode[/grant],...', restored when it is disabled
     saved_permissions TEXT NOT NULL,  -- the runtime permissions the sandbox may have
                                       -- taken, each with its state before, or 'default'
                                       -- where that is not known: 'permission=state,...'

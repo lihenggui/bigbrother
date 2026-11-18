@@ -30,7 +30,13 @@
 //! with the last.
 //!
 //! What the ops were before is kept in the app's entry (`saved_ops`), and
-//! put back when the app leaves the sandbox.
+//! put back when the app leaves the sandbox. For the op of a runtime
+//! permission the helper saves, with the mode, the mode the system gave it
+//! for the permission's grant then (`android:read_contacts=1/1`); where the
+//! grant has changed by the time the op is given back, the op gets the
+//! system's mode for the grant as it is then instead. The daemon keeps and
+//! hands back what the helper saved as it is; a mode written by earlier
+//! builds, without a grant, is put back as saved.
 //!
 //! Only the ops of the items that are on for the app are held (see
 //! `items::Settings::op_targets`), ignored, or, for an item left to the
@@ -46,7 +52,10 @@
 //! as it holds the ops (`items::Settings::taken_permissions`). What the
 //! permission was before, granted or not and with the user's flags, is
 //! kept in the entry (`saved_permissions`) and put back when the app leaves
-//! coarse. No mode of the items covers both the ops of one mode and the
+//! coarse. If the user grants it again in the meantime, the helper takes it
+//! back and reports the state it found (`reverted <uid>
+//! <permission>=<state>`): the user's latest choice, kept in the entry in
+//! place of the one before (`Effect::found`) and given back instead. No mode of the items covers both the ops of one mode and the
 //! permission of another (`items::Settings::covering`), so a permission is
 //! named in the entry before it is taken, its state not known yet
 //! ([`naming_taken`]), and whatever the entry names is put back when the app
@@ -135,6 +144,21 @@ fn parse_unheld(line: &str) -> Option<(u32, BTreeSet<String>)> {
     Some((uid, ops))
 }
 
+/// What a `reverted` line reports of a permission the helper found granted
+/// again while it held it revoked, and took back: the uid, and
+/// `<permission>=<state>`, the state it was found in.
+fn found_in(line: &str) -> Option<(u32, String)> {
+    let mut words = line.split_ascii_whitespace();
+    if words.next()? != "reverted" {
+        return None;
+    }
+    let uid = words.next()?.parse().ok()?;
+    let found = words.next()?;
+    let (name, state) = found.split_once('=')?;
+    (is_permission(name) && !state.is_empty() && words.next().is_none())
+        .then(|| (uid, found.to_string()))
+}
+
 #[derive(Default)]
 struct State {
     /// Whether the helper is to run: an app is sandboxed, or about to be.
@@ -163,6 +187,9 @@ struct State {
     /// The ops of guarded uids that the running helper last found it could
     /// not hold. A uid it has not reported on yet is not known to be held.
     unheld: BTreeMap<u32, BTreeSet<String>>,
+    /// The permissions the helper found granted again, by uid, as
+    /// [`found_in`] reads them, not yet kept in the entries.
+    found: Vec<(u32, String)>,
 }
 
 impl State {
@@ -412,6 +439,25 @@ fn keep_found(entry: &mut Entry, found: &str) {
         .join(",");
 }
 
+/// Give the permissions `entry` names the states in `found`
+/// (`<permission>=<state>`) in place of the ones saved: each was granted
+/// again while the app was held to it revoked, the user's choice since it
+/// was taken, and what to give back now. One `entry` does not name was not
+/// taken from it. Whether anything changed.
+fn keep_regranted(entry: &mut Entry, found: &[String]) -> bool {
+    let found: HashMap<&str, &str> = found.iter().flat_map(|pair| pairs(pair)).collect();
+    let mut changed = false;
+    let kept: Vec<String> = pairs(&entry.saved_permissions)
+        .map(|(name, saved)| {
+            let state = found.get(name).copied().unwrap_or(saved);
+            changed |= state != saved;
+            format!("{name}={state}")
+        })
+        .collect();
+    entry.saved_permissions = kept.join(",");
+    changed
+}
+
 /// Forget what `entry` saved for the permissions among `names`: they were
 /// given back.
 fn forget_given_back(entry: &mut Entry, names: &[String]) {
@@ -624,6 +670,20 @@ impl Effect for AppOps {
                 .collect();
         }
     }
+
+    fn found(&mut self, entries: &mut HashMap<u32, Entry>) -> Vec<u32> {
+        let found = std::mem::take(&mut self.shared.state().found);
+        let mut changed = Vec::new();
+        for (uid, state) in found {
+            if let Some(entry) = entries.get_mut(&uid)
+                && keep_regranted(entry, &[state])
+                && !changed.contains(&uid)
+            {
+                changed.push(uid);
+            }
+        }
+        changed
+    }
 }
 
 /// Run the helper while it is wanted, starting it again when it ends by
@@ -713,6 +773,8 @@ fn run_helper(shared: &Shared) -> anyhow::Error {
         } else if let Some((uid, Some(answer))) = parse_line(&line) {
             shared.state().answers.insert(uid, answer);
             shared.changed.notify_all();
+        } else if let Some(found) = found_in(&line) {
+            shared.state().found.push(found);
         }
     }
     // Closes its input, if it is still there to notice. The next helper
@@ -1259,6 +1321,89 @@ mod tests {
             restore_line(&coarse, &only(&[(Item::Location, Mode::Coarse)])).as_deref(),
             Some("restore 10100 android.permission.ACCESS_FINE_LOCATION=denied+user_set")
         );
+    }
+
+    #[test]
+    fn ops_saved_with_their_grants_go_back_with_them() {
+        use super::super::items::{Item, Mode};
+        let (ops, permissions) = split_saved(&format!(
+            "android:read_contacts=1/1,android:camera=default/4,{FINE}=granted"
+        ));
+        assert_eq!(ops, "android:read_contacts=1/1,android:camera=default/4");
+        assert_eq!(permissions, format!("{FINE}=granted"));
+        let entry = Entry {
+            saved_ops: ops,
+            ..sandboxed(10100)
+        };
+        // The helper sets each op by its grant then and now.
+        assert_eq!(
+            restore_line(
+                &entry,
+                &only(&[(Item::Camera, Mode::On), (Item::Contacts, Mode::On)])
+            )
+            .as_deref(),
+            Some(
+                "restore 10100 android:read_contacts=1/1,android:write_contacts=default,\
+                 android:camera=default/4"
+            )
+        );
+    }
+
+    #[test]
+    fn a_permission_found_granted_again_is_read_from_the_helpers_lines() {
+        assert_eq!(
+            found_in(&format!("reverted 10100 {FINE}=granted+user_set")),
+            Some((10100, format!("{FINE}=granted+user_set")))
+        );
+        // Answers nothing.
+        assert_eq!(
+            parse_line(&format!("reverted 10100 {FINE}=granted")),
+            Some((10100, None))
+        );
+        for line in [
+            format!("reverted 10100 {FINE}"),
+            "reverted 10100 android:camera".to_string(),
+            "reverted 10100 android:camera=1".to_string(),
+            format!("reverted 10100 {FINE}="),
+            format!("verified 10100 {FINE}=granted"),
+            format!("reverted x {FINE}=granted"),
+        ] {
+            assert_eq!(found_in(&line), None, "{line}");
+        }
+    }
+
+    #[test]
+    fn a_permission_granted_again_while_held_is_given_back_granted() {
+        use super::super::items::{Item, Mode};
+        let mut appops = AppOps {
+            shared: Arc::new(Shared::default()),
+        };
+        let entry = Entry {
+            saved_permissions: format!("{FINE}=denied+user_set"),
+            ..sandboxed(10100)
+        };
+        let mut entries = HashMap::from([(10100, entry), (10101, sandboxed(10101))]);
+        appops.shared.state().found.extend([
+            (10100, format!("{FINE}=granted+user_set")),
+            // Not taken from this one, nor is there an entry for the last.
+            (10101, format!("{FINE}=granted")),
+            (10102, format!("{FINE}=granted")),
+        ]);
+
+        assert_eq!(appops.found(&mut entries), [10100]);
+        assert!(appops.shared.state().found.is_empty());
+        assert_eq!(entries[&10101].saved_permissions, "");
+        assert_eq!(
+            restore_line(&entries[&10100], &only(&[(Item::Location, Mode::Coarse)])).as_deref(),
+            Some("restore 10100 android.permission.ACCESS_FINE_LOCATION=granted+user_set")
+        );
+        // Found again as it is now: nothing to write.
+        appops
+            .shared
+            .state()
+            .found
+            .push((10100, format!("{FINE}=granted+user_set")));
+        assert!(appops.found(&mut entries).is_empty());
     }
 
     #[test]
