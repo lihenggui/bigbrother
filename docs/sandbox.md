@@ -74,7 +74,7 @@ Android's "only while using the app" does:
 | `location` | No location; with coarse, an approximate one only, as with precise location turned off | off, on, coarse, foreground |
 | `camera` | No camera image | off, on, foreground |
 | `microphone` | Silence | off, on, foreground |
-| `body_sensors` | No body sensor or activity data | off, on |
+| `body_sensors` | No body sensor or activity data, nor, from Android 16, heart rate, skin temperature or oxygen saturation | off, on |
 | `device_ids` | An ANDROID_ID of its own; no phone number or phone state | off, on |
 | `installed_apps` | No installed app but itself and the system's; no usage statistics | off, on |
 | `nearby_devices` | No Bluetooth or Wi-Fi devices nearby | off, on |

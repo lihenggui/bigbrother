@@ -75,7 +75,14 @@ enum class SandboxItem(val id: String) {
 
             MICROPHONE -> listOf("android.permission.RECORD_AUDIO")
 
-            BODY_SENSORS -> listOf("android.permission.BODY_SENSORS", "android.permission.ACTIVITY_RECOGNITION")
+            BODY_SENSORS -> listOf(
+                "android.permission.BODY_SENSORS",
+                "android.permission.ACTIVITY_RECOGNITION",
+                // What Android 16 splits the body sensors permission into.
+                "android.permission.health.READ_HEART_RATE",
+                "android.permission.health.READ_SKIN_TEMPERATURE",
+                "android.permission.health.READ_OXYGEN_SATURATION",
+            )
 
             NEARBY_DEVICES -> listOf(
                 "android.permission.BLUETOOTH_SCAN",

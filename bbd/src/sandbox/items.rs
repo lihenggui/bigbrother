@@ -163,7 +163,14 @@ impl Item {
             ],
             Item::Camera => &["android:camera"],
             Item::Microphone => &["android:record_audio"],
-            Item::BodySensors => &["android:body_sensors", "android:activity_recognition"],
+            Item::BodySensors => &[
+                "android:body_sensors",
+                "android:activity_recognition",
+                // From Android 16, which splits the body sensors permission.
+                "android:read_heart_rate",
+                "android:read_skin_temperature",
+                "android:read_oxygen_saturation",
+            ],
             Item::DeviceIds => &["android:read_phone_state", "android:read_phone_numbers"],
             Item::InstalledApps => &["android:get_usage_stats"],
             Item::NearbyDevices => &[
