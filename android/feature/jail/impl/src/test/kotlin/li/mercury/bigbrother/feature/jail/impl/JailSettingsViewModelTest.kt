@@ -69,6 +69,17 @@ class JailSettingsViewModelTest {
     }
 
     @Test
+    fun givenMicrophoneOn_whenOnlyWhileInUseChosenThenTurnedOff_thenGlobalModeFollows() = runTest {
+        val viewModel = viewModel()
+
+        viewModel.choose(SandboxItem.MICROPHONE, SandboxMode.FOREGROUND)
+        assertEquals(SandboxMode.FOREGROUND, viewModel.uiState.value.global?.get(SandboxItem.MICROPHONE))
+
+        viewModel.setOn(SandboxItem.MICROPHONE, on = false)
+        assertEquals(SandboxMode.OFF, viewModel.uiState.value.global?.get(SandboxItem.MICROPHONE))
+    }
+
+    @Test
     fun givenIsolatedApps_whenAllReleased_thenNoneIsolated() = runTest {
         val viewModel = viewModel()
 

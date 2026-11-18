@@ -16,10 +16,11 @@
 //!
 //! Each item is a kind of data the app is kept from, and has a mode: off
 //! (the app gets what the system gives it), on (an empty, made-up or
-//! separate answer), and for location, coarse (an approximate one). The
-//! settings of a sandboxed app name the items it has
-//! its own mode for; every other item has the mode of the global settings,
-//! and every item is on unless set otherwise.
+//! separate answer), for location, coarse (an approximate one), and for
+//! location, the camera and the microphone, foreground (the data only
+//! while the app is in use). The settings of a sandboxed app name the items
+//! it has its own mode for; every other item has the mode of the global
+//! settings, and every item is on unless set otherwise.
 
 use std::collections::BTreeMap;
 
@@ -63,6 +64,21 @@ pub enum Mode {
     On,
     /// For location: an approximate one, and nothing more precise.
     Coarse,
+    /// For location, the camera and the microphone: what the system gives
+    /// while the app is in use, and nothing in the background, as Android's
+    /// "only while using the app".
+    Foreground,
+}
+
+/// The mode an app op is held to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OpMode {
+    /// `AppOpsManager.MODE_IGNORED`: an empty answer, never a refusal.
+    Ignored,
+    /// `AppOpsManager.MODE_FOREGROUND`: allowed while the app is in the
+    /// foreground, ignored in the background. The system keeps it for the
+    /// ops of runtime permissions, as it does ignored.
+    Foreground,
 }
 
 impl Item {
@@ -106,11 +122,14 @@ impl Item {
     }
 
     /// Whether the item can be set to `mode`. Every item can be off or on;
-    /// only location can be made coarse.
+    /// only location can be made coarse, and only what Android itself
+    /// grants while an app is in use (location, the camera and the
+    /// microphone) can be left to the app in the foreground.
     pub fn allows(self, mode: Mode) -> bool {
         match mode {
             Mode::Off | Mode::On => true,
             Mode::Coarse => self == Item::Location,
+            Mode::Foreground => matches!(self, Item::Location | Item::Camera | Item::Microphone),
         }
     }
 
@@ -162,6 +181,11 @@ impl Item {
 /// precise location op ignored, the location service still takes the app
 /// for one with precise location, and gives it none at all.
 pub const PRECISE_LOCATION: &str = "android.permission.ACCESS_FINE_LOCATION";
+
+/// The ops whose uid mode the system keeps under another op of the same
+/// item (their switch op), which holds them in the foreground: the Wi-Fi
+/// scan follows the coarse location.
+const SWITCHED_WITH_ANOTHER: &[&str] = &["android:wifi_scan"];
 
 /// The mode of some items: an app's own, or the global settings.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -282,15 +306,27 @@ impl Settings {
         )
     }
 
-    /// The app ops to hold the app to, ignored: those of the items on.
-    /// Location made coarse holds none of its ops: it takes a permission
-    /// instead ([`Self::taken_permissions`]).
-    pub fn op_targets(&self) -> Vec<&'static str> {
-        Item::ALL
-            .into_iter()
-            .filter(|item| self.mode(*item) == Mode::On)
-            .flat_map(|item| item.ops().iter().copied())
-            .collect()
+    /// The app ops to hold the app to, and the mode of each: ignored for
+    /// the items on, foreground for those left to the app in the
+    /// foreground. Location made coarse holds none of its ops: it takes a
+    /// permission instead ([`Self::taken_permissions`]).
+    pub fn op_targets(&self) -> Vec<(&'static str, OpMode)> {
+        let mut targets = Vec::new();
+        for item in Item::ALL {
+            match self.mode(item) {
+                Mode::On => targets.extend(item.ops().iter().map(|op| (*op, OpMode::Ignored))),
+                // An op switched with another is held through that one:
+                // holding it as well would set the same uid mode twice.
+                Mode::Foreground => targets.extend(
+                    item.ops()
+                        .iter()
+                        .filter(|op| !SWITCHED_WITH_ANOTHER.contains(op))
+                        .map(|op| (*op, OpMode::Foreground)),
+                ),
+                Mode::Off | Mode::Coarse => {}
+            }
+        }
+        targets
     }
 
     /// The runtime permissions to keep revoked: the precise location while
@@ -308,21 +344,26 @@ impl Settings {
     }
 
     /// Settings that keep from an app all that `self` or `other` keeps,
-    /// both over `global`: for each item, the mode of whichever keeps more,
-    /// `self`'s where they keep as much. What is written down while an app
-    /// changes from the one to the other, so that a daemon that stopped
-    /// half way takes it up again with every app op, mount and hook
-    /// answer it may have been given.
+    /// both over `global`: for each item, the mode of whichever keeps all
+    /// the other keeps, `self`'s where both do, and on where neither does
+    /// (coarse keeps the precise location, foreground what the app is
+    /// given in the background). What is written down while an app changes
+    /// from the one to the other, so that a daemon that stopped half way
+    /// takes it up again with every app op, mount and hook answer it may
+    /// have been given.
     pub fn covering(&self, other: &Settings, global: &Settings) -> Settings {
         let (mine, theirs) = (self.over(global), other.over(global));
         let mut covering = Settings::default();
         for item in Item::ALL {
-            let wider = if keeps(theirs.mode(item)) > keeps(mine.mode(item)) {
-                other
+            let (my_mode, their_mode) = (mine.mode(item), theirs.mode(item));
+            let mode = if keeps_all_of(my_mode, their_mode) {
+                self.get(item)
+            } else if keeps_all_of(their_mode, my_mode) {
+                other.get(item)
             } else {
-                self
+                Some(Mode::On)
             };
-            if let Some(mode) = wider.get(item) {
+            if let Some(mode) = mode {
                 covering.0.insert(item, mode);
             }
         }
@@ -330,15 +371,11 @@ impl Settings {
     }
 }
 
-/// How much of an item `mode` keeps from the app, to compare two modes:
-/// what a mode keeps, one that keeps more keeps too.
-fn keeps(mode: Mode) -> u8 {
-    match mode {
-        Mode::Off => 0,
-        // All but an approximate location.
-        Mode::Coarse => 1,
-        Mode::On => 2,
-    }
+/// Whether `wide` keeps from the app all that `narrow` keeps: on keeps
+/// everything, off nothing, and coarse and foreground each keep what the
+/// other does not.
+fn keeps_all_of(wide: Mode, narrow: Mode) -> bool {
+    wide == narrow || wide == Mode::On || narrow == Mode::Off
 }
 
 pub fn mode_name(mode: Mode) -> &'static str {
@@ -346,11 +383,12 @@ pub fn mode_name(mode: Mode) -> &'static str {
         Mode::Off => "off",
         Mode::On => "on",
         Mode::Coarse => "coarse",
+        Mode::Foreground => "foreground",
     }
 }
 
 pub fn parse_mode(name: &str) -> Option<Mode> {
-    [Mode::Off, Mode::On, Mode::Coarse]
+    [Mode::Off, Mode::On, Mode::Coarse, Mode::Foreground]
         .into_iter()
         .find(|mode| mode_name(*mode) == name)
 }
@@ -380,6 +418,17 @@ mod tests {
         let mut settings = Settings::default();
         assert!(settings.set(Item::Camera, Some(Mode::Coarse)).is_err());
         assert_eq!(parse_mode("deny"), None);
+        // Foreground is for what Android grants while an app is in use.
+        for item in [Item::Location, Item::Camera, Item::Microphone] {
+            settings.set(item, Some(Mode::Foreground)).unwrap();
+        }
+        for item in [Item::Contacts, Item::Storage, Item::BodySensors] {
+            assert!(settings.set(item, Some(Mode::Foreground)).is_err());
+        }
+        assert_eq!(
+            Settings::parse("contacts=foreground,camera=foreground").to_text(),
+            "camera=foreground"
+        );
     }
 
     #[test]
@@ -426,19 +475,50 @@ mod tests {
         // permission.
         assert_eq!(
             coarse.op_targets(),
-            ["android:read_contacts", "android:write_contacts"]
+            [
+                ("android:read_contacts", OpMode::Ignored),
+                ("android:write_contacts", OpMode::Ignored)
+            ]
         );
         assert_eq!(coarse.taken_permissions(), [PRECISE_LOCATION]);
         own.set(Item::Location, Some(Mode::On)).unwrap();
         let on = own.over(&Settings::default());
-        assert!(on.op_targets().contains(&"android:wifi_scan"));
+        assert!(
+            on.op_targets()
+                .contains(&("android:wifi_scan", OpMode::Ignored))
+        );
         assert!(on.taken_permissions().is_empty());
+    }
+
+    #[test]
+    fn foreground_holds_the_ops_in_the_foreground() {
+        let mut own = Settings::default();
+        for item in Item::ALL {
+            own.set(item, Some(Mode::Off)).unwrap();
+        }
+        for item in [Item::Location, Item::Camera, Item::Microphone] {
+            own.set(item, Some(Mode::Foreground)).unwrap();
+        }
+        let foreground = own.over(&Settings::default());
+        // The Wi-Fi scan goes with the coarse location, its switch op.
+        assert_eq!(
+            foreground.op_targets(),
+            [
+                ("android:coarse_location", OpMode::Foreground),
+                ("android:fine_location", OpMode::Foreground),
+                ("android:camera", OpMode::Foreground),
+                ("android:record_audio", OpMode::Foreground),
+            ]
+        );
+        assert!(foreground.taken_permissions().is_empty());
+        assert!(foreground.any_on());
+        assert!(!foreground.mounts().any());
     }
 
     #[test]
     fn covering_settings_keep_all_that_either_keeps() {
         let ops = |items: &Settings| -> std::collections::BTreeSet<&str> {
-            items.op_targets().into_iter().collect()
+            items.op_targets().into_iter().map(|(op, _)| op).collect()
         };
         let global = Settings::parse("camera=off");
         let before = Settings::parse("location=coarse,microphone=on");
@@ -476,6 +556,54 @@ mod tests {
     }
 
     #[test]
+    fn coarse_and_foreground_are_covered_by_on() {
+        let none = Settings::default();
+        let covers = |before: &str, after: &str| {
+            Settings::parse(before)
+                .covering(&Settings::parse(after), &none)
+                .to_text()
+        };
+        // Each keeps what the other gives: the precise location, the
+        // location in the background.
+        assert_eq!(
+            covers("location=coarse", "location=foreground"),
+            "location=on"
+        );
+        assert_eq!(
+            covers("location=foreground", "location=coarse"),
+            "location=on"
+        );
+        // Foreground keeps more than off, and on more than foreground.
+        assert_eq!(
+            covers("camera=off", "camera=foreground"),
+            "camera=foreground"
+        );
+        assert_eq!(
+            covers("camera=foreground", "camera=off"),
+            "camera=foreground"
+        );
+        assert_eq!(
+            covers("microphone=foreground", "microphone=on"),
+            "microphone=on"
+        );
+        // Following the global settings, which make it foreground.
+        let global = Settings::parse("location=foreground");
+        let covering = Settings::default().covering(&Settings::parse("location=coarse"), &global);
+        assert_eq!(covering.to_text(), "location=on");
+        let held: std::collections::BTreeSet<&str> = covering
+            .over(&global)
+            .op_targets()
+            .into_iter()
+            .map(|(op, _)| op)
+            .collect();
+        assert!(held.contains("android:coarse_location") && held.contains("android:fine_location"));
+        assert_eq!(
+            Settings::parse("location=foreground").covering(&Settings::default(), &global),
+            Settings::parse("location=foreground")
+        );
+    }
+
+    #[test]
     fn items_and_modes_have_stable_names() {
         for item in Item::ALL {
             assert_eq!(Item::from_name(item.name()), Some(item));
@@ -484,5 +612,10 @@ mod tests {
         }
         assert_eq!(parse_mode("coarse"), Some(Mode::Coarse));
         assert_eq!(serde_json::to_string(&Mode::Coarse).unwrap(), "\"coarse\"");
+        assert_eq!(parse_mode("foreground"), Some(Mode::Foreground));
+        assert_eq!(
+            serde_json::to_string(&Mode::Foreground).unwrap(),
+            "\"foreground\""
+        );
     }
 }

@@ -1808,7 +1808,7 @@ mod tests {
             )
             .unwrap();
         let held = |seen: &Settings| -> std::collections::BTreeSet<&str> {
-            seen.op_targets().into_iter().collect()
+            seen.op_targets().into_iter().map(|(op, _)| op).collect()
         };
         let both = ["android:camera", "android:record_audio"];
 
@@ -1992,6 +1992,76 @@ mod tests {
     }
 
     #[test]
+    fn a_change_between_coarse_and_foreground_is_written_down_as_on() {
+        let mut f = Fixture::new("sandbox-coarse-foreground");
+        let (covered, named) = (
+            Rc::new(RefCell::new(Vec::new())),
+            Rc::new(RefCell::new(Vec::new())),
+        );
+        let mut sandbox = f.sandbox_with(vec![
+            Box::new(Witness {
+                db: f.dir.join("bb.db"),
+                seen: covered.clone(),
+            }),
+            Box::new(Taker {
+                db: f.dir.join("bb.db"),
+                seen: named.clone(),
+            }),
+        ]);
+        let fine = items::PRECISE_LOCATION;
+        let location = |mode| BTreeMap::from([(Item::Location, Some(mode))]);
+        let row = || f.writer.sandbox_entry(10100).unwrap().unwrap();
+        sandbox
+            .enable(&f.writer, &mut f.packages, "com.app", 0, 1000)
+            .unwrap();
+        sandbox
+            .configure(
+                &f.writer,
+                &mut f.packages,
+                "com.app",
+                0,
+                &location(Mode::Coarse),
+            )
+            .unwrap();
+        assert_eq!(row().saved_permissions, format!("{fine}=granted"));
+
+        // While it runs, the app is held to on: neither keeps all the other
+        // does. The permission taken stays named until it is given back.
+        named.borrow_mut().clear();
+        sandbox
+            .configure(
+                &f.writer,
+                &mut f.packages,
+                "com.app",
+                0,
+                &location(Mode::Foreground),
+            )
+            .unwrap();
+        assert_eq!(covered.borrow()[0].mode(Item::Location), Mode::On);
+        assert_eq!(*named.borrow(), [format!("{fine}=granted")]);
+        assert_eq!(row().settings, "location=foreground");
+        assert_eq!(row().saved_permissions, "");
+
+        // And back: on while it runs, the permission named before it is
+        // taken.
+        covered.borrow_mut().clear();
+        named.borrow_mut().clear();
+        sandbox
+            .configure(
+                &f.writer,
+                &mut f.packages,
+                "com.app",
+                0,
+                &location(Mode::Coarse),
+            )
+            .unwrap();
+        assert_eq!(covered.borrow()[0].mode(Item::Location), Mode::On);
+        assert_eq!(*named.borrow(), [format!("{fine}=default")]);
+        assert_eq!(row().settings, "location=coarse");
+        assert_eq!(row().saved_permissions, format!("{fine}=granted"));
+    }
+
+    #[test]
     fn the_restore_lines_give_back_the_ops_and_the_permissions_taken() {
         let f = Fixture::new("sandbox-restore-lines");
         let entry = |uid, enabled, settings: &str, saved_permissions: &str| Entry {
@@ -2146,6 +2216,23 @@ mod tests {
                 r#"{"cmd":"sandbox.set","package":"com.shared.one","settings":{"storage":"coarse"}}"#
             ),
             serde_json::json!({"ok": false, "error": "storage cannot be coarse"})
+        );
+        assert_eq!(
+            ask(
+                r#"{"cmd":"sandbox.set","package":"com.shared.one","settings":{"contacts":"foreground"}}"#
+            ),
+            serde_json::json!({"ok": false, "error": "contacts cannot be foreground"})
+        );
+        assert_eq!(
+            ask(
+                r#"{"cmd":"sandbox.set","package":"com.shared.one","settings":{"camera":"foreground"}}"#
+            )["items"]["camera"],
+            "foreground"
+        );
+        assert_eq!(
+            ask(r#"{"cmd":"sandbox.set","package":"com.shared.one","settings":{"camera":null}}"#)["items"]
+                ["camera"],
+            "on"
         );
         assert_eq!(
             ask(r#"{"cmd":"sandbox.global"}"#)["items"]["microphone"],

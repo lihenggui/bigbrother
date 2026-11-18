@@ -41,9 +41,11 @@ import kotlin.system.exitProcess
 /**
  * Keeps a set of permissions ("app ops") ignored for given apps, for the
  * daemon's sandbox: an app whose ops are ignored is given no data, while its
- * permissions still show as granted. It also keeps runtime permissions
- * revoked, for what no op can do: the precise location permission, whose
- * loss gives an app the system's approximate location.
+ * permissions still show as granted. Ops can be kept in the foreground
+ * instead, where the app gets the data only while it is in use. It also
+ * keeps runtime permissions revoked, for what no op can do: the precise
+ * location permission, whose loss gives an app the system's approximate
+ * location.
  *
  * Not part of the app. The daemon runs it as root, outside any app process,
  * and keeps it running:
@@ -53,8 +55,8 @@ import kotlin.system.exitProcess
  *
  * It reads one command per line and answers each, one line per item. What a
  * uid is held to (`<targets>`) is `<op>=<mode>` for each op, with the mode
- * ignored, and `<permission>=revoked` for each runtime permission, joined
- * by commas:
+ * ignored (1) or foreground (4), and `<permission>=revoked` for each runtime
+ * permission, joined by commas:
  *
  * - `set <uid> <targets>`: prints `saved <uid> <values>`, the uid's current
  *   modes for the guarded ops and the states of the permissions in
@@ -87,7 +89,7 @@ import kotlin.system.exitProcess
  *
  * A command that fails is answered with `failed <uid>`, and the reason goes
  * to the error output. So is one the system took none of: a `set` after
- * which no op is ignored must not pass for one that worked, and a
+ * which no op has its mode must not pass for one that worked, and a
  * permission the system still grants after it was revoked fails the
  * command. Op names are the public ones, such as `android:camera`, and
  * permissions go by their full names.
@@ -354,7 +356,7 @@ object AppOpsGuard {
                     if (setUidMode(name, op.code, uid, mode ?: op.defaultMode ?: MODE_DEFAULT)) taken++
                 }
                 // Still guarded if it fails: the daemon then keeps the app
-                // sandboxed, and its ops must stay ignored.
+                // sandboxed, and its ops must stay as they are held.
                 if (values.ops.isNotEmpty() && taken == 0) error("the system took none of the modes")
                 for ((permission, state) in values.permissions) {
                     permissions().putBack(uid, permission, state ?: guard?.tookPermissions?.get(permission))

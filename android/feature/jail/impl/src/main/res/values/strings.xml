@@ -164,6 +164,8 @@
     <!-- The other modes of an item. -->
     <string name="jail_mode_coarse">Approximate location</string>
     <string name="jail_mode_coarse_detail">Precise location turned off; only an approximate location is available.</string>
+    <string name="jail_mode_foreground">Only while in use</string>
+    <string name="jail_mode_foreground_detail">Available while the app is in use, not in the background.</string>
     <string name="jail_mode_off">Real data</string>
     <string name="jail_mode_off_detail">The app gets what the system gives it.</string>
     <string name="jail_mode_global">Use global setting</string>

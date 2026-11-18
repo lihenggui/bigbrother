@@ -25,6 +25,16 @@ internal object AppOpsGuardProtocol {
     /** `AppOpsManager.MODE_IGNORED`: the app is told no data, not refused. */
     const val MODE_IGNORED = 1
 
+    /**
+     * `AppOpsManager.MODE_FOREGROUND`: allowed while the app is in the
+     * foreground, ignored in the background. The system keeps it for the
+     * ops of runtime permissions.
+     */
+    const val MODE_FOREGROUND = 4
+
+    /** The modes an op can be held to. */
+    private val HELD_MODES = setOf(MODE_IGNORED, MODE_FOREGROUND)
+
     /** `AppOpsManager.MODE_DEFAULT`. */
     const val MODE_DEFAULT = 3
 
@@ -243,8 +253,9 @@ internal object AppOpsGuardProtocol {
     private const val NONE = "-"
 
     /**
-     * What to hold a uid to: ops each ignored, in the form [encodeValues]
-     * writes, and permissions each `revoked`; `null` for anything else.
+     * What to hold a uid to: ops each ignored or in the foreground, in the
+     * form [encodeValues] writes, and permissions each `revoked`; `null` for
+     * anything else.
      */
     fun decodeTargets(text: String): Targets? {
         val ops = mutableMapOf<String, Int>()
@@ -254,8 +265,7 @@ internal object AppOpsGuardProtocol {
                 if (value != REVOKED) return null
                 permissions += name
             } else {
-                if (value.toIntOrNull() != MODE_IGNORED) return null
-                ops[name] = MODE_IGNORED
+                ops[name] = value.toIntOrNull()?.takeIf { it in HELD_MODES } ?: return null
             }
         }
         return Targets(ops, permissions)

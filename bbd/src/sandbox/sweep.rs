@@ -19,9 +19,12 @@
 //! already has are ended, and when it is taken out, those that have one. The
 //! system starts an app again when it is next wanted, and then it starts as
 //! it should. Changing an app's items ends its processes if what is mounted
-//! for it changes, or an item that was off is turned on: what the app read
-//! before, and may keep (the ANDROID_ID, for one), goes with them. Turning
-//! items off takes effect in the running process.
+//! for it changes, or an item that was off is turned on, to any mode but
+//! off: what the app read before, and may keep (the ANDROID_ID, for one),
+//! goes with them. Turning items off, and changing one between the modes
+//! that keep something (on, coarse, foreground), takes effect in the
+//! running process: the app ops and permissions are looked up as the app
+//! asks.
 //!
 //! Location made coarse takes the precise location permission away, and
 //! Android ends the processes of an app whenever it revokes a runtime

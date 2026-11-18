@@ -53,8 +53,10 @@ it again by a file in it that only root can see.
 ## Items
 
 What the sandbox does to an app is set item by item. Each item is off (the
-app gets what the system gives it) or on, and location can also be made
-coarse:
+app gets what the system gives it) or on. Location can also be made
+coarse, and location, the camera and the microphone can be left to the app
+while it is in use and kept from it in the background (foreground), as
+Android's "only while using the app" does:
 
 | Item | On | Modes |
 | --- | --- | --- |
@@ -64,9 +66,9 @@ coarse:
 | `messages` | No messages or call log | off, on |
 | `calendar` | No calendar | off, on |
 | `clipboard_accounts` | An empty clipboard, no accounts | off, on |
-| `location` | No location; with coarse, an approximate one only, as with precise location turned off | off, on, coarse |
-| `camera` | No camera image | off, on |
-| `microphone` | Silence | off, on |
+| `location` | No location; with coarse, an approximate one only, as with precise location turned off | off, on, coarse, foreground |
+| `camera` | No camera image | off, on, foreground |
+| `microphone` | Silence | off, on, foreground |
 | `body_sensors` | No body sensor or activity data | off, on |
 | `device_ids` | An ANDROID_ID of its own; no phone number or phone state | off, on |
 | `installed_apps` | No installed app but itself and the system's; no usage statistics | off, on |
@@ -79,12 +81,14 @@ otherwise. An app keeps its own settings when it leaves the sandbox.
 ```sh
 $bbd sandbox global camera=off microphone=off
 $bbd sandbox set com.example.app camera=on location=coarse
+$bbd sandbox set com.example.app microphone=foreground
 $bbd sandbox set com.example.app camera=global   # follows the global settings again
 ```
 
 A change takes effect at once. It ends the app's processes if what is
 mounted for it changes (`storage`, `cpu_info`), or an item that was off is
-turned on: what the app read before, and may keep, goes with them. Making
+turned on, to any mode but off: what the app read before, and may keep,
+goes with them. Making
 location coarse ends them too when the app had precise location: Android
 ends an app whenever it revokes a permission the app had. A change of the global
 settings is made to every sandboxed app that follows them, or to none. An
@@ -127,6 +131,13 @@ runtime permissions at "ignored" whatever is set.) A helper program
 items that are on, remembers what they were, and sets them again when the
 system changes them, which it does whenever the app's permissions change.
 The helper runs only while a sandboxed app has such an item on.
+
+An item left to the app in the foreground has its ops held at
+"foreground" instead, which the system keeps for the ops of runtime
+permissions as it keeps "ignored": the app gets the data while it is in
+the foreground and nothing in the background. For location these are the
+coarse and the precise location ops; the Wi-Fi scan op goes with the
+coarse location one, under which the system keeps its mode.
 
 No mode of the app ops makes location approximate: with the precise
 location op ignored, the location service still takes the app for one

@@ -142,6 +142,8 @@
 
     <string name="jail_mode_coarse">大致位置</string>
     <string name="jail_mode_coarse_detail">确切位置已关闭，仅能获取大致位置。</string>
+    <string name="jail_mode_foreground">仅在使用期间允许</string>
+    <string name="jail_mode_foreground_detail">应用使用期间可用，在后台时不可用。</string>
     <string name="jail_mode_off">使用真实数据</string>
     <string name="jail_mode_off_detail">应用获得系统提供的数据。</string>
     <string name="jail_mode_global">跟随全局设置</string>

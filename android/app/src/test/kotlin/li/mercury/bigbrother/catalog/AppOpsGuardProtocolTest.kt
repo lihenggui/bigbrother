@@ -51,6 +51,32 @@ class AppOpsGuardProtocolTest {
     }
 
     @Test
+    fun givenOpsInTheForeground_whenParsed_thenHeldAtModeFour() {
+        assertEquals(
+            Command.Set(10123, ops("android:camera" to AppOpsGuardProtocol.MODE_FOREGROUND, "android:read_contacts" to 1)),
+            AppOpsGuardProtocol.parseCommand("set 10123 android:camera=4,android:read_contacts=1"),
+        )
+        assertEquals(
+            Command.Apply(10123, ops("android:coarse_location" to 4, "android:fine_location" to 4), opValues("android:wifi_scan" to null)),
+            AppOpsGuardProtocol.parseCommand("apply 10123 android:coarse_location=4,android:fine_location=4 android:wifi_scan=default"),
+        )
+        assertEquals(Command.Verify(10123, ops("android:record_audio" to 4)), AppOpsGuardProtocol.parseCommand("verify 10123 android:record_audio=4"))
+    }
+
+    @Test
+    fun givenOpsHeldInTheForeground_whenChecked_thenOnlyThoseWithAnotherModeAreSetAgain() {
+        val states = listOf(
+            OpState("android:camera", uidMode = 4, defaultMode = 0),
+            // The system set it back to allowed as the permission changed.
+            OpState("android:record_audio", uidMode = 0, defaultMode = 0),
+            OpState("android:fine_location", uidMode = null, defaultMode = 0),
+        )
+        val targets = mapOf("android:camera" to 4, "android:record_audio" to 4, "android:fine_location" to 4)
+
+        assertEquals(listOf("android:record_audio", "android:fine_location"), AppOpsGuardProtocol.opsToSetAgain(states, targets))
+    }
+
+    @Test
     fun givenPermissionRevokedInTargets_whenParsed_thenHeldApartFromOps() {
         assertEquals(
             Command.Set(10123, Targets(mapOf("android:camera" to 1), setOf(fine))),

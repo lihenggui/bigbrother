@@ -33,8 +33,11 @@
 //! put back when the app leaves the sandbox.
 //!
 //! Only the ops of the items that are on for the app are held (see
-//! `items::Settings::op_targets`), ignored. An app with none of them on is
-//! not handed to the helper.
+//! `items::Settings::op_targets`), ignored, or, for an item left to the
+//! app in the foreground, at "foreground": the system then gives the data
+//! while the app is in use and nothing in the background, as Android's
+//! "only while using the app" does. An app with none of them on is not
+//! handed to the helper.
 //!
 //! Location made coarse is the system's own approximate location: no mode
 //! of the app ops gives it. The helper revokes the precise location
@@ -60,7 +63,10 @@ use std::{
 
 use anyhow::Context as _;
 
-use super::{Effect, Entry, Resumed, Status, items::Settings};
+use super::{
+    Effect, Entry, Resumed, Status,
+    items::{OpMode, Settings},
+};
 use crate::helper;
 
 const HELPER_CLASS: &str = "AppOpsGuard";
@@ -289,9 +295,16 @@ impl AppOps {
     }
 }
 
-/// `AppOpsManager.MODE_IGNORED`: the app is given an empty answer, with its
-/// permission still shown as granted.
-const MODE_IGNORED: u8 = 1;
+/// The framework's number for an op's mode, as the helper takes it.
+fn mode_number(mode: OpMode) -> u8 {
+    match mode {
+        // `AppOpsManager.MODE_IGNORED`: the app is given an empty answer,
+        // with its permission still shown as granted.
+        OpMode::Ignored => 1,
+        // `AppOpsManager.MODE_FOREGROUND`.
+        OpMode::Foreground => 4,
+    }
+}
 
 /// What the helper holds a permission to: revoked, and not to be asked for
 /// again.
@@ -309,7 +322,7 @@ fn targets_of(items: &Settings) -> String {
     let ops = items
         .op_targets()
         .into_iter()
-        .map(|op| format!("{op}={MODE_IGNORED}"));
+        .map(|(op, mode)| format!("{op}={}", mode_number(mode)));
     let permissions = items
         .taken_permissions()
         .into_iter()
@@ -852,6 +865,55 @@ mod tests {
             )
         );
         assert_eq!(split_saved(""), (String::new(), String::new()));
+    }
+
+    #[test]
+    fn an_item_left_to_the_foreground_holds_its_ops_at_foreground() {
+        use super::super::items::{Item, Mode};
+        let mut appops = AppOps {
+            shared: Arc::new(Shared::default()),
+        };
+        let (input, sent) = stand_in(&appops.shared, |_, _| {});
+        appops.shared.state().input = Some(input);
+        let on = only(&[(Item::Location, Mode::On), (Item::Camera, Mode::On)]);
+        let foreground = only(&[
+            (Item::Location, Mode::Foreground),
+            (Item::Camera, Mode::Foreground),
+        ]);
+        let coarse = only(&[
+            (Item::Location, Mode::Coarse),
+            (Item::Camera, Mode::Foreground),
+        ]);
+        let mut entry = Entry {
+            saved_ops: "android:wifi_scan=4,android:camera=default".into(),
+            ..sandboxed(10100)
+        };
+        appops.resume(&[Resumed {
+            entry: entry.clone(),
+            packages: vec![],
+            items: on.clone(),
+        }]);
+
+        appops.update(&mut entry, &[], &on, &foreground).unwrap();
+        appops
+            .update(&mut entry, &[], &foreground, &coarse)
+            .unwrap();
+        appops.disable(&mut entry, &[], &coarse).unwrap();
+        assert_eq!(
+            sent.join().unwrap(),
+            [
+                // The Wi-Fi scan goes back to what it was, and then with
+                // the coarse location, its switch op, to the foreground.
+                "apply 10100 android:coarse_location=4,android:fine_location=4,\
+                 android:camera=4 android:wifi_scan=4"
+                    .to_string(),
+                format!(
+                    "apply 10100 android:camera=4,{FINE}=revoked \
+                     android:coarse_location=default,android:fine_location=default"
+                ),
+                format!("restore 10100 android:camera=default,{FINE}=granted"),
+            ]
+        );
     }
 
     #[test]
