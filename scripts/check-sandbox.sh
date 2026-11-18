@@ -52,6 +52,34 @@ for item in $ITEMS; do
     [[ "$item" == device_ids ]] && ONLY_IDS+=" $item=on" || ONLY_IDS+=" $item=off"
 done
 
+# The app ops each item holds (`Item::ops` in bbd/src/sandbox/items.rs).
+declare -A ITEM_OPS=(
+    [storage]="android:read_external_storage android:write_external_storage android:manage_external_storage android:access_media_location android:read_media_images android:read_media_video android:read_media_audio android:read_media_visual_user_selected"
+    [contacts]="android:read_contacts android:write_contacts"
+    [messages]="android:read_sms android:receive_sms android:read_call_log"
+    [calendar]="android:read_calendar android:write_calendar"
+    [clipboard_accounts]="android:read_clipboard android:get_accounts"
+    [location]="android:coarse_location android:fine_location android:wifi_scan"
+    [camera]="android:camera"
+    [microphone]="android:record_audio"
+    [body_sensors]="android:body_sensors android:activity_recognition"
+    [device_ids]="android:read_phone_state android:read_phone_numbers"
+    [installed_apps]="android:get_usage_stats"
+    [nearby_devices]="android:bluetooth_scan android:bluetooth_connect android:nearby_wifi_devices"
+)
+# The canary is told which ops to report the mode of.
+ALL_OPS="$(echo "${ITEM_OPS[*]}" | tr -s ' ' ',')"
+# Granted to the canary, so that what it gets is up to the sandbox.
+PERMISSIONS="READ_CONTACTS READ_CALENDAR READ_SMS READ_CALL_LOG READ_MEDIA_IMAGES ACCESS_FINE_LOCATION
+ACCESS_COARSE_LOCATION CAMERA RECORD_AUDIO BODY_SENSORS ACTIVITY_RECOGNITION READ_PHONE_STATE READ_PHONE_NUMBERS
+BLUETOOTH_SCAN BLUETOOTH_CONNECT NEARBY_WIFI_DEVICES"
+# What the check puts on the device for the canary to find outside the
+# sandbox, and takes away again: a contact, a text message, a call and a
+# calendar event, all under these names.
+TEST_ACCOUNT=bb.check
+TEST_NUMBER=5550199
+SEED=/data/local/tmp/bb_check_seed.sh
+
 stress=0
 if [[ "${1:-}" == --stress ]]; then
     stress="${2:?--stress needs a number of starts}"
@@ -89,7 +117,9 @@ check() {
 run_canary() {
     adb shell am force-stop "$PACKAGE"
     adb logcat -c
-    adb shell am start -W -n "$PACKAGE/.MainActivity" >/dev/null
+    # Each start finds a fresh location from the test provider.
+    adb shell cmd location providers set-test-provider-location gps --location 52.52,13.405 --accuracy 5
+    adb shell am start -W -n "$PACKAGE/.MainActivity" --es ops "$ALL_OPS" >/dev/null
     local i log=""
     for ((i = 0; i < 90; i++)); do
         log="$(adb logcat -d -s BigBrotherCanary:I | tr -d '\r')"
@@ -133,34 +163,88 @@ names_nothing() {
 
 # The value the canary reported for a key, in a report.
 seen() { sed -n "s/^$2=//p" <<<"$1" | head -n 1; }
+# The mode (0 allowed, 1 ignored, ...) the canary found app op $2 in, in
+# report $1; "none" for an op this Android version does not have.
+op_mode() { seen "$1" ops | tr ',' '\n' | sed -n "s/^$2=//p"; }
+# The ops of the items given after the report that it did not find ignored.
+ops_not_held() {
+    local report="$1" item op mode out=""
+    shift
+    for item in "$@"; do
+        for op in ${ITEM_OPS[$item]}; do
+            mode="$(op_mode "$report" "$op")"
+            [[ "$mode" == 1 || "$mode" == none ]] || out+=" ${op#android:}=${mode:-?}"
+        done
+    done
+    echo "$out"
+}
+# The ops of the items given after two reports whose modes differ between them.
+ops_changed() {
+    local report="$1" base="$2" item op out=""
+    shift 2
+    for item in "$@"; do
+        for op in ${ITEM_OPS[$item]}; do
+            [[ "$(op_mode "$report" "$op")" == "$(op_mode "$base" "$op")" ]] || out+=" ${op#android:}"
+        done
+    done
+    echo "$out"
+}
 
 status_field() { grep -o "\"$1\":[a-z0-9]*" <<<"$status" | head -n 1 | cut -d: -f2; }
 
 adb install -r "$APK" >/dev/null
-for permission in READ_CONTACTS READ_CALENDAR READ_SMS READ_MEDIA_IMAGES; do
+for permission in $PERMISSIONS; do
     adb shell pm grant "$PACKAGE" "android.permission.$permission" 2>/dev/null || true
 done
 # All files access, so that outside the sandbox the marker can be read: the
 # check is that the sandbox takes it away, not that the system refuses it.
 adb shell appops set "$PACKAGE" MANAGE_EXTERNAL_STORAGE allow
 as_root "echo real > $MARKER && chown media_rw:media_rw $MARKER"
+# A location to be had, from a test provider the shell may set.
+mock_location="$(adb shell appops get com.android.shell android:mock_location | tr -d '\r' | sed -n 's/.*: \([a-z]*\).*/\1/p')"
+adb shell appops set com.android.shell android:mock_location allow
+adb shell cmd location providers add-test-provider gps >/dev/null 2>&1 || true
+adb shell cmd location providers set-test-provider-enabled gps true
+# The test records, written as root through the providers (the script is
+# pushed rather than quoted through su).
+adb shell "cat > $SEED" <<EOF
+content insert --uri content://com.android.contacts/raw_contacts --bind account_type:s:$TEST_ACCOUNT --bind account_name:s:$TEST_ACCOUNT
+raw=\$(content query --uri content://com.android.contacts/raw_contacts --projection _id --where "account_type='$TEST_ACCOUNT'" | grep -o '_id=[0-9]*' | tail -n 1 | cut -d= -f2)
+content insert --uri content://com.android.contacts/data --bind raw_contact_id:i:\$raw --bind mimetype:s:vnd.android.cursor.item/name --bind data1:s:Canary
+content insert --uri content://sms/inbox --bind address:s:$TEST_NUMBER --bind body:s:canary --bind read:i:1
+content insert --uri content://call_log/calls --bind number:s:$TEST_NUMBER --bind type:i:1 --bind duration:i:1 --bind date:l:\$(date +%s)000
+cal="content://com.android.calendar/calendars?caller_is_syncadapter=true&account_name=$TEST_ACCOUNT&account_type=LOCAL"
+content insert --uri "\$cal" --bind account_name:s:$TEST_ACCOUNT --bind account_type:s:LOCAL --bind name:s:$TEST_ACCOUNT --bind calendar_displayName:s:$TEST_ACCOUNT --bind calendar_access_level:i:700 --bind ownerAccount:s:$TEST_ACCOUNT --bind visible:i:1 --bind sync_events:i:1
+id=\$(content query --uri content://com.android.calendar/calendars --projection _id --where "account_name='$TEST_ACCOUNT'" | grep -o '_id=[0-9]*' | tail -n 1 | cut -d= -f2)
+content insert --uri content://com.android.calendar/events --bind calendar_id:i:\$id --bind title:s:canary --bind dtstart:l:\$(date +%s)000 --bind dtend:l:\$(date +%s)000 --bind eventTimezone:s:UTC
+EOF
+as_root "sh $SEED" >/dev/null
 
 # Leave the device as it was, whatever happens.
 cleanup() {
     as_root "$BBD sandbox set $PACKAGE$ALL_GLOBAL" >/dev/null 2>&1 || true
     as_root "$BBD sandbox disable $PACKAGE" >/dev/null 2>&1 || true
     as_root "rm -f $MARKER" || true
+    adb shell "cat > $SEED" <<EOF || true
+content delete --uri "content://com.android.contacts/raw_contacts?caller_is_syncadapter=true" --where "account_type='$TEST_ACCOUNT'"
+content delete --uri content://sms --where "address='$TEST_NUMBER'"
+content delete --uri content://call_log/calls --where "number='$TEST_NUMBER'"
+content delete --uri "content://com.android.calendar/calendars?caller_is_syncadapter=true&account_name=$TEST_ACCOUNT&account_type=LOCAL" --where "account_name='$TEST_ACCOUNT'"
+EOF
+    as_root "sh $SEED; rm -f $SEED" >/dev/null 2>&1 || true
+    adb shell cmd location providers remove-test-provider gps >/dev/null 2>&1 || true
+    adb shell appops set com.android.shell android:mock_location "${mock_location:-default}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
 as_root "$BBD sandbox disable $PACKAGE" >/dev/null
-# The modes of the app's ops, without when each was last used.
-ops() { adb shell appops get --uid "$PACKAGE" | tr -d '\r' | sed 's/;.*//' | sort; }
-ops_before="$(ops)"
 
 echo "outside the sandbox:"
 run_canary
 outside="$view"
+check "the test records are there (contacts $(seen "$outside" contacts), messages $(seen "$outside" sms), calls $(seen "$outside" call_log), events $(seen "$outside" calendar))" \
+    [ "$(seen "$outside" contacts)" -gt 0 -a "$(seen "$outside" sms)" -gt 0 -a "$(seen "$outside" call_log)" -gt 0 -a "$(seen "$outside" calendar)" -gt 0 ]
+check "a location is had ($(seen "$outside" location))" grep -q '^accuracy:' <<<"$(seen "$outside" location)"
 check "the real storage is visible" [ "$(seen "$outside" marker)" = real ]
 check "the chip is named in /proc/cpuinfo" [ "$(seen "$outside" cpu_named)" = true ]
 
@@ -207,6 +291,13 @@ check "the memory is reported as it is ($(seen "$inside" mem_total_kb) kB)" \
 check "no contacts ($(seen "$outside" contacts) outside)" [ "$(seen "$inside" contacts)" = 0 ]
 check "no clipboard ($(seen "$outside" clipboard) outside)" [ "$(seen "$inside" clipboard)" = 0 ]
 check "no images ($(seen "$outside" images) outside)" [ "$(seen "$inside" images)" = 0 ]
+check "no messages ($(seen "$outside" sms) outside)" [ "$(seen "$inside" sms)" = 0 ]
+check "no call log ($(seen "$outside" call_log) outside)" [ "$(seen "$inside" call_log)" = 0 ]
+check "no calendar ($(seen "$outside" calendar) outside)" [ "$(seen "$inside" calendar)" = 0 ]
+check "no accounts ($(seen "$outside" accounts) outside)" [ "$(seen "$inside" accounts)" = 0 ]
+check "no location ($(seen "$inside" location))" [ "$(seen "$inside" location)" = none ]
+not_held="$(ops_not_held "$inside" "${!ITEM_OPS[@]}")"
+check "every item's app ops are ignored${not_held:+ (not:$not_held)}" [ -z "$not_held" ]
 
 # Layer 4: identity, which needs the LSPosed hook.
 if [[ "$(status_field android_id)" == true ]]; then
@@ -258,6 +349,14 @@ if [[ "$(status_field android_id)" == true ]]; then
     check "the contacts are as outside ($(seen "$only_id" contacts))" \
         [ "$(seen "$only_id" contacts)" = "$(seen "$outside" contacts)" ]
     check "the installed apps are as outside" [ "$(seen "$only_id" apps)" = "$(seen "$outside" apps)" ]
+    check "the location is as outside ($(seen "$only_id" location))" \
+        [ "$(seen "$only_id" location)" = "$(seen "$outside" location)" ]
+    not_held="$(ops_not_held "$only_id" device_ids)"
+    others=()
+    for item in "${!ITEM_OPS[@]}"; do [[ "$item" == device_ids ]] || others+=("$item"); done
+    changed="$(ops_changed "$only_id" "$outside" "${others[@]}")"
+    check "only device_ids' app ops are ignored${not_held:+ (not held:$not_held)}${changed:+ (changed:$changed)}" \
+        [ -z "$not_held$changed" ]
     check "the Android ID is the sandbox's" [ "$(seen "$only_id" android_id)" = "$want" ]
     pids="$(adb shell pidof "$PACKAGE" | tr -d '\r')"
     as_root "kill -9 \$(pidof bbd)"
@@ -281,7 +380,12 @@ check "the chip is named again" [ "$(seen "$after" cpu_named)" = true ]
 check "the Android ID is the real one" [ "$(seen "$after" android_id)" = "$(seen "$outside" android_id)" ]
 check "the installed apps are visible again" [ "$(seen "$after" apps)" = "$(seen "$outside" apps)" ]
 check "the clipboard is readable again" [ "$(seen "$after" clipboard)" = "$(seen "$outside" clipboard)" ]
-check "the app ops are as they were" [ "$ops_before" = "$(ops)" ]
+# As the app finds them: `appops get` also lists an op once the app has
+# used it, whatever its mode.
+changed="$(ops_changed "$after" "$outside" "${!ITEM_OPS[@]}")"
+check "the app ops are as they were${changed:+ (changed:$changed)}" [ -z "$changed" ]
+check "the messages are back" [ "$(seen "$after" sms)" = "$(seen "$outside" sms)" ]
+check "the location is back ($(seen "$after" location))" [ "$(seen "$after" location)" = "$(seen "$outside" location)" ]
 
 if ((failed > 0)); then
     echo "$failed check(s) failed"

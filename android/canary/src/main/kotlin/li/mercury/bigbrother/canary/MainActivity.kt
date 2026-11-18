@@ -19,6 +19,7 @@ package li.mercury.bigbrother.canary
 import android.accounts.AccountManager
 import android.app.Activity
 import android.app.ActivityManager
+import android.app.AppOpsManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.pm.ApplicationInfo
@@ -30,7 +31,9 @@ import android.location.LocationManager
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Bundle
+import android.os.Process
 import android.provider.CalendarContract
+import android.provider.CallLog
 import android.provider.ContactsContract
 import android.provider.MediaStore
 import android.provider.Settings
@@ -46,6 +49,7 @@ import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.Socket
 import kotlin.concurrent.thread
+import kotlin.math.roundToInt
 
 /**
  * Does, once each, the things Big Brother is meant to notice.
@@ -187,6 +191,27 @@ class MainActivity : Activity() {
         view("images") {
             contentResolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, arrayOf("_id"), null, null, null)?.use { it.count }
         }
+        view("sms") { contentResolver.query(Telephony.Sms.CONTENT_URI, null, null, null, null)?.use { it.count } }
+        view("call_log") { contentResolver.query(CallLog.Calls.CONTENT_URI, null, null, null, null)?.use { it.count } }
+        view("calendar") {
+            contentResolver.query(CalendarContract.Events.CONTENT_URI, null, null, null, null)?.use { it.count }
+        }
+        view("accounts") { AccountManager.get(this).accounts.size }
+        view("location") { lastLocation() }
+        // The mode the system applies to each app op the check asks about
+        // (the `ops` extra): what holds the rest of the personal data back.
+        view("ops") {
+            val appOps = getSystemService(AppOpsManager::class.java)
+            intent.getStringExtra(EXTRA_OPS).orEmpty().split(',').filter { it.isNotEmpty() }.joinToString(",") { op ->
+                val mode = try {
+                    appOps.unsafeCheckOpNoThrow(op, Process.myUid(), packageName).toString()
+                } catch (_: IllegalArgumentException) {
+                    // An op this Android version does not have.
+                    "none"
+                }
+                "$op=$mode"
+            }
+        }
         // Identity: the Android ID both ways to it, and the installed apps
         // that did not come with the system.
         view("android_id") { Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) }
@@ -206,6 +231,19 @@ class MainActivity : Activity() {
         view("system_apps") {
             packageManager.getInstalledApplications(0).count { it.flags and ApplicationInfo.FLAG_SYSTEM != 0 }
         }
+    }
+
+    /**
+     * How close the most accurate location the system last had is, as
+     * `accuracy:<metres>`; `none` when it gives this app none.
+     */
+    @Suppress("MissingPermission")
+    private fun lastLocation(): String {
+        val manager = getSystemService(LocationManager::class.java)
+        val location = manager.getProviders(true)
+            .mapNotNull { manager.getLastKnownLocation(it) }
+            .minByOrNull { it.accuracy }
+        return location?.let { "accuracy:${it.accuracy.roundToInt()}" } ?: "none"
     }
 
     /** Reports one thing this app sees; `refused` if it may not look. */
@@ -250,6 +288,9 @@ class MainActivity : Activity() {
     private companion object {
         const val TAG = "BigBrotherCanary"
         const val CONNECT_TIMEOUT_MS = 500
+
+        /** The app ops `scripts/check-sandbox.sh` asks about, comma-separated. */
+        const val EXTRA_OPS = "ops"
 
         /** How long the sensors stay on: a known length for the recorded sessions. */
         const val SENSORS_ON_MS = 10_000L
