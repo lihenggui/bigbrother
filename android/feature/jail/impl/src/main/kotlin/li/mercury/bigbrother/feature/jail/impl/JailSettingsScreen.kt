@@ -273,6 +273,11 @@ private fun StatusRow(status: SandboxStatus?) {
         if (status != null && !status.gate) add(stringResource(R.string.jail_status_gate_missing))
         if (status != null && (!status.androidIdHook || !status.appListHook)) add(stringResource(R.string.jail_status_hook_missing))
         if (status != null && !status.appOps) add(stringResource(R.string.jail_status_appops_missing))
+        val pending = status?.newAppsPending ?: 0
+        if (pending > 0) {
+            val text = if (status?.newAppsHeld == true) R.plurals.jail_status_new_apps_held else R.plurals.jail_status_new_apps_pending
+            add(pluralStringResource(text, pending, pending))
+        }
     }
     val colors = MaterialTheme.colorScheme
     ListItem(

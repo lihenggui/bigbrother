@@ -91,6 +91,12 @@
     <string name="jail_status_hook_missing">系统框架钩子未加载</string>
     <string name="jail_status_gate_missing">此内核不支持存储隔离</string>
     <string name="jail_status_appops_missing">通讯录、位置等未生效</string>
+    <plurals name="jail_status_new_apps_held">
+        <item quantity="other">%d 个新安装的应用尚未隔离，已阻止其启动</item>
+    </plurals>
+    <plurals name="jail_status_new_apps_pending">
+        <item quantity="other">%d 个新安装的应用尚未隔离</item>
+    </plurals>
     <string name="jail_release_all">解除全部隔离</string>
     <string name="jail_release_all_summary">隔离存储中的文件保留</string>
     <string name="jail_release_all_title">解除全部隔离？</string>

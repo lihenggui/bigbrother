@@ -155,6 +155,10 @@ data class SandboxStatus(
     val androidIdHook: Boolean,
     /** The hook hides the installed apps. */
     val appListHook: Boolean,
+    /** Newly installed apps not isolated yet, with isolating new apps on. */
+    val newAppsPending: Int = 0,
+    /** Whether those are kept from starting until they are isolated. */
+    val newAppsHeld: Boolean = false,
 ) {
     /** Whether [item] can take effect here. */
     fun supports(item: SandboxItem): Boolean = when (item) {

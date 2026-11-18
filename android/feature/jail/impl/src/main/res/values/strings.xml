@@ -109,6 +109,15 @@
     <string name="jail_status_hook_missing">System framework hook not loaded</string>
     <string name="jail_status_gate_missing">Storage isolation not available on this kernel</string>
     <string name="jail_status_appops_missing">Contacts, location and more not in effect</string>
+    <!-- Newly installed apps the daemon could not isolate yet. -->
+    <plurals name="jail_status_new_apps_held">
+        <item quantity="one">%d newly installed app not isolated yet; kept from starting</item>
+        <item quantity="other">%d newly installed apps not isolated yet; kept from starting</item>
+    </plurals>
+    <plurals name="jail_status_new_apps_pending">
+        <item quantity="one">%d newly installed app not isolated yet</item>
+        <item quantity="other">%d newly installed apps not isolated yet</item>
+    </plurals>
     <string name="jail_release_all">End all isolation</string>
     <string name="jail_release_all_summary">Files in isolated storage are kept</string>
     <string name="jail_release_all_title">End all isolation?</string>

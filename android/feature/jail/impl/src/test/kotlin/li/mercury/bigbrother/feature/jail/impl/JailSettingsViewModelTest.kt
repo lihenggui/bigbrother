@@ -24,6 +24,7 @@ import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
+import li.mercury.bigbrother.core.model.SandboxStatus
 import li.mercury.bigbrother.core.testing.MainDispatcherRule
 import li.mercury.bigbrother.core.testing.repository.TestSandboxRepository
 import org.junit.Rule
@@ -103,6 +104,23 @@ class JailSettingsViewModelTest {
 
         assertFalse(viewModel.uiState.value.autoIsolate)
         assertEquals(LoadFailure.ModuleOutdated, viewModel.uiState.value.error)
+    }
+
+    @Test
+    fun givenNewAppsNotIsolatedYet_whenLoaded_thenStatusSaysHowMany() = runTest {
+        sandboxRepository.status = SandboxStatus(
+            gate = true,
+            appOps = true,
+            androidIdHook = true,
+            appListHook = true,
+            newAppsPending = 2,
+            newAppsHeld = true,
+        )
+
+        val viewModel = viewModel()
+
+        assertEquals(2, viewModel.uiState.value.status?.newAppsPending)
+        assertEquals(true, viewModel.uiState.value.status?.newAppsHeld)
     }
 
     @Test

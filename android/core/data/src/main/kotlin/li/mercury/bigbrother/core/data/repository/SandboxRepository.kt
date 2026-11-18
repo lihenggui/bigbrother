@@ -108,6 +108,9 @@ internal class RootSandboxRepository @Inject constructor(
             appOps = status.optBoolean("appops"),
             androidIdHook = hook.optBoolean("android_id"),
             appListHook = hook.optBoolean("app_list"),
+            // Not reported by a daemon older than isolating new apps.
+            newAppsPending = status.optInt("new_apps_pending"),
+            newAppsHeld = status.optBoolean("new_apps_held"),
         )
     }
 
