@@ -43,6 +43,9 @@ internal class DaemonDouble(private val android: FakeAndroid) {
     /** What the helper is told the uid is held to (`State::guarded`). */
     private var guarded: String? = null
 
+    /** The permissions a helper last reported unheld (`State::unsure`), kept while the daemon runs. */
+    private var unsure = emptySet<String>()
+
     /** The permissions the helper found changed, not yet kept in the entry. */
     private val found = mutableListOf<String>()
 
@@ -88,6 +91,7 @@ internal class DaemonDouble(private val android: FakeAndroid) {
      * again.
      */
     fun restartDaemon() {
+        unsure = emptySet()
         helper = AppOpsGuardHandler(android)
         guarded = if (sandboxed) targetsOf(items).ifEmpty { null } else null
         tellGuarded()
@@ -102,8 +106,10 @@ internal class DaemonDouble(private val android: FakeAndroid) {
         keepWhatWasFound()
     }
 
+    /** `State::verify`, with the permissions last reported unheld so marked (`marking_unheld`). */
     private fun tellGuarded() {
-        guarded?.let { send("verify $UID $it") }
+        val targets = guarded ?: return
+        send("verify $UID " + pairs(targets).joinToString(",") { (name, value) -> "$name=${if (name in unsure) "unheld" else value}" })
     }
 
     /** A command from `bbd sandbox`, which `Sandbox::answer` begins by keeping what was found. */
@@ -135,6 +141,7 @@ internal class DaemonDouble(private val android: FakeAndroid) {
         if (names.isEmpty()) return
         answer(send("restore $UID ${savedValuesOf(names)}"), "restored")
         guarded = null
+        unsure = emptySet()
         savedPermissions = ""
     }
 
@@ -169,6 +176,7 @@ internal class DaemonDouble(private val android: FakeAndroid) {
         for (line in lines) {
             val words = line.split(' ')
             if (words[0] == "reverted" && words.size == 3 && isPermission(words[2].substringBefore('=')) && '=' in words[2]) found += words[2]
+            if (words[0] == "unheld" && words.size == 3) unsure = words[2].split(',').filter(::isPermission).toSet()
         }
         return lines
     }

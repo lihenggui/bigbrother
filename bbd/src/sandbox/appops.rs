@@ -210,6 +210,11 @@ struct State {
     /// The ops of guarded uids that the running helper last found it could
     /// not hold. A uid it has not reported on yet is not known to be held.
     unheld: BTreeMap<u32, BTreeSet<String>>,
+    /// The permissions of guarded uids that a helper, this one or one before
+    /// it, last reported it could not hold. A helper that starts is told so
+    /// in its `verify`: it may find them half taken, which it must not take
+    /// for the user's doing.
+    unsure: BTreeMap<u32, BTreeSet<String>>,
     /// The permissions the helper found changed by the user, by uid, as
     /// [`found_in`] reads them, not yet kept in the entries.
     found: Vec<(u32, String)>,
@@ -253,7 +258,8 @@ impl State {
             return;
         }
         if let Some(targets) = self.guarded.get(&uid) {
-            let line = Command::Verify(uid, targets).to_string();
+            let targets = marking_unheld(targets, self.unsure.get(&uid));
+            let line = Command::Verify(uid, &targets).to_string();
             let _ = self.send(&line);
         }
     }
@@ -484,6 +490,25 @@ fn mode_number(mode: OpMode) -> u8 {
 /// What the helper holds a permission to: revoked, and not to be asked for
 /// again.
 const REVOKED: &str = "revoked";
+
+/// In a `verify`, in place of [`REVOKED`]: held revoked all the same, but
+/// last reported unheld (`State::unsure`).
+const UNHELD: &str = "unheld";
+
+/// `targets`, as [`targets_of`] writes them, for a `verify`: the
+/// permissions among `unsure` written as [`UNHELD`].
+fn marking_unheld(targets: &str, unsure: Option<&BTreeSet<String>>) -> String {
+    let Some(unsure) = unsure.filter(|unsure| !unsure.is_empty()) else {
+        return targets.to_string();
+    };
+    pairs(targets)
+        .map(|(name, value)| {
+            let value = if unsure.contains(name) { UNHELD } else { value };
+            format!("{name}={value}")
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
 
 /// What `restore` and `apply` are given for an op or a permission whose
 /// state before is not known: an op loses its uid mode, a permission the
@@ -754,6 +779,7 @@ impl Effect for AppOps {
             if restored {
                 state.guarded.remove(&uid);
                 state.unheld.remove(&uid);
+                state.unsure.remove(&uid);
             }
             restored
         })?;
@@ -847,6 +873,7 @@ impl Effect for AppOps {
         state.owners.remove(&uid);
         state.guarded.remove(&uid);
         state.unheld.remove(&uid);
+        state.unsure.remove(&uid);
         state.found.retain(|(id, _)| *id != uid);
         drop(state);
         self.shared.rest_if_unused();
@@ -973,7 +1000,14 @@ fn run_helper(shared: &Shared) -> anyhow::Error {
     }
     for line in BufReader::new(output).lines().map_while(Result::ok) {
         if let Some((uid, ops)) = parse_unheld(&line) {
-            shared.state().unheld.insert(uid, ops);
+            let mut state = shared.state();
+            let permissions = ops
+                .iter()
+                .filter(|name| is_permission(name))
+                .cloned()
+                .collect();
+            state.unsure.insert(uid, permissions);
+            state.unheld.insert(uid, ops);
         } else if let Some((uid, Some(answer))) = parse_line(&line) {
             let mut state = shared.state();
             if let Answer::Kind(request, kind) = answer {
@@ -1065,8 +1099,12 @@ mod tests {
                     (op, mode)
                 })
                 .collect();
-            let permissions: Vec<&str> = case.all("revoke").collect();
-            let targets = targets_text(&ops, &permissions);
+            let permissions: Vec<&str> = case
+                .all("revoke")
+                .chain(case.all("revoke_unheld"))
+                .collect();
+            let unsure: BTreeSet<String> = case.all("revoke_unheld").map(str::to_string).collect();
+            let targets = marking_unheld(&targets_text(&ops, &permissions), Some(&unsure));
             // What the entry saved; a value not known is not in it, and
             // is sent as not known all the same.
             let values = values_of(case);
@@ -1767,5 +1805,17 @@ mod tests {
         assert_eq!(retry_delay(1), RETRY);
         assert_eq!(retry_delay(2), RETRY * 2);
         assert_eq!(retry_delay(40), RETRY_MAX);
+    }
+
+    #[test]
+    fn a_verify_names_the_permissions_last_reported_unheld() {
+        let targets = targets_text(&[("android:camera", OpMode::Ignored)], &[FINE]);
+        assert_eq!(marking_unheld(&targets, None), targets);
+        assert_eq!(marking_unheld(&targets, Some(&BTreeSet::new())), targets);
+        let unsure = BTreeSet::from([FINE.to_string()]);
+        assert_eq!(
+            marking_unheld(&targets, Some(&unsure)),
+            format!("android:camera=1,{FINE}=unheld")
+        );
     }
 }

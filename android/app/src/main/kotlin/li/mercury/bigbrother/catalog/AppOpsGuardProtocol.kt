@@ -108,6 +108,12 @@ internal object AppOpsGuardProtocol {
     /** What a permission is held to: revoked, and fixed as the user's choice. */
     const val REVOKED = "revoked"
 
+    /**
+     * In a `verify`, in place of [REVOKED]: held to it all the same, but
+     * last reported unheld, so perhaps not as held now.
+     */
+    const val UNHELD = "unheld"
+
     private const val GRANTED = "granted"
     private const val DENIED = "denied"
     private const val USER_SET = "user_set"
@@ -134,8 +140,13 @@ internal object AppOpsGuardProtocol {
 
     fun isSpecialAccess(name: String): Boolean = name in SPECIAL_ACCESS
 
-    /** What to hold a uid to: [ops] at their modes, and [permissions] revoked. */
-    data class Targets(val ops: Map<String, Int>, val permissions: Set<String>) {
+    /**
+     * What to hold a uid to: [ops] at their modes, and [permissions] revoked.
+     * In a `verify`, [unheld] are those of the permissions the daemon last
+     * heard were not held: a helper that has not held them itself cannot
+     * take their state for the user's.
+     */
+    data class Targets(val ops: Map<String, Int>, val permissions: Set<String>, val unheld: Set<String> = emptySet()) {
         companion object {
             val NONE = Targets(emptyMap(), emptySet())
         }
@@ -208,7 +219,7 @@ internal object AppOpsGuardProtocol {
         return when (words[0]) {
             "set" -> if (words.size == 3) decodeTargets(words[2])?.let { Command.Set(uid, it) } else null
 
-            "verify" -> if (words.size == 3) decodeTargets(words[2])?.let { Command.Verify(uid, it) } else null
+            "verify" -> if (words.size == 3) decodeTargets(words[2], unheldAllowed = true)?.let { Command.Verify(uid, it) } else null
 
             "apply" -> {
                 if (words.size != 4) return null
@@ -382,21 +393,26 @@ internal object AppOpsGuardProtocol {
 
     /**
      * What to hold a uid to: ops each ignored or in the foreground, in the
-     * form [encodeValues] writes, and permissions each `revoked`; `null` for
-     * anything else.
+     * form [encodeValues] writes, and permissions each `revoked`, or, where
+     * [unheldAllowed], `unheld`; `null` for anything else.
      */
-    fun decodeTargets(text: String): Targets? {
+    fun decodeTargets(text: String, unheldAllowed: Boolean = false): Targets? {
         val ops = mutableMapOf<String, Int>()
         val permissions = mutableSetOf<String>()
+        val unheld = mutableSetOf<String>()
         for ((name, value) in decodePairs(text) ?: return null) {
             if (isPermission(name)) {
-                if (value != REVOKED) return null
+                when {
+                    value == REVOKED -> Unit
+                    value == UNHELD && unheldAllowed -> unheld += name
+                    else -> return null
+                }
                 permissions += name
             } else {
                 ops[name] = value.toIntOrNull()?.takeIf { it in HELD_MODES } ?: return null
             }
         }
-        return Targets(ops, permissions)
+        return Targets(ops, permissions, unheld)
     }
 
     /** What `set` saves: each op's own uid mode, `null` where it has none. */

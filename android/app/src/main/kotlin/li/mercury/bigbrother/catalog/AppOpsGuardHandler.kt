@@ -281,7 +281,13 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
 
             is Command.Verify -> {
                 val guard = guarded[uid]
-                guarded[uid] = guard?.copy(targets = command.targets) ?: Guard(null, command.targets)
+                // A uid new here was held by the program before this one:
+                // the daemon holds it to a permission only once a command
+                // has taken it. Found no longer fixed, the user changed it
+                // while neither was there to see; but not one the daemon
+                // last heard was unheld, which that program may have left
+                // half taken.
+                guarded[uid] = guard?.copy(targets = command.targets) ?: Guard(null, command.targets, held = command.targets.permissions - command.targets.unheld)
                 reportUnheld(uid, verify(uid), always = true)
                 system.emit(AppOpsGuardProtocol.verifiedLine(uid))
             }
@@ -543,12 +549,14 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
         var changed = false
         for (pkg in requesting) {
             system.requireOwner(uid)
-            if (connected.isGranted(uid, permission)) {
-                connected.revoke(pkg, permission, uid)
-                changed = true
-            }
+            // Fixed first: held half way, the permission is granted and
+            // fixed, which no one takes for the user's revocation.
             if (connected.flags(pkg, permission, uid) and FLAG_USER_FIXED == 0) {
                 connected.setFlags(pkg, permission, uid, FLAG_USER_FIXED, FLAG_USER_FIXED)
+                changed = true
+            }
+            if (connected.isGranted(uid, permission)) {
+                connected.revoke(pkg, permission, uid)
                 changed = true
             }
         }

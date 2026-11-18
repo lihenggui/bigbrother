@@ -113,6 +113,7 @@ pub fn appops() -> Vec<Case> {
             "uid",
             "hold",
             "revoke",
+            "revoke_unheld",
             "op",
             "permission",
             "name",

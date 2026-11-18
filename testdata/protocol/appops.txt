@@ -18,6 +18,8 @@
 # package=<package>            the package to classify
 # hold=<op>/<mode>             an op held at a mode: 1 ignored, 4 foreground
 # revoke=<permission>          a permission held revoked
+# revoke_unheld=<permission>   in a verify: held revoked, but last reported
+#                              unheld
 # op=<op>/<mode>[/<grant>]     an op's uid mode, or none; and the mode the
 #                              system gave it for its permission's grant
 # permission=<permission>/<state>[/user_set][/user_fixed][/service:<package>:<class>]...
@@ -40,6 +42,9 @@ command-read	set 10100 android.permission.ACCESS_FINE_LOCATION=revoked,android:c
 command	verify 10100 android:camera=1,android:read_contacts=1	verify	uid=10100	hold=android:camera/1	hold=android:read_contacts/1
 command	verify 10100 android:record_audio=4	verify	uid=10100	hold=android:record_audio/4
 command	verify 10100 android.permission.ACCESS_FINE_LOCATION=revoked	verify	uid=10100	revoke=android.permission.ACCESS_FINE_LOCATION
+# A permission the daemon last heard was not held: a helper that starts
+# does not count it as held already.
+command	verify 10100 android:camera=1,android.permission.ACCESS_FINE_LOCATION=unheld	verify	uid=10100	hold=android:camera/1	revoke_unheld=android.permission.ACCESS_FINE_LOCATION
 
 # release: stop holding a uid, and set back what the helper saved itself.
 command	release 10100	release	uid=10100
@@ -89,6 +94,8 @@ command-bad	set 10100 android:camera=1 more
 command-bad	set 10100 android.permission.ACCESS_FINE_LOCATION=granted
 command-bad	set 10100 android.permission.ACCESS_FINE_LOCATION=1
 command-bad	set 10100 android:camera=revoked
+command-bad	set 10100 android.permission.ACCESS_FINE_LOCATION=unheld
+command-bad	apply 10100 android.permission.ACCESS_FINE_LOCATION=unheld -
 command-bad	set 4294967296 android:camera=1
 command-bad	release
 command-bad	release 10100 extra

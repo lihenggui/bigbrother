@@ -37,7 +37,7 @@ class AppOpsGuardProtocolTest {
         types = setOf("command", "command-read", "command-bad", "answer", "answer-bad"),
         keys = setOf(
             "set", "verify", "release", "restore", "apply", "saved", "restored", "applied", "failed", "verified", "reverted", "unheld",
-            "uid", "hold", "revoke", "op", "permission", "name", "not_held",
+            "uid", "hold", "revoke", "revoke_unheld", "op", "permission", "name", "not_held",
             "kind", "library", "app", "unknown", "request", "package",
         ),
     )
@@ -71,7 +71,8 @@ class AppOpsGuardProtocolTest {
 
     private fun ProtocolCase.targets(): Targets = Targets(
         all("hold").associate { it.substringBefore('/') to it.substringAfter('/').toInt() },
-        all("revoke").toSet(),
+        (all("revoke") + all("revoke_unheld")).toSet(),
+        all("revoke_unheld").toSet(),
     )
 
     private fun ProtocolCase.values(): Values {
