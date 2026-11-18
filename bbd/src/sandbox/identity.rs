@@ -353,33 +353,46 @@ mod tests {
     }
 
     #[test]
-    fn hooks_count_only_if_reported_in_this_boot() {
-        let on = HookStatus {
-            android_id: true,
-            app_list: true,
-        };
-        let text = "android_id=1\napp_list=1\napi=35\nlist=1\nboot=abc-1\n";
-        assert_eq!(parse_status(text, "abc-1"), on);
-        // Left from a boot in which the hook was there.
-        assert_eq!(parse_status(text, "abc-2"), HookStatus::default());
-        assert_eq!(parse_status(text, ""), HookStatus::default());
-        // Written by a hook that does not say which boot.
-        assert_eq!(
-            parse_status("android_id=1\napp_list=1\napi=35\n", "abc-1"),
-            HookStatus::default()
-        );
-        // The hook could not read the list.
-        assert_eq!(
-            parse_status("android_id=1\napp_list=1\nlist=0\nboot=abc-1\n", "abc-1"),
-            HookStatus::default()
-        );
-        assert_eq!(
-            parse_status("android_id=1\napp_list=0\nlist=1\nboot=abc-1\n", "abc-1"),
-            HookStatus {
-                android_id: true,
-                app_list: false
-            }
-        );
-        assert_eq!(parse_status("", "abc-1"), HookStatus::default());
+    fn the_list_is_written_as_the_hook_reads_it() {
+        let cases = crate::protocol_cases::sandbox_list();
+        for case in crate::protocol_cases::of(&cases, &["line"]) {
+            let apps: BTreeMap<u32, Listed> = case
+                .all("app")
+                .map(|app| {
+                    let mut parts = app.split('/');
+                    let uid = parts.next().unwrap().parse().unwrap();
+                    let android_id = parts.next().unwrap().to_string();
+                    let items: Vec<&str> = parts.collect();
+                    let listed = (
+                        android_id,
+                        items.contains(&"device_ids"),
+                        items.contains(&"installed_apps"),
+                    );
+                    (uid, listed)
+                })
+                .collect();
+            assert_eq!(list_text(&apps), case.line);
+        }
+    }
+
+    #[test]
+    fn the_status_is_read_as_the_hook_writes_it() {
+        let cases = crate::protocol_cases::sandbox_status();
+        for case in crate::protocol_cases::of(&cases, &["line"])
+            .into_iter()
+            .chain(crate::protocol_cases::of(&cases, &["read"]))
+        {
+            let now = case.get("now").or(case.get("boot")).unwrap();
+            let in_place: Vec<&str> = case.get("in_place").unwrap().split('/').collect();
+            assert_eq!(
+                parse_status(&case.line, now),
+                HookStatus {
+                    android_id: in_place.contains(&"android_id"),
+                    app_list: in_place.contains(&"app_list"),
+                },
+                "{:?}",
+                case.line
+            );
+        }
     }
 }

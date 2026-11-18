@@ -239,45 +239,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_queries_and_opens() {
-        assert_eq!(
-            parse_line(
-                "1\t1700000000\t10123\tq\t\t3214\tcontent://media/external/images/media\t",
-                true
-            ),
-            Some(ProviderEvent {
-                ts: 1_700_000_000,
-                uid: 10123,
-                op: Op::Query,
-                read: false,
-                write: false,
-                items: 3214,
-                uri: "content://media/external/images/media".into(),
-                path: String::new(),
-                storage_provider: true,
-            })
-        );
-        let open = parse_line(
-            "1\t1700000001\t10123\to\trw\t0\tcontent://media/external/images/media/7\t/storage/emulated/0/DCIM/a.jpg",
-            true,
-        )
-        .unwrap();
-        assert_eq!((open.op, open.read, open.write), (Op::Open, true, true));
-        assert_eq!(open.path, "/storage/emulated/0/DCIM/a.jpg");
-    }
-
-    #[test]
-    fn rejects_malformed_lines() {
-        for line in [
-            "",
-            "garbage",
-            "2\t1700000000\t10123\tq\t\t0\tcontent://x\t",
-            "1\tnot-a-time\t10123\tq\t\t0\tcontent://x\t",
-            "1\t1700000000\t10123\tx\t\t0\tcontent://x\t",
-            "1\t1700000000\t10123\tq\t\t0\t\t",
-            "1\t1700000000\t10123\tq",
-        ] {
-            assert_eq!(parse_line(line, true), None, "{line:?}");
+    fn every_line_of_the_hook_is_read_as_it_writes_it() {
+        let cases = crate::protocol_cases::spool();
+        let flag = |case: &crate::protocol_cases::Case, key| match case.get(key) {
+            Some("1") => true,
+            Some("0") => false,
+            other => panic!("{key}={other:?}"),
+        };
+        for case in crate::protocol_cases::of(&cases, &["line"])
+            .into_iter()
+            .chain(crate::protocol_cases::of(&cases, &["read"]))
+        {
+            let op = || match case.get("op") {
+                Some("query") => Op::Query,
+                Some("open") => Op::Open,
+                other => panic!("op={other:?}"),
+            };
+            for storage_provider in [true, false] {
+                assert_eq!(
+                    parse_line(&case.line, storage_provider),
+                    Some(ProviderEvent {
+                        ts: case.get("ts").unwrap().parse().unwrap(),
+                        uid: case.get("uid").unwrap().parse().unwrap(),
+                        op: op(),
+                        read: flag(case, "read"),
+                        write: flag(case, "write"),
+                        items: case.get("items").unwrap().parse().unwrap(),
+                        uri: case.get("uri").unwrap().into(),
+                        path: case.get("path").unwrap().into(),
+                        storage_provider,
+                    }),
+                    "{:?}",
+                    case.line
+                );
+            }
+        }
+        for case in crate::protocol_cases::of(&cases, &["bad"]) {
+            assert_eq!(parse_line(&case.line, true), None, "{:?}", case.line);
         }
     }
 

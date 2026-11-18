@@ -44,20 +44,16 @@ internal class EventSpool(private val directory: File) {
         }
     }
 
-    fun addQuery(uid: Int, uri: String, items: Int) = add(uid, "q", "", items, uri, "")
+    fun addQuery(uid: Int, uri: String, items: Int) = add(queryLine(now(), uid, uri, items))
 
-    fun addOpen(uid: Int, uri: String, mode: String, path: String) = add(uid, "o", mode, 0, uri, path)
+    fun addOpen(uid: Int, uri: String, mode: String, path: String) = add(openLine(now(), uid, uri, mode, path))
 
-    private fun add(uid: Int, op: String, mode: String, items: Int, uri: String, path: String) {
-        val time = System.currentTimeMillis() / 1000
-        val line = listOf(FORMAT_VERSION, time, uid, op, mode.clean(), items, uri.clean(), path.clean())
-            .joinToString("\t")
+    private fun now(): Long = System.currentTimeMillis() / 1000
+
+    private fun add(line: String) {
         // If the writer can't keep up, dropping records beats stalling the provider.
         queue.offer(line)
     }
-
-    /** Tabs and line breaks would corrupt the format; they don't occur in real paths. */
-    private fun String.clean(): String = replace(SEPARATORS, " ")
 
     private fun writeLoop() {
         val batch = ArrayList<String>()
@@ -91,12 +87,23 @@ internal class EventSpool(private val directory: File) {
         }
     }
 
-    private companion object {
-        const val FORMAT_VERSION = "1"
-        const val FILE_NAME = "events.log"
-        const val QUEUE_CAPACITY = 10_000
-        const val BATCH_WINDOW_MS = 2_000L
-        const val MAX_FILE_BYTES = 4L * 1024 * 1024
-        val SEPARATORS = Regex("[\\t\\n\\r]")
+    internal companion object {
+        /** The line of a query at [time] (unix time) that returned [items] rows. */
+        fun queryLine(time: Long, uid: Int, uri: String, items: Int): String = line(time, uid, "q", "", items, uri, "")
+
+        /** The line of an open in [mode] at [time] that resolved to [path], or `""` if not known. */
+        fun openLine(time: Long, uid: Int, uri: String, mode: String, path: String): String = line(time, uid, "o", mode, 0, uri, path)
+
+        private fun line(time: Long, uid: Int, op: String, mode: String, items: Int, uri: String, path: String): String = listOf(FORMAT_VERSION, time, uid, op, mode.clean(), items, uri.clean(), path.clean()).joinToString("\t")
+
+        /** Tabs and line breaks would corrupt the format; they don't occur in real paths. */
+        private fun String.clean(): String = replace(SEPARATORS, " ")
+
+        private const val FORMAT_VERSION = "1"
+        private const val FILE_NAME = "events.log"
+        private const val QUEUE_CAPACITY = 10_000
+        private const val BATCH_WINDOW_MS = 2_000L
+        private const val MAX_FILE_BYTES = 4L * 1024 * 1024
+        private val SEPARATORS = Regex("[\\t\\n\\r]")
     }
 }

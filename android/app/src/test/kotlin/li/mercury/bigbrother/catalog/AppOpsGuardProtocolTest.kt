@@ -32,35 +32,107 @@ import kotlin.test.assertTrue
 class AppOpsGuardProtocolTest {
     private val fine = "android.permission.ACCESS_FINE_LOCATION"
 
-    private fun ops(vararg ops: Pair<String, Int>) = Targets(mapOf(*ops), emptySet())
+    private val cases = protocolCases(
+        "appops.txt",
+        types = setOf("command", "command-read", "command-bad", "answer", "answer-bad"),
+        keys = setOf(
+            "set", "verify", "release", "restore", "apply", "saved", "restored", "applied", "failed", "verified", "reverted", "unheld",
+            "uid", "hold", "revoke", "op", "permission", "name", "not_held",
+        ),
+    )
 
-    private fun opValues(vararg ops: Pair<String, Int?>) = Values(listOf(*ops), emptyList())
+    /** An op's uid mode, `null` for none, and its grant's mode if given: `<op>/<mode>[/<grant>]`. */
+    private fun opValue(word: String): Triple<String, Int?, Int?> {
+        val parts = word.split('/')
+        return Triple(parts[0], parts[1].takeUnless { it == "none" }?.toInt(), parts.getOrNull(2)?.toInt())
+    }
 
-    @Test
-    fun givenReleaseLine_whenParsed_thenCommandForUid() {
-        assertEquals(AppOpsGuardProtocol.Command.Release(10205), AppOpsGuardProtocol.parseCommand("release 10205"))
-        assertEquals(null, AppOpsGuardProtocol.parseCommand("release 10205 extra"))
+    /** A permission's state, `null` if not known: `<permission>/<granted|denied|unknown>[/<flag>]...`. */
+    private fun permissionValue(word: String): Pair<String, PermissionState?> {
+        val parts = word.split('/')
+        if (parts[1] == "unknown") return parts[0] to null
+        val flags = parts.drop(2).fold(0) { flags, flag ->
+            flags or when (flag) {
+                "user_set" -> FLAG_USER_SET
+                "user_fixed" -> FLAG_USER_FIXED
+                else -> error("no flag $flag")
+            }
+        }
+        return parts[0] to PermissionState(granted = parts[1] == "granted", flags = flags)
+    }
+
+    private fun ProtocolCase.uid(): Int = get("uid")!!.toInt()
+
+    private fun ProtocolCase.targets(): Targets = Targets(
+        all("hold").associate { it.substringBefore('/') to it.substringAfter('/').toInt() },
+        all("revoke").toSet(),
+    )
+
+    private fun ProtocolCase.values(): Values {
+        val ops = all("op").map(::opValue)
+        return Values(
+            ops.map { (name, mode, _) -> name to mode },
+            all("permission").map(::permissionValue),
+            ops.mapNotNull { (name, _, grant) -> grant?.let { name to it } }.toMap(),
+        )
     }
 
     @Test
-    fun givenSetOrVerifyLine_whenParsed_thenTargetsByOp() {
-        val targets = ops("android:camera" to 1, "android:read_contacts" to 1)
-        assertEquals(Command.Set(10123, targets), AppOpsGuardProtocol.parseCommand("set 10123 android:camera=1,android:read_contacts=1"))
-        assertEquals(Command.Verify(10123, targets), AppOpsGuardProtocol.parseCommand("verify 10123 android:camera=1,android:read_contacts=1"))
-        assertEquals(Command.Set(10123, ops("android:camera" to 1)), AppOpsGuardProtocol.parseCommand("  set\t10123 android:camera=1 \n"))
+    fun givenEveryCommandOfTheCases_whenParsed_thenWhatTheDaemonMeant() {
+        for (case in cases.ofType("command") + cases.ofType("command-read")) {
+            val uid = case.uid()
+            val expected = when (case.first) {
+                "set" -> Command.Set(uid, case.targets())
+                "verify" -> Command.Verify(uid, case.targets())
+                "release" -> Command.Release(uid)
+                "restore" -> Command.Restore(uid, case.values())
+                "apply" -> Command.Apply(uid, case.targets(), case.values())
+                else -> error("no command ${case.first}")
+            }
+            assertEquals(expected, AppOpsGuardProtocol.parseCommand(case.line), case.line)
+        }
     }
 
     @Test
-    fun givenOpsInTheForeground_whenParsed_thenHeldAtModeFour() {
-        assertEquals(
-            Command.Set(10123, ops("android:camera" to AppOpsGuardProtocol.MODE_FOREGROUND, "android:read_contacts" to 1)),
-            AppOpsGuardProtocol.parseCommand("set 10123 android:camera=4,android:read_contacts=1"),
-        )
-        assertEquals(
-            Command.Apply(10123, ops("android:coarse_location" to 4, "android:fine_location" to 4), opValues("android:wifi_scan" to null)),
-            AppOpsGuardProtocol.parseCommand("apply 10123 android:coarse_location=4,android:fine_location=4 android:wifi_scan=default"),
-        )
-        assertEquals(Command.Verify(10123, ops("android:record_audio" to 4)), AppOpsGuardProtocol.parseCommand("verify 10123 android:record_audio=4"))
+    fun givenEveryValueListOfTheCommands_whenEncoded_thenAsTheDaemonWroteIt() {
+        for (case in cases.ofType("command").filter { it.first == "restore" || it.first == "apply" }) {
+            val values = case.values()
+            if (values.isEmpty()) continue
+            assertEquals(case.line.split(' ').last(), AppOpsGuardProtocol.encodeValues(values), case.line)
+        }
+    }
+
+    @Test
+    fun givenEveryMalformedCommandOfTheCases_whenParsed_thenNull() {
+        for (case in cases.ofType("command-bad")) {
+            assertNull(AppOpsGuardProtocol.parseCommand(case.line), case.line)
+        }
+    }
+
+    @Test
+    fun givenEveryAnswerOfTheCases_whenWritten_thenTheLineTheDaemonReads() {
+        for (case in cases.ofType("answer")) {
+            val uid = case.uid()
+            val line = when (case.first) {
+                "saved" -> AppOpsGuardProtocol.savedLine(uid, case.values())
+
+                "restored" -> AppOpsGuardProtocol.restoredLine(uid)
+
+                "applied" -> AppOpsGuardProtocol.appliedLine(uid, case.values().permissions.map { (name, state) -> name to state!! })
+
+                "failed" -> AppOpsGuardProtocol.failedLine(uid)
+
+                "verified" -> AppOpsGuardProtocol.verifiedLine(uid)
+
+                "reverted" -> case.get("name")?.let { AppOpsGuardProtocol.revertedLine(uid, it) }
+                    ?: case.values().permissions.single().let { (name, state) -> AppOpsGuardProtocol.revertedLine(uid, name, state!!) }
+
+                "unheld" -> AppOpsGuardProtocol.unheldLine(uid, case.all("not_held"))
+
+                else -> error("no answer ${case.first}")
+            }
+            assertEquals(case.line, line)
+        }
     }
 
     @Test
@@ -74,93 +146,6 @@ class AppOpsGuardProtocolTest {
         val targets = mapOf("android:camera" to 4, "android:record_audio" to 4, "android:fine_location" to 4)
 
         assertEquals(listOf("android:record_audio", "android:fine_location"), AppOpsGuardProtocol.opsToSetAgain(states, targets))
-    }
-
-    @Test
-    fun givenPermissionRevokedInTargets_whenParsed_thenHeldApartFromOps() {
-        assertEquals(
-            Command.Set(10123, Targets(mapOf("android:camera" to 1), setOf(fine))),
-            AppOpsGuardProtocol.parseCommand("set 10123 android:camera=1,$fine=revoked"),
-        )
-        assertEquals(
-            Command.Verify(10123, Targets(emptyMap(), setOf(fine))),
-            AppOpsGuardProtocol.parseCommand("verify 10123 $fine=revoked"),
-        )
-    }
-
-    @Test
-    fun givenApplyLine_whenParsed_thenTargetsAndResets() {
-        assertEquals(
-            Command.Apply(10123, ops("android:camera" to 1), opValues("android:read_contacts" to null, "android:read_sms" to 4)),
-            AppOpsGuardProtocol.parseCommand("apply 10123 android:camera=1 android:read_contacts=default,android:read_sms=4"),
-        )
-        assertEquals(Command.Apply(10123, ops("android:camera" to 1), Values.NONE), AppOpsGuardProtocol.parseCommand("apply 10123 android:camera=1 -"))
-        assertEquals(Command.Apply(10123, Targets.NONE, opValues("android:camera" to 0)), AppOpsGuardProtocol.parseCommand("apply 10123 - android:camera=0"))
-        // Location made precise again: its ops held, the permission given back.
-        assertEquals(
-            Command.Apply(
-                10123,
-                ops("android:fine_location" to 1),
-                Values(emptyList(), listOf(fine to PermissionState(granted = true, flags = FLAG_USER_SET))),
-            ),
-            AppOpsGuardProtocol.parseCommand("apply 10123 android:fine_location=1 $fine=granted+user_set"),
-        )
-    }
-
-    @Test
-    fun givenRestoreLine_whenParsed_thenModesAndStatesInOrder() {
-        assertEquals(
-            Command.Restore(10123, opValues("android:camera" to 4, "android:read_contacts" to null)),
-            AppOpsGuardProtocol.parseCommand("restore 10123 android:camera=4,android:read_contacts=default"),
-        )
-        assertEquals(Command.Restore(10123, Values.NONE), AppOpsGuardProtocol.parseCommand("restore 10123"))
-        assertEquals(
-            Command.Restore(
-                10123,
-                Values(listOf("android:camera" to 4), listOf(fine to PermissionState(granted = false, flags = FLAG_USER_SET or FLAG_USER_FIXED))),
-            ),
-            AppOpsGuardProtocol.parseCommand("restore 10123 android:camera=4,$fine=denied+user_set+user_fixed"),
-        )
-        assertEquals(
-            Command.Restore(10123, Values(emptyList(), listOf(fine to null))),
-            AppOpsGuardProtocol.parseCommand("restore 10123 $fine=default"),
-        )
-    }
-
-    @Test
-    fun givenMalformedLine_whenParsed_thenNull() {
-        listOf(
-            "",
-            "set",
-            "set abc",
-            "set -1",
-            "set 10123",
-            "verify 10123",
-            "set 10123 extra",
-            "verify 10123 extra",
-            "set 10123 android:camera=0",
-            "set 10123 android:camera=2",
-            "set 10123 android:camera=default",
-            "set 10123 android:camera=1 more",
-            "set 10123 $fine=granted",
-            "set 10123 $fine=1",
-            "set 10123 android:camera=revoked",
-            "apply 10123 android:camera=1",
-            "apply 10123 android:camera=3 -",
-            "apply 10123 - android:camera=x",
-            "apply 10123 - $fine=revoked",
-            "unset 10123",
-            "restore 10123 android:camera",
-            "restore 10123 android:camera=",
-            "restore 10123 android:camera=ignored",
-            "restore 10123 =1",
-            "restore 10123 android:camera=1,",
-            "restore 10123 android:camera=-1",
-            "restore 10123 android:camera=1 more",
-            "restore 10123 $fine=granted+user_whatever",
-            "restore 10123 $fine=maybe",
-            "restore 10123 $fine=4",
-        ).forEach { assertNull(AppOpsGuardProtocol.parseCommand(it), it) }
     }
 
     @Test
@@ -287,15 +272,6 @@ class AppOpsGuardProtocolTest {
     }
 
     @Test
-    fun givenPermissionsTakenAnew_whenApplied_thenTheirStatesAnswered() {
-        assertEquals("applied 10123", AppOpsGuardProtocol.appliedLine(10123, emptyList()))
-        assertEquals(
-            "applied 10123 $fine=denied+user_set",
-            AppOpsGuardProtocol.appliedLine(10123, listOf(fine to PermissionState(granted = false, flags = FLAG_USER_SET))),
-        )
-    }
-
-    @Test
     fun givenPermissionStates_whenChecked_thenHeldOnlyRevokedAndFixed() {
         assertTrue(AppOpsGuardProtocol.isHeld(granted = false, flags = FLAG_USER_FIXED))
         assertTrue(AppOpsGuardProtocol.isHeld(granted = false, flags = FLAG_USER_FIXED or FLAG_USER_SET or 0x40))
@@ -351,15 +327,6 @@ class AppOpsGuardProtocolTest {
         val targets = AppOpsGuardProtocol.GUARDED_OPS.associateWith { 1 }
 
         assertEquals(emptyList(), AppOpsGuardProtocol.opsToSetAgain(states, targets))
-    }
-
-    @Test
-    fun givenUnheldOps_whenReported_thenNamedOrDash() {
-        assertEquals(
-            "unheld 10100 android:camera,android:read_sms",
-            AppOpsGuardProtocol.unheldLine(10100, listOf("android:camera", "android:read_sms")),
-        )
-        assertEquals("unheld 10100 -", AppOpsGuardProtocol.unheldLine(10100, emptyList()))
     }
 
     @Test
