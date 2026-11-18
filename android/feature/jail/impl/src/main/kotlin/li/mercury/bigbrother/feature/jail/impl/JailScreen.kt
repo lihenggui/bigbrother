@@ -16,6 +16,8 @@
 
 package li.mercury.bigbrother.feature.jail.impl
 
+import androidx.annotation.PluralsRes
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -31,6 +33,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.outlined.Contacts
@@ -60,8 +63,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -71,6 +76,7 @@ import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndica
 import li.mercury.bigbrother.core.designsystem.component.ShapedIcon
 import li.mercury.bigbrother.core.designsystem.icon.CageIcons
 import li.mercury.bigbrother.core.model.InstalledApp
+import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxStatus
@@ -113,7 +119,7 @@ fun JailScreen(
         onUndo = { shown ->
             when (shown) {
                 is JailMessage.Isolated -> viewModel.undoIsolate(shown.apps)
-                is JailMessage.Failed -> Unit
+                is JailMessage.NotIsolated, is JailMessage.NotReleased -> Unit
             }
         },
         onMessageDismiss = viewModel::dismissMessage,
@@ -324,16 +330,11 @@ private fun MessageEffect(
     onUndo: (JailMessage) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val separator = stringResource(R.string.jail_list_separator)
-    val text = when (message) {
-        is JailMessage.Isolated -> stringResource(R.string.jail_isolated, message.names.joinToString(separator))
-        is JailMessage.Failed -> failureText(message.failure)
-        null -> null
-    }
+    val text = message?.let { messageText(it) }
     val undo = stringResource(R.string.jail_undo)
     LaunchedEffect(message) {
         if (message == null || text == null) return@LaunchedEffect
-        val canUndo = message !is JailMessage.Failed
+        val canUndo = message is JailMessage.Isolated
         val result = snackbar.showSnackbar(
             message = text,
             actionLabel = if (canUndo) undo else null,
@@ -345,6 +346,34 @@ private fun MessageEffect(
     }
 }
 
+/** What [message] says: the apps by name, or by number once there are several that failed. */
+@Composable
+private fun messageText(message: JailMessage): String {
+    val separator = stringResource(R.string.jail_list_separator)
+    return when (message) {
+        is JailMessage.Isolated -> {
+            val names = message.names.joinToString(separator)
+            val left = message.notIsolated
+            when (left.size) {
+                0 -> stringResource(R.string.jail_isolated, names)
+                1 -> stringResource(R.string.jail_isolated_partly, names, left.single())
+                else -> pluralStringResource(R.plurals.jail_isolated_partly_count, left.size, names, left.size)
+            }
+        }
+
+        is JailMessage.NotIsolated -> notChanged(message.names, R.string.jail_not_isolated, R.plurals.jail_not_isolated_count, message.failure)
+
+        is JailMessage.NotReleased -> notChanged(message.names, R.string.jail_not_released, R.plurals.jail_not_released_count, message.failure)
+    }
+}
+
+/** [one] with the app's name, or [several] with the number of apps, then why. */
+@Composable
+private fun notChanged(names: List<String>, @StringRes one: Int, @PluralsRes several: Int, failure: LoadFailure): String {
+    val reason = failureReason(failure)
+    return if (names.size == 1) stringResource(one, names.single(), reason) else pluralStringResource(several, names.size, names.size, reason)
+}
+
 /** Opens the list of apps to add, and puts those chosen in the sandbox. */
 @Composable
 internal fun AddAppsDialog(
@@ -353,9 +382,16 @@ internal fun AddAppsDialog(
     viewModel: AddAppsViewModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    // The field keeps its own text, and the list follows it. Given back the
+    // text with the list, worked out on another thread, it would lose what
+    // is typed in the meantime, and break input methods' composing text.
+    val query = rememberTextFieldState()
+    LaunchedEffect(query) {
+        snapshotFlow { query.text.toString() }.collect(viewModel::setQuery)
+    }
     AddAppsDialog(
         state = state,
-        onQueryChange = viewModel::setQuery,
+        query = query,
         onToggle = viewModel::toggle,
         onDismiss = {
             viewModel.clear()

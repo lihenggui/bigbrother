@@ -42,7 +42,6 @@ import javax.inject.Inject
 data class AddAppsUiState(
     /** The apps that can be put in the sandbox and match the search, by name; null until read. */
     val apps: List<InstalledApp>? = null,
-    val query: String = "",
     /** Chosen, by package name. */
     val selected: Set<String> = emptySet(),
 )
@@ -83,13 +82,17 @@ class AddAppsViewModel @Inject constructor(
                     (query.isBlank() || app.info.label.contains(query, ignoreCase = true) || app.packageName.contains(query, ignoreCase = true))
             }
             ?.sortedByName { it.info.label }
-        AddAppsUiState(apps = apps, query = query, selected = selected)
+        AddAppsUiState(apps = apps, selected = selected)
     }.flowOn(defaultDispatcher).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AddAppsUiState())
 
     init {
         viewModelScope.launch { installed.value = installedAppRepository.getInstalledApps() }
     }
 
+    /**
+     * Lists the apps that match [text]. The search field keeps the text
+     * itself: the state that comes back is worked out on another thread.
+     */
     fun setQuery(text: String) {
         query.value = text
     }

@@ -99,7 +99,7 @@ class AddAppsViewModelTest {
         viewModel.clear()
 
         assertTrue(viewModel.chosen().isEmpty())
-        assertEquals("", viewModel.uiState.value.query)
+        assertEquals(listOf("Notes", "Weather"), viewModel.uiState.value.apps?.map { it.info.label })
     }
 
     private companion object {

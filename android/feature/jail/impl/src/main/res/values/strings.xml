@@ -41,6 +41,25 @@
     <string name="jail_undo">Undo</string>
     <!-- %1$s: the reason the daemon gave. -->
     <string name="jail_failed">Not changed: %1$s</string>
+    <!-- %1$s: the apps isolated; %2$s: the one that could not be. -->
+    <string name="jail_isolated_partly">%1$s isolated. Could not isolate %2$s</string>
+    <!-- %1$s: the apps isolated; %2$d: how many could not be. -->
+    <plurals name="jail_isolated_partly_count">
+        <item quantity="one">%1$s isolated. Could not isolate %2$d app</item>
+        <item quantity="other">%1$s isolated. Could not isolate %2$d apps</item>
+    </plurals>
+    <!-- %1$s: an app; %2$s: why. -->
+    <string name="jail_not_isolated">Could not isolate %1$s: %2$s</string>
+    <plurals name="jail_not_isolated_count">
+        <item quantity="one">Could not isolate %1$d app: %2$s</item>
+        <item quantity="other">Could not isolate %1$d apps: %2$s</item>
+    </plurals>
+    <!-- After Undo. %1$s: an app; %2$s: why. -->
+    <string name="jail_not_released">%1$s still isolated: %2$s</string>
+    <plurals name="jail_not_released_count">
+        <item quantity="one">%1$d app still isolated: %2$s</item>
+        <item quantity="other">%1$d apps still isolated: %2$s</item>
+    </plurals>
 
     <!-- Adding apps. -->
     <string name="jail_add_search">Search apps</string>
@@ -77,6 +96,7 @@
     <string name="jail_section_status">Status</string>
     <string name="jail_status_title">Components</string>
     <string name="jail_status_ok">Storage isolation and the system framework hook in effect</string>
+    <string name="jail_status_checking">Checking…</string>
     <string name="jail_status_hook_missing">System framework hook not loaded</string>
     <string name="jail_status_gate_missing">Storage isolation not available on this kernel</string>
     <string name="jail_release_all">End all isolation</string>

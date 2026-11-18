@@ -17,6 +17,7 @@
 package li.mercury.bigbrother.feature.jail.impl
 
 import androidx.activity.ComponentActivity
+import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
@@ -130,8 +131,8 @@ class JailScreenScreenshotTests {
                 .sortedByName { it.info.label }
             AddAppsSheet(
                 state = AddAppsUiState(apps = apps, selected = setOf(DemoApp.PUZZLE.packageName, DemoApp.NEWS.packageName)),
+                query = rememberTextFieldState(),
                 compact = true,
-                onQueryChange = {},
                 onToggle = {},
                 onDismiss = {},
                 onConfirm = {},

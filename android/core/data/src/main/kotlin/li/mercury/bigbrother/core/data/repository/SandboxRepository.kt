@@ -29,6 +29,7 @@ import li.mercury.bigbrother.core.model.SandboxStatus
 import li.mercury.bigbrother.core.model.SandboxedApp
 import org.json.JSONException
 import org.json.JSONObject
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -36,6 +37,10 @@ import javax.inject.Singleton
  * The jail: the apps put in the sandbox, what it keeps from each, and the
  * global settings. The daemon keeps all of it; every change goes through it,
  * and what it then reports is what [apps] and [global] hold.
+ *
+ * A change throws only if the daemon did not make it. If the lists cannot be
+ * read again afterwards, [apps] and [global] stay as they were until the
+ * next [refresh].
  */
 interface SandboxRepository {
     /** The apps in the sandbox, and those that were and kept their settings; null until read. */
@@ -98,17 +103,17 @@ internal class RootSandboxRepository @Inject constructor(
     // same; everything else interpolated is a number or an enum constant.
     override suspend fun isolate(packageName: String, userId: Int) {
         sandbox("enable ${packageName.shellQuoted()} --user $userId")
-        refresh()
+        refreshAfter("enable")
     }
 
     override suspend fun release(packageName: String, userId: Int) {
         sandbox("disable ${packageName.shellQuoted()} --user $userId")
-        refresh()
+        refreshAfter("disable")
     }
 
     override suspend fun releaseAll(): Int {
         val answer = sandbox("disable --all")
-        refresh()
+        refreshAfter("disable --all")
         // The daemon gives up on an app it cannot take out in time, and
         // names it rather than fail the whole command.
         return try {
@@ -122,13 +127,27 @@ internal class RootSandboxRepository @Inject constructor(
         if (changes.isEmpty()) return
         val settings = changes.entries.joinToString(" ") { (item, mode) -> "${item.id}=${mode?.id ?: GLOBAL}" }
         sandbox("set ${packageName.shellQuoted()} $settings --user $userId")
-        refresh()
+        refreshAfter("set")
     }
 
     override suspend fun setGlobal(changes: Map<SandboxItem, SandboxMode>) {
         if (changes.isEmpty()) return
         sandbox("global " + changes.entries.joinToString(" ") { (item, mode) -> "${item.id}=${mode.id}" })
-        refresh()
+        refreshAfter("global")
+    }
+
+    /**
+     * Reads the lists again after [command] was made. The change stands even
+     * if they cannot be read: failing it here would have the caller report
+     * as not made what the daemon did.
+     */
+    private suspend fun refreshAfter(command: String) {
+        try {
+            refresh()
+        } catch (e: RecordsException) {
+            // The reason is left out: the daemon's error can name packages.
+            Timber.w("bbd sandbox %s made, lists not read again: %s", command, e.javaClass.simpleName)
+        }
     }
 
     private fun JSONObject.toSandboxedApp(): SandboxedApp = SandboxedApp(

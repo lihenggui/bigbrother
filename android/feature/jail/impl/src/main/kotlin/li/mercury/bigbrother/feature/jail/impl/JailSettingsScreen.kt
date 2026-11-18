@@ -30,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.HourglassEmpty
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
@@ -218,7 +219,7 @@ internal fun JailSettingsScreen(
     }
 }
 
-/** Which parts of the sandbox work on this device. */
+/** Which parts of the sandbox work on this device; until known, neither good nor bad. */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun StatusRow(status: SandboxStatus?) {
@@ -226,22 +227,23 @@ private fun StatusRow(status: SandboxStatus?) {
         if (status != null && !status.gate) add(stringResource(R.string.jail_status_gate_missing))
         if (status != null && (!status.androidIdHook || !status.appListHook)) add(stringResource(R.string.jail_status_hook_missing))
     }
-    val ok = status != null && problems.isEmpty()
+    val colors = MaterialTheme.colorScheme
     ListItem(
         shapes = ListItemDefaults.segmentedShapes(0, 2),
         colors = ListItemDefaults.segmentedColors(),
         leadingContent = {
-            ShapedIcon(
-                if (ok) Icons.Outlined.CheckCircle else Icons.Outlined.ErrorOutline,
-                containerColor = if (ok) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.errorContainer,
-                contentColor = if (ok) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onErrorContainer,
-            )
+            when {
+                status == null -> ShapedIcon(Icons.Outlined.HourglassEmpty)
+                problems.isEmpty() -> ShapedIcon(Icons.Outlined.CheckCircle)
+                else -> ShapedIcon(Icons.Outlined.ErrorOutline, containerColor = colors.errorContainer, contentColor = colors.onErrorContainer)
+            }
         },
         supportingContent = {
-            Text(
-                if (ok) stringResource(R.string.jail_status_ok) else problems.joinToString(stringResource(R.string.jail_list_separator)),
-                color = if (ok) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
-            )
+            when {
+                status == null -> Text(stringResource(R.string.jail_status_checking), color = colors.onSurfaceVariant)
+                problems.isEmpty() -> Text(stringResource(R.string.jail_status_ok), color = colors.onSurfaceVariant)
+                else -> Text(problems.joinToString(stringResource(R.string.jail_list_separator)), color = colors.error)
+            }
         },
         verticalAlignment = Alignment.CenterVertically,
     ) { Text(stringResource(R.string.jail_status_title)) }
