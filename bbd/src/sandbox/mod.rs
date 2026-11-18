@@ -294,6 +294,9 @@ pub struct Status {
     /// Starts of sandboxed apps let through, and those that were stopped.
     pub admitted: u64,
     pub failed: u64,
+    /// Starts of newly installed apps ended before they were in the
+    /// sandbox (see [`auto`]).
+    pub new_apps_stopped: u64,
     /// How long starts were held, 95th percentile, in microseconds.
     pub hold_p95_us: u64,
 }
@@ -1103,6 +1106,7 @@ fn print_status(out: &mut impl std::io::Write, status: &Status) -> std::io::Resu
     writeln!(out, "App list hook:     {}", on(status.hook.app_list))?;
     writeln!(out, "Starts admitted:   {}", status.admitted)?;
     writeln!(out, "Starts failed:     {}", status.failed)?;
+    writeln!(out, "New apps stopped:  {}", status.new_apps_stopped)?;
     writeln!(out, "Hold time p95:     {} us", status.hold_p95_us)
 }
 
@@ -2272,7 +2276,7 @@ mod tests {
             serde_json::json!({
                 "ok": true, "gate": false, "appops": false,
                 "hook": {"android_id": false, "app_list": false},
-                "admitted": 0, "failed": 0, "hold_p95_us": 0,
+                "admitted": 0, "failed": 0, "new_apps_stopped": 0, "hold_p95_us": 0,
             })
         );
         assert_eq!(

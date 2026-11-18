@@ -98,6 +98,10 @@ const ACCEPT_RETRY: Duration = Duration::from_secs(1);
 /// Most command connections waiting to send their request at once. Only
 /// root can connect; this only keeps a stuck client from piling them up.
 const MAX_PENDING_COMMANDS: usize = 8;
+/// Uids of new apps whose start the gate ended, waiting for the main loop.
+/// One look at the package list deals with all of them; a uid that finds no
+/// room is reported again by its next start.
+const NEW_STARTS_QUEUE: usize = 16;
 
 pub struct Options<'a> {
     pub db: &'a Path,
@@ -283,8 +287,16 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     }
     // The sandbox (see `sandbox`). Like the optional probes, it costs only
     // itself where it cannot work: the daemon records regardless.
+    let (new_starts_sender, mut new_starts) = tokio::sync::mpsc::channel(NEW_STARTS_QUEUE);
     let mut sandbox = if opts.sandbox {
-        start_sandbox(&mut ebpf, &symbols, &offsets, &mut tracer, opts.db)
+        start_sandbox(
+            &mut ebpf,
+            &symbols,
+            &offsets,
+            &mut tracer,
+            opts.db,
+            new_starts_sender,
+        )
     } else {
         None
     };
@@ -386,6 +398,15 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
                         }
                     }
                     Err(e) => package_watch.give_up(&e),
+                }
+                continue;
+            }
+            // A new app started before it was put in the sandbox. The gate
+            // ended that start; the app is put in for its next.
+            Some(_) = new_starts.recv() => {
+                while new_starts.try_recv().is_ok() {}
+                if let Some(sandbox) = sandbox.as_mut() {
+                    sandbox.isolate_new(&tracer.writer, &mut tracer.packages);
                 }
                 continue;
             }
@@ -517,13 +538,15 @@ async fn next_request(listener: Option<&UnixListener>) -> Option<UnixStream> {
 /// Load the sandbox, attach its gate and put the apps that were sandboxed
 /// back in. `None`, with a warning, if the sandbox's entries cannot be
 /// read; a gate that cannot be attached leaves a sandbox that refuses to
-/// take apps in.
+/// take apps in. The gate sends `new_starts` the uid of each new app whose
+/// start it ended (see `sandbox::auto`).
 fn start_sandbox(
     ebpf: &mut aya::Ebpf,
     symbols: &std::collections::HashSet<&'static str>,
     offsets: &[u32],
     tracer: &mut Tracer,
     db: &Path,
+    new_starts: tokio::sync::mpsc::Sender<u32>,
 ) -> Option<Sandbox> {
     // Where every user's apps keep the data they can reach before the user
     // unlocks the device: there for every installed app from the start.
@@ -545,9 +568,17 @@ fn start_sandbox(
         i64::from(storage.is_ok()),
     );
     let appops = sandbox::appops::AppOps::start();
+    let mut new_apps = None;
     let storage: Box<dyn sandbox::Effect> = match storage {
         Ok(storage) => {
             storage.on_admitted(appops.verifier());
+            // Not waited for: the gate thread waits for nothing.
+            storage.on_unknown(move |uid| {
+                let _ = new_starts.try_send(uid);
+            });
+            new_apps = sandbox::auto::Kernel::take(ebpf)
+                .inspect_err(|e| eprintln!("bbd: warning: starts of new apps are not held: {e:#}"))
+                .ok();
             Box::new(storage)
         }
         Err(e) => {
@@ -563,6 +594,7 @@ fn start_sandbox(
     sandbox.add_effect(storage);
     sandbox.add_effect(Box::new(sandbox::sweep::Restart));
     sandbox.resume(&tracer.writer, &mut tracer.packages);
+    sandbox.resume_auto(new_apps, &tracer.writer, &mut tracer.packages);
     Some(sandbox)
 }
 

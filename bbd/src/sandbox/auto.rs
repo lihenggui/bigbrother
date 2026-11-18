@@ -37,9 +37,18 @@
 //! every install, update and removal. While this is on, the daemon watches
 //! for that ([`Watch`]) and looks at the list each time; while it is off,
 //! nothing is watched.
+//!
+//! An app can start before the daemon has looked: an installer may open it
+//! at once. So that none of its code runs outside the sandbox, the kernel
+//! side of the gate is given what is known ([`Kernel`]) and stops a start of
+//! any other app id or uid, as it stops a sandboxed app's. The gate thread
+//! ends that start, as it ends any start it cannot give a sandbox, and tells
+//! the main loop, which looks at the list and puts the app in: its next
+//! start is held as a sandboxed one. While this is off, the kernel side
+//! reads only the switch.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     ffi::CString,
     io,
     os::{
@@ -50,10 +59,13 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::Context as _;
+use aya::maps::{Array, HashMap as BpfHashMap, MapData};
+use bb_common::{KNOWN_APP_WORDS, known_app_bit};
 use serde::{Deserialize, Serialize};
 use tokio::io::{Interest, unix::AsyncFd};
 
-use super::{FIRST_APPLICATION_UID, LAST_USER, OWN_PACKAGES, Sandbox};
+use super::{LAST_USER, OWN_PACKAGES, Sandbox};
 use crate::{
     packages::{PER_USER_RANGE, Packages},
     store::{KnownApp, Writer},
@@ -65,11 +77,6 @@ pub const PACKAGE_DIR: &str = "/data/system";
 
 /// The package list's name in [`PACKAGE_DIR`].
 const PACKAGE_LIST: &[u8] = b"packages.list";
-
-/// App ids of installed apps end below this (Android's
-/// `LAST_APPLICATION_UID` is 19999). Above are the SDK sandboxes of apps and
-/// isolated processes, which are not packages.
-const APP_ID_END: u32 = 20_000;
 
 /// Least time between two log lines about apps that could not be put in.
 /// One that cannot be is tried again with every change of the package list.
@@ -87,6 +94,8 @@ pub struct Switch {
 pub struct Auto {
     on: bool,
     known: Known,
+    /// The kernel side's maps, where the gate is there.
+    kernel: Option<Kernel>,
     failures: FailureLog,
 }
 
@@ -97,8 +106,87 @@ impl Auto {
         Ok(Self {
             on,
             known: Known::from_rows(rows),
+            kernel: None,
             failures: FailureLog::default(),
         })
+    }
+
+    /// Have the kernel side hold starts of new apps while this is on,
+    /// against what is known now.
+    fn sync(&mut self) {
+        let Some(kernel) = &mut self.kernel else {
+            return;
+        };
+        if let Err(e) = kernel.sync(self.on, &self.known) {
+            // A known app missing from the maps could never start. Better
+            // hold none: new apps are still found in the package list.
+            let _ = kernel.switch.set(0, &0, 0);
+            eprintln!("bbd: sandbox: starts of new apps are not held: {e:#}");
+        }
+    }
+}
+
+/// The kernel side's maps for new apps (see `gate_setresuid` in bb-ebpf).
+pub struct Kernel {
+    /// Whether starts of new apps are held.
+    switch: Array<MapData, u32>,
+    /// A bit per known app id.
+    apps: Array<MapData, u64>,
+    /// The known uids of apps installed since.
+    uids: BpfHashMap<MapData, u32, u32>,
+    /// What `apps` and `uids` hold, so that only changes are written.
+    words: Vec<u64>,
+    held: BTreeSet<u32>,
+}
+
+impl Kernel {
+    /// The maps of the loaded gate program.
+    pub fn take(ebpf: &mut aya::Ebpf) -> anyhow::Result<Self> {
+        let mut map = |name: &str| {
+            ebpf.take_map(name)
+                .with_context(|| format!("{name} map missing"))
+        };
+        Ok(Self {
+            switch: Array::try_from(map("AUTO_ISOLATE")?)?,
+            apps: Array::try_from(map("KNOWN_APP_IDS")?)?,
+            uids: BpfHashMap::try_from(map("KNOWN_UIDS")?)?,
+            words: vec![0; KNOWN_APP_WORDS as usize],
+            held: BTreeSet::new(),
+        })
+    }
+
+    /// Have the maps hold `known`, and starts of new apps held while `on`.
+    /// What is known is written before starts are held and after they no
+    /// longer are: a known app is never held for not being written yet.
+    fn sync(&mut self, on: bool, known: &Known) -> anyhow::Result<()> {
+        if !on {
+            self.switch.set(0, &0, 0).context("turning the hold off")?;
+        }
+        for (index, word) in known.words().into_iter().enumerate() {
+            if self.words[index] != word {
+                self.apps
+                    .set(index as u32, &word, 0)
+                    .context("writing the known app ids")?;
+                self.words[index] = word;
+            }
+        }
+        let uids: BTreeSet<u32> = known.uids.keys().copied().collect();
+        let added: Vec<u32> = uids.difference(&self.held).copied().collect();
+        let removed: Vec<u32> = self.held.difference(&uids).copied().collect();
+        for uid in added {
+            self.uids
+                .insert(&uid, &1, 0)
+                .context("writing a known uid")?;
+            self.held.insert(uid);
+        }
+        for uid in removed {
+            let _ = self.uids.remove(&uid);
+            self.held.remove(&uid);
+        }
+        if on {
+            self.switch.set(0, &1, 0).context("turning the hold on")?;
+        }
+        Ok(())
     }
 }
 
@@ -152,11 +240,20 @@ impl Known {
         });
         apps.chain(uids).collect()
     }
+
+    /// The known app ids as the kernel side has them: a bit per app id.
+    fn words(&self) -> Vec<u64> {
+        let mut words = vec![0; KNOWN_APP_WORDS as usize];
+        for (word, bit) in self.apps.keys().filter_map(|app_id| known_app_bit(*app_id)) {
+            words[word as usize] |= bit;
+        }
+        words
+    }
 }
 
 /// Whether `app_id` can be an installed app's.
 fn is_app(app_id: u32) -> bool {
-    (FIRST_APPLICATION_UID..APP_ID_END).contains(&app_id)
+    known_app_bit(app_id).is_some()
 }
 
 /// What a look at the package list finds.
@@ -265,6 +362,7 @@ impl Sandbox {
         writer.put_sandbox_auto(on, &known.rows())?;
         self.auto.on = on;
         self.auto.known = known;
+        self.auto.sync();
         eprintln!(
             "bbd: sandbox: newly installed apps are {}put in the sandbox",
             if on { "" } else { "no longer " }
@@ -320,7 +418,23 @@ impl Sandbox {
                 eprintln!("bbd: sandbox: cannot write the apps known to be installed: {e:#}");
             }
             self.auto.known = known;
+            self.auto.sync();
         }
+    }
+
+    /// Take up the putting of new apps in the sandbox in a daemon that just
+    /// started, with the kernel side's maps where the gate is there. What
+    /// was installed while no daemon ran is put in first; starts of new apps
+    /// are held from then on.
+    pub fn resume_auto(
+        &mut self,
+        kernel: Option<Kernel>,
+        writer: &Writer,
+        packages: &mut Packages,
+    ) {
+        self.auto.kernel = kernel;
+        self.isolate_new(writer, packages);
+        self.auto.sync();
     }
 
     /// The Android users, by their directories in `user_data`; user 0 alone
@@ -461,7 +575,7 @@ impl Watch {
     /// Stop watching, after `e`.
     pub fn give_up(&mut self, e: &io::Error) {
         eprintln!(
-            "bbd: sandbox: cannot watch for installed apps ({e}); they are looked for when the daemon next starts"
+            "bbd: sandbox: cannot watch for installed apps ({e}); new apps are found as they start, or when the daemon next starts"
         );
         self.inotify = None;
         self.failed = true;
@@ -710,6 +824,27 @@ mod tests {
 
         sandbox.set_auto(&f.writer, &mut f.packages, false).unwrap();
         assert_eq!(f.writer.sandbox_auto().unwrap(), (false, vec![]));
+    }
+
+    #[test]
+    fn the_kernel_side_is_given_a_bit_per_known_app_id() {
+        let known = Known {
+            apps: [10_000, 10_063, 10_064, 19_999, 1001]
+                .into_iter()
+                .map(|app_id| (app_id, String::new()))
+                .collect(),
+            uids: BTreeMap::from([(1_010_230, String::new())]),
+        };
+        let words = known.words();
+        assert_eq!(words.len(), 157);
+        assert_eq!(words[0], 1 | 1 << 63);
+        assert_eq!(words[1], 1);
+        assert_eq!(words[156], 1 << 15);
+        assert_eq!(words.iter().map(|w| w.count_ones()).sum::<u32>(), 4);
+        // What no package can have has no bit.
+        assert_eq!(known_app_bit(9_999), None);
+        assert_eq!(known_app_bit(20_000), None);
+        assert_eq!(known_app_bit(99_012), None);
     }
 
     #[test]

@@ -39,9 +39,12 @@ These programs run on every file open and many system calls of every process.
 - `gate_setresuid` is not a recorder: it stops a starting app of the sandbox
   and wakes the daemon's gate thread for each (`BPF_RB_FORCE_WAKEUP` on its
   own ring buffer), which is once per start of a sandboxed app. For every
-  other process that changes uid it costs a uid check and a map lookup. It
-  must never let a sandboxed start through when it cannot report it: it
-  kills the process instead.
+  other process that changes uid it costs a uid check and a map lookup.
+  An app's uid also has the auto-isolation switch read (`AUTO_ISOLATE`), and
+  while that is on, its bit in the known app ids; an app installed since
+  costs one lookup more (`KNOWN_UIDS`). A new app not known yet is stopped
+  and reported like a sandboxed one. It must never let a sandboxed or new
+  start through when it cannot report it: it kills the process instead.
 
 ## Testing
 

@@ -11,7 +11,7 @@ bb-common = { path = "../bb-common" }
 anyhow = { workspace = true, default-features = true }
 aya = { workspace = true }
 libc = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt", "net", "signal", "time"] }
+tokio = { workspace = true, features = ["macros", "rt", "net", "signal", "sync", "time"] }
 rusqlite = { version = "0.43.0", features = ["bundled"] }
 clap = { version = "4.6.8", features = ["derive", "env"] }
 serde = { version = "1.0.229", features = ["derive"] }
