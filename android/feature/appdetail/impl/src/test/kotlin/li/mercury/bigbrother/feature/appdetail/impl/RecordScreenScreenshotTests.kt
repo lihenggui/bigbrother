@@ -32,6 +32,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.annotation.LooperMode
+import java.time.LocalDate
 
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -91,7 +92,7 @@ class RecordScreenScreenshotTests {
             state = RecordUiState(
                 appInfo = records.appInfo.getValue(app.packageName),
                 group = group,
-                periods = records.history(app, topic),
+                periods = records.history(app, topic, HISTORY_DAY),
                 sensorSessions = records.sensorSessions(app).takeIf { topic == SENSORS },
                 loaded = true,
             ),
@@ -103,6 +104,9 @@ class RecordScreenScreenshotTests {
     }
 
     private companion object {
+        /** The day the list of each access is on: the list shows the date. */
+        val HISTORY_DAY: LocalDate = LocalDate.of(2026, 11, 16)
+
         const val SENSORS = "sensors"
         const val CLIPBOARD = "clipboard"
     }
