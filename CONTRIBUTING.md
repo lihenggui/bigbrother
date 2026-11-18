@@ -72,6 +72,12 @@ a root manager:
 ./scripts/install-on-emulator.sh
 ```
 
+The Device workflow (`.github/workflows/device.yml`) does this on emulators
+of API 33 to 36, nightly and for pull requests that touch the eBPF
+programs, the daemon, the Cargo manifests, the module, the scripts, the
+app, the hook, the canary, the Gradle build or the build setup. Without
+LSPosed there, the sandbox check skips what needs the hook.
+
 The unit tests include screenshot tests
 ([Roborazzi](https://github.com/takahirom/roborazzi)), which render the
 screens with sample records and compare them with the checked-in images:
