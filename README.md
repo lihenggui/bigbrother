@@ -114,6 +114,8 @@ records. Then uninstall the app.
   the time of each access.
 - Timeline: what each app did, hour by hour.
 - Search: apps, file names and kinds of data across all records.
+- Jail: the apps put in isolation, and what each one is kept from. Apps
+  are restarted when they are isolated and when isolation ends.
 
 System apps are hidden by default, since reading data is part of how they
 work. They can be shown in Settings.
@@ -143,8 +145,10 @@ Installation.
 ### Does it block anything?
 
 Not by default: it records access and does not prevent it. An app can be
-put in a sandbox from a root shell, where it is given empty storage, no
-personal data and an identity of its own; see
+isolated in Jail: it is given storage of its own, empty at first, no
+personal data and an identity of its own. Each item can be set for all
+isolated apps or for one app. Hiding device identifiers and installed apps
+needs the LSPosed hook with the System Framework scope. See
 [docs/sandbox.md](docs/sandbox.md).
 
 ### Does it drain the battery?

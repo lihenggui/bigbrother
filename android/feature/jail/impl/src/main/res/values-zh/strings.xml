@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="jail_section_isolated">已隔离的应用</string>
+    <string name="jail_section_settings">设置</string>
+    <string name="jail_add_apps">添加应用</string>
+    <string name="jail_global_settings">全局设置</string>
+    <string name="jail_all_items_on">全部项目已隔离</string>
+    <string name="jail_items_off">未隔离：%1$s</string>
+    <string name="jail_no_items_on">未隔离任何项目</string>
+    <string name="jail_empty_title">没有已隔离的应用</string>
+    <string name="jail_empty_files_title">文件</string>
+    <string name="jail_empty_files">仅可访问独立的隔离存储</string>
+    <string name="jail_empty_permissions_title">通讯录、位置、相机等</string>
+    <string name="jail_empty_permissions">权限保持已授权，返回空数据</string>
+    <string name="jail_empty_device_title">设备与应用</string>
+    <string name="jail_empty_device">使用虚拟 Android ID，仅可见系统应用</string>
+    <string name="jail_hook_missing_title">设备标识符和应用列表未隐藏</string>
+    <string name="jail_hook_missing">在 LSPosed 中为 Big Brother 启用系统框架作用域，然后重启设备。</string>
+    <string name="jail_gate_missing_title">无法隔离存储和处理器信息</string>
+    <string name="jail_gate_missing">此内核不支持在应用启动时进行拦截。</string>
+
+    <string name="jail_isolated">%1$s 已隔离</string>
+    <string name="jail_undo">撤销</string>
+    <string name="jail_failed">未更改：%1$s</string>
+
+    <string name="jail_add_search">搜索应用</string>
+    <plurals name="jail_add_confirm">
+        <item quantity="other">隔离 %d 个</item>
+    </plurals>
+    <string name="jail_add_confirm_none">隔离</string>
+    <string name="jail_add_restart">正在运行的应用会被关闭并重新启动。</string>
+    <string name="jail_add_empty">没有可添加的应用</string>
+    <string name="jail_close">关闭</string>
+
+    <string name="jail_release">解除隔离</string>
+    <string name="jail_records">访问记录</string>
+    <string name="jail_section_items">隔离项目</string>
+    <string name="jail_items_summary">开启的项目返回空数据、虚拟数据或隔离存储；关闭的项目保持系统行为。</string>
+    <string name="jail_reset">恢复全局设置</string>
+    <plurals name="jail_more_items">
+        <item quantity="other">另有 %d 项，应用未申请相关权限</item>
+    </plurals>
+    <string name="jail_fewer_items">收起</string>
+    <string name="jail_restart_note">开启项目或更改存储、处理器信息时，应用会重新启动。</string>
+    <string name="jail_custom">自定义</string>
+    <string name="jail_not_in_effect">在此设备上未生效</string>
+
+    <string name="jail_settings_subtitle">适用于未单独设置的已隔离应用</string>
+    <string name="jail_group_files">文件</string>
+    <string name="jail_group_personal">个人数据</string>
+    <string name="jail_group_sensors">位置与传感器</string>
+    <string name="jail_group_device">设备与应用</string>
+    <string name="jail_section_status">状态</string>
+    <string name="jail_status_title">组件状态</string>
+    <string name="jail_status_ok">存储隔离与系统框架钩子已生效</string>
+    <string name="jail_status_hook_missing">系统框架钩子未加载</string>
+    <string name="jail_status_gate_missing">此内核不支持存储隔离</string>
+    <string name="jail_release_all">解除全部隔离</string>
+    <string name="jail_release_all_summary">隔离存储中的文件保留</string>
+    <string name="jail_release_all_title">解除全部隔离？</string>
+    <plurals name="jail_release_all_body">
+        <item quantity="other">%d 个应用将恢复读取真实数据并重新启动。隔离存储中的文件保留。</item>
+    </plurals>
+    <plurals name="jail_release_all_left">
+        <item quantity="other">仍有 %d 个应用未解除隔离，请重试。</item>
+    </plurals>
+    <string name="jail_cancel">取消</string>
+
+    <string name="jail_item_storage">文件和媒体</string>
+    <string name="jail_item_storage_on">隔离存储</string>
+    <string name="jail_item_storage_on_detail">使用独立的隔离存储，应用保存的文件留存其中；真实的照片、下载和文档不可见。</string>
+    <string name="jail_item_cpu_info">处理器信息</string>
+    <string name="jail_item_cpu_info_on">隐藏芯片型号</string>
+    <string name="jail_item_cpu_info_on_detail">保留核心数和指令集特性，去除芯片型号等标识。</string>
+    <string name="jail_item_contacts">通讯录</string>
+    <string name="jail_item_contacts_on">空列表</string>
+    <string name="jail_item_contacts_on_detail">显示为已授权，通讯录查询返回空结果。</string>
+    <string name="jail_item_messages">短信和通话记录</string>
+    <string name="jail_item_messages_on">空列表</string>
+    <string name="jail_item_messages_on_detail">显示为已授权，短信和通话记录查询返回空结果。</string>
+    <string name="jail_item_calendar">日历</string>
+    <string name="jail_item_calendar_on">空日历</string>
+    <string name="jail_item_calendar_on_detail">显示为已授权，日历查询返回空结果。</string>
+    <string name="jail_item_clipboard_accounts">剪贴板和账户</string>
+    <string name="jail_item_clipboard_accounts_on">空</string>
+    <string name="jail_item_clipboard_accounts_on_detail">剪贴板和账户列表均为空。</string>
+    <string name="jail_item_location">位置信息</string>
+    <string name="jail_item_location_on">不提供位置</string>
+    <string name="jail_item_location_on_detail">显示为已授权，无法获取位置。</string>
+    <string name="jail_item_camera">相机</string>
+    <string name="jail_item_camera_on">无法使用</string>
+    <string name="jail_item_camera_on_detail">显示为已授权，无法获取相机画面。</string>
+    <string name="jail_item_microphone">麦克风</string>
+    <string name="jail_item_microphone_on">静音</string>
+    <string name="jail_item_microphone_on_detail">显示为已授权，录到的声音为静音。</string>
+    <string name="jail_item_body_sensors">身体传感器和健身运动</string>
+    <string name="jail_item_body_sensors_on">无数据</string>
+    <string name="jail_item_body_sensors_on_detail">无法获取心率、步数和运动状态。</string>
+    <string name="jail_item_device_ids">设备标识符</string>
+    <string name="jail_item_device_ids_on">虚拟 ID</string>
+    <string name="jail_item_device_ids_on_detail">每个应用使用固定的虚拟 Android ID；电话号码和设备状态不可读取。</string>
+    <string name="jail_item_installed_apps">已安装的应用</string>
+    <string name="jail_item_installed_apps_on">仅系统应用</string>
+    <string name="jail_item_installed_apps_on_detail">已安装应用列表仅包含系统应用及其自身；使用情况不可读取。</string>
+    <string name="jail_item_nearby_devices">附近设备</string>
+    <string name="jail_item_nearby_devices_on">无设备</string>
+    <string name="jail_item_nearby_devices_on_detail">蓝牙和 Wi‑Fi 扫描结果为空。</string>
+
+    <string name="jail_mode_deny">拒绝</string>
+    <string name="jail_mode_deny_detail">应用收到权限错误，可能请求授权或停止相关功能。</string>
+    <string name="jail_mode_coarse">大致位置</string>
+    <string name="jail_mode_coarse_detail">仅提供大致位置（街区级）。</string>
+    <string name="jail_mode_off">使用真实数据</string>
+    <string name="jail_mode_off_detail">应用获得系统提供的数据。</string>
+    <string name="jail_mode_global">跟随全局设置</string>
+    <string name="jail_mode_global_detail">当前：%1$s</string>
+    <string name="jail_list_separator">、</string>
+    <string name="jail_app_not_isolated">此应用未被隔离</string>
+    <string name="jail_select">选择已隔离的应用或全局设置</string>
+</resources>

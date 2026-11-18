@@ -25,11 +25,15 @@ import li.mercury.bigbrother.core.data.repository.AppInfoRepository
 import li.mercury.bigbrother.core.data.repository.DataStoreUserDataRepository
 import li.mercury.bigbrother.core.data.repository.DiagnosticsRepository
 import li.mercury.bigbrother.core.data.repository.FileAccessRepository
+import li.mercury.bigbrother.core.data.repository.InstalledAppRepository
 import li.mercury.bigbrother.core.data.repository.ModuleRepository
 import li.mercury.bigbrother.core.data.repository.PackageManagerAppInfoRepository
+import li.mercury.bigbrother.core.data.repository.PackageManagerInstalledAppRepository
 import li.mercury.bigbrother.core.data.repository.RootAccessRepository
 import li.mercury.bigbrother.core.data.repository.RootFileAccessRepository
 import li.mercury.bigbrother.core.data.repository.RootModuleRepository
+import li.mercury.bigbrother.core.data.repository.RootSandboxRepository
+import li.mercury.bigbrother.core.data.repository.SandboxRepository
 import li.mercury.bigbrother.core.data.repository.UserDataRepository
 import li.mercury.bigbrother.core.data.repository.ZipDiagnosticsRepository
 
@@ -59,4 +63,12 @@ internal abstract class DataModule {
     abstract fun bindsAppInfoRepository(
         repository: PackageManagerAppInfoRepository,
     ): AppInfoRepository
+
+    @Binds
+    abstract fun bindsSandboxRepository(repository: RootSandboxRepository): SandboxRepository
+
+    @Binds
+    abstract fun bindsInstalledAppRepository(
+        repository: PackageManagerInstalledAppRepository,
+    ): InstalledAppRepository
 }

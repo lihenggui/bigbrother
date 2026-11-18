@@ -1,0 +1,152 @@
+/*
+ * Copyright (C) 2026 Mercury Li
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 3 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
+package li.mercury.bigbrother.feature.jail.impl
+
+import androidx.annotation.StringRes
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.DirectionsRun
+import androidx.compose.material.icons.outlined.Apps
+import androidx.compose.material.icons.outlined.CalendarMonth
+import androidx.compose.material.icons.outlined.Contacts
+import androidx.compose.material.icons.outlined.ContentPaste
+import androidx.compose.material.icons.outlined.DevicesOther
+import androidx.compose.material.icons.outlined.Fingerprint
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.LocationOn
+import androidx.compose.material.icons.outlined.Memory
+import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material.icons.outlined.PhotoCamera
+import androidx.compose.material.icons.outlined.Sms
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
+import li.mercury.bigbrother.core.model.SandboxItem
+import li.mercury.bigbrother.core.model.SandboxMode
+
+/** The items by what they keep from the app, as the global settings list them. */
+internal enum class ItemGroup(@StringRes val title: Int, val items: List<SandboxItem>) {
+    FILES(R.string.jail_group_files, listOf(SandboxItem.STORAGE)),
+    PERSONAL(
+        R.string.jail_group_personal,
+        listOf(SandboxItem.CONTACTS, SandboxItem.MESSAGES, SandboxItem.CALENDAR, SandboxItem.CLIPBOARD_ACCOUNTS),
+    ),
+    SENSORS(
+        R.string.jail_group_sensors,
+        listOf(SandboxItem.LOCATION, SandboxItem.CAMERA, SandboxItem.MICROPHONE, SandboxItem.BODY_SENSORS),
+    ),
+    DEVICE(
+        R.string.jail_group_device,
+        listOf(SandboxItem.DEVICE_IDS, SandboxItem.INSTALLED_APPS, SandboxItem.NEARBY_DEVICES, SandboxItem.CPU_INFO),
+    ),
+}
+
+/** Every item in the order the groups list them: files first, then personal data. */
+internal val ITEM_ORDER: List<SandboxItem> = ItemGroup.entries.flatMap { it.items }
+
+@get:StringRes
+internal val SandboxItem.title: Int
+    get() = when (this) {
+        SandboxItem.STORAGE -> R.string.jail_item_storage
+        SandboxItem.CPU_INFO -> R.string.jail_item_cpu_info
+        SandboxItem.CONTACTS -> R.string.jail_item_contacts
+        SandboxItem.MESSAGES -> R.string.jail_item_messages
+        SandboxItem.CALENDAR -> R.string.jail_item_calendar
+        SandboxItem.CLIPBOARD_ACCOUNTS -> R.string.jail_item_clipboard_accounts
+        SandboxItem.LOCATION -> R.string.jail_item_location
+        SandboxItem.CAMERA -> R.string.jail_item_camera
+        SandboxItem.MICROPHONE -> R.string.jail_item_microphone
+        SandboxItem.BODY_SENSORS -> R.string.jail_item_body_sensors
+        SandboxItem.DEVICE_IDS -> R.string.jail_item_device_ids
+        SandboxItem.INSTALLED_APPS -> R.string.jail_item_installed_apps
+        SandboxItem.NEARBY_DEVICES -> R.string.jail_item_nearby_devices
+    }
+
+internal val SandboxItem.icon: ImageVector
+    get() = when (this) {
+        SandboxItem.STORAGE -> Icons.Outlined.Folder
+        SandboxItem.CPU_INFO -> Icons.Outlined.Memory
+        SandboxItem.CONTACTS -> Icons.Outlined.Contacts
+        SandboxItem.MESSAGES -> Icons.Outlined.Sms
+        SandboxItem.CALENDAR -> Icons.Outlined.CalendarMonth
+        SandboxItem.CLIPBOARD_ACCOUNTS -> Icons.Outlined.ContentPaste
+        SandboxItem.LOCATION -> Icons.Outlined.LocationOn
+        SandboxItem.CAMERA -> Icons.Outlined.PhotoCamera
+        SandboxItem.MICROPHONE -> Icons.Outlined.Mic
+        SandboxItem.BODY_SENSORS -> Icons.AutoMirrored.Outlined.DirectionsRun
+        SandboxItem.DEVICE_IDS -> Icons.Outlined.Fingerprint
+        SandboxItem.INSTALLED_APPS -> Icons.Outlined.Apps
+        SandboxItem.NEARBY_DEVICES -> Icons.Outlined.DevicesOther
+    }
+
+/** What the app gets with the item on, in a few words. */
+@get:StringRes
+private val SandboxItem.onLabel: Int
+    get() = when (this) {
+        SandboxItem.STORAGE -> R.string.jail_item_storage_on
+        SandboxItem.CPU_INFO -> R.string.jail_item_cpu_info_on
+        SandboxItem.CONTACTS -> R.string.jail_item_contacts_on
+        SandboxItem.MESSAGES -> R.string.jail_item_messages_on
+        SandboxItem.CALENDAR -> R.string.jail_item_calendar_on
+        SandboxItem.CLIPBOARD_ACCOUNTS -> R.string.jail_item_clipboard_accounts_on
+        SandboxItem.LOCATION -> R.string.jail_item_location_on
+        SandboxItem.CAMERA -> R.string.jail_item_camera_on
+        SandboxItem.MICROPHONE -> R.string.jail_item_microphone_on
+        SandboxItem.BODY_SENSORS -> R.string.jail_item_body_sensors_on
+        SandboxItem.DEVICE_IDS -> R.string.jail_item_device_ids_on
+        SandboxItem.INSTALLED_APPS -> R.string.jail_item_installed_apps_on
+        SandboxItem.NEARBY_DEVICES -> R.string.jail_item_nearby_devices_on
+    }
+
+@get:StringRes
+private val SandboxItem.onDetail: Int
+    get() = when (this) {
+        SandboxItem.STORAGE -> R.string.jail_item_storage_on_detail
+        SandboxItem.CPU_INFO -> R.string.jail_item_cpu_info_on_detail
+        SandboxItem.CONTACTS -> R.string.jail_item_contacts_on_detail
+        SandboxItem.MESSAGES -> R.string.jail_item_messages_on_detail
+        SandboxItem.CALENDAR -> R.string.jail_item_calendar_on_detail
+        SandboxItem.CLIPBOARD_ACCOUNTS -> R.string.jail_item_clipboard_accounts_on_detail
+        SandboxItem.LOCATION -> R.string.jail_item_location_on_detail
+        SandboxItem.CAMERA -> R.string.jail_item_camera_on_detail
+        SandboxItem.MICROPHONE -> R.string.jail_item_microphone_on_detail
+        SandboxItem.BODY_SENSORS -> R.string.jail_item_body_sensors_on_detail
+        SandboxItem.DEVICE_IDS -> R.string.jail_item_device_ids_on_detail
+        SandboxItem.INSTALLED_APPS -> R.string.jail_item_installed_apps_on_detail
+        SandboxItem.NEARBY_DEVICES -> R.string.jail_item_nearby_devices_on_detail
+    }
+
+/** What the app gets from [item] in [mode], in a few words. */
+@Composable
+internal fun modeLabel(item: SandboxItem, mode: SandboxMode): String = stringResource(
+    when (mode) {
+        SandboxMode.ON -> item.onLabel
+        SandboxMode.DENY -> R.string.jail_mode_deny
+        SandboxMode.COARSE -> R.string.jail_mode_coarse
+        SandboxMode.OFF -> R.string.jail_mode_off
+    },
+)
+
+/** What [mode] of [item] means for the app. */
+@Composable
+internal fun modeDetail(item: SandboxItem, mode: SandboxMode): String = stringResource(
+    when (mode) {
+        SandboxMode.ON -> item.onDetail
+        SandboxMode.DENY -> R.string.jail_mode_deny_detail
+        SandboxMode.COARSE -> R.string.jail_mode_coarse_detail
+        SandboxMode.OFF -> R.string.jail_mode_off_detail
+    },
+)

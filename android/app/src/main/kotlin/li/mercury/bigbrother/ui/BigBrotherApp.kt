@@ -27,9 +27,11 @@ import androidx.compose.foundation.background
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.SpaceDashboard
 import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.SpaceDashboard
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Icon
@@ -70,6 +72,8 @@ import li.mercury.bigbrother.feature.appdetail.api.navigation.navigateToAppDetai
 import li.mercury.bigbrother.feature.appdetail.impl.navigation.appDetailEntries
 import li.mercury.bigbrother.feature.applist.api.navigation.AppListNavKey
 import li.mercury.bigbrother.feature.applist.impl.navigation.appListEntry
+import li.mercury.bigbrother.feature.jail.api.navigation.JailNavKey
+import li.mercury.bigbrother.feature.jail.impl.navigation.jailEntries
 import li.mercury.bigbrother.feature.overview.api.navigation.CategoryNavKey
 import li.mercury.bigbrother.feature.overview.api.navigation.OverviewNavKey
 import li.mercury.bigbrother.feature.overview.api.navigation.navigateToCategory
@@ -89,17 +93,19 @@ internal class TopLevelDestination(
 )
 
 /**
- * What was accessed, by whom, and when: the three ways into the records.
- * Internal, like the layout decisions below, for the screenshot tests.
+ * What was accessed, by whom, and when: the three ways into the records;
+ * and the jail, where apps are put in the sandbox. Internal, like the layout
+ * decisions below, for the screenshot tests.
  */
 internal val TOP_LEVEL_DESTINATIONS = listOf(
     TopLevelDestination(OverviewNavKey, R.string.nav_overview, Icons.Outlined.SpaceDashboard, Icons.Filled.SpaceDashboard),
     TopLevelDestination(AppListNavKey, R.string.nav_apps, Icons.Outlined.Apps, Icons.Filled.Apps),
     TopLevelDestination(TimelineNavKey, R.string.nav_timeline, Icons.Outlined.History, Icons.Filled.History),
+    TopLevelDestination(JailNavKey, R.string.nav_jail, Icons.Outlined.Lock, Icons.Filled.Lock),
 )
 
 /** Destinations shown as the list pane of a list-detail layout. */
-private val LIST_PANE_KEYS = setOf<NavKey>(AppListNavKey, TimelineNavKey)
+private val LIST_PANE_KEYS = setOf<NavKey>(AppListNavKey, TimelineNavKey, JailNavKey)
 
 /** The screen underneath moves this fraction of the distance, for depth. */
 private const val PARALLAX = 4
@@ -112,8 +118,9 @@ private class TransitionHint {
 /**
  * Root of the UI: the navigation bar or rail, and the screens.
  *
- * Three top-level destinations: the overview (what was accessed), the app
- * list (by whom) and the timeline (when). Compact windows show one pane and
+ * Four top-level destinations: the overview (what was accessed), the app
+ * list (by whom), the timeline (when) and the jail (the apps put in the
+ * sandbox). Compact windows show one pane and
  * a navigation bar; wider ones a navigation rail and, from the expanded
  * breakpoint, a list beside the app it opens; extra-large ones also a third
  * pane for a record or the files.
@@ -147,6 +154,7 @@ fun BigBrotherApp(recordingStopped: Boolean, modifier: Modifier = Modifier) {
         overviewEntries(navigator, searchBar)
         appListEntry(navigator, searchBar)
         timelineEntry(navigator, searchBar)
+        jailEntries(navigator, searchBar)
         appDetailEntries(navigator)
         settingsEntry(navigator)
     }

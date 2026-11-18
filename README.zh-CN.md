@@ -93,6 +93,7 @@ apd module install big_brother-<version>.zip        # APatch
   访问的其他数据，以及每次访问的时间。
 - 时间线：按小时展示各应用的行为。
 - 搜索：在全部记录中检索应用、文件名和数据类别。
+- 监狱：已隔离的应用及各自的隔离项目。隔离和解除隔离时，应用会重新启动。
 
 系统应用默认隐藏，可在设置中开启显示。
 
@@ -119,9 +120,10 @@ apd module install big_brother-<version>.zip        # APatch
 
 ### 是否会拦截访问
 
-默认不会：Big Brother 只记录访问，不阻止访问。可在 root shell 中将应用放入沙箱，
-沙箱内的应用读到的是空的存储、空的个人数据和独立的设备标识，详见
-[docs/sandbox.md](docs/sandbox.md)（英文）。
+默认不会：Big Brother 只记录访问，不阻止访问。可在“监狱”中隔离应用：被隔离的应用使用
+独立的存储（初始为空），读不到个人数据，并获得独立的设备标识。每一项既可对所有隔离应用
+统一设置，也可单独设置。隐藏设备标识和已安装应用需要在 LSPosed 中为模块启用“系统框架”
+作用域。详见 [docs/sandbox.md](docs/sandbox.md)（英文）。
 
 ### 对续航的影响
 

@@ -15,7 +15,8 @@ Hilt, Compose with Material 3 Expressive, and Navigation 3.
 - `core/testing`: fakes and `MainDispatcherRule` for unit tests.
   `core/screenshot-testing`: Roborazzi helpers and sample data.
 - `feature/<name>/api` (navigation keys) and `feature/<name>/impl` (screens,
-  view models) for overview, applist, appdetail, timeline, search and settings.
+  view models) for overview, applist, appdetail, timeline, search, settings
+  and jail (the sandbox: isolated apps and their items).
 - `hook/`: the LSPosed hook, which runs inside system content providers and,
   for the sandbox, inside system_server.
   `canary/`: a test app that triggers every kind of record.
