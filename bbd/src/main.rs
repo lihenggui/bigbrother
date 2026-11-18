@@ -42,6 +42,7 @@ use std::{
 };
 
 use clap::{Parser, Subcommand};
+use sandbox::items::{self, Item, Mode};
 use serde::Serialize;
 
 #[derive(Parser)]
@@ -177,6 +178,42 @@ enum SandboxCommand {
     List,
     /// Whether each part of the sandbox works on this device.
     Status,
+    /// Set what the sandbox does to an app, item by item, as ITEM=MODE:
+    /// MODE is off, on, deny or coarse, or global to follow the global
+    /// settings again.
+    Set {
+        package: String,
+        #[arg(required = true, value_parser = parse_setting)]
+        settings: Vec<(Item, Option<Mode>)>,
+        /// Android user the app is installed for.
+        #[arg(long, default_value_t = 0)]
+        user: u32,
+    },
+    /// The global settings; with ITEM=MODE arguments, change them.
+    Global {
+        #[arg(value_parser = parse_global_setting)]
+        settings: Vec<(Item, Mode)>,
+    },
+}
+
+/// `ITEM=MODE`, where `global` stands for no mode of the app's own.
+fn parse_setting(text: &str) -> Result<(Item, Option<Mode>), String> {
+    let (item, mode) = text
+        .split_once('=')
+        .ok_or_else(|| format!("{text}: not ITEM=MODE"))?;
+    let item = Item::from_name(item).ok_or_else(|| format!("{item}: no such item"))?;
+    if mode == "global" {
+        return Ok((item, None));
+    }
+    let mode = items::parse_mode(mode).ok_or_else(|| format!("{mode}: no such mode"))?;
+    Ok((item, Some(mode)))
+}
+
+fn parse_global_setting(text: &str) -> Result<(Item, Mode), String> {
+    match parse_setting(text)? {
+        (item, Some(mode)) => Ok((item, mode)),
+        (_, None) => Err(format!("{text}: the global settings need a mode")),
+    }
 }
 
 impl From<SandboxCommand> for control::Request {
@@ -192,6 +229,19 @@ impl From<SandboxCommand> for control::Request {
             SandboxCommand::Disable { package: None, .. } => Self::SandboxDisableAll,
             SandboxCommand::List => Self::SandboxList,
             SandboxCommand::Status => Self::SandboxStatus,
+            SandboxCommand::Set {
+                package,
+                settings,
+                user,
+            } => Self::SandboxSet {
+                package,
+                user,
+                settings: settings.into_iter().collect(),
+            },
+            SandboxCommand::Global { settings } if settings.is_empty() => Self::SandboxGlobal,
+            SandboxCommand::Global { settings } => Self::SandboxSetGlobal {
+                settings: settings.into_iter().collect(),
+            },
         }
     }
 }

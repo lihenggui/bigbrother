@@ -42,7 +42,7 @@ internal class SandboxList(
     private val clock: () -> Long = System::nanoTime,
 ) {
     @Volatile
-    private var entries: Map<Int, String> = emptyMap()
+    private var entries: Map<Int, SandboxedUid> = emptyMap()
 
     /** Modification time and size of the file [entries] came from; null to force a read. */
     @Volatile
@@ -60,13 +60,16 @@ internal class SandboxList(
         nextCheck = AtomicLong(clock() + checkIntervalNanos)
     }
 
-    /** The Android ID configured for [uid], or null if it is not sandboxed. */
-    fun androidIdOf(uid: Int): String? {
+    /** The Android ID configured for [uid], or null if it keeps the real one. */
+    fun androidIdOf(uid: Int): String? = entryOf(uid)?.takeIf { it.ownAndroidId }?.androidId
+
+    /** Whether [uid] is to see no installed app but itself and the system's. */
+    fun hidesAppsFrom(uid: Int): Boolean = entryOf(uid)?.hidesApps == true
+
+    private fun entryOf(uid: Int): SandboxedUid? {
         refresh()
         return entries[uid]
     }
-
-    fun isSandboxed(uid: Int): Boolean = androidIdOf(uid) != null
 
     private fun refresh() {
         val due = nextCheck.get()

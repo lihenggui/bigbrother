@@ -43,16 +43,21 @@
 //!
 //! Taking an app out begins with the one that can fail, restoring its app
 //! ops, so that a failure leaves the app as sandboxed as it was.
+//!
+//! What each effect does depends on the app's [`items`]: the items the app
+//! has a mode of its own for, over the global settings. An item is on unless
+//! set otherwise, and an app with every item off has nothing done to it.
 
 pub mod appops;
 mod dirs;
 pub mod gate;
 pub mod identity;
+pub mod items;
 mod mounts;
 pub mod sweep;
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fs::File,
     io::{Read as _, Write as _},
     path::{Path, PathBuf},
@@ -69,6 +74,7 @@ use crate::{
 };
 
 pub use crate::store::SandboxEntry as Entry;
+use items::{Item, Mode, Settings};
 
 /// App ids from here up belong to installed apps. Below are the system's
 /// own uids, which are shared by many components and cannot be sandboxed.
@@ -91,6 +97,15 @@ const DISABLE_ALL_WAIT: std::time::Duration = std::time::Duration::from_secs(6);
 /// The sandboxed uids and their entries, enabled ones only.
 pub type Snapshot = Arc<RwLock<HashMap<u32, Entry>>>;
 
+/// The global settings: the mode of each item of an app that has none of
+/// its own.
+pub type Global = Arc<RwLock<Settings>>;
+
+/// What applies to `entry`: its own settings over the global ones.
+pub fn items_of(entry: &Entry, global: &Settings) -> Settings {
+    Settings::parse(&entry.settings).over(global)
+}
+
 /// One thing the sandbox does to an app (say, the storage it sees, or the
 /// app ops it is refused).
 ///
@@ -103,22 +118,85 @@ pub trait Effect {
     /// Names the effect in an error.
     fn name(&self) -> &'static str;
 
-    /// Apply the effect to `entry.uid`, under which run `packages`. It may
-    /// change the entry, for instance to keep what it replaced; the entry is
-    /// written after the last effect.
-    fn enable(&mut self, entry: &mut Entry, packages: &[String]) -> anyhow::Result<()>;
+    /// Apply the effect to `entry.uid`, under which run `packages`, as
+    /// `items` say. It may change the entry, for instance to keep what it
+    /// replaced; the entry is written after the last effect.
+    fn enable(
+        &mut self,
+        entry: &mut Entry,
+        packages: &[String],
+        items: &Settings,
+    ) -> anyhow::Result<()>;
 
-    /// Take the effect off again, from what `entry` keeps.
-    fn disable(&mut self, entry: &mut Entry, packages: &[String]) -> anyhow::Result<()>;
+    /// Take the effect off again, from what `entry` keeps. `items` are the
+    /// ones that applied.
+    fn disable(
+        &mut self,
+        entry: &mut Entry,
+        packages: &[String],
+        items: &Settings,
+    ) -> anyhow::Result<()>;
+
+    /// Change what the effect does to an app in the sandbox from what
+    /// `before` says to what `after` says.
+    fn update(
+        &mut self,
+        entry: &mut Entry,
+        packages: &[String],
+        before: &Settings,
+        after: &Settings,
+    ) -> anyhow::Result<()>;
 
     /// Take up again, in a daemon that just started, the apps that were
-    /// sandboxed when the last one stopped: each entry with the packages
-    /// under its uid. Unlike [`Effect::enable`] this cannot fail the whole:
-    /// an effect reports what it could not do and carries on.
-    fn resume(&mut self, _entries: &[(Entry, Vec<String>)]) {}
+    /// sandboxed when the last one stopped. Unlike [`Effect::enable`] this
+    /// cannot fail the whole: an effect reports what it could not do and
+    /// carries on.
+    fn resume(&mut self, _apps: &[Resumed]) {}
 
     /// Fill in what the effect knows about its own state.
     fn report(&self, _status: &mut Status) {}
+}
+
+/// A sandboxed app taken up again by a daemon that just started.
+#[derive(Clone, Debug)]
+pub struct Resumed {
+    pub entry: Entry,
+    /// The packages that run under its uid.
+    pub packages: Vec<String>,
+    /// What applies to it.
+    pub items: Settings,
+}
+
+/// What is done to an app's effects.
+#[derive(Clone, Copy)]
+enum Change<'a> {
+    Enable(&'a Settings),
+    Disable(&'a Settings),
+    Update(&'a Settings, &'a Settings),
+}
+
+impl Change<'_> {
+    /// What undoes it.
+    fn reversed(self) -> Self {
+        match self {
+            Change::Enable(items) => Change::Disable(items),
+            Change::Disable(items) => Change::Enable(items),
+            Change::Update(before, after) => Change::Update(after, before),
+        }
+    }
+
+    fn apply(
+        self,
+        effect: &mut dyn Effect,
+        entry: &mut Entry,
+        packages: &[String],
+    ) -> anyhow::Result<()> {
+        match self {
+            Change::Enable(items) => effect.enable(entry, packages, items),
+            Change::Disable(items) => effect.disable(entry, packages, items),
+            Change::Update(before, after) => effect.update(entry, packages, before, after),
+        }
+    }
 }
 
 /// The answer to `sandbox.enable`.
@@ -162,6 +240,32 @@ pub struct ListedApp {
     pub uid: u32,
     pub package: String,
     pub enabled: bool,
+    /// When it was first put in the sandbox, in seconds since the epoch.
+    #[serde(default)]
+    pub created: i64,
+    /// The items it has a mode of its own for.
+    #[serde(default)]
+    pub settings: Settings,
+    /// What applies to it: its own settings over the global ones.
+    #[serde(default)]
+    pub items: Settings,
+}
+
+/// The answer to `sandbox.global` and `sandbox.set_global`: every item,
+/// with the mode it has for an app that has none of its own.
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GlobalItems {
+    pub items: Settings,
+}
+
+/// The answer to `sandbox.set`.
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Configured {
+    pub uid: u32,
+    /// The items the app now has a mode of its own for.
+    pub settings: Settings,
+    /// What applies to it now.
+    pub items: Settings,
 }
 
 /// The answer to `sandbox.status`: whether each part of the sandbox works on
@@ -190,6 +294,7 @@ pub struct HookStatus {
 
 pub struct Sandbox {
     snapshot: Snapshot,
+    global: Global,
     effects: Vec<Box<dyn Effect>>,
     /// Where each Android user's apps keep their data, a directory per user
     /// and package (`/data/user`): how an app is known to be installed for a
@@ -212,8 +317,10 @@ impl Sandbox {
             .filter(|entry| entry.enabled)
             .map(|entry| (entry.uid, entry))
             .collect();
+        let global = Settings::parse(&writer.sandbox_global()?);
         Ok(Self {
             snapshot: Arc::new(RwLock::new(enabled)),
+            global: Arc::new(RwLock::new(global)),
             effects,
             user_data: user_data.map(Path::to_path_buf),
         })
@@ -222,6 +329,21 @@ impl Sandbox {
     /// The enabled entries, for an effect that needs them all.
     pub fn snapshot(&self) -> Snapshot {
         self.snapshot.clone()
+    }
+
+    /// The global settings, for an effect that works out what applies to
+    /// the apps in the snapshot.
+    pub fn global(&self) -> Global {
+        self.global.clone()
+    }
+
+    fn global_read(&self) -> std::sync::RwLockReadGuard<'_, Settings> {
+        self.global.read().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// What applies to `entry`.
+    fn items(&self, entry: &Entry) -> Settings {
+        items_of(entry, &self.global_read())
     }
 
     /// Add an effect, after those there are.
@@ -233,14 +355,18 @@ impl Sandbox {
     /// in. To be called once, when the daemon starts.
     pub fn resume(&mut self, writer: &Writer, packages: &mut Packages) {
         self.release_reassigned(writer, packages);
-        let mut entries: Vec<(Entry, Vec<String>)> = self
+        let mut apps: Vec<Resumed> = self
             .snapshot_read()
             .values()
-            .map(|entry| (entry.clone(), packages.for_uid(entry.uid).to_vec()))
+            .map(|entry| Resumed {
+                entry: entry.clone(),
+                packages: packages.for_uid(entry.uid).to_vec(),
+                items: self.items(entry),
+            })
             .collect();
-        entries.sort_by_key(|(entry, _)| entry.uid);
+        apps.sort_by_key(|app| app.entry.uid);
         for effect in &mut self.effects {
-            effect.resume(&entries);
+            effect.resume(&apps);
         }
     }
 
@@ -264,13 +390,14 @@ impl Sandbox {
             let uid = entry.uid;
             eprintln!("bbd: sandbox: the app of uid {uid} is gone; the uid is taken out");
             let kept = entry.clone();
+            let items = self.items(&entry);
             self.snapshot_write().remove(&uid);
             entry.enabled = false;
             // What was saved was the other app's: the uid goes back to the
             // system's defaults.
             entry.saved_ops.clear();
             let released = self
-                .run(&mut entry, &[], false)
+                .run(&mut entry, &[], Change::Disable(&items))
                 .and_then(|()| writer.put_sandbox(&entry));
             if let Err(e) = released {
                 // Still sandboxed, and listed as such, rather than half
@@ -308,8 +435,19 @@ impl Sandbox {
                 .disable(writer, packages, &package, user)
                 .map(control::success),
             Request::SandboxDisableAll => Ok(control::success(self.disable_all(writer))),
-            Request::SandboxList => list(writer).map(control::success),
+            Request::SandboxList => self.list(writer).map(control::success),
             Request::SandboxStatus => Ok(control::success(self.status())),
+            Request::SandboxSet {
+                package,
+                user,
+                settings,
+            } => self
+                .configure(writer, packages, &package, user, &settings)
+                .map(control::success),
+            Request::SandboxGlobal => Ok(control::success(self.global_items())),
+            Request::SandboxSetGlobal { settings } => self
+                .set_global(writer, packages, &settings)
+                .map(control::success),
         };
         answer.unwrap_or_else(|e| control::failure(&format!("{e:#}")))
     }
@@ -356,18 +494,20 @@ impl Sandbox {
                 android_id: new_android_id()?,
                 saved_ops: String::new(),
                 created: now,
+                settings: String::new(),
             },
         };
         writer.put_sandbox(&entry)?;
         self.snapshot_write().insert(uid, entry.clone());
 
+        let items = self.items(&entry);
         let written = entry.clone();
-        let mut applied = self.run(&mut entry, &sharing, true);
+        let mut applied = self.run(&mut entry, &sharing, Change::Enable(&items));
         if applied.is_ok() && entry != written {
             applied = writer.put_sandbox(&entry);
             if applied.is_err() {
                 // What the effects changed is lost: they cannot stay.
-                if let Err(e) = self.run(&mut entry.clone(), &sharing, false) {
+                if let Err(e) = self.run(&mut entry.clone(), &sharing, Change::Disable(&items)) {
                     eprintln!("bbd: sandbox: cannot take uid {uid}'s effects off: {e:#}");
                 }
             }
@@ -399,15 +539,7 @@ impl Sandbox {
         user: u32,
     ) -> anyhow::Result<Disabled> {
         // An app uninstalled while sandboxed is found by its entry.
-        let uid = match uid_of(packages, package, user) {
-            Ok(uid) => uid,
-            Err(e) => writer
-                .sandbox_entries()?
-                .into_iter()
-                .find(|entry| entry.package == package && entry.uid / PER_USER_RANGE == user)
-                .map(|entry| entry.uid)
-                .ok_or(e)?,
-        };
+        let uid = self.uid_of_entry(writer, packages, package, user)?;
         let sharing = packages.for_uid(uid).to_vec();
         self.disable_uid(writer, uid, &sharing)
     }
@@ -421,15 +553,16 @@ impl Sandbox {
         let Some(mut entry) = self.snapshot_write().remove(&uid) else {
             return Ok(Disabled { was_enabled: false });
         };
+        let items = self.items(&entry);
         let enabled = entry.clone();
         entry.enabled = false;
-        if let Err(e) = self.run(&mut entry, sharing, false) {
+        if let Err(e) = self.run(&mut entry, sharing, Change::Disable(&items)) {
             self.snapshot_write().insert(uid, enabled);
             return Err(e);
         }
         if let Err(e) = writer.put_sandbox(&entry) {
             // The row still says the app is sandboxed: so it stays.
-            if let Err(e) = self.run(&mut enabled.clone(), sharing, true) {
+            if let Err(e) = self.run(&mut enabled.clone(), sharing, Change::Enable(&items)) {
                 eprintln!("bbd: sandbox: cannot put uid {uid}'s effects back: {e:#}");
             }
             self.snapshot_write().insert(uid, enabled);
@@ -466,25 +599,20 @@ impl Sandbox {
         answer
     }
 
-    /// Carry out every effect, enabling or disabling. When one fails, those
-    /// that already ran are reversed, last first.
-    fn run(&mut self, entry: &mut Entry, packages: &[String], enable: bool) -> anyhow::Result<()> {
+    /// Carry out every effect. When one fails, those that already ran are
+    /// reversed, last first.
+    fn run(
+        &mut self,
+        entry: &mut Entry,
+        packages: &[String],
+        change: Change,
+    ) -> anyhow::Result<()> {
         for done in 0..self.effects.len() {
             let effect = &mut self.effects[done];
-            let result = if enable {
-                effect.enable(entry, packages)
-            } else {
-                effect.disable(entry, packages)
-            };
-            if let Err(e) = result {
+            if let Err(e) = change.apply(effect.as_mut(), entry, packages) {
                 let failed = effect.name();
                 for effect in self.effects[..done].iter_mut().rev() {
-                    let undone = if enable {
-                        effect.disable(entry, packages)
-                    } else {
-                        effect.enable(entry, packages)
-                    };
-                    if let Err(undo) = undone {
+                    if let Err(undo) = change.reversed().apply(effect.as_mut(), entry, packages) {
                         eprintln!(
                             "bbd: sandbox: cannot undo {} for uid {}: {undo:#}",
                             effect.name(),
@@ -505,20 +633,215 @@ impl Sandbox {
         }
         status
     }
-}
 
-/// Every entry, enabled or not.
-fn list(writer: &Writer) -> anyhow::Result<Listed> {
-    let apps = writer
-        .sandbox_entries()?
-        .into_iter()
-        .map(|entry| ListedApp {
-            uid: entry.uid,
-            package: entry.package,
-            enabled: entry.enabled,
+    /// Every entry, enabled or not.
+    fn list(&self, writer: &Writer) -> anyhow::Result<Listed> {
+        let global = self.global_read();
+        let apps = writer
+            .sandbox_entries()?
+            .into_iter()
+            .map(|entry| {
+                let settings = Settings::parse(&entry.settings);
+                ListedApp {
+                    items: settings.over(&global),
+                    uid: entry.uid,
+                    package: entry.package,
+                    enabled: entry.enabled,
+                    created: entry.created,
+                    settings,
+                }
+            })
+            .collect();
+        Ok(Listed { apps })
+    }
+
+    /// Every item, with its global mode.
+    fn global_items(&self) -> GlobalItems {
+        GlobalItems {
+            items: self.global_read().over(&Settings::default()),
+        }
+    }
+
+    /// Set what the sandbox does to `package`, as installed for Android user
+    /// `user`, item by item: to a mode, or with `None` back to following the
+    /// global settings. Items not named keep what they have. The app may be
+    /// in the sandbox or have been in it; for an app in it, what changes is
+    /// carried out at once, and undone if it cannot all be.
+    pub fn configure(
+        &mut self,
+        writer: &Writer,
+        packages: &mut Packages,
+        package: &str,
+        user: u32,
+        changes: &BTreeMap<Item, Option<Mode>>,
+    ) -> anyhow::Result<Configured> {
+        let uid = self.uid_of_entry(writer, packages, package, user)?;
+        let mut entry = match self.snapshot_read().get(&uid).cloned() {
+            Some(entry) => entry,
+            None => writer
+                .sandbox_entry(uid)?
+                .with_context(|| format!("{package} is not in the sandbox"))?,
+        };
+        let mut own = Settings::parse(&entry.settings);
+        for (item, mode) in changes {
+            own.set(*item, *mode)?;
+        }
+        let before = self.items(&entry);
+        let previous = entry.clone();
+        entry.settings = own.to_text();
+        let after = self.items(&entry);
+        if !entry.enabled || before == after {
+            writer.put_sandbox(&entry)?;
+            if entry.enabled {
+                self.snapshot_write().insert(uid, entry);
+            }
+            return Ok(Configured {
+                uid,
+                settings: own,
+                items: after,
+            });
+        }
+
+        let sharing = packages.for_uid(uid).to_vec();
+        // As for enabling: what is meant to be in effect changes first.
+        self.snapshot_write().insert(uid, entry.clone());
+        let mut applied = self.run(&mut entry, &sharing, Change::Update(&before, &after));
+        if applied.is_ok() {
+            applied = writer.put_sandbox(&entry);
+            if applied.is_err() {
+                let undone = self.run(
+                    &mut entry.clone(),
+                    &sharing,
+                    Change::Update(&after, &before),
+                );
+                if let Err(e) = undone {
+                    eprintln!("bbd: sandbox: cannot put uid {uid}'s items back: {e:#}");
+                }
+            }
+        }
+        if let Err(e) = applied {
+            self.snapshot_write().insert(uid, previous);
+            return Err(e);
+        }
+        self.snapshot_write().insert(uid, entry);
+        Ok(Configured {
+            uid,
+            settings: own,
+            items: after,
         })
-        .collect();
-    Ok(Listed { apps })
+    }
+
+    /// Change the global settings, and with them every app in the sandbox
+    /// that follows them. All or nothing: if one app cannot be changed, the
+    /// apps changed already are put back and the settings stay as they were.
+    pub fn set_global(
+        &mut self,
+        writer: &Writer,
+        packages: &mut Packages,
+        changes: &BTreeMap<Item, Mode>,
+    ) -> anyhow::Result<GlobalItems> {
+        let old = self.global_read().clone();
+        let mut new = old.clone();
+        for (item, mode) in changes {
+            new.set(*item, Some(*mode))?;
+        }
+        if new == old {
+            return Ok(self.global_items());
+        }
+        let mut uids: Vec<u32> = self.snapshot_read().keys().copied().collect();
+        uids.sort_unstable();
+        *self.global.write().unwrap_or_else(|e| e.into_inner()) = new.clone();
+
+        // Each app may wait for the app ops helper, on the loop that also
+        // records: as with taking every app out, the rest are not waited
+        // for one by one past a point.
+        let until = std::time::Instant::now() + DISABLE_ALL_WAIT;
+        let mut changed: Vec<(Entry, Vec<String>, Settings, Settings)> = Vec::new();
+        let mut failure = None;
+        for uid in uids {
+            let Some(mut entry) = self.snapshot_read().get(&uid).cloned() else {
+                continue;
+            };
+            let (before, after) = (items_of(&entry, &old), items_of(&entry, &new));
+            if before == after {
+                continue;
+            }
+            if std::time::Instant::now() > until {
+                failure = Some(anyhow::anyhow!("taking too long"));
+                break;
+            }
+            let sharing = packages.for_uid(uid).to_vec();
+            let written = entry.clone();
+            match self.run(&mut entry, &sharing, Change::Update(&before, &after)) {
+                Ok(()) => {
+                    if entry != written {
+                        if let Err(e) = writer.put_sandbox(&entry) {
+                            failure = Some(e.context(format!("uid {uid}")));
+                            changed.push((entry, sharing, before, after));
+                            break;
+                        }
+                        self.snapshot_write().insert(uid, entry.clone());
+                    }
+                    changed.push((entry, sharing, before, after));
+                }
+                Err(e) => {
+                    failure = Some(e.context(format!("uid {uid}")));
+                    break;
+                }
+            }
+        }
+        let written = failure.is_none().then(|| {
+            let pairs: Vec<(&str, &str)> = new
+                .iter()
+                .map(|(item, mode)| (item.name(), items::mode_name(mode)))
+                .collect();
+            writer.put_sandbox_global(&pairs)
+        });
+        let failure = match written {
+            Some(Err(e)) => Some(e),
+            _ => failure,
+        };
+        if let Some(e) = failure {
+            *self.global.write().unwrap_or_else(|e| e.into_inner()) = old;
+            for (mut entry, sharing, before, after) in changed.into_iter().rev() {
+                let uid = entry.uid;
+                let forward = entry.clone();
+                if let Err(e) = self.run(&mut entry, &sharing, Change::Update(&after, &before)) {
+                    eprintln!("bbd: sandbox: cannot put uid {uid}'s items back: {e:#}");
+                    continue;
+                }
+                // What going back changed (modes saved anew) is kept.
+                if entry != forward
+                    && let Err(e) = writer.put_sandbox(&entry)
+                {
+                    eprintln!("bbd: sandbox: cannot write uid {uid}'s entry: {e:#}");
+                }
+                self.snapshot_write().insert(uid, entry);
+            }
+            return Err(e.context("the global settings are as they were"));
+        }
+        Ok(self.global_items())
+    }
+
+    /// The uid of `package` for Android user `user`, or, for an app
+    /// uninstalled while it was sandboxed, the uid of its entry.
+    fn uid_of_entry(
+        &self,
+        writer: &Writer,
+        packages: &mut Packages,
+        package: &str,
+        user: u32,
+    ) -> anyhow::Result<u32> {
+        match uid_of(packages, package, user) {
+            Ok(uid) => Ok(uid),
+            Err(e) => writer
+                .sandbox_entries()?
+                .into_iter()
+                .find(|entry| entry.package == package && entry.uid / PER_USER_RANGE == user)
+                .map(|entry| entry.uid)
+                .ok_or(e),
+        }
+    }
 }
 
 /// The uid `package` runs under for Android user `user`, if it is an app
@@ -581,6 +904,13 @@ pub fn command(db: &Path, request: Request, json: bool) -> anyhow::Result<()> {
         }
         Request::SandboxList => print_list(&mut out, &serde_json::from_value(answer)?),
         Request::SandboxStatus => print_status(&mut out, &serde_json::from_value(answer)?),
+        Request::SandboxSet { package, .. } => {
+            print_configured(&mut out, &package, &serde_json::from_value(answer)?)
+        }
+        Request::SandboxGlobal | Request::SandboxSetGlobal { .. } => {
+            let global: GlobalItems = serde_json::from_value(answer)?;
+            print_items(&mut out, &global.items, |_| "")
+        }
     }?;
     Ok(())
 }
@@ -620,9 +950,53 @@ fn print_list(out: &mut impl std::io::Write, listed: &Listed) -> std::io::Result
     writeln!(out, "{:<10} {:<9} PACKAGE", "UID", "STATE")?;
     for app in &listed.apps {
         let state = if app.enabled { "enabled" } else { "disabled" };
-        writeln!(out, "{:<10} {state:<9} {}", app.uid, app.package)?;
+        let not_on: Vec<String> = app
+            .items
+            .iter()
+            .filter(|(_, mode)| *mode != Mode::On)
+            .map(|(item, mode)| format!("{} {}", item.name(), items::mode_name(mode)))
+            .collect();
+        let not_on = if not_on.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", not_on.join(", "))
+        };
+        writeln!(out, "{:<10} {state:<9} {}{not_on}", app.uid, app.package)?;
     }
     Ok(())
+}
+
+/// Each item with its mode, and what `note` says of it.
+fn print_items(
+    out: &mut impl std::io::Write,
+    items: &Settings,
+    note: impl Fn(Item) -> &'static str,
+) -> std::io::Result<()> {
+    for (item, mode) in items.iter() {
+        writeln!(
+            out,
+            "{:<20} {}{}",
+            item.name(),
+            items::mode_name(mode),
+            note(item)
+        )?;
+    }
+    Ok(())
+}
+
+fn print_configured(
+    out: &mut impl std::io::Write,
+    package: &str,
+    configured: &Configured,
+) -> std::io::Result<()> {
+    writeln!(out, "Sandbox items for {package} (uid {}):", configured.uid)?;
+    print_items(out, &configured.items, |item| {
+        if configured.settings.get(item).is_some() {
+            ""
+        } else {
+            " (global)"
+        }
+    })
 }
 
 fn print_status(out: &mut impl std::io::Write, status: &Status) -> std::io::Result<()> {
@@ -695,6 +1069,7 @@ mod tests {
         log: Rc<RefCell<Vec<String>>>,
         fail_enable: bool,
         fail_disable: bool,
+        fail_update: bool,
     }
 
     impl Recorder {
@@ -704,6 +1079,7 @@ mod tests {
                 log: log.clone(),
                 fail_enable: false,
                 fail_disable: false,
+                fail_update: false,
             })
         }
     }
@@ -713,24 +1089,36 @@ mod tests {
             self.name
         }
 
-        fn enable(&mut self, entry: &mut Entry, _: &[String]) -> anyhow::Result<()> {
+        fn enable(&mut self, entry: &mut Entry, _: &[String], _: &Settings) -> anyhow::Result<()> {
             anyhow::ensure!(!self.fail_enable, "refused");
             self.log.borrow_mut().push(format!("+{}", self.name));
             entry.saved_ops = format!("{}=1", self.name);
             Ok(())
         }
 
-        fn disable(&mut self, _: &mut Entry, _: &[String]) -> anyhow::Result<()> {
+        fn disable(&mut self, _: &mut Entry, _: &[String], _: &Settings) -> anyhow::Result<()> {
             anyhow::ensure!(!self.fail_disable, "refused");
             self.log.borrow_mut().push(format!("-{}", self.name));
             Ok(())
         }
 
-        fn resume(&mut self, entries: &[(Entry, Vec<String>)]) {
-            for (entry, _) in entries {
+        fn update(
+            &mut self,
+            _: &mut Entry,
+            _: &[String],
+            _: &Settings,
+            _: &Settings,
+        ) -> anyhow::Result<()> {
+            anyhow::ensure!(!self.fail_update, "refused");
+            self.log.borrow_mut().push(format!("*{}", self.name));
+            Ok(())
+        }
+
+        fn resume(&mut self, apps: &[Resumed]) {
+            for app in apps {
                 self.log
                     .borrow_mut()
-                    .push(format!("~{} {}", self.name, entry.uid));
+                    .push(format!("~{} {}", self.name, app.entry.uid));
             }
         }
 
@@ -1090,6 +1478,142 @@ mod tests {
         assert_eq!(enabled(&sandbox), [10100]);
     }
 
+    fn camera(mode: Option<Mode>) -> BTreeMap<Item, Option<Mode>> {
+        BTreeMap::from([(Item::Camera, mode)])
+    }
+
+    #[test]
+    fn changing_items_updates_an_app_in_the_sandbox_only_if_what_applies_changes() {
+        let mut f = Fixture::new("sandbox-items");
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let mut sandbox = f.sandbox_with(vec![Recorder::new("a", &log), Recorder::new("b", &log)]);
+        sandbox
+            .enable(&f.writer, &mut f.packages, "com.app", 0, 1000)
+            .unwrap();
+        log.borrow_mut().clear();
+
+        let configured = sandbox
+            .configure(
+                &f.writer,
+                &mut f.packages,
+                "com.app",
+                0,
+                &camera(Some(Mode::Off)),
+            )
+            .unwrap();
+        assert_eq!(configured.items.mode(Item::Camera), Mode::Off);
+        assert_eq!(*log.borrow(), ["*a", "*b"]);
+        assert_eq!(
+            f.writer.sandbox_entry(10100).unwrap().unwrap().settings,
+            "camera=off"
+        );
+        // The same again changes nothing, and nothing is done.
+        sandbox
+            .configure(
+                &f.writer,
+                &mut f.packages,
+                "com.app",
+                0,
+                &camera(Some(Mode::Off)),
+            )
+            .unwrap();
+        assert_eq!(log.borrow().len(), 2);
+
+        // The global settings change the apps that follow them.
+        let global = |item, mode| BTreeMap::from([(item, mode)]);
+        sandbox
+            .set_global(&f.writer, &mut f.packages, &global(Item::Camera, Mode::Off))
+            .unwrap();
+        assert_eq!(log.borrow().len(), 2);
+        sandbox
+            .set_global(
+                &f.writer,
+                &mut f.packages,
+                &global(Item::Microphone, Mode::Off),
+            )
+            .unwrap();
+        assert_eq!(log.borrow().len(), 4);
+        assert_eq!(
+            f.writer.sandbox_global().unwrap(),
+            "camera=off,microphone=off"
+        );
+        // Following them again for the camera: it was off, and stays so.
+        sandbox
+            .configure(&f.writer, &mut f.packages, "com.app", 0, &camera(None))
+            .unwrap();
+        assert_eq!(log.borrow().len(), 4);
+
+        // An app taken out keeps its settings for when it is put back.
+        sandbox
+            .disable(&f.writer, &mut f.packages, "com.app", 0)
+            .unwrap();
+        log.borrow_mut().clear();
+        sandbox
+            .configure(
+                &f.writer,
+                &mut f.packages,
+                "com.app",
+                0,
+                &camera(Some(Mode::On)),
+            )
+            .unwrap();
+        assert!(log.borrow().is_empty());
+        assert_eq!(
+            f.writer.sandbox_entry(10100).unwrap().unwrap().settings,
+            "camera=on"
+        );
+        // One that never was in it has none.
+        assert!(
+            sandbox
+                .configure(
+                    &f.writer,
+                    &mut f.packages,
+                    "com.shared.one",
+                    0,
+                    &camera(None)
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_change_of_items_that_fails_is_undone() {
+        let mut f = Fixture::new("sandbox-items-failed");
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let mut failing = Recorder::new("b", &log);
+        failing.fail_update = true;
+        let mut sandbox = f.sandbox_with(vec![Recorder::new("a", &log), failing]);
+        sandbox
+            .enable(&f.writer, &mut f.packages, "com.app", 0, 1000)
+            .unwrap();
+        log.borrow_mut().clear();
+
+        assert!(
+            sandbox
+                .configure(
+                    &f.writer,
+                    &mut f.packages,
+                    "com.app",
+                    0,
+                    &camera(Some(Mode::Off))
+                )
+                .is_err()
+        );
+        // `a` was changed, and changed back.
+        assert_eq!(*log.borrow(), ["*a", "*a"]);
+        assert_eq!(f.writer.sandbox_entry(10100).unwrap().unwrap().settings, "");
+        assert_eq!(sandbox.snapshot_read()[&10100].settings, "");
+
+        let off = BTreeMap::from([(Item::Camera, Mode::Off)]);
+        assert!(
+            sandbox
+                .set_global(&f.writer, &mut f.packages, &off)
+                .is_err()
+        );
+        assert_eq!(f.writer.sandbox_global().unwrap(), "");
+        assert_eq!(sandbox.global_items().items.mode(Item::Camera), Mode::On);
+    }
+
     #[test]
     fn requests_are_answered_with_one_json_line() {
         let mut f = Fixture::new("sandbox-answer");
@@ -1116,12 +1640,65 @@ mod tests {
             ask(r#"{"cmd":"sandbox.disable","package":"com.app","user":0}"#),
             serde_json::json!({"ok": true, "was_enabled": false})
         );
+        let listed = ask(r#"{"cmd":"sandbox.list"}"#);
+        let apps: Vec<_> = listed["apps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|app| {
+                (
+                    app["uid"].clone(),
+                    app["package"].clone(),
+                    app["enabled"].clone(),
+                )
+            })
+            .collect();
         assert_eq!(
-            ask(r#"{"cmd":"sandbox.list"}"#),
-            serde_json::json!({"ok": true, "apps": [
-                {"uid": 10100, "package": "com.app", "enabled": false},
-                {"uid": 10200, "package": "com.shared.one", "enabled": true},
-            ]})
+            apps,
+            [
+                (10100.into(), "com.app".into(), false.into()),
+                (10200.into(), "com.shared.one".into(), true.into())
+            ]
+        );
+        assert_eq!(listed["apps"][1]["settings"], serde_json::json!({}));
+        assert_eq!(listed["apps"][1]["items"]["camera"], "on");
+        // Item by item, for one app and for all.
+        assert_eq!(
+            ask(
+                r#"{"cmd":"sandbox.set","package":"com.shared.one","settings":{"camera":"off","contacts":"deny"}}"#
+            ),
+            serde_json::json!({
+                "ok": true, "uid": 10200,
+                "settings": {"contacts": "deny", "camera": "off"},
+                "items": {
+                    "storage": "on", "cpu_info": "on", "contacts": "deny", "messages": "on",
+                    "calendar": "on", "clipboard_accounts": "on", "location": "on", "camera": "off",
+                    "microphone": "on", "body_sensors": "on", "device_ids": "on",
+                    "installed_apps": "on", "nearby_devices": "on",
+                },
+            })
+        );
+        assert_eq!(
+            ask(r#"{"cmd":"sandbox.set","package":"com.shared.one","settings":{"camera":null}}"#)["settings"],
+            serde_json::json!({"contacts": "deny"})
+        );
+        assert_eq!(
+            ask(
+                r#"{"cmd":"sandbox.set","package":"com.shared.one","settings":{"storage":"deny"}}"#
+            ),
+            serde_json::json!({"ok": false, "error": "storage cannot be deny"})
+        );
+        assert_eq!(
+            ask(r#"{"cmd":"sandbox.global"}"#)["items"]["microphone"],
+            "on"
+        );
+        assert_eq!(
+            ask(r#"{"cmd":"sandbox.set_global","settings":{"microphone":"off"}}"#)["items"]["microphone"],
+            "off"
+        );
+        assert_eq!(
+            ask(r#"{"cmd":"sandbox.list"}"#)["apps"][1]["items"]["microphone"],
+            "off"
         );
         assert_eq!(
             ask(r#"{"cmd":"sandbox.status"}"#),
@@ -1158,11 +1735,25 @@ mod tests {
         print_list(
             &mut out,
             &Listed {
-                apps: vec![ListedApp {
-                    uid: 10100,
-                    package: "com.app".into(),
-                    enabled: false,
-                }],
+                apps: vec![
+                    ListedApp {
+                        uid: 10100,
+                        package: "com.app".into(),
+                        enabled: false,
+                        created: 0,
+                        settings: Settings::default(),
+                        items: Settings::default(),
+                    },
+                    ListedApp {
+                        uid: 10200,
+                        package: "com.shared.one".into(),
+                        enabled: true,
+                        created: 0,
+                        settings: Settings::parse("camera=off"),
+                        items: Settings::parse("camera=off")
+                            .over(&Settings::parse("contacts=deny")),
+                    },
+                ],
             },
         )
         .unwrap();
@@ -1173,6 +1764,7 @@ mod tests {
              Also sandboxed, sharing its uid: com.shared.two.\n\
              UID        STATE     PACKAGE\n\
              10100      disabled  com.app\n\
+             10200      enabled   com.shared.one (contacts deny, camera off)\n\
              No apps in the sandbox.\n"
         );
     }

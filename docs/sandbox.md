@@ -12,13 +12,16 @@ $bbd sandbox enable com.example.app      # --user N for another Android user
 $bbd sandbox disable com.example.app     # --all for every app
 $bbd sandbox list
 $bbd sandbox status
+$bbd sandbox set com.example.app camera=off   # see Items
+$bbd sandbox global                           # the global settings
 ```
 
 Every subcommand takes `--json`. The commands are sent to the running
 daemon (`bbd.ctl`, one JSON line each way); without it they fail.
 
 Enabling and disabling end the app's running processes, so that it starts
-again as it should.
+again as it should. An app that is not in the sandbox is not affected in
+any way.
 
 ## What a sandboxed app gets
 
@@ -48,6 +51,45 @@ it again by a file in it that only root can see. A directory made under the
 fixed name `.bb_sandbox` by an earlier version is renamed the first time it
 is reached, with what is in it.
 
+## Items
+
+What the sandbox does to an app is set item by item. Each item is off (the
+app gets what the system gives it) or on, and some can also be set to deny
+(a permission error rather than an empty answer) or coarse:
+
+| Item | On | Modes |
+| --- | --- | --- |
+| `storage` | Shared storage of its own; an empty media library | off, on |
+| `cpu_info` | `/proc/cpuinfo` without what names the chip | off, on |
+| `contacts` | No contacts | off, on, deny |
+| `messages` | No messages or call log | off, on, deny |
+| `calendar` | No calendar | off, on, deny |
+| `clipboard_accounts` | An empty clipboard, no accounts | off, on, deny |
+| `location` | No location; with coarse, an approximate one only | off, on, deny, coarse |
+| `camera` | No camera image | off, on, deny |
+| `microphone` | Silence | off, on, deny |
+| `body_sensors` | No body sensor or activity data | off, on, deny |
+| `device_ids` | An ANDROID_ID of its own; no phone number or phone state | off, on |
+| `installed_apps` | No installed app but itself and the system's; no usage statistics | off, on |
+| `nearby_devices` | No Bluetooth or Wi-Fi devices nearby | off, on, deny |
+
+The global settings give every item a mode; an app has these, except for
+the items it has a mode of its own for. Every item is on unless set
+otherwise. An app keeps its own settings when it leaves the sandbox.
+
+```sh
+$bbd sandbox global camera=off microphone=off
+$bbd sandbox set com.example.app camera=on location=coarse
+$bbd sandbox set com.example.app camera=global   # follows the global settings again
+```
+
+A change takes effect at once. It ends the app's processes if what is
+mounted for it changes (`storage`, `cpu_info`), or an item that was off is
+turned on: what the app read before, and may keep, goes with them. A change of the global
+settings is made to every sandboxed app that follows them, or to none. An
+app in the sandbox with every item off has nothing done to it: no mount,
+no app op and no answer of the hook.
+
 ## How it works
 
 ### The gate
@@ -58,7 +100,8 @@ of the app has run by then, and nothing is mounted for it afterwards: this
 is the one moment at which what the app sees can be replaced.
 
 An eBPF program on `setresuid` (`gate_setresuid`) stops a child of zygote
-that is about to take a sandboxed uid, and reports it to the daemon. A
+that is about to take a sandboxed uid with `storage` or `cpu_info` on, and
+reports it to the daemon. A
 thread of the daemon that does nothing else enters the child's mount
 namespace, makes the sandbox's mounts and lets the process continue. Apps
 that are not sandboxed pay for one hash lookup when they start.
@@ -76,10 +119,11 @@ The thread has no timer: with no sandboxed app starting, it does not run.
 
 System services ask the system's app ops whether a uid may have the data
 behind a permission. With an op "ignored" the caller gets an empty answer
-rather than an error. A helper program (`AppOpsGuard`, run by the daemon
-with `app_process`) sets the ops, remembers what they were, and sets them
-again when the system changes them, which it does whenever the app's
-permissions change. The helper runs only while an app is sandboxed.
+rather than an error; with an op "errored", the error. A helper program
+(`AppOpsGuard`, run by the daemon with `app_process`) sets the ops of the
+items that are on, remembers what they were, and sets them again when the
+system changes them, which it does whenever the app's permissions change.
+The helper runs only while a sandboxed app has such an item on.
 
 What the ops were is kept in the database and put back when the app leaves
 the sandbox. Removing the module takes every app out first; where the root
@@ -95,8 +139,10 @@ provider's entry points (`ContentProvider.Transport.call` and `query`) and
 the package manager's visibility check (`shouldFilterApplication`), and
 answers by the calling uid, which Binder reports and an app cannot forge.
 
-The daemon lists the sandboxed uids in `/data/system/big_brother_sandbox`;
-the hook reads the list again when it changes, so no restart is needed. The
+The daemon lists the uids with `device_ids` or `installed_apps` on in
+`/data/system/big_brother_sandbox`, with an `items` line for a uid that has
+only one of them; the hook reads the list again when it changes, so no
+restart is needed. The
 hook writes which of its hooks are in place to
 `/data/system/big_brother_sandbox.status`.
 
@@ -112,8 +158,8 @@ minutes.
 ## Starting and stopping
 
 - When the daemon starts, at boot or after a restart, it takes up the
-  sandboxed apps again and ends any of their processes that started without
-  it. The supervisor restarts a daemon that died at once.
+  sandboxed apps again and ends those of their processes that should have
+  been given mounts and started without them. The supervisor restarts a daemon that died at once.
 - An app started before the user first unlocks the device, when its sandbox
   directory cannot be reached yet, gets empty, read-only storage in its
   place.

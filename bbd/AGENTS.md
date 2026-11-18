@@ -25,6 +25,13 @@ JSON.
 (docs/sandbox.md). What it does to an app is a list of effects
 (`sandbox::Effect`), carried out in order and undone in reverse on failure.
 
+- Each effect follows the app's items (`sandbox/items.rs`): it does nothing
+  for an item that is off, and `update` carries out a change of items on an
+  app already in the sandbox. An app with every item off has nothing done to
+  it, and an app not in the sandbox is never touched.
+- A new item names the app ops, mounts or hook answers it covers in
+  `items.rs`; its app ops must also be in `AppOpsGuardProtocol.GUARDED_OPS`.
+
 - Fail closed. A start that cannot be given its sandbox is killed, never let
   through, and the kernel side does the same when the gate thread is stuck
   or gone.

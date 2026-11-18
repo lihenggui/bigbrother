@@ -117,7 +117,30 @@ class SandboxRulesTest {
     fun givenWellFormedList_whenParsed_thenEveryPairKept() {
         val text = "10205 0123456789abcdef\n1010150 fedcba9876543210\n"
         assertEquals(
-            mapOf(10_205 to "0123456789abcdef", 1_010_150 to "fedcba9876543210"),
+            mapOf(10_205 to SandboxedUid("0123456789abcdef"), 1_010_150 to SandboxedUid("fedcba9876543210")),
+            parseSandboxList(text),
+        )
+    }
+
+    @Test
+    fun givenItemsLines_whenParsed_thenOnlyTheItemsNamedApply() {
+        val text = listOf(
+            "10205 0123456789abcdef",
+            "items 10205 installed_apps",
+            "10206 fedcba9876543210",
+            "items 10206 device_ids,installed_apps",
+            "10207 0123456789abcdef",
+            "items 10207 device_ids",
+            // Items of a uid that is not listed say nothing.
+            "items 10208 device_ids",
+            "items abc device_ids",
+        ).joinToString("\n")
+        assertEquals(
+            mapOf(
+                10_205 to SandboxedUid("0123456789abcdef", ownAndroidId = false, hidesApps = true),
+                10_206 to SandboxedUid("fedcba9876543210"),
+                10_207 to SandboxedUid("0123456789abcdef", ownAndroidId = true, hidesApps = false),
+            ),
             parseSandboxList(text),
         )
     }
@@ -137,7 +160,7 @@ class SandboxRulesTest {
             "\t10211\t0123456789ABCDEF  ",
         ).joinToString("\n")
         assertEquals(
-            mapOf(10_205 to "0123456789abcdef", 10_211 to "0123456789abcdef"),
+            mapOf(10_205 to SandboxedUid("0123456789abcdef"), 10_211 to SandboxedUid("0123456789abcdef")),
             parseSandboxList(text),
         )
     }
@@ -151,7 +174,7 @@ class SandboxRulesTest {
     @Test
     fun givenRepeatedUid_whenParsed_thenLastLineWins() {
         val text = "10205 0123456789abcdef\n10205 fedcba9876543210"
-        assertEquals(mapOf(10_205 to "fedcba9876543210"), parseSandboxList(text))
+        assertEquals(mapOf(10_205 to SandboxedUid("fedcba9876543210")), parseSandboxList(text))
     }
 
     @Test

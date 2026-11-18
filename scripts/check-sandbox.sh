@@ -41,6 +41,16 @@ LIST=/data/system/big_brother_sandbox
 SANDBOX_ENTRIES="Android DCIM Documents Download Movies Music Pictures"
 # The 95th percentile a start may be held for, in microseconds.
 MAX_HOLD_US=20000
+# Every item of the sandbox (`bbd/src/sandbox/items.rs`), each set to on,
+# back to the global settings, or off but for device_ids.
+ITEMS="storage cpu_info contacts messages calendar clipboard_accounts location camera microphone
+body_sensors device_ids installed_apps nearby_devices"
+ALL_ON="" ALL_GLOBAL="" ONLY_IDS=""
+for item in $ITEMS; do
+    ALL_ON+=" $item=on"
+    ALL_GLOBAL+=" $item=global"
+    [[ "$item" == device_ids ]] && ONLY_IDS+=" $item=on" || ONLY_IDS+=" $item=off"
+done
 
 stress=0
 if [[ "${1:-}" == --stress ]]; then
@@ -137,6 +147,7 @@ as_root "echo real > $MARKER && chown media_rw:media_rw $MARKER"
 
 # Leave the device as it was, whatever happens.
 cleanup() {
+    as_root "$BBD sandbox set $PACKAGE$ALL_GLOBAL" >/dev/null 2>&1 || true
     as_root "$BBD sandbox disable $PACKAGE" >/dev/null 2>&1 || true
     as_root "rm -f $MARKER" || true
 }
@@ -157,6 +168,8 @@ echo "enabling the sandbox:"
 enabled="$(as_root "$BBD sandbox enable $PACKAGE --json")"
 uid="$(grep -o '"uid":[0-9]*' <<<"$enabled" | cut -d: -f2)"
 check "the daemon took the app in (uid ${uid:-?})" [ -n "$uid" ]
+# Every item on, whatever the global settings of this device say.
+as_root "$BBD sandbox set $PACKAGE$ALL_ON" >/dev/null
 status="$(as_root "$BBD sandbox status --json")"
 echo "  status  $status"
 check "the gate is in place" [ "$(status_field gate)" = true ]
@@ -231,6 +244,32 @@ if ((stress > 0)); then
     # grep finds none, and says so with its status, when all is well.
     held="$( (as_root "grep -l \"^[0-9]* (.*) T \" /proc/[0-9]*/stat 2>/dev/null" || true) | wc -l)"
     check "no process was left held" [ "$held" = 0 ]
+fi
+
+# One item on and the rest off: only the Android ID changes, and nothing is
+# mounted, so restarting the daemon leaves the app running.
+if [[ "$(status_field android_id)" == true ]]; then
+    echo "with only device_ids on:"
+    as_root "$BBD sandbox set $PACKAGE$ONLY_IDS" >/dev/null
+    run_canary
+    only_id="$view"
+    check "the real storage is visible" [ "$(seen "$only_id" marker)" = real ]
+    check "the chip is named" [ "$(seen "$only_id" cpu_named)" = true ]
+    check "the contacts are as outside ($(seen "$only_id" contacts))" \
+        [ "$(seen "$only_id" contacts)" = "$(seen "$outside" contacts)" ]
+    check "the installed apps are as outside" [ "$(seen "$only_id" apps)" = "$(seen "$outside" apps)" ]
+    check "the Android ID is the sandbox's" [ "$(seen "$only_id" android_id)" = "$want" ]
+    pids="$(adb shell pidof "$PACKAGE" | tr -d '\r')"
+    as_root "kill -9 \$(pidof bbd)"
+    for _ in $(seq 1 30); do
+        as_root "$BBD sandbox status" >/dev/null 2>&1 && break
+        sleep 1
+    done
+    sleep 2
+    check "the app keeps running when the daemon restarts" [ "$(adb shell pidof "$PACKAGE" | tr -d '\r')" = "$pids" ]
+    as_root "$BBD sandbox set $PACKAGE$ALL_ON" >/dev/null
+else
+    skip "only device_ids on: the hook is not in place"
 fi
 
 echo "disabling the sandbox:"

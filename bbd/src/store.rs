@@ -101,7 +101,7 @@ impl Category {
 
 /// Schema version stored in SQLite's `user_version`. Bump it and add a step
 /// to `MIGRATIONS` whenever the schema changes.
-const SCHEMA_VERSION: i32 = 5;
+const SCHEMA_VERSION: i32 = 6;
 
 /// Most entries returned for one path's history.
 const HISTORY_LIMIT: u32 = 2000;
@@ -136,6 +136,8 @@ const MIGRATIONS: &[&str] = &[
     SENSOR_SCHEMA,
     // 4 -> 5: apps the user put in the sandbox.
     SANDBOX_SCHEMA,
+    // 5 -> 6: what the sandbox does to each app, item by item.
+    SANDBOX_SETTINGS_SCHEMA,
 ];
 
 /// Apps the user put in the sandbox (see `sandbox`). The sandbox applies to
@@ -151,6 +153,17 @@ CREATE TABLE IF NOT EXISTS sandbox (
     saved_ops  TEXT    NOT NULL,      -- the uid's app-op modes before it was enabled,
                                       -- 'op=mode,...', restored when it is disabled
     created    INTEGER NOT NULL
+) WITHOUT ROWID;
+";
+
+/// What the sandbox does to apps, item by item (see `sandbox::items`): the
+/// items an app has a mode of its own for, in its row, and the global
+/// settings every other item follows. An item named in neither is on.
+const SANDBOX_SETTINGS_SCHEMA: &str = "
+ALTER TABLE sandbox ADD COLUMN settings TEXT NOT NULL DEFAULT '';  -- 'item=mode,...'
+CREATE TABLE IF NOT EXISTS sandbox_global (
+    item TEXT PRIMARY KEY,
+    mode TEXT NOT NULL
 ) WITHOUT ROWID;
 ";
 
@@ -625,19 +638,20 @@ impl Writer {
     /// the daemon stopping, and the power going, right after.
     pub fn put_sandbox(&self, entry: &SandboxEntry) -> anyhow::Result<()> {
         self.conn.execute(
-            "INSERT INTO sandbox (uid, package, enabled, android_id, saved_ops, created)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "INSERT INTO sandbox (uid, package, enabled, android_id, saved_ops, created, settings)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT (uid) DO UPDATE SET
                  package = excluded.package, enabled = excluded.enabled,
                  android_id = excluded.android_id, saved_ops = excluded.saved_ops,
-                 created = excluded.created",
+                 created = excluded.created, settings = excluded.settings",
             params![
                 entry.uid,
                 entry.package,
                 entry.enabled,
                 entry.android_id,
                 entry.saved_ops,
-                entry.created
+                entry.created,
+                entry.settings
             ],
         )?;
         self.sync()
@@ -680,6 +694,38 @@ impl Writer {
         let rows = stmt.query_map([], sandbox_entry)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
+
+    /// The global settings of the sandbox, as `item=mode,...`.
+    pub fn sandbox_global(&self) -> anyhow::Result<String> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT item, mode FROM sandbox_global ORDER BY item")?;
+        let pairs = stmt
+            .query_map([], |r| {
+                Ok(format!(
+                    "{}={}",
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(pairs.join(","))
+    }
+
+    /// Replace the global settings of the sandbox with `pairs` of item and
+    /// mode. Written through to the disk, as the entries are.
+    pub fn put_sandbox_global(&self, pairs: &[(&str, &str)]) -> anyhow::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM sandbox_global", [])?;
+        for (item, mode) in pairs {
+            tx.execute(
+                "INSERT INTO sandbox_global (item, mode) VALUES (?1, ?2)",
+                params![item, mode],
+            )?;
+        }
+        tx.commit()?;
+        self.sync()
+    }
 }
 
 /// One app in the sandbox: a `sandbox` row.
@@ -691,10 +737,12 @@ pub struct SandboxEntry {
     pub android_id: String,
     pub saved_ops: String,
     pub created: i64,
+    /// The items the app has a mode of its own for, as `item=mode,...`.
+    pub settings: String,
 }
 
 const SANDBOX_SELECT: &str =
-    "SELECT uid, package, enabled, android_id, saved_ops, created FROM sandbox";
+    "SELECT uid, package, enabled, android_id, saved_ops, created, settings FROM sandbox";
 
 fn sandbox_entry(r: &rusqlite::Row<'_>) -> rusqlite::Result<SandboxEntry> {
     Ok(SandboxEntry {
@@ -704,6 +752,7 @@ fn sandbox_entry(r: &rusqlite::Row<'_>) -> rusqlite::Result<SandboxEntry> {
         android_id: r.get(3)?,
         saved_ops: r.get(4)?,
         created: r.get(5)?,
+        settings: r.get(6)?,
     })
 }
 
@@ -726,6 +775,7 @@ fn migrate(conn: &mut Connection) -> anyhow::Result<()> {
         conn.execute_batch(EVENT_SCHEMA)?;
         conn.execute_batch(SENSOR_SCHEMA)?;
         conn.execute_batch(SANDBOX_SCHEMA)?;
+        conn.execute_batch(SANDBOX_SETTINGS_SCHEMA)?;
         version = SCHEMA_VERSION;
     } else if version == 0 {
         // Databases created before versioning existed have the first layout.
@@ -1945,6 +1995,43 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    #[test]
+    fn upgrades_a_version_5_database() {
+        let dir = std::env::temp_dir().join(format!("bbd-migrate5-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("bb.db");
+        {
+            // Version 5: an entry from before apps had settings of their own.
+            let conn = Connection::open(&db).unwrap();
+            conn.execute_batch(SCHEMA).unwrap();
+            conn.execute_batch(EVENT_SCHEMA).unwrap();
+            conn.execute_batch(SENSOR_SCHEMA).unwrap();
+            conn.execute_batch(SANDBOX_SCHEMA).unwrap();
+            conn.execute_batch(
+                "INSERT INTO sandbox VALUES (10100, 'com.a', 1, '0123456789abcdef', '', 1000);",
+            )
+            .unwrap();
+            conn.pragma_update(None, "user_version", 5).unwrap();
+        }
+        let w = Writer::open(&db).unwrap();
+        let version: i32 = w
+            .conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+        // It follows the global settings, which name nothing yet.
+        assert_eq!(w.sandbox_entries().unwrap(), [sandbox_entry_for(10100)]);
+        assert_eq!(w.sandbox_global().unwrap(), "");
+        w.put_sandbox_global(&[("camera", "off"), ("location", "coarse")])
+            .unwrap();
+        assert_eq!(w.sandbox_global().unwrap(), "camera=off,location=coarse");
+        w.put_sandbox_global(&[("contacts", "deny")]).unwrap();
+        assert_eq!(w.sandbox_global().unwrap(), "contacts=deny");
+        drop(w);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     fn sandbox_entry_for(uid: u32) -> SandboxEntry {
         SandboxEntry {
             uid,
@@ -1953,6 +2040,7 @@ mod tests {
             android_id: "0123456789abcdef".into(),
             saved_ops: String::new(),
             created: 1000,
+            settings: String::new(),
         }
     }
 

@@ -31,9 +31,13 @@
 //!
 //! What the ops were before is kept in the app's entry (`saved_ops`), and
 //! put back when the app leaves the sandbox.
+//!
+//! Only the ops of the items that are on for the app are held (see
+//! `items::Settings::op_targets`), ignored or, for an item set to deny,
+//! errored. An app with none of them on is not handed to the helper.
 
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     io::{BufRead as _, BufReader, Write as _},
     os::fd::AsRawFd as _,
     process::ChildStdin,
@@ -43,7 +47,7 @@ use std::{
 
 use anyhow::Context as _;
 
-use super::{Effect, Entry, Status};
+use super::{Effect, Entry, Resumed, Status, items::Settings};
 use crate::helper;
 
 const HELPER_CLASS: &str = "AppOpsGuard";
@@ -72,6 +76,8 @@ enum Answer {
     /// To `set`: the modes the ops had, as `restore` takes them.
     Saved(String),
     Restored,
+    /// To `apply`.
+    Applied,
     Failed,
 }
 
@@ -85,6 +91,7 @@ fn parse_line(line: &str) -> Option<(u32, Option<Answer>)> {
     let answer = match kind {
         "saved" => Some(Answer::Saved(words.next().unwrap_or("").to_string())),
         "restored" => Some(Answer::Restored),
+        "applied" => Some(Answer::Applied),
         "failed" => Some(Answer::Failed),
         "reverted" | "verified" => None,
         _ => return None,
@@ -103,9 +110,10 @@ struct State {
     hurry: bool,
     /// The running helper's input; `None` while there is none.
     input: Option<ChildStdin>,
-    /// The uids whose ops are kept ignored. A helper that starts is told
-    /// of each, so that it carries on where the last one ended.
-    guarded: BTreeSet<u32>,
+    /// The uids whose ops are held, each with the ops it is held to, as
+    /// `set` takes them. A helper that starts is told of each, so that it
+    /// carries on where the last one ended.
+    guarded: BTreeMap<u32, String>,
     /// Answers not yet taken by who asked.
     answers: HashMap<u32, Answer>,
 }
@@ -204,10 +212,46 @@ impl AppOps {
         let shared = self.shared.clone();
         move |uid| {
             if let Ok(mut state) = shared.state.try_lock() {
-                let _ = state.send(&format!("verify {uid}"));
+                // An app held at the gate for its mounts alone has no ops to
+                // look at.
+                if let Some(targets) = state.guarded.get(&uid).cloned() {
+                    let _ = state.send(&format!("verify {uid} {targets}"));
+                }
             }
         }
     }
+}
+
+/// The ops to hold an app to, as the helper takes them: `<op>=<mode>,...`,
+/// with the mode's number. Empty if none.
+fn targets_of(items: &Settings) -> String {
+    items
+        .op_targets()
+        .iter()
+        .map(|(op, mode)| format!("{op}={}", *mode as u8))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// The ops named in `targets` (as [`targets_of`] writes them).
+fn ops_in(targets: &str) -> Vec<&str> {
+    targets
+        .split(',')
+        .filter_map(|pair| pair.split_once('=').map(|(op, _)| op))
+        .collect()
+}
+
+/// The modes `saved` (an entry's `saved_ops`) has for `ops`, as `restore`
+/// and `apply` take them: `default` for an op it does not name.
+fn saved_modes_of(saved: &str, ops: &[&str]) -> String {
+    let saved: HashMap<&str, &str> = saved
+        .split(',')
+        .filter_map(|pair| pair.split_once('='))
+        .collect();
+    ops.iter()
+        .map(|op| format!("{op}={}", saved.get(op).copied().unwrap_or("default")))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 impl Effect for AppOps {
@@ -215,12 +259,16 @@ impl Effect for AppOps {
         "app ops"
     }
 
-    fn enable(&mut self, entry: &mut Entry, _: &[String]) -> anyhow::Result<()> {
+    fn enable(&mut self, entry: &mut Entry, _: &[String], items: &Settings) -> anyhow::Result<()> {
+        let targets = targets_of(items);
+        if targets.is_empty() {
+            return Ok(());
+        }
         let uid = entry.uid;
-        match self.shared.ask(uid, &format!("set {uid}")) {
+        match self.shared.ask(uid, &format!("set {uid} {targets}")) {
             Ok(Answer::Saved(modes)) => {
                 entry.saved_ops = modes;
-                self.shared.state().guarded.insert(uid);
+                self.shared.state().guarded.insert(uid, targets);
                 Ok(())
             }
             failed => {
@@ -234,13 +282,28 @@ impl Effect for AppOps {
         }
     }
 
-    fn disable(&mut self, entry: &mut Entry, _: &[String]) -> anyhow::Result<()> {
+    fn disable(&mut self, entry: &mut Entry, _: &[String], items: &Settings) -> anyhow::Result<()> {
         let uid = entry.uid;
-        // Without saved modes (the daemon stopped between setting them and
-        // writing them down) the helper clears the uid's own modes, and
-        // the system's defaults apply.
-        let line = format!("restore {uid} {}", entry.saved_ops);
-        match self.shared.ask(uid, line.trim_end())? {
+        let held = self
+            .shared
+            .state()
+            .guarded
+            .get(&uid)
+            .cloned()
+            .unwrap_or_else(|| targets_of(items));
+        if held.is_empty() {
+            return Ok(());
+        }
+        // Only the ops held go back: one the app was not held to is the
+        // system's, and may have been changed since it was saved. Without
+        // saved modes (the daemon stopped between setting them and writing
+        // them down) their uid modes are cleared, and the system's defaults
+        // apply.
+        let line = format!(
+            "restore {uid} {}",
+            saved_modes_of(&entry.saved_ops, &ops_in(&held))
+        );
+        match self.shared.ask(uid, &line)? {
             Answer::Restored => {
                 self.shared.state().guarded.remove(&uid);
                 self.shared.rest_if_unused();
@@ -250,12 +313,62 @@ impl Effect for AppOps {
         }
     }
 
-    fn resume(&mut self, entries: &[(Entry, Vec<String>)]) {
+    fn update(
+        &mut self,
+        entry: &mut Entry,
+        packages: &[String],
+        before: &Settings,
+        after: &Settings,
+    ) -> anyhow::Result<()> {
+        let (held, holding) = (targets_of(before), targets_of(after));
+        if held == holding {
+            return Ok(());
+        }
+        if held.is_empty() {
+            return self.enable(entry, packages, after);
+        }
+        if holding.is_empty() {
+            return self.disable(entry, packages, before);
+        }
+        // The ops no longer held go back to what they were before the app
+        // was sandboxed.
+        let resets = |from: &str, to: &str| {
+            let kept: HashSet<&str> = ops_in(to).into_iter().collect();
+            let released: Vec<&str> = ops_in(from)
+                .into_iter()
+                .filter(|op| !kept.contains(op))
+                .collect();
+            if released.is_empty() {
+                "-".to_string()
+            } else {
+                saved_modes_of(&entry.saved_ops, &released)
+            }
+        };
+        let uid = entry.uid;
+        let line = format!("apply {uid} {holding} {}", resets(&held, &holding));
+        match self.shared.ask(uid, &line) {
+            Ok(Answer::Applied) => {
+                self.shared.state().guarded.insert(uid, holding);
+                Ok(())
+            }
+            failed => {
+                // It may have applied them all the same, or be about to:
+                // what was held is held again.
+                let back = format!("apply {uid} {held} {}", resets(&holding, &held));
+                let _ = self.shared.state().send(&back);
+                failed?;
+                anyhow::bail!("the system did not take the app ops")
+            }
+        }
+    }
+
+    fn resume(&mut self, apps: &[Resumed]) {
         let mut state = self.shared.state();
         // The helper is told of them as it starts.
-        state
-            .guarded
-            .extend(entries.iter().map(|(entry, _)| entry.uid));
+        state.guarded.extend(apps.iter().filter_map(|app| {
+            let targets = targets_of(&app.items);
+            (!targets.is_empty()).then_some((app.entry.uid, targets))
+        }));
         state.wanted = !state.guarded.is_empty();
         self.shared.changed.notify_all();
     }
@@ -343,9 +456,13 @@ fn run_helper(shared: &Shared) -> anyhow::Error {
         state.input = Some(input);
         // Whoever was in a hurry has it now.
         state.hurry = false;
-        let guarded: Vec<u32> = state.guarded.iter().copied().collect();
-        for uid in guarded {
-            let _ = state.send(&format!("verify {uid}"));
+        let guarded: Vec<String> = state
+            .guarded
+            .iter()
+            .map(|(uid, targets)| format!("verify {uid} {targets}"))
+            .collect();
+        for line in guarded {
+            let _ = state.send(&line);
         }
         shared.changed.notify_all();
     }
@@ -403,6 +520,10 @@ mod tests {
             Some((10100, None))
         );
         assert_eq!(parse_line("verified 10100"), Some((10100, None)));
+        assert_eq!(
+            parse_line("applied 10100"),
+            Some((10100, Some(Answer::Applied)))
+        );
         for line in ["", "saved", "saved x", "hello 10100", "restored -1"] {
             assert_eq!(parse_line(line), None, "{line:?}");
         }
@@ -420,10 +541,23 @@ mod tests {
             android_id: String::new(),
             saved_ops: String::new(),
             created: 0,
+            settings: String::new(),
+        };
+        let app = |uid, items| Resumed {
+            entry: entry(uid),
+            packages: vec![],
+            items,
         };
         appops.resume(&[]);
         assert!(!appops.shared.state().wanted);
-        appops.resume(&[(entry(10100), vec![])]);
+        // An app with no item that holds an op does not need it.
+        let mut off = Settings::default();
+        for item in super::super::items::Item::ALL {
+            off.set(item, Some(super::super::items::Mode::Off)).unwrap();
+        }
+        appops.resume(&[app(10101, off.over(&Settings::default()))]);
+        assert!(!appops.shared.state().wanted);
+        appops.resume(&[app(10100, Settings::all_on())]);
         assert!(appops.shared.state().wanted);
         let mut status = Status::default();
         appops.report(&mut status);
@@ -434,6 +568,42 @@ mod tests {
         appops.shared.state().guarded.clear();
         appops.shared.rest_if_unused();
         assert!(!appops.shared.state().wanted);
+    }
+
+    #[test]
+    fn the_helper_is_told_the_ops_of_the_items_on() {
+        use super::super::items::{Item, Mode};
+        let mut own = Settings::default();
+        for item in Item::ALL {
+            own.set(item, Some(Mode::Off)).unwrap();
+        }
+        own.set(Item::Camera, Some(Mode::On)).unwrap();
+        own.set(Item::Contacts, Some(Mode::Deny)).unwrap();
+        let items = own.over(&Settings::default());
+        assert_eq!(
+            targets_of(&items),
+            "android:read_contacts=2,android:write_contacts=2,android:camera=1"
+        );
+        assert_eq!(
+            saved_modes_of(
+                "android:camera=4,android:read_contacts=default",
+                &[
+                    "android:camera",
+                    "android:read_contacts",
+                    "android:record_audio"
+                ]
+            ),
+            "android:camera=4,android:read_contacts=default,android:record_audio=default"
+        );
+        assert_eq!(
+            ops_in(&targets_of(&items)),
+            [
+                "android:read_contacts",
+                "android:write_contacts",
+                "android:camera"
+            ]
+        );
+        assert!(ops_in("").is_empty());
     }
 
     #[test]
