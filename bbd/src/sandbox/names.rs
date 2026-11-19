@@ -156,8 +156,9 @@ impl Names {
     }
 }
 
-/// Whether the lookup of a name by a uid is refused.
-pub type Refuses = Arc<dyn Fn(u32, &str) -> bool + Send + Sync>;
+/// Whether the lookup of a name by a uid is refused; of `None`, a name
+/// that could not be read, which an app kept from any name is refused.
+pub type Refuses = Arc<dyn Fn(u32, Option<&str>) -> bool + Send + Sync>;
 
 /// Whether a uid is one the daemon relays lookups for: an app in the
 /// sandbox.
@@ -338,11 +339,16 @@ fn relay(mut client: UnixStream, shared: &Shared) -> io::Result<()> {
     }
     let asked = Asked::parse(&request);
     if let Some(host) = asked.host()
-        && (shared.refuses)(uid, host)
+        && (shared.refuses)(uid, Some(host))
     {
         let refused = shared.refused.lock().unwrap_or_else(|e| e.into_inner());
         let _ = refused.send((uid, host.to_string()));
         // Closed without an answer: the lookup fails.
+        return Ok(());
+    }
+    // A lookup of what cannot be read here might be read by netd as a name
+    // the app is kept from.
+    if asked == Asked::Unreadable && (shared.refuses)(uid, None) {
         return Ok(());
     }
 
@@ -428,8 +434,34 @@ enum Asked {
     /// A name, in another way than its addresses being listed
     /// (`gethostbyname`, or a DNS query the app wrote itself).
     Name(String),
-    /// Anything else, or what could not be read.
+    /// A lookup of something that is not read here as a name: what netd
+    /// would make of it is not known.
+    Unreadable,
+    /// Anything else: not a lookup of a name, or of one no rule can be
+    /// about (an address written out, a name of one label).
     Other,
+}
+
+/// What a word given as the name to look up is: a name, something no rule
+/// can be about, or neither.
+fn named(word: Option<&str>, asked: impl Fn(String) -> Asked) -> Asked {
+    let Some(word) = word else {
+        return Asked::Unreadable;
+    };
+    if let Some(name) = netctl::name(word) {
+        return asked(name);
+    }
+    // No name given (`^`), an address, or one label: rules name at least
+    // two.
+    let plain = !word.is_empty()
+        && word
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    if word == "^" || word.parse::<IpAddr>().is_ok() || plain {
+        Asked::Other
+    } else {
+        Asked::Unreadable
+    }
 }
 
 impl Asked {
@@ -440,34 +472,31 @@ impl Asked {
             .position(|b| *b == 0)
             .unwrap_or(request.len());
         let Ok(text) = std::str::from_utf8(&request[..end]) else {
-            return Asked::Other;
+            return Asked::Unreadable;
         };
         let mut words = text.split(' ');
         match words.next() {
             // getaddrinfo <name> <service> <flags> <family> <type> <protocol> <network>
-            Some("getaddrinfo") => words
-                .next()
-                .and_then(netctl::name)
-                .map_or(Asked::Other, Asked::Addresses),
+            Some("getaddrinfo") => named(words.next(), Asked::Addresses),
             // gethostbyname <network> <name> <family>
-            Some("gethostbyname") => words
-                .nth(1)
-                .and_then(netctl::name)
-                .map_or(Asked::Other, Asked::Name),
+            Some("gethostbyname") => named(words.nth(1), Asked::Name),
             // resnsend <network> <flags> <query, in base64>
             Some("resnsend") => words
                 .nth(2)
                 .and_then(base64)
                 .and_then(|query| question(&query))
-                .map_or(Asked::Other, Asked::Name),
-            _ => Asked::Other,
+                .map_or(Asked::Unreadable, Asked::Name),
+            // Not a lookup of a name: an address looked up, the network
+            // asked for.
+            Some("gethostbyaddr" | "getdnsnetid") => Asked::Other,
+            _ => Asked::Unreadable,
         }
     }
 
     fn host(&self) -> Option<&str> {
         match self {
             Asked::Addresses(host) | Asked::Name(host) => Some(host),
-            Asked::Other => None,
+            Asked::Unreadable | Asked::Other => None,
         }
     }
 }
@@ -617,17 +646,32 @@ mod tests {
             Asked::parse(b"resnsend 0 0 EjQBAAABAAAAAAAAB2V4YW1wbGUDY29tAAABAAE=\0"),
             Asked::Name("example.com".into())
         );
-        // What names nothing, or cannot be read, is passed on as it is.
+        // What no rule can be about is passed on as it is.
         for request in [
             &b"getdnsnetid 0\0"[..],
+            b"gethostbyaddr 203.0.113.7 4 2 0\0",
             b"getaddrinfo ^ ^ 0 0 0 0 0\0",
             b"getaddrinfo 203.0.113.7 ^ 4 0 1 0 0\0",
-            b"resnsend 0 0 not!base64\0",
+            b"getaddrinfo 2001:db8::5 ^ 4 0 1 0 0\0",
+            b"getaddrinfo localhost ^ 0 0 1 0 0\0",
+            b"gethostbyname 0 printer 2\0",
+        ] {
+            assert_eq!(Asked::parse(request), Asked::Other, "{request:?}");
+        }
+        // A lookup that cannot be read might be of a name netd reads.
+        for request in [
+            &b"resnsend 0 0 not!base64\0"[..],
             b"resnsend 0 0 EjQ=\0",
+            b"resnsend 0 0\0",
+            b"getaddrinfo exa\tmple.com ^ 0 0 1 0 0\0",
+            b"getaddrinfo example..com ^ 0 0 1 0 0\0",
+            b"getaddrinfo\0",
+            b"gethostbyname 0\0",
+            b"somethingnew example.com\0",
             b"\xff\xfe\0",
             b"",
         ] {
-            assert_eq!(Asked::parse(request), Asked::Other, "{request:?}");
+            assert_eq!(Asked::parse(request), Asked::Unreadable, "{request:?}");
         }
         assert_eq!(base64("aGVsbG8="), Some(b"hello".to_vec()));
         assert_eq!(base64("aGVsbG8"), Some(b"hello".to_vec()));

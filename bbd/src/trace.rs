@@ -619,7 +619,7 @@ fn start_sandbox(
     let (lookups_refused, refused_lookups) = std::sync::mpsc::channel();
     let refuses: sandbox::names::Refuses = {
         let (snapshot, book) = (sandbox.snapshot(), sandbox.book());
-        std::sync::Arc::new(move |uid, host: &str| {
+        std::sync::Arc::new(move |uid, host: Option<&str>| {
             // Only of an app in the sandbox: taken out, it is kept from
             // nothing.
             snapshot
@@ -630,7 +630,14 @@ fn start_sandbox(
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .get(&uid)
-                    .is_some_and(|targets| targets.iter().any(|target| target.covers_name(host)))
+                    .is_some_and(|targets| {
+                        targets.iter().any(|target| match host {
+                            Some(host) => target.covers_name(host),
+                            // A name that could not be read: refused to
+                            // an app kept from any name.
+                            None => !matches!(target, crate::netctl::Target::Ip(..)),
+                        })
+                    })
         })
     };
     let serves: sandbox::names::Serves = {
