@@ -54,6 +54,10 @@ JSON.
   kept from the network; with none, the chains and the jump to them are
   removed. A packet costs one rule and one map lookup whatever the number
   of apps: no rule per app.
+- A mount made in a running process's namespace (`sandbox/resolver.rs`) is
+  made only where it cannot pass to other namespaces
+  (`resolver::spreads`): in the first namespace, or one that shares its
+  mounts, it would change what every process sees.
 
 ## Database
 

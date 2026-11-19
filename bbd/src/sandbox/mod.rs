@@ -70,6 +70,7 @@ pub mod identity;
 pub mod items;
 mod mounts;
 pub mod network;
+pub mod resolver;
 pub mod sweep;
 
 use std::{

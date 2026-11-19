@@ -82,6 +82,8 @@ pub trait Sys {
     fn storage_entries(&mut self) -> io::Result<Vec<String>>;
     /// Put a file with `content` over each `target`.
     fn replace_files(&mut self, files: &[(&str, &str)]) -> io::Result<()>;
+    /// Cover the socket of the system's resolver (`resolver`).
+    fn cover_resolver(&mut self) -> io::Result<()>;
 }
 
 /// Where a user's shared storage is, as apps see it and underneath.
@@ -104,8 +106,9 @@ pub fn media_of(uid: u32) -> String {
 }
 
 /// Give the namespace `sys` works in the sandbox of `uid`, under which run
-/// `packages`: its own shared storage if `storage`, and `files`, the kernel
-/// information files to replace, each with its content.
+/// `packages`: its own shared storage if `storage`, `files`, the kernel
+/// information files to replace, each with its content, and no resolver
+/// to ask if `resolver`.
 ///
 /// The errors name the step, never a path: paths have package names in
 /// them, which are not to be logged.
@@ -115,12 +118,18 @@ pub fn apply<S: Sys>(
     packages: &[String],
     files: &[(&str, &str)],
     storage: bool,
+    resolver: bool,
 ) -> anyhow::Result<()> {
     if storage {
         replace_storage(sys, uid, packages)?;
     }
     sys.replace_files(files)
-        .context("replacing kernel information files")
+        .context("replacing kernel information files")?;
+    if resolver {
+        sys.cover_resolver()
+            .context("covering the resolver's socket")?;
+    }
+    Ok(())
 }
 
 /// The storage part of [`apply`].
@@ -284,6 +293,10 @@ impl Sys for Kernel {
     type Tree = OwnedFd;
     type Dir = Dir;
 
+    fn cover_resolver(&mut self) -> io::Result<()> {
+        super::resolver::cover_here()
+    }
+
     fn make_private(&mut self, path: &str) -> io::Result<()> {
         mount(None, path, None, libc::MS_REC | libc::MS_PRIVATE, None)
     }
@@ -411,6 +424,11 @@ mod tests {
         type Tree = String;
         type Dir = String;
 
+        fn cover_resolver(&mut self) -> io::Result<()> {
+            self.steps.push("cover the resolver".to_string());
+            Ok(())
+        }
+
         fn make_private(&mut self, path: &str) -> io::Result<()> {
             self.steps.push(format!("private {path}"));
             Ok(())
@@ -481,7 +499,7 @@ mod tests {
             ..Default::default()
         };
         let packages = ["com.a".to_string(), "com.b".to_string()];
-        apply(&mut sys, 1_010_100, &packages, FILES, true).unwrap();
+        apply(&mut sys, 1_010_100, &packages, FILES, true, false).unwrap();
         assert_eq!(
             sys.steps,
             [
@@ -515,7 +533,7 @@ mod tests {
                 bind_error: Some(errno),
                 ..Default::default()
             };
-            apply(&mut sys, 10100, &["com.a".to_string()], FILES, true).unwrap();
+            apply(&mut sys, 10100, &["com.a".to_string()], FILES, true, false).unwrap();
             assert_eq!(
                 sys.steps,
                 [
@@ -535,10 +553,15 @@ mod tests {
             storage: vec!["emulated", "self", "1A2B-3C4D"],
             ..Default::default()
         };
-        apply(&mut sys, 10100, &["com.a".to_string()], FILES, false).unwrap();
+        apply(&mut sys, 10100, &["com.a".to_string()], FILES, false, false).unwrap();
         assert_eq!(sys.steps, ["replace /proc/cpuinfo"]);
         let mut sys = Recorder::default();
-        apply(&mut sys, 10100, &[], &[], false).unwrap();
+        apply(&mut sys, 10100, &[], &[], false, false).unwrap();
+        assert!(sys.steps.is_empty());
+        // The resolver alone, for an app only kept from the network.
+        apply(&mut sys, 10100, &[], &[], false, true).unwrap();
+        assert_eq!(sys.steps, ["cover the resolver"]);
+        sys.steps.clear();
         assert!(sys.steps.is_empty());
     }
 
@@ -548,7 +571,7 @@ mod tests {
             bind_error: Some(libc::EACCES),
             ..Default::default()
         };
-        let e = apply(&mut sys, 10100, &["com.a".to_string()], FILES, true).unwrap_err();
+        let e = apply(&mut sys, 10100, &["com.a".to_string()], FILES, true, true).unwrap_err();
         assert_eq!(e.to_string(), "mounting the sandbox");
 
         // A symbolic link where the app's own directory is to be mounted.
@@ -557,7 +580,7 @@ mod tests {
             symlink_at: Some("data"),
             ..Default::default()
         };
-        let e = apply(&mut sys, 10100, &["com.a".to_string()], FILES, true).unwrap_err();
+        let e = apply(&mut sys, 10100, &["com.a".to_string()], FILES, true, true).unwrap_err();
         assert_eq!(e.to_string(), "making the app's own data directory");
         assert!(!format!("{e:#}").contains("com.a"));
         assert!(!sys.steps.iter().any(|step| step.starts_with("attach")));

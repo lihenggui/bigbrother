@@ -249,7 +249,7 @@ pub struct Settings(BTreeMap<Item, Mode>);
 /// ops, mounts, and the system server hook withholding the file grants
 /// the app kept from before; the device identifiers and the installed
 /// apps are app ops and an answer of the hook; the network is the
-/// system's packet filter.
+/// system's packet filter, and a mount over the resolver's socket.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Part {
@@ -474,7 +474,8 @@ impl Settings {
                 continue;
             }
             let mut missing = Vec::new();
-            if matches!(item, Item::Storage | Item::CpuInfo) && !parts.mounts {
+            // The network's mount is the one over the resolver's socket.
+            if matches!(item, Item::Storage | Item::CpuInfo | Item::Network) && !parts.mounts {
                 missing.push(Part::Mounts);
             }
             if self.held_for(item).into_iter().any(|name| !held(name)) {
@@ -661,7 +662,7 @@ mod tests {
             [Part::AppOps, Part::AppListHook]
         );
         assert_eq!(unmet[&Item::Camera], [Part::AppOps]);
-        assert_eq!(unmet[&Item::Network], [Part::PacketFilter]);
+        assert_eq!(unmet[&Item::Network], [Part::Mounts, Part::PacketFilter]);
     }
 
     #[test]
