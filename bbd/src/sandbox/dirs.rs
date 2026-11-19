@@ -239,13 +239,13 @@ pub fn pin_install(
 /// Record the same installation cookie on another member of a verified
 /// shared UID, so it can own the existing sandbox if the primary package is
 /// removed. An existing cookie is never replaced.
-pub(super) fn share_install(root: &Path, package: &str, uid: u32, id: &str) -> io::Result<()> {
+pub(super) fn share_install(root: &Path, package: &str, uid: u32, id: &str) -> io::Result<bool> {
     let create = || {
         u128::from_str_radix(id, 16)
             .map(|id| Some(id.to_be_bytes()))
             .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))
     };
-    pin_install_with(root, package, uid, create).map(|_| ())
+    pin_install_with(root, package, uid, create).map(|(_, cookie)| cookie == id)
 }
 
 fn pin_install_with(

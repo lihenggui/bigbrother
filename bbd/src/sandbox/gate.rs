@@ -444,6 +444,8 @@ enum Held {
     NotOurs,
     /// A new app, not in the sandbox yet: ended.
     New,
+    /// The registered UID no longer belongs to the verified installation.
+    Stale,
 }
 
 /// The thread cannot go on: it is in a mount namespace it could not leave.
@@ -558,7 +560,7 @@ impl Keeper {
         let held = wait_stopped(pid)
             .and_then(|()| self.set_up(&process, event, home, cpuinfo, &mut lost))
             .and_then(|held| {
-                if !matches!(held, Held::New) {
+                if matches!(held, Held::Sandboxed | Held::NotOurs) {
                     process
                         .signal(libc::SIGCONT)
                         .context("continuing held process")?;
@@ -581,8 +583,10 @@ impl Keeper {
             }
             Ok(Held::NotOurs) => {}
             ended => {
+                let rescan = event.unknown != 0 || matches!(ended, Ok(Held::Stale));
                 match ended {
-                    Ok(_) => lock(&shared.stats).unknown += 1,
+                    Ok(Held::New) => lock(&shared.stats).unknown += 1,
+                    Ok(_) => lock(&shared.stats).failed += 1,
                     Err(e) => {
                         lock(&shared.stats).failed += 1;
                         self.failures.log(event.uid, &e);
@@ -598,7 +602,7 @@ impl Keeper {
                     self.failures.log(event.uid, &e.into());
                     std::thread::sleep(Duration::from_millis(100));
                 }
-                if event.unknown != 0 {
+                if rescan {
                     self.tell_unknown(event.uid);
                 }
             }
@@ -671,13 +675,16 @@ impl Keeper {
             "unexpected process credentials"
         );
         process.signal(0)?;
-        if !dirs::matches_install(
+        match dirs::matches_install(
             Path::new("/data/user_de"),
             &gated.package,
             uid,
             &gated.install_id,
-        )? {
-            return Ok(Held::NotOurs);
+        ) {
+            Ok(true) => {}
+            Ok(false) => return Ok(Held::Stale),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Held::Stale),
+            Err(e) => return Err(e.into()),
         }
         self.kernel.generation = format!("{}-{}", uid, gated.install_id);
         let files: &[(&str, &str)] = if gated.mounts.cpu_info {
@@ -914,6 +921,27 @@ mod tests {
             .admit(&new_app_start(i32::MAX as u32), &home, "")
             .unwrap();
         assert_eq!(lock(&told).len(), 2);
+    }
+
+    #[test]
+    fn a_stale_gate_entry_ends_the_start_and_requests_a_scan() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let process = Process::open(child.id() as i32).unwrap();
+        process.signal(libc::SIGSTOP).unwrap();
+        let (mut keeper, shared, told) = keeper(Path::new("/unused"));
+        let mut event = new_app_start(child.id());
+        // The kernel already held this UID for the previous installation.
+        event.unknown = 0;
+
+        keeper.finish(&event, &process, Ok(Held::Stale));
+
+        assert!(process.exited(5000).unwrap());
+        assert!(!child.wait().unwrap().success());
+        assert_eq!(*lock(&told), [event.uid]);
+        assert_eq!(lock(&shared.stats).failed, 1);
     }
 
     #[test]

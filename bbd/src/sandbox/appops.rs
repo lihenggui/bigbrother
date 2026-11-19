@@ -446,10 +446,8 @@ impl super::auto::Libraries for Librarian {
                 },
                 |_, kind| kind,
             )
-            // One the package manager cannot tell about counts as an app;
-            // no answer in time is no answer.
             .ok()
-            .map(|kind| kind.unwrap_or(false))
+            .flatten()
     }
 
     fn done(&self) {

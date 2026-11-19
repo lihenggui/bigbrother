@@ -410,12 +410,15 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
                 }
                 continue;
             }
-            // A new app started before it was put in the sandbox. The gate
-            // ended that start; the app is put in for its next.
+            // The gate ended a start for a new app or a stale entry.
             Some(_) = new_starts.recv() => {
                 while new_starts.try_recv().is_ok() {}
                 if let Some(sandbox) = sandbox.as_mut() {
-                    sandbox.isolate_new(&tracer.writer, &mut tracer.packages);
+                    if sandbox.auto_on() {
+                        sandbox.isolate_new(&tracer.writer, &mut tracer.packages);
+                    } else {
+                        sandbox.release_reassigned(&tracer.writer, &mut tracer.packages);
+                    }
                 }
                 continue;
             }

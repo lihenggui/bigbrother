@@ -540,6 +540,7 @@ impl Sandbox {
                     }
                     self.snapshot_write().remove(&uid);
                     self.awaiting_storage.remove(&uid);
+                    self.auto.forget_uid(uid);
                     // Nothing saved for the old installation may be applied
                     // to the one the uid belongs to now.
                     for effect in &mut self.effects {
@@ -611,7 +612,8 @@ impl Sandbox {
                 recorded.contains(*package)
                     || *package == &entry.package
                     || self.user_data.as_deref().is_none_or(|root| {
-                        dirs::share_install(root, package, entry.uid, &entry.install_id).is_ok()
+                        dirs::share_install(root, package, entry.uid, &entry.install_id)
+                            .unwrap_or(false)
                     })
             })
             .cloned()
@@ -706,6 +708,18 @@ impl Sandbox {
         now: i64,
     ) -> anyhow::Result<Enabled> {
         let uid = uid_of(packages, package, user)?;
+        self.enable_uid(writer, packages, package, uid, now)
+    }
+
+    fn enable_uid(
+        &mut self,
+        writer: &Writer,
+        packages: &Packages,
+        package: &str,
+        uid: u32,
+        now: i64,
+    ) -> anyhow::Result<Enabled> {
+        let user = uid / PER_USER_RANGE;
         let sharing = packages.packages_of(uid % PER_USER_RANGE).to_vec();
         anyhow::ensure!(
             !sharing.iter().any(|p| OWN_PACKAGES.contains(&p.as_str())),

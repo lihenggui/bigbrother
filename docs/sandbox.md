@@ -133,12 +133,11 @@ $bbd sandbox auto on    # or off; without an argument, says which it is
   them is installed. A replacement installation gets its own entry even
   if Android gives it the same uid. Re-enabling the same verified
   installation keeps its settings and ANDROID_ID.
-- A library that comes as a package of its own (a static shared library,
-  such as Play installs with each update of Chrome or the WebView) is not
-  an app, and is left alone. The package manager says which packages are
-  libraries, by flags the package cannot set; the app ops helper asks it,
-  once for each new package with a data directory, and is started for
-  that if it is not running.
+- Static shared libraries and SDK libraries are left alone, including the
+  static libraries Play installs with Chrome or WebView updates. The app
+  ops helper reads the package manager's library flags once per new
+  package with a data directory. A lookup that cannot classify the
+  package is retried before changing its sandbox.
 - An app given the uid of one uninstalled while it was in the sandbox is
   put in once that one is taken out, with an entry of its own.
 
@@ -150,22 +149,26 @@ the sandbox. What wakes it is a file renamed or written into
 `/data/system` and a directory made in `/data/user_de` or in a user's
 directory there; what an app does inside its own data directory does not.
 
-The app may start first, when the installer opens it at once. While the
-gate is in place, it also holds the start of an app the daemon has not
+The installer can request a launch immediately. While the gate is in
+place, it holds an ordinary zygote start of a UID the daemon has not
 dealt with yet; the daemon ends that start, as it ends any start it cannot
 give its sandbox, and puts the app in, and the next start is held as a
-sandboxed app's. So no code of a new app runs outside the sandbox while the
-daemon runs and holds such starts, which `bbd sandbox status` reports as
-`new_apps_held`. Holding stops, and the daemon logs why, where the kernel
-side cannot be given what the daemon knows (more than 1024 uids of apps
+sandboxed app's. Android can still be waiting for the ended launch to
+attach, so a new tap may need to wait for its startup timeout.
+`bbd sandbox status` reports the hold as `new_apps_held`.
+The kernel uses the UIDs and app IDs from the last scan, and the gate also
+checks installation ownership when it applies mounts. The daemon logs
+when it stops holding starts because the kernel cannot store what the
+daemon knows (more than 1024 uids of apps
 installed since the switch was turned on, counted per Android user); new
 apps are then still put in the sandbox as the daemon finds them. Apps
 installed while no daemon runs are held from when it starts, put in by its
 first look, and any of their processes then running are ended.
 
-A look puts apps in, and asks about libraries, for at most 4 seconds; the
-app it is putting in then is finished, and the rest are left for a look 2
-seconds later. An app that cannot be put in, as when the app ops helper
+A look gives library queries up to 4 seconds total, and starts no more
+isolations after that budget. An isolation already in progress finishes or
+rolls back, and the rest are left for a look 2 seconds later. An app that
+cannot be put in, as when the app ops helper
 does not answer, is tried again after 10 seconds, then twice as long each
 time up to 5 minutes, and its starts are held meanwhile. A timer for the
 next try exists only while such an app waits. `bbd sandbox status` reports

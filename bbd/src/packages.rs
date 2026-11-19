@@ -193,13 +193,13 @@ fn parse(text: &str) -> List {
 /// Whether the package of a line of the list came with the system. Android
 /// names the partition such a package was installed from in its SELinux
 /// information (`platform:privapp:targetSdkVersion=35:partition=system`),
-/// and gives `@system` as its installer; a package the user installed has
-/// neither.
+/// and gives `@system` or `@product` as its installer; a package the user
+/// installed has neither.
 fn came_with_system(fields: &[&str]) -> bool {
     let partition = fields
         .get(4)
         .is_some_and(|seinfo| seinfo.split(':').any(|part| part.starts_with("partition=")));
-    partition || fields.get(9) == Some(&"@system")
+    partition || matches!(fields.get(9), Some(&"@system" | &"@product"))
 }
 
 #[cfg(test)]
@@ -229,14 +229,15 @@ mod tests {
              com.example.adb 10230 1 /data/user/0/com.example.adb default:targetSdkVersion=34 3003 1 1 1 @null\n\
              com.example.play 10231 0 /data/user/0/com.example.play default:targetSdkVersion=35 none 0 41 1 com.android.vending\n\
              com.example.old 10232 0 /data/user/0/com.example.old default none\n\
-             com.example.preloaded 10233 0 /data/user/0/com.example.preloaded default none 0 1 1 @system\n",
+             com.example.preloaded 10233 0 /data/user/0/com.example.preloaded default none 0 1 1 @system\n\
+             com.example.product 10234 0 /data/user/0/com.example.product default none 0 1 1 @product\n",
         );
         let system: Vec<u32> = {
             let mut ids: Vec<u32> = list.from_system.into_iter().collect();
             ids.sort();
             ids
         };
-        assert_eq!(system, [1001, 10150, 10233]);
+        assert_eq!(system, [1001, 10150, 10233, 10234]);
     }
 
     #[test]

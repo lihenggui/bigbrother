@@ -109,6 +109,10 @@ pub struct Auto {
     /// New apps that could not be put in the sandbox, by uid, with when to
     /// try again.
     retries: BTreeMap<u32, Retry>,
+    /// Retry a package-list read or a write of the known set even when no
+    /// particular app was waiting.
+    rescan: Option<Retry>,
+    known_dirty: bool,
     /// How many new apps the last look left out of the sandbox.
     pending: u32,
     /// What tells libraries from apps, where there is something to ask.
@@ -180,6 +184,8 @@ impl Auto {
             kernel: None,
             held: false,
             retries: BTreeMap::new(),
+            rescan: None,
+            known_dirty: false,
             pending: 0,
             libraries: None,
             told_apps: BTreeSet::new(),
@@ -234,15 +240,30 @@ impl Auto {
         if !self.on {
             return None;
         }
-        self.retries.values().map(|retry| retry.at).min()
+        self.retries
+            .values()
+            .chain(self.rescan.iter())
+            .map(|retry| retry.at)
+            .min()
     }
 
     /// Put off every try that is due, by as long as it waited before: a
     /// look could not be made.
     fn put_off(&mut self) {
+        self.rescan = Some(Retry::after(self.rescan));
         let now = Instant::now();
         for retry in self.retries.values_mut().filter(|retry| retry.at <= now) {
             retry.at = now + retry.waited.max(RETRY_FIRST);
+        }
+    }
+
+    pub(super) fn forget_uid(&mut self, uid: u32) {
+        if self.known.uids.remove(&uid).is_some() {
+            self.known_dirty = true;
+            self.rescan = Some(Retry {
+                at: Instant::now(),
+                waited: Duration::ZERO,
+            });
         }
     }
 
@@ -299,15 +320,15 @@ impl Kernel {
         let uids: BTreeSet<u32> = known.uids.keys().copied().collect();
         let added: Vec<u32> = uids.difference(&self.held).copied().collect();
         let removed: Vec<u32> = self.held.difference(&uids).copied().collect();
+        for uid in removed {
+            self.uids.remove(&uid).context("forgetting a known uid")?;
+            self.held.remove(&uid);
+        }
         for uid in added {
             self.uids
                 .insert(&uid, &1, 0)
                 .context("writing a known uid")?;
             self.held.insert(uid);
-        }
-        for uid in removed {
-            let _ = self.uids.remove(&uid);
-            self.held.remove(&uid);
         }
         if on {
             self.switch.set(0, &1, 0).context("turning the hold on")?;
@@ -520,7 +541,10 @@ impl Sandbox {
         writer.put_sandbox_auto(on, &known.rows())?;
         self.auto.on = on;
         self.auto.known = known;
+        self.auto.known_dirty = false;
         self.auto.retries.clear();
+        self.auto.rescan = None;
+        self.auto.told_apps.clear();
         self.auto.pending = 0;
         self.auto.sync();
         eprintln!(
@@ -593,10 +617,10 @@ impl Sandbox {
             // Each package is asked about once. A library is known, and
             // left alone; one not told about yet waits for the next try.
             let mut apps = BTreeSet::new();
-            let mut told = true;
+            let mut deferred = None;
             for name in &names {
-                if Instant::now() > until {
-                    told = false;
+                if Instant::now() >= until {
+                    deferred = Some(Retry::soon(retry));
                     break;
                 }
                 asked |= self.auto.libraries.is_some();
@@ -612,18 +636,14 @@ impl Sandbox {
                         apps.insert(name.clone());
                     }
                     None => {
-                        told = false;
+                        deferred = Some(Retry::after(retry));
                         break;
                     }
                 }
             }
-            let out_of_time = Instant::now() > until;
-            if !told || (out_of_time && !apps.is_empty()) {
-                let later = if out_of_time {
-                    Retry::soon(retry)
-                } else {
-                    Retry::after(retry)
-                };
+            if let Some(later) = deferred.or_else(|| {
+                (!apps.is_empty() && Instant::now() >= until).then(|| Retry::soon(retry))
+            }) {
                 retries.insert(uid, later);
                 left += 1;
                 continue;
@@ -632,21 +652,19 @@ impl Sandbox {
             let Some(package) = apps.first().cloned() else {
                 continue;
             };
-            match self.enable(
-                writer,
-                packages,
-                &package,
-                uid / PER_USER_RANGE,
-                crate::now(),
-            ) {
+            let result = (|| {
+                let current = super::uid_of(packages, &package, uid / PER_USER_RANGE)?;
+                anyhow::ensure!(
+                    current == uid && !packages.is_system(app_id),
+                    "the package changed during the scan"
+                );
+                self.enable_uid(writer, packages, &package, uid, crate::now())
+            })();
+            match result {
                 // Only an app in the sandbox under its own entry is known.
-                Ok(enabled) if enabled.uid == uid => {
+                Ok(_) => {
                     isolated.push(uid);
                     known.uids.insert(uid, apps);
-                }
-                Ok(_) => {
-                    retries.insert(uid, Retry::after(retry));
-                    left += 1;
                 }
                 Err(e) => {
                     retries.insert(uid, Retry::after(retry));
@@ -672,16 +690,20 @@ impl Sandbox {
                 started.elapsed().as_millis()
             );
         }
-        if known != self.auto.known {
-            // What was done stands even if it cannot be written: it is
-            // known, and what the database still lacks is looked at again
-            // when the daemon next starts.
-            if let Err(e) = writer.put_sandbox_auto(true, &known.rows()) {
-                eprintln!("bbd: sandbox: cannot write the apps known to be installed: {e:#}");
-            }
+        if known != self.auto.known || self.auto.known_dirty {
             self.auto.known = known;
             self.auto.sync();
+            self.auto.known_dirty = true;
         }
+        if self.auto.known_dirty
+            && let Err(e) = writer.put_sandbox_auto(true, &self.auto.known.rows())
+        {
+            eprintln!("bbd: sandbox: cannot write the apps known to be installed: {e:#}");
+            self.auto.rescan = Some(Retry::after(self.auto.rescan));
+            return;
+        }
+        self.auto.known_dirty = false;
+        self.auto.rescan = None;
     }
 
     /// When a look is due without anything having changed (see
@@ -2062,5 +2084,81 @@ mod tests {
         // Nor while it is off.
         sandbox.set_auto(&f.writer, &mut f.packages, false).unwrap();
         assert_eq!(sandbox.auto_next_look(), None);
+    }
+
+    #[test]
+    fn an_install_event_is_retried_when_the_package_list_cannot_be_read() {
+        let mut f = Fixture::new("auto-list-unavailable");
+        let mut sandbox = f.sandbox();
+        sandbox.set_auto(&f.writer, &mut f.packages, true).unwrap();
+        std::fs::remove_file(f.dir.join("packages.list")).unwrap();
+
+        sandbox.isolate_new(&f.writer, &mut f.packages);
+
+        let retry = sandbox.auto_next_look().unwrap();
+        assert!(retry > Instant::now());
+        assert!(sandboxed(&sandbox).is_empty());
+    }
+
+    #[test]
+    fn a_known_app_is_written_again_after_a_failed_write() {
+        let mut f = Fixture::new("auto-known-write");
+        let mut sandbox = f.sandbox();
+        sandbox.set_auto(&f.writer, &mut f.packages, true).unwrap();
+        f.list(&[NEW]);
+        f.install(0, "com.example.new");
+        let conn = rusqlite::Connection::open(f.dir.join("bb.db")).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER refuse_known BEFORE INSERT ON sandbox_known
+             BEGIN SELECT RAISE(ABORT, 'refuse known app'); END;",
+        )
+        .unwrap();
+
+        sandbox.isolate_new(&f.writer, &mut f.packages);
+
+        assert_eq!(sandboxed(&sandbox), [10230]);
+        assert!(
+            f.writer
+                .sandbox_auto()
+                .unwrap()
+                .1
+                .iter()
+                .all(|row| row.app_id != 10230)
+        );
+        conn.execute_batch("DROP TRIGGER refuse_known").unwrap();
+        sandbox.isolate_new(&f.writer, &mut f.packages);
+        assert!(
+            f.writer
+                .sandbox_auto()
+                .unwrap()
+                .1
+                .iter()
+                .any(|row| row.app_id == 10230)
+        );
+    }
+
+    #[test]
+    fn a_package_that_moves_during_classification_is_left_for_the_next_scan() {
+        struct Moved(PathBuf);
+
+        impl Libraries for Moved {
+            fn is_library(&self, _: u32, _: &str, _: Instant) -> Option<bool> {
+                std::fs::write(&self.0, NEW.replace("10230", "10231")).unwrap();
+                Some(false)
+            }
+        }
+
+        let mut f = Fixture::new("auto-moved-during-scan");
+        let mut sandbox = f.sandbox();
+        sandbox.set_auto(&f.writer, &mut f.packages, true).unwrap();
+        f.list(&[NEW]);
+        f.install(0, "com.example.new");
+        sandbox.tell_libraries_with(Box::new(Moved(f.dir.join("packages.list"))));
+
+        sandbox.isolate_new(&f.writer, &mut f.packages);
+        assert!(sandboxed(&sandbox).is_empty());
+
+        sandbox.isolate_new(&f.writer, &mut f.packages);
+        assert_eq!(sandboxed(&sandbox), [10231]);
     }
 }
