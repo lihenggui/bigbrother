@@ -36,6 +36,7 @@ class AppOpsGuardProtocolTest {
         "appops.txt",
         types = setOf("command", "command-read", "command-bad", "answer", "answer-bad"),
         keys = setOf(
+            "capture", "captured", "capture-failed",
             "set", "verify", "release", "restore", "apply", "saved", "restored", "applied", "failed", "verified", "reverted", "unheld",
             "uid", "hold", "revoke", "revoke_unheld", "op", "permission", "name", "not_held",
             "kind", "library", "app", "unknown", "request", "package",
@@ -89,6 +90,7 @@ class AppOpsGuardProtocolTest {
         for (case in cases.ofType("command") + cases.ofType("command-read")) {
             val uid = case.uid()
             val expected = when (case.first) {
+                "capture" -> Command.Capture(uid, case.get("request")!!.toLong(), case.targets())
                 "set" -> Command.Set(uid, case.targets())
                 "verify" -> Command.Verify(uid, case.targets())
                 "release" -> Command.Release(uid)
@@ -122,6 +124,10 @@ class AppOpsGuardProtocolTest {
         for (case in cases.ofType("answer")) {
             val uid = case.uid()
             val line = when (case.first) {
+                "captured" -> AppOpsGuardProtocol.capturedLine(uid, case.get("request")!!.toLong(), case.values())
+
+                "capture-failed" -> AppOpsGuardProtocol.captureFailedLine(uid, case.get("request")!!.toLong())
+
                 "saved" -> AppOpsGuardProtocol.savedLine(uid, case.values())
 
                 "restored" -> AppOpsGuardProtocol.restoredLine(uid)

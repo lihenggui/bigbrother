@@ -18,11 +18,43 @@ package li.mercury.bigbrother.catalog
 
 import li.mercury.bigbrother.catalog.FakeAndroid.Companion.COARSE
 import li.mercury.bigbrother.catalog.FakeAndroid.Companion.FINE
+import li.mercury.bigbrother.catalog.FakeAndroid.Companion.PACKAGE
 import li.mercury.bigbrother.catalog.FakeAndroid.Companion.UID
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class AppOpsGuardHandlerTest {
+    @Test
+    fun givenOriginalState_whenCapturedThenRestoredByANewHelper_thenAppOpsAndPermissionFlagsMatch() {
+        val android = FakeAndroid()
+        android.pmGrant(COARSE)
+        android.settingsGrant(FINE)
+        val originalFlags = android.flags(PACKAGE, FINE, UID)
+        val op = android.ops.first { it.name == "android:coarse_location" }
+        val handler = AppOpsGuardHandler(android)
+        val targets = "${op.name}=1,$FINE=revoked"
+
+        handler.handle(AppOpsGuardProtocol.parseCommand("capture $UID 7 $targets")!!)
+        val saved = android.printed.single().removePrefix("captured $UID 7 ").split(',')
+            .filter { it.substringBefore('=') in setOf(op.name, FINE) }.joinToString(",")
+        assertFalse(handler.isGuarded(UID))
+        assertTrue(android.isGranted(FINE))
+        assertEquals(originalFlags, android.flags(PACKAGE, FINE, UID))
+        assertEquals(4, android.uidModes(UID, intArrayOf(op.switchCode))[op.switchCode])
+
+        handler.handle(AppOpsGuardProtocol.parseCommand("set $UID $targets")!!)
+        assertFalse(android.isGranted(FINE))
+        assertEquals(1, android.uidModes(UID, intArrayOf(op.switchCode))[op.switchCode])
+
+        val restarted = AppOpsGuardHandler(android)
+        restarted.handle(AppOpsGuardProtocol.parseCommand("restore $UID $saved")!!)
+        assertTrue(android.isGranted(FINE))
+        assertEquals(originalFlags, android.flags(PACKAGE, FINE, UID))
+        assertEquals(4, android.uidModes(UID, intArrayOf(op.switchCode))[op.switchCode])
+    }
+
     @Test
     fun givenGrantTheSystemWillNotTakeBack_whenCheckedAgainAndAgain_thenItsStateIsReportedOnce() {
         val android = FakeAndroid()

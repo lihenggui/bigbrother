@@ -215,6 +215,9 @@ internal object AppOpsGuardProtocol {
     sealed interface Command {
         val uid: Int
 
+        /** Read the recovery values for [targets] before [Set] changes them. */
+        data class Capture(override val uid: Int, val request: Long, val targets: Targets) : Command
+
         data class Set(override val uid: Int, val targets: Targets) : Command
 
         data class Restore(override val uid: Int, val values: Values) : Command
@@ -245,6 +248,13 @@ internal object AppOpsGuardProtocol {
         val words = line.trim().split(' ', '\t').filter { it.isNotEmpty() }
         val uid = words.getOrNull(1)?.toIntOrNull()?.takeIf { it >= 0 } ?: return null
         return when (words[0]) {
+            "capture" -> {
+                if (words.size != 4) return null
+                val request = words[2].toLongOrNull()?.takeIf { it >= 0 } ?: return null
+                val targets = decodeTargets(words[3]) ?: return null
+                Command.Capture(uid, request, targets)
+            }
+
             "set" -> if (words.size == 3) decodeTargets(words[2])?.let { Command.Set(uid, it) } else null
 
             "verify" -> if (words.size == 3) decodeTargets(words[2], unheldAllowed = true)?.let { Command.Verify(uid, it) } else null
@@ -466,6 +476,10 @@ internal object AppOpsGuardProtocol {
     } else {
         granted == state.granted && flags and USER_FLAGS == state.flags
     }
+
+    fun capturedLine(uid: Int, request: Long, values: Values): String = if (values.isEmpty()) "captured $uid $request" else "captured $uid $request ${encodeValues(values)}"
+
+    fun captureFailedLine(uid: Int, request: Long): String = "capture-failed $uid $request"
 
     fun savedLine(uid: Int, values: Values): String = if (values.isEmpty()) "saved $uid" else "saved $uid ${encodeValues(values)}"
 

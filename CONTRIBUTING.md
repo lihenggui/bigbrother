@@ -76,6 +76,17 @@ changes, in the matrix:
 ./scripts/check-permissions.sh          # or the names of some cases
 ```
 
+For the arm64 release check, install the candidate module on an unlocked
+arm64 test device and select it with `ANDROID_SERIAL`. Run the canary and
+the restart cases to check that probes fire and that taking the canary out
+of the sandbox restores the saved mode and permission after a daemon restart.
+
+```sh
+(cd android && ./gradlew :canary:assembleDebug)
+./scripts/check-canary.sh
+./scripts/check-permissions.sh camera_ignored_by_the_user_through_a_daemon_restart location_coarse_through_a_daemon_restart
+```
+
 These checks run on an emulator as well. On a `google_apis` image, which allows
 `adb root`, `scripts/install-on-emulator.sh` installs the module and the app
 from `out/` with the module's own installer and starts the daemon, without

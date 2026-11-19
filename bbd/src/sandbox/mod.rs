@@ -152,6 +152,14 @@ pub trait Effect {
     /// Names the effect in an error.
     fn name(&self) -> &'static str;
 
+    /// Read the original state needed for recovery before enabling an app.
+    fn prepare_enable(&mut self, _entry: &mut Entry, _items: &Settings) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    /// Discard preparation when the entry cannot be committed.
+    fn cancel_enable(&mut self, _uid: u32) {}
+
     /// Apply the effect to `entry.uid`, under which run `packages`, as
     /// `items` say. It may change the entry, for instance to keep what it
     /// replaced; the entry is written after the last effect.
@@ -986,8 +994,25 @@ impl Sandbox {
             },
         };
         let items = self.items(&entry);
-        let written = appops::naming_taken(&entry, &items);
-        writer.put_sandbox(&written)?;
+        let prepared = (|| -> anyhow::Result<Entry> {
+            for effect in &mut self.effects {
+                effect
+                    .prepare_enable(&mut entry, &items)
+                    .with_context(|| effect.name())?;
+            }
+            let written = appops::naming_taken(&entry, &items);
+            writer.put_sandbox(&written)?;
+            Ok(written)
+        })();
+        let written = match prepared {
+            Ok(written) => written,
+            Err(e) => {
+                for effect in &mut self.effects {
+                    effect.cancel_enable(uid);
+                }
+                return Err(e);
+            }
+        };
         self.snapshot_write().insert(uid, entry.clone());
 
         let mut applied = self.run(&mut entry, &sharing, Change::Enable(&items));

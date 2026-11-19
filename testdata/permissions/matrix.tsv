@@ -84,6 +84,7 @@ contacts_ignored_by_the_user_then_uninstalled	contacts	ignored	-	uninstall	grant
 camera_granted_throughout	camera	granted	-	disable	granted	foreground	yes	both
 camera_denied_throughout	camera	denied	-	disable	denied	ignore	no	both
 camera_ignored_by_the_user_throughout	camera	ignored	-	disable	granted	ignore	no	both
+camera_ignored_by_the_user_through_a_daemon_restart	camera	ignored	restart:daemon	disable	granted	ignore	no	both
 camera_granted_with_pm_in_the_sandbox	camera	denied	pm:grant	disable	granted	foreground	yes	both
 camera_allowed_in_settings_in_the_sandbox	camera	denied	settings:grant	disable	granted	foreground	yes	both
 camera_revoked_with_pm_in_the_sandbox	camera	granted	pm:revoke	disable	denied	ignore	no	both

@@ -105,6 +105,8 @@ fn retry_delay(failures: u32) -> Duration {
 /// The helper's answer to a command about one uid.
 #[derive(Debug, PartialEq, Eq)]
 enum Answer {
+    /// To `capture`: the original values, read without changing the uid.
+    Captured(u64, Option<String>),
     /// To `set`: the modes the ops had and the states of the permissions
     /// taken, as `restore` takes them.
     Saved(String),
@@ -125,6 +127,18 @@ fn parse_line(line: &str) -> Option<(u32, Option<Answer>)> {
     let kind = words.next()?;
     let uid = words.next()?.parse().ok()?;
     let answer = match kind {
+        "captured" | "capture-failed" => {
+            let request = words.next()?.parse().ok()?;
+            let values = if kind == "captured" {
+                Some(words.next().unwrap_or("").to_owned())
+            } else {
+                None
+            };
+            if words.next().is_some() {
+                return None;
+            }
+            Some(Answer::Captured(request, values))
+        }
         "saved" => Some(Answer::Saved(words.next().unwrap_or("").to_string())),
         "restored" => Some(Answer::Restored),
         "applied" => Some(Answer::Applied(words.next().unwrap_or("").to_string())),
@@ -204,6 +218,8 @@ struct State {
     untold: bool,
     /// Answers not yet taken by who asked.
     answers: HashMap<u32, Answer>,
+    /// A capture cannot answer a later command, even for the same uid.
+    captured: Option<(u32, u64, Option<String>)>,
     /// Kept apart from the mutating commands, with its request number so
     /// a late answer cannot classify another package of the same uid.
     kind: Option<(u32, u64, Option<bool>)>,
@@ -280,6 +296,7 @@ impl State {
 #[derive(Default)]
 struct Shared {
     state: Mutex<State>,
+    next_capture: AtomicU64,
     /// An answer arrived, the helper started or ended, or it is wanted.
     changed: Condvar,
     /// Called when the helper reports a permission changed by the user.
@@ -538,6 +555,7 @@ fn targets_text(ops: &[(&str, OpMode)], permissions: &[&str]) -> String {
 /// `AppOpsGuardProtocol.kt`): targets as [`targets_of`] writes them,
 /// values as [`saved_values_of`] does.
 enum Command<'a> {
+    Capture(u32, u64, &'a str),
     Set(u32, &'a str),
     Verify(u32, &'a str),
     Release(u32),
@@ -550,6 +568,7 @@ enum Command<'a> {
 impl std::fmt::Display for Command<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match *self {
+            Self::Capture(uid, request, targets) => write!(f, "capture {uid} {request} {targets}"),
             Self::Set(uid, targets) => write!(f, "set {uid} {targets}"),
             Self::Verify(uid, targets) => write!(f, "verify {uid} {targets}"),
             Self::Release(uid) => write!(f, "release {uid}"),
@@ -716,6 +735,43 @@ pub fn restore_line(entry: &Entry, items: &Settings) -> Option<String> {
 impl Effect for AppOps {
     fn name(&self) -> &'static str {
         "app ops"
+    }
+
+    fn prepare_enable(&mut self, entry: &mut Entry, items: &Settings) -> anyhow::Result<()> {
+        let targets = targets_of(items);
+        if targets.is_empty() {
+            return Ok(());
+        }
+        let uid = entry.uid;
+        self.shared
+            .state()
+            .owners
+            .insert(uid, (entry.package.clone(), entry.install_id.clone()));
+        let request = self.shared.next_capture.fetch_add(1, Ordering::Relaxed);
+        let line = Command::Capture(uid, request, &targets).to_string();
+        let saved = self
+            .shared
+            .ask_until(
+                uid,
+                Instant::now() + ANSWER_WAIT,
+                |state| state.send(&line),
+                |state| {
+                    state
+                        .captured
+                        .take()
+                        .filter(|(id, number, _)| (*id, *number) == (uid, request))
+                        .map(|(_, _, values)| values)
+                },
+                |_, values| values,
+            )?
+            .context("the app ops helper could not read the original values")?;
+        (entry.saved_ops, entry.saved_permissions) = split_saved(&saved);
+        Ok(())
+    }
+
+    fn cancel_enable(&mut self, uid: u32) {
+        self.shared.state().owners.remove(&uid);
+        self.shared.rest_if_unused();
     }
 
     fn enable(&mut self, entry: &mut Entry, _: &[String], items: &Settings) -> anyhow::Result<()> {
@@ -1010,10 +1066,12 @@ fn run_helper(shared: &Shared) -> anyhow::Error {
             state.unheld.insert(uid, ops);
         } else if let Some((uid, Some(answer))) = parse_line(&line) {
             let mut state = shared.state();
-            if let Answer::Kind(request, kind) = answer {
-                state.kind = Some((uid, request, kind));
-            } else {
-                state.answers.insert(uid, answer);
+            match answer {
+                Answer::Kind(request, kind) => state.kind = Some((uid, request, kind)),
+                Answer::Captured(request, values) => state.captured = Some((uid, request, values)),
+                _ => {
+                    state.answers.insert(uid, answer);
+                }
             }
             drop(state);
             shared.changed.notify_all();
@@ -1121,6 +1179,9 @@ mod tests {
             let names: Vec<&str> = values.iter().map(|(name, _)| *name).collect();
             let saved = saved_values_of(&entry, &names);
             let line = match case.first() {
+                "capture" => {
+                    Command::Capture(uid, case.get("request").unwrap().parse().unwrap(), &targets)
+                }
                 "set" => Command::Set(uid, &targets),
                 "verify" => Command::Verify(uid, &targets),
                 "release" => Command::Release(uid),
@@ -1151,6 +1212,10 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join(",");
             let answer = match case.first() {
+                "captured" | "capture-failed" => Some(Answer::Captured(
+                    case.get("request").unwrap().parse().unwrap(),
+                    (case.first() == "captured").then(|| text.clone()),
+                )),
                 "saved" => Some(Answer::Saved(text.clone())),
                 "restored" => Some(Answer::Restored),
                 "applied" => Some(Answer::Applied(text.clone())),
@@ -1419,10 +1484,24 @@ mod tests {
         let shared = shared.clone();
         let sent = std::thread::spawn(move || {
             let mut sent = Vec::new();
+            let mut captured = None;
             for line in BufReader::new(output).lines().map_while(Result::ok) {
-                let mut words = line.split(' ');
+                let command = line
+                    .strip_prefix("bound ")
+                    .and_then(|bound| bound.splitn(3, ' ').nth(2))
+                    .unwrap_or(&line);
+                let mut words = command.split(' ');
                 let kind = words.next().unwrap().to_string();
                 let uid = words.next().unwrap().parse().unwrap();
+                sent.push(line.clone());
+                if kind == "capture" {
+                    let request = words.next().unwrap().parse().unwrap();
+                    let saved = format!("android:camera=4,{FINE}=granted+user_set");
+                    captured = Some((uid, saved.clone()));
+                    shared.state().captured = Some((uid, request, Some(saved)));
+                    shared.changed.notify_all();
+                    continue;
+                }
                 // Each permission taken was granted, as far as it says.
                 let found = names_in(words.next().unwrap_or(""))
                     .into_iter()
@@ -1430,9 +1509,13 @@ mod tests {
                     .map(|name| format!("{name}=granted"))
                     .collect::<Vec<_>>()
                     .join(",");
-                sent.push(line.clone());
                 let answer = match kind.as_str() {
-                    "set" => Answer::Saved(found),
+                    "set" => Answer::Saved(
+                        captured
+                            .take()
+                            .filter(|(id, _)| *id == uid)
+                            .map_or(found, |(_, saved)| saved),
+                    ),
                     "apply" => Answer::Applied(found),
                     "restore" => Answer::Restored,
                     _ => continue,
@@ -1447,6 +1530,83 @@ mod tests {
             sent
         });
         (input, sent)
+    }
+
+    #[test]
+    fn original_app_ops_and_permission_flags_are_committed_before_set() {
+        use crate::{
+            packages::Packages,
+            sandbox::Sandbox,
+            store::{Reader, Writer},
+        };
+
+        let dir = std::env::temp_dir().join(format!("bbd-appops-capture-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let list = dir.join("packages.list");
+        std::fs::write(
+            &list,
+            "com.example.reader 10100 0 /data/user/0/com.example.reader default none\n",
+        )
+        .unwrap();
+        let mut packages = Packages::new(list.to_str().unwrap());
+        let db = dir.join("bb.db");
+        let writer = Writer::open(&db).unwrap();
+        writer
+            .put_sandbox_global(&[("location", "coarse")])
+            .unwrap();
+        let shared = Arc::new(Shared::default());
+        let mut sandbox = Sandbox::load(
+            &writer,
+            vec![Box::new(AppOps {
+                shared: shared.clone(),
+            })],
+            None,
+        )
+        .unwrap();
+        let fault = rusqlite::Connection::open(&db).unwrap();
+        fault
+            .execute_batch(
+                "CREATE TRIGGER fail_enable BEFORE INSERT ON sandbox
+                 BEGIN SELECT RAISE(FAIL, 'injected write failure'); END;",
+            )
+            .unwrap();
+        let (input, sent) = stand_in(&shared, |_, _| panic!("the helper must only read"));
+        shared.state().input = Some(input);
+        assert!(
+            sandbox
+                .enable(&writer, &mut packages, "com.example.reader", 0, 1000)
+                .is_err()
+        );
+        assert!(writer.sandbox_entry(10100).unwrap().is_none());
+        assert!(shared.state().input.is_none());
+        assert_eq!(sent.join().unwrap().len(), 1);
+        fault.execute_batch("DROP TRIGGER fail_enable").unwrap();
+        drop(fault);
+
+        let witness = db.clone();
+        let (input, sent) = stand_in(&shared, move |_, uid| {
+            // Open a new connection as a restarted daemon would see it.
+            let reader = Reader::open(&witness).unwrap();
+            let entries = reader.sandbox_entries().unwrap();
+            let entry = entries.iter().find(|entry| entry.uid == uid).unwrap();
+            assert_eq!(entry.saved_ops, "android:camera=4");
+            assert!(pairs(&entry.saved_permissions).any(|p| p == (FINE, "granted+user_set")));
+        });
+        shared.state().input = Some(input);
+        sandbox
+            .enable(&writer, &mut packages, "com.example.reader", 0, 1000)
+            .unwrap();
+        let entry = writer.sandbox_entry(10100).unwrap().unwrap();
+        assert_eq!(entry.saved_ops, "android:camera=4");
+        assert_eq!(entry.saved_permissions, format!("{FINE}=granted+user_set"));
+        shared.state().input = None;
+        let sent = sent.join().unwrap();
+        assert_eq!(sent.len(), 2);
+        let binding = "bound com.example.reader com.example.reader";
+        assert!(sent[0].starts_with(&format!("{binding} capture 10100 ")));
+        assert!(sent[1].starts_with(&format!("{binding} set 10100 ")));
+        drop(writer);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// The camera and the microphone on, as `camera` says, and every other
