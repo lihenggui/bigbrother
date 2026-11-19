@@ -50,6 +50,7 @@ import android.util.Log
 import android.widget.ScrollView
 import android.widget.TextView
 import java.io.File
+import java.io.IOException
 import java.net.ConnectException
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -276,6 +277,17 @@ class MainActivity : Activity() {
             LocalSocket().use { it.connect(LocalSocketAddress(RESOLVER, LocalSocketAddress.Namespace.FILESYSTEM)) }
             "connected"
         }
+        // The socket the sandbox's daemon relays lookups on, asked directly,
+        // whatever is mounted for this app: `answered` if a lookup sent
+        // there comes back with anything, `closed` if it is not taken.
+        view("relay") {
+            LocalSocket().use {
+                it.connect(LocalSocketAddress(RELAY, LocalSocketAddress.Namespace.FILESYSTEM))
+                it.soTimeout = REACH_TIMEOUT_MS
+                it.outputStream.write("getaddrinfo $RELAY_NAME ^ 1024 0 1 0 0\u0000".toByteArray())
+                if (it.inputStream.read() >= 0) "answered" else "closed"
+            }
+        }
         // Identity: the Android ID both ways to it, and the installed apps
         // that did not come with the system.
         view("android_id") { Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) }
@@ -398,7 +410,17 @@ class MainActivity : Activity() {
 
     /** What comes of connecting to [address]: `connected`, `refused` or `timeout`. */
     private fun reach(address: InetSocketAddress): String = try {
-        Socket().use { it.connect(address, REACH_TIMEOUT_MS) }
+        Socket().use {
+            it.connect(address, REACH_TIMEOUT_MS)
+            // A request and whatever answers it, so that bytes go both
+            // ways where something listens; what comes back is not looked at.
+            try {
+                it.soTimeout = REACH_TIMEOUT_MS
+                it.getOutputStream().write("GET / HTTP/1.0\r\n\r\n".toByteArray())
+                it.getInputStream().read(ByteArray(4096))
+            } catch (_: IOException) {
+            }
+        }
         "connected"
     } catch (_: ConnectException) {
         "refused"
@@ -420,6 +442,10 @@ class MainActivity : Activity() {
 
         /** Where netd listens for the lookups of apps. */
         const val RESOLVER = "/dev/socket/dnsproxyd"
+
+        /** Where the sandbox's daemon does (`SOCKET` in bbd/src/sandbox/names.rs), and a name to ask it for. */
+        const val RELAY = "/dev/socket/dnsproxyd_relay"
+        const val RELAY_NAME = "relay.sandbox-check.example"
 
         /** Set by `scripts/check-sandbox.sh` to have a file picked rather than the probes run. */
         const val EXTRA_PICK = "pick"

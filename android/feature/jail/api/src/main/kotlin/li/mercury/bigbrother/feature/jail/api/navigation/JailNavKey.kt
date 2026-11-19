@@ -35,6 +35,39 @@ data class JailAppNavKey(
 @Serializable
 data object JailSettingsNavKey : NavKey
 
+/** Where an app in the jail connected to, and what is blocked for it. */
+@Serializable
+data class JailNetworkNavKey(
+    val uid: Int,
+    val packageName: String,
+) : NavKey
+
+/**
+ * One destination of an app in the jail.
+ *
+ * @param target the domain or address, as the daemon writes it (`domain:example.com`, `ip:203.0.113.7`).
+ * @param rangeHours the time range of the activity it was opened from, as `TimeRange.hours`.
+ */
+@Serializable
+data class JailDestinationNavKey(
+    val uid: Int,
+    val packageName: String,
+    val target: String,
+    val rangeHours: Int,
+) : NavKey
+
+/** Opens an app's network activity above its page. */
+fun Navigator.navigateToJailNetwork(uid: Int, packageName: String) {
+    state.currentSubStack.removeAll { it is JailNetworkNavKey || it is JailDestinationNavKey }
+    navigate(JailNetworkNavKey(uid, packageName))
+}
+
+/** Opens a destination beside, or over, the network activity, in place of one opened before. */
+fun Navigator.navigateToJailDestination(uid: Int, packageName: String, target: String, rangeHours: Int) {
+    state.currentSubStack.removeAll { it is JailDestinationNavKey }
+    navigate(JailDestinationNavKey(uid, packageName, target, rangeHours))
+}
+
 /**
  * Opens an app in the jail in place of everything opened beside the list,
  * the records of an app opened from there included: back then leads to

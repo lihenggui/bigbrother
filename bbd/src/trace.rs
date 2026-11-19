@@ -31,7 +31,7 @@ use aya::{
 };
 use bb_common::{
     BinderEvent, BinderKey, BinderValue, ConnectEvent, EV_BINDER, EV_CONNECT, EV_EXEC, EV_FILE,
-    EV_NETLINK, EV_PATH, EV_PROCESS, EV_RESULT, EXEC_ARGS, EventHeader, ExecEvent,
+    EV_NETLINK, EV_PATH, EV_PROCESS, EV_RESULT, EV_TRAFFIC, EXEC_ARGS, EventHeader, ExecEvent,
     FUSE_SUPER_MAGIC, FileEvent, NetlinkEvent, OFF_COUNT, OFF_MISSING, OP_PROBE, OP_WATCH,
     PROC_SUPER_MAGIC, PROCESS_READ, PROCESS_WRITE, PathEvent, ProcessEvent, ResultEvent,
     SELINUX_MAGIC, SYSFS_MAGIC,
@@ -56,12 +56,19 @@ use crate::{
     sandbox::{self, Sandbox},
     selftest, sensors,
     spool::{self, Spool},
+    store::net::{NetKey, NetSeen},
     store::{
         Category, Counters, MODE_CALL, MODE_CONNECT, MODE_DIR, MODE_EXEC, MODE_ISOLATED,
         MODE_PROBE, MODE_QUERY, MODE_READ, MODE_VIA_PROVIDER, MODE_WATCH, MODE_WRITE, Mode, Writer,
     },
     syscalls,
 };
+
+/// A destination of the network records: a name, an address and a port.
+type NetDestination = (String, String, u16);
+
+/// The most destinations an app has rows of its own for in an hour.
+const NET_DESTINATIONS_PER_HOUR: usize = 512;
 
 const AT_FDCWD: i32 = -100;
 /// File type bits of an inode's mode.
@@ -219,6 +226,9 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         spool: Spool::new(),
         listeners: Listeners::new(),
         scans: net::Scans::default(),
+        net: None,
+        refused_lookups: None,
+        net_listed: (0, HashMap::new()),
         searches: commands::Searches::default(),
         catalog: None,
         sensors,
@@ -448,6 +458,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         tracer.expire(now() - RESULT_TIMEOUT_SECS);
         tracer.prune_isolated_owners();
         tracer.ingest_provider_events();
+        tracer.take_refused_lookups();
         while let Ok(reading) = permission_uses.try_recv() {
             // A reading at all shows the records can be read here. Written
             // when that changes, not with every reading.
@@ -604,7 +615,77 @@ fn start_sandbox(
     );
     let appops = sandbox::appops::AppOps::start();
     let mut new_apps = None;
-    let network = sandbox::network::Network::start(ebpf);
+    // Whether an app is kept from single destinations: what the one effect
+    // finds out and the other needs the packet filter's rules for.
+    let ruled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let destinations =
+        sandbox::destinations::Destinations::start(ebpf, sandbox.book(), ruled.clone());
+    let network = sandbox::network::Network::start(ebpf, ruled);
+    // The names apps look up, heard by standing between them and netd.
+    let names = std::sync::Arc::new(sandbox::names::Names::default());
+    let (lookups_refused, refused_lookups) = std::sync::mpsc::channel();
+    let refuses: sandbox::names::Refuses = {
+        let (snapshot, book) = (sandbox.snapshot(), sandbox.book());
+        std::sync::Arc::new(move |uid, host: Option<&str>| {
+            // Only of an app in the sandbox: taken out, it is kept from
+            // nothing.
+            snapshot
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains_key(&uid)
+                && book
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get(&uid)
+                    .is_some_and(|targets| {
+                        targets.iter().any(|target| match host {
+                            Some(host) => target.covers_name(host),
+                            // A name that could not be read: refused to
+                            // an app kept from any name.
+                            None => !matches!(target, crate::netctl::Target::Ip(..)),
+                        })
+                    })
+        })
+    };
+    let serves: sandbox::names::Serves = {
+        let (snapshot, global, book) = (sandbox.snapshot(), sandbox.global(), sandbox.book());
+        std::sync::Arc::new(move |uid| {
+            // The apps given the daemon's socket, and no other: the socket
+            // can be found by any process, and an app kept from the
+            // network is to have no resolver at all.
+            let snapshot = snapshot.read().unwrap_or_else(|e| e.into_inner());
+            let Some(entry) = snapshot.get(&uid) else {
+                return false;
+            };
+            let items = sandbox::items_of(entry, &global.read().unwrap_or_else(|e| e.into_inner()));
+            !items.network_refused()
+                && (items.network_recorded()
+                    || book
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .get(&uid)
+                        .is_some_and(|targets| {
+                            targets
+                                .iter()
+                                .any(|target| !matches!(target, crate::netctl::Target::Ip(..)))
+                        }))
+        })
+    };
+    let relay = sandbox::names::start(names.clone(), serves, refuses, lookups_refused);
+    if let Err(e) = &relay {
+        eprintln!("bbd: warning: the names apps look up are not known: {e:#}");
+    }
+    let _ = tracer
+        .writer
+        .set_meta("coverage_net_names", i64::from(relay.is_ok()));
+    let names = relay.is_ok().then_some(names);
+    tracer.refused_lookups = Some(refused_lookups);
+    tracer.net = Some(sandbox::destinations::View {
+        snapshot: sandbox.snapshot(),
+        global: sandbox.global(),
+        book: sandbox.book(),
+        names: names.clone(),
+    });
     let found = found.clone();
     appops.on_found(move || found.notify_one());
     let storage: Box<dyn sandbox::Effect> = match storage {
@@ -613,6 +694,9 @@ fn start_sandbox(
             // The resolver goes with the network, and stays without it.
             if network.is_ok() {
                 storage.with_network();
+            }
+            if names.is_some() {
+                storage.with_names(sandbox.book());
             }
             // Not waited for: the gate thread waits for nothing.
             storage.on_unknown(move |uid| {
@@ -636,6 +720,28 @@ fn start_sandbox(
         &sandbox.snapshot(),
         &sandbox.global(),
     )));
+    // What went over a connection is told by another program, which reads
+    // the same list of apps.
+    let traffic = destinations
+        .as_ref()
+        .map_err(|e| anyhow::anyhow!("{e:#}"))
+        .and_then(|_| attach_traffic(ebpf, offsets));
+    if let Err(e) = &traffic {
+        eprintln!("bbd: warning: the bytes of connections are not counted: {e:#}");
+    }
+    let _ = tracer
+        .writer
+        .set_meta("coverage_net_traffic", i64::from(traffic.is_ok()));
+    match destinations {
+        Ok(mut destinations) => {
+            destinations.with_traffic(traffic.is_ok());
+            if let Some(names) = names {
+                destinations.with_names(names);
+            }
+            sandbox.add_effect(Box::new(destinations));
+        }
+        Err(e) => eprintln!("bbd: warning: connections are not recorded: {e:#}"),
+    }
     let network: Box<dyn sandbox::Effect> = match network {
         Ok(network) => Box::new(network),
         Err(e) => {
@@ -649,6 +755,7 @@ fn start_sandbox(
     sandbox.add_effect(storage);
     sandbox.add_effect(Box::new(sandbox::sweep::Restart));
     sandbox.resume(&tracer.writer, &mut tracer.packages);
+    sandbox.note_recording(&tracer.writer);
     sandbox.resume_auto(new_apps, &tracer.writer, &mut tracer.packages);
     Some(sandbox)
 }
@@ -806,6 +913,37 @@ fn attach_feature(
         }
     }
     Ok(plan)
+}
+
+/// Load and attach the program that reports what went over the TCP
+/// connections of the apps recorded, as each ends.
+fn attach_traffic(ebpf: &mut aya::Ebpf, offsets: &[u32]) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        [
+            bb_common::OFF_SOCK_PROTOCOL,
+            bb_common::OFF_SK_FAMILY,
+            bb_common::OFF_SK_DADDR,
+            bb_common::OFF_SK_DPORT,
+            bb_common::OFF_SK_V6_DADDR,
+            bb_common::OFF_SK_UID,
+            bb_common::OFF_TCP_ACKED,
+            bb_common::OFF_TCP_RECEIVED,
+        ]
+        .iter()
+        .all(|&slot| offsets[slot] != OFF_MISSING),
+        "this kernel's type information lacks a field it reads"
+    );
+    let program: &mut RawTracePoint = ebpf
+        .program_mut("inet_sock_set_state")
+        .context("program inet_sock_set_state missing from object")?
+        .try_into()?;
+    program
+        .load()
+        .context("verifier rejected inet_sock_set_state")?;
+    program
+        .attach("inet_sock_set_state")
+        .context("attaching to the inet_sock_set_state tracepoint")?;
+    Ok(())
 }
 
 /// Load and attach the binder tracepoint program, and return the map that
@@ -1161,6 +1299,14 @@ struct Tracer {
     listeners: Listeners,
     /// Ports each app has contacted, to recognise a scan.
     scans: net::Scans,
+    /// What the sandbox refuses of the network, for the connections
+    /// recorded of its apps.
+    net: Option<sandbox::destinations::View>,
+    /// The lookups refused since they were last taken in: the uid and the
+    /// name of each.
+    refused_lookups: Option<std::sync::mpsc::Receiver<(u32, String)>>,
+    /// The destinations each app has rows of in the hour (see `net_key`).
+    net_listed: (i64, HashMap<u32, HashSet<NetDestination>>),
     /// Commands being looked for along `PATH`.
     searches: commands::Searches,
     /// The service methods being watched; `None` until they are known.
@@ -1442,6 +1588,29 @@ impl Tracer {
                     0,
                 );
             }
+            EV_TRAFFIC => {
+                let Some(ev) = cast::<bb_common::TrafficEvent>(bytes) else {
+                    return;
+                };
+                self.counters.seen += 1;
+                // Only what went to the internet, as the connections are.
+                let Some(address) = net::public(ev.family, ev.port, &ev.addr) else {
+                    return;
+                };
+                let wide = |low: u32, high: u32| (u64::from(high) << 32) | u64::from(low);
+                let host = self.host_of(hdr.uid, address.ip());
+                let key = self.net_key(hdr.uid, ts, host, address.ip().to_string(), address.port());
+                self.writer.net_record(
+                    key,
+                    NetSeen {
+                        sent: wide(ev.sent_low, ev.sent_high),
+                        recv: wide(ev.recv_low, ev.recv_high),
+                        counted: 1,
+                        ..NetSeen::default()
+                    },
+                    ts,
+                );
+            }
             EV_NETLINK => {
                 let Some(ev) = cast::<NetlinkEvent>(bytes) else {
                     return;
@@ -1467,6 +1636,25 @@ impl Tracer {
                     return;
                 };
                 self.counters.seen += 1;
+                if let Some(address) = net::public(ev.family, ev.port, &ev.addr) {
+                    let (uid, _) = self.owner_uid(hdr.uid, hdr.pid);
+                    let refused = self
+                        .net
+                        .as_ref()
+                        .is_some_and(|net| net.refuses(uid, address));
+                    let host = self.host_of(uid, address.ip());
+                    let key = self.net_key(uid, ts, host, address.ip().to_string(), address.port());
+                    self.writer.net_record(
+                        key,
+                        NetSeen {
+                            conn: u32::from(!refused),
+                            refused: u32::from(refused),
+                            ..NetSeen::default()
+                        },
+                        ts,
+                    );
+                    return;
+                }
                 let Some(destination) = Destination::new(ev.family, ev.port, &ev.addr) else {
                     return;
                 };
@@ -1648,6 +1836,68 @@ impl Tracer {
     /// Isolated processes run under a uid of their own. Best effort: when
     /// the process is gone and its uid was not seen recently, the record
     /// stays under the isolated uid, without the flag.
+    /// What a row of the network records is about. An app has so many
+    /// destinations of its own in an hour; what it connects to past them
+    /// is counted together, of no destination: an app that goes through
+    /// addresses, or looks up names made up one after another, would
+    /// otherwise fill the database, which every record shares.
+    fn net_key(&mut self, uid: u32, ts: i64, host: String, addr: String, port: u16) -> NetKey {
+        let hour = ts.div_euclid(3600);
+        if self.net_listed.0 != hour {
+            self.net_listed = (hour, HashMap::new());
+        }
+        let listed = self.net_listed.1.entry(uid).or_default();
+        let destination = (host, addr, port);
+        if listed.len() >= NET_DESTINATIONS_PER_HOUR && !listed.contains(&destination) {
+            return NetKey {
+                uid,
+                hour,
+                host: String::new(),
+                addr: String::new(),
+                port: 0,
+            };
+        }
+        listed.insert(destination.clone());
+        let (host, addr, port) = destination;
+        NetKey {
+            uid,
+            hour,
+            host,
+            addr,
+            port,
+        }
+    }
+
+    /// The name `uid` was given `address` for; empty if none is known.
+    fn host_of(&self, uid: u32, address: std::net::IpAddr) -> String {
+        self.net
+            .as_ref()
+            .and_then(|net| net.names.as_ref())
+            .and_then(|names| names.host_of(uid, address))
+            .unwrap_or_default()
+    }
+
+    /// Record the lookups refused since the last time: each an attempt at
+    /// a name that went to no address.
+    fn take_refused_lookups(&mut self) {
+        let Some(refused) = &self.refused_lookups else {
+            return;
+        };
+        let ts = now();
+        let lookups: Vec<(u32, String)> = refused.try_iter().collect();
+        for (uid, host) in lookups {
+            let key = self.net_key(uid, ts, host, String::new(), 0);
+            self.writer.net_record(
+                key,
+                NetSeen {
+                    refused: 1,
+                    ..NetSeen::default()
+                },
+                ts,
+            );
+        }
+    }
+
     fn owner_uid(&mut self, uid: u32, pid: u32) -> (u32, Mode) {
         if uid % PER_USER_RANGE < FIRST_ISOLATED_APP_ID {
             return (uid, 0);

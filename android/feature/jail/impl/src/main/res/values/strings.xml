@@ -106,7 +106,8 @@
     <string name="jail_group_device">Device and apps</string>
     <string name="jail_section_status">Status</string>
     <string name="jail_status_title">Components</string>
-    <string name="jail_status_ok">Storage isolation and the system framework hook in effect</string>
+    <string name="jail_status_ok">Storage isolation, the system framework hook and network filtering in effect</string>
+    <string name="jail_status_network_missing">Network filtering not available on this kernel</string>
     <string name="jail_status_checking">Checking…</string>
     <string name="jail_status_hook_missing">System framework hook not loaded</string>
     <string name="jail_status_gate_missing">Storage isolation not available on this kernel</string>
@@ -193,4 +194,134 @@
     <string name="jail_mode_global_detail">Now: %1$s</string>
     <string name="jail_list_separator">", "</string>
     <string name="jail_select">Select an isolated app or the global settings</string>
+
+    <!-- The network: in the jail's list, after what applies to an app. -->
+    <string name="jail_summary_no_network">No network</string>
+    <string name="jail_summary_recording">Recording connections</string>
+    <string name="jail_summary_separator">" · "</string>
+
+    <!-- The network section of an app and of the global settings. -->
+    <string name="jail_section_network">Network</string>
+    <string name="jail_network_access">Network access</string>
+    <string name="jail_network_allowed">Allowed</string>
+    <string name="jail_network_allowed_detail">Connects as the system allows.</string>
+    <string name="jail_network_blocked">No network</string>
+    <string name="jail_network_blocked_detail">Connections and name lookups fail at once; connections within the device still work. The app is not restarted.</string>
+    <string name="jail_network_record">Record connections</string>
+    <string name="jail_network_record_summary">Domains, addresses and ports it connects to; kept for 30 days</string>
+    <!-- %1$s: a date and time. -->
+    <string name="jail_network_recording_since">Recording since %1$s</string>
+    <string name="jail_network_activity">Network activity</string>
+    <plurals name="jail_network_activity_summary">
+        <item quantity="one">%1$d destination in 24 hours</item>
+        <item quantity="other">%1$d destinations in 24 hours</item>
+    </plurals>
+    <plurals name="jail_network_blocked_count">
+        <item quantity="one">%1$d blocked</item>
+        <item quantity="other">%1$d blocked</item>
+    </plurals>
+    <string name="jail_network_no_permission">The app does not request network access</string>
+    <string name="jail_not_in_effect_packet_filter">Not in effect: network filtering unavailable on this kernel</string>
+    <string name="jail_not_in_effect_resolver">Partly in effect: name lookups are not blocked</string>
+    <string name="jail_network_global_note">For isolated apps without their own setting. With no network, connections fail at once; apps are not restarted.</string>
+
+    <!-- An app's network activity. %1$s: the app. -->
+    <string name="jail_net_subtitle_recording">%1$s · Recording</string>
+    <string name="jail_net_subtitle_stopped">%1$s · Not recording</string>
+    <!-- After the number of destinations, in large type. -->
+    <plurals name="jail_net_destinations">
+        <item quantity="one">destination</item>
+        <item quantity="other">destinations</item>
+    </plurals>
+    <!-- %1$s: connections; %2$s and %3$s: amounts of data, such as "3.2 MB". -->
+    <plurals name="jail_net_facts">
+        <item quantity="one">%1$s connection · %2$s received · %3$s sent</item>
+        <item quantity="other">%1$s connections · %2$s received · %3$s sent</item>
+    </plurals>
+    <plurals name="jail_net_facts_counts">
+        <item quantity="one">%1$s connection · %2$s refused</item>
+        <item quantity="other">%1$s connections · %2$s refused</item>
+    </plurals>
+    <string name="jail_net_legend_connected">Connected</string>
+    <string name="jail_net_legend_refused">Refused</string>
+    <string name="jail_net_now">Now</string>
+    <!-- The blocked filter, followed by how many are blocked. -->
+    <string name="jail_net_filter_blocked_count">Blocked %1$d</string>
+    <string name="jail_net_sort_data">Most data</string>
+    <string name="jail_net_sort_connections">Most connections</string>
+    <string name="jail_net_sort_recent">Most recent</string>
+    <string name="jail_net_sort_name">Name</string>
+    <string name="jail_net_section_domains">Domains</string>
+    <string name="jail_net_section_addresses">IP addresses</string>
+    <string name="jail_net_addresses_note">Connected to directly, without a system name lookup.</string>
+    <string name="jail_net_port">Port %1$d</string>
+    <plurals name="jail_net_connections">
+        <item quantity="one">%1$d connection</item>
+        <item quantity="other">%1$d connections</item>
+    </plurals>
+    <plurals name="jail_net_refused">
+        <item quantity="one">refused %1$d time</item>
+        <item quantity="other">refused %1$d times</item>
+    </plurals>
+    <string name="jail_net_blocked">Blocked</string>
+    <string name="jail_net_show_all">Show all %1$d</string>
+    <string name="jail_net_footer">Records are kept for 30 days. Blocking takes effect at once.</string>
+    <string name="jail_net_search">Search domains and addresses</string>
+    <string name="jail_net_no_results">No matching destinations</string>
+    <string name="jail_net_empty_title">No connections yet</string>
+    <!-- %1$s: a date and time. -->
+    <string name="jail_net_empty_body">Recording since %1$s. Connections appear here once the app uses the network.</string>
+    <string name="jail_net_stopped">Not recording. Records up to %1$s are shown.</string>
+    <string name="jail_net_start">Record</string>
+    <string name="jail_net_no_network_title">No network</string>
+    <string name="jail_net_no_network_body">Every connection is refused. Name lookups fail, so most destinations show as addresses.</string>
+    <string name="jail_net_names_missing_title">Domain names unavailable</string>
+    <string name="jail_net_names_missing_body">Name lookups cannot be read on this device; destinations show as addresses.</string>
+    <string name="jail_net_traffic_missing">Data amounts are not available on this device; connection counts are shown.</string>
+    <string name="jail_net_more_options">More options</string>
+    <string name="jail_net_menu_block">Block a domain or address…</string>
+    <string name="jail_net_menu_stop">Stop recording</string>
+    <string name="jail_net_menu_clear">Clear records</string>
+    <string name="jail_net_clear_title">Clear network records?</string>
+    <!-- %1$s: the app. -->
+    <string name="jail_net_clear_body">Network records of %1$s are deleted. Blocked destinations stay blocked.</string>
+    <string name="jail_net_clear">Clear</string>
+
+    <!-- Blocking. %1$s: a domain or address. -->
+    <string name="jail_net_block">Block</string>
+    <string name="jail_net_unblock">Unblock</string>
+    <string name="jail_net_block_cd">Block %1$s</string>
+    <string name="jail_net_blocked_message">%1$s blocked</string>
+    <string name="jail_net_unblocked_message">%1$s unblocked</string>
+    <string name="jail_net_manual">Added manually</string>
+    <string name="jail_net_no_attempts">No attempts in this period</string>
+
+    <!-- A destination. -->
+    <plurals name="jail_net_subdomains">
+        <item quantity="one">%1$d subdomain</item>
+        <item quantity="other">%1$d subdomains</item>
+    </plurals>
+    <!-- %1$s and %2$s: when it was first and last connected to. -->
+    <string name="jail_net_first_last">First %1$s · Last %2$s</string>
+    <string name="jail_net_block_site">Block %1$s and its subdomains</string>
+    <string name="jail_net_block_address">Block %1$s on all ports</string>
+    <string name="jail_net_sent">Sent</string>
+    <string name="jail_net_received">Received</string>
+    <string name="jail_net_connections_label">Connections</string>
+    <string name="jail_net_hosts_header">Subdomains</string>
+    <string name="jail_net_ports_header">Ports</string>
+    <string name="jail_net_addresses_header">Addresses</string>
+    <plurals name="jail_net_more">
+        <item quantity="one">%1$d more</item>
+        <item quantity="other">%1$d more</item>
+    </plurals>
+    <!-- %1$s: other domains of the app, separated by commas. -->
+    <string name="jail_net_shared">Addresses of this domain also serve %1$s, which will be blocked too.</string>
+    <string name="jail_net_own_resolver">Connections the app resolves on its own are not affected; they are listed under IP addresses and can be blocked there.</string>
+
+    <!-- Blocking a domain or address by hand. -->
+    <string name="jail_net_add_title">Block a domain or address</string>
+    <string name="jail_net_add_label">Domain, IP address or address:port</string>
+    <string name="jail_net_add_supporting">A domain includes its subdomains.</string>
+    <string name="jail_net_add_invalid">Not a domain or IP address</string>
 </resources>

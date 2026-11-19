@@ -31,8 +31,19 @@ class SandboxTest {
         assertEquals(listOf(ON, COARSE, FOREGROUND, OFF), SandboxItem.LOCATION.modes)
         assertEquals(listOf(ON, FOREGROUND, OFF), SandboxItem.CAMERA.modes)
         assertEquals(listOf(ON, FOREGROUND, OFF), SandboxItem.MICROPHONE.modes)
-        val others = SandboxItem.entries - setOf(SandboxItem.LOCATION, SandboxItem.CAMERA, SandboxItem.MICROPHONE)
+        val network = setOf(SandboxItem.NETWORK, SandboxItem.NETWORK_RECORD)
+        network.forEach { assertEquals(listOf(OFF, ON), it.modes, it.id) }
+        val others = SandboxItem.entries - setOf(SandboxItem.LOCATION, SandboxItem.CAMERA, SandboxItem.MICROPHONE) - network
         others.forEach { assertEquals(listOf(ON, OFF), it.modes, it.id) }
+    }
+
+    @Test
+    fun givenNothingSet_whenModeAsked_thenNetworkLeftToTheAppAndNotRecorded() {
+        val app = SandboxedApp(10_204, "com.example.shopping", enabled = true, created = 0, settings = emptyMap(), items = emptyMap())
+
+        assertEquals(OFF, app.modeOf(SandboxItem.NETWORK))
+        assertEquals(OFF, app.modeOf(SandboxItem.NETWORK_RECORD))
+        assertEquals(ON, app.modeOf(SandboxItem.CONTACTS))
     }
 
     @Test

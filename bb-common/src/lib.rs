@@ -72,7 +72,14 @@ pub const OFF_SB_DEV: usize = 8; //       struct super_block -> s_dev
 pub const OFF_SOCK_PROTOCOL: usize = 9; // struct sock   -> sk_protocol
 pub const OFF_SKB_DATA: usize = 10; //     struct sk_buff -> data
 pub const OFF_TASK_START: usize = 11;
-pub const OFF_COUNT: usize = 12;
+pub const OFF_SK_FAMILY: usize = 12; //   struct sock     -> __sk_common.skc_family
+pub const OFF_SK_DADDR: usize = 13; //    struct sock     -> __sk_common.skc_daddr
+pub const OFF_SK_DPORT: usize = 14; //    struct sock     -> __sk_common.skc_dport
+pub const OFF_SK_V6_DADDR: usize = 15; // struct sock     -> __sk_common.skc_v6_daddr
+pub const OFF_SK_UID: usize = 16; //      struct sock     -> sk_uid
+pub const OFF_TCP_ACKED: usize = 17; //   struct tcp_sock -> bytes_acked
+pub const OFF_TCP_RECEIVED: usize = 18; // struct tcp_sock -> bytes_received
+pub const OFF_COUNT: usize = 19;
 
 /// Stands in for an offset the running kernel's BTF does not have. Only the
 /// offsets of optional probes may be missing; such a probe is not attached.
@@ -114,6 +121,9 @@ pub const EV_NETLINK: u32 = 7;
 
 /// A call to a watched method of a system service (see `BinderEvent`).
 pub const EV_BINDER: u32 = 8;
+/// A TCP connection of an app whose connections are recorded has ended
+/// (see `TrafficEvent`).
+pub const EV_TRAFFIC: u32 = 9;
 
 /// What the app did with the path (`PathEvent::op`).
 pub const OP_OPEN: u32 = 0;
@@ -472,3 +482,52 @@ pub const fn known_app_bit(app_id: u32) -> Option<(u32, u64)> {
     let index = app_id - FIRST_APP_ID;
     Some((index / 64, 1 << (index % 64)))
 }
+
+/// A destination an app is kept from: the key of the map the packet filter's
+/// program looks packets up in.
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct NetRuleKey {
+    /// The uid of the socket the packet is sent from.
+    pub uid: u32,
+    /// The destination port, host byte order; 0 for every port.
+    pub port: u32,
+    /// The destination address in network order; IPv4 uses the first 4
+    /// bytes, and the rest is zero.
+    pub addr: [u8; 16],
+}
+
+assert_no_padding!(NetRuleKey { uid, port, addr });
+
+/// What went over a TCP connection, reported when it ends: the kernel's own
+/// counts for the socket, read once.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct TrafficEvent {
+    /// The uid is that of the socket; the pid and tid are whatever ran when
+    /// it ended, and mean nothing.
+    pub hdr: EventHeader,
+    /// `AF_INET` or `AF_INET6`.
+    pub family: u32,
+    /// The peer's port, host byte order.
+    pub port: u32,
+    /// The peer's address in network order; IPv4 uses the first 4 bytes.
+    pub addr: [u8; 16],
+    /// Bytes the peer acknowledged, low half first.
+    pub sent_low: u32,
+    pub sent_high: u32,
+    /// Bytes received, low half first.
+    pub recv_low: u32,
+    pub recv_high: u32,
+}
+
+assert_no_padding!(TrafficEvent {
+    hdr,
+    family,
+    port,
+    addr,
+    sent_low,
+    sent_high,
+    recv_low,
+    recv_high
+});

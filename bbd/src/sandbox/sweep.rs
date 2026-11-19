@@ -86,7 +86,9 @@ impl Effect for Restart {
         after: &Settings,
     ) -> anyhow::Result<()> {
         let turned_on = Item::ALL.into_iter().any(|item| {
-            item != Item::Network && before.mode(item) == Mode::Off && after.mode(item) != Mode::Off
+            item.held_by_a_process()
+                && before.mode(item) == Mode::Off
+                && after.mode(item) != Mode::Off
         });
         if before.mounts() != after.mounts() || turned_on {
             end(entry, Which::All);

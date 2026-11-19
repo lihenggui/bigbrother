@@ -56,6 +56,10 @@ use std::{
     io::Write as _,
     path::Path,
     process::{Command, Stdio},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use anyhow::Context as _;
@@ -258,6 +262,9 @@ pub struct Network {
     /// few this one has listed so far, or removed, they would let the
     /// others through.
     resumed: bool,
+    /// Whether an app is kept from single destinations
+    /// ([`super::destinations`]): the rules are needed for those too.
+    destinations: Arc<AtomicBool>,
 }
 
 impl Network {
@@ -265,7 +272,7 @@ impl Network {
     /// one pinned, and take its map. The rules that daemon left go on
     /// naming its program, with the uids it listed, until they are
     /// written again ([`Effect::resume`]).
-    pub fn start(ebpf: &mut aya::Ebpf) -> anyhow::Result<Self> {
+    pub fn start(ebpf: &mut aya::Ebpf, destinations: Arc<AtomicBool>) -> anyhow::Result<Self> {
         anyhow::ensure!(
             Family::BOTH
                 .iter()
@@ -290,17 +297,33 @@ impl Network {
             .take_map("NETWORK_REFUSED")
             .context("NETWORK_REFUSED map missing")?;
         let listed: BpfHashMap<MapData, u32, u32> = BpfHashMap::try_from(map)?;
-        Ok(Self::with(Box::new(System), Box::new(listed)))
+        Ok(Self::with(Box::new(System), Box::new(listed), destinations))
     }
 
-    fn with(tools: Box<dyn Tools>, listed: Box<dyn Listed>) -> Self {
+    fn with(tools: Box<dyn Tools>, listed: Box<dyn Listed>, destinations: Arc<AtomicBool>) -> Self {
         Self {
             tools,
             listed,
             refused: BTreeSet::new(),
             rules: Rules::Unknown,
             resumed: false,
+            destinations,
         }
+    }
+
+    /// Whether the rules are needed: an app is kept from the network, or
+    /// from a destination.
+    fn wanted(&self) -> bool {
+        !self.refused.is_empty() || self.destinations.load(Ordering::Relaxed)
+    }
+
+    /// Have the rules there or gone as they are needed now, once the apps
+    /// have been taken up again.
+    fn settle(&mut self) -> anyhow::Result<()> {
+        if self.resumed {
+            self.write_rules(self.wanted())?;
+        }
+        Ok(())
     }
 
     /// Have the rules there if `wanted`, and gone if not, for both
@@ -350,7 +373,7 @@ impl Network {
         // known to be as meant: rules a daemon before left would go on
         // refusing the app by that daemon's list.
         if self.resumed
-            && let Err(e) = self.write_rules(!self.refused.is_empty())
+            && let Err(e) = self.write_rules(self.wanted())
         {
             // Off this daemon's list all the same; the rules are written
             // again with the next change.
@@ -373,7 +396,12 @@ impl Effect for Network {
             // installation before admitting its successor.
             self.allow(entry.uid)?;
         }
-        Ok(())
+        // An app kept from single destinations needs the rules too.
+        self.settle()
+    }
+
+    fn refresh(&mut self, _: &Entry, _: &Settings) -> anyhow::Result<()> {
+        self.settle()
     }
 
     fn disable(&mut self, entry: &mut Entry, _: &[String], _: &Settings) -> anyhow::Result<()> {
@@ -390,7 +418,7 @@ impl Effect for Network {
         match (before.network_refused(), after.network_refused()) {
             (false, true) => self.refuse(entry.uid),
             (true, false) => self.allow(entry.uid),
-            _ => Ok(()),
+            _ => self.settle(),
         }
     }
 
@@ -406,7 +434,7 @@ impl Effect for Network {
         }
         // Written also where they are: the rules of the daemon before
         // name its program. With no app listed, what it left is removed.
-        if let Err(e) = self.write_rules(!self.refused.is_empty()) {
+        if let Err(e) = self.write_rules(self.wanted()) {
             eprintln!(
                 "bbd: warning: {} sandboxed apps may have the network: {e:#}",
                 self.refused.len()
@@ -419,6 +447,11 @@ impl Effect for Network {
             && let Err(e) = self.allow(uid)
         {
             eprintln!("bbd: sandbox: cannot clear the retired uid {uid}'s network rule: {e:#}");
+        }
+        // The destinations it was kept from went before this: without any
+        // left, the rules go too.
+        if let Err(e) = self.settle() {
+            eprintln!("bbd: warning: the packet filter's rules are not as meant: {e:#}");
         }
     }
 
@@ -514,6 +547,8 @@ mod tests {
         /// Whether the list cannot be changed.
         list_fails: bool,
         runs: u32,
+        /// Whether an app is kept from single destinations.
+        destinations: Arc<AtomicBool>,
     }
 
     #[derive(Clone, Default)]
@@ -594,7 +629,11 @@ mod tests {
     impl Fake {
         /// A daemon that has just started.
         fn network(&self) -> Network {
-            Network::with(Box::new(self.clone()), Box::new(self.clone()))
+            Network::with(
+                Box::new(self.clone()),
+                Box::new(self.clone()),
+                self.0.borrow().destinations.clone(),
+            )
         }
 
         /// One that found no app sandboxed when it started.
@@ -815,6 +854,38 @@ mod tests {
         assert!(fake.runs() > runs);
         assert_eq!(fake.refused(), [10002]);
         assert!(in_place(&network));
+    }
+
+    #[test]
+    fn the_rules_are_there_for_an_app_kept_from_single_destinations() {
+        let fake = Fake::default();
+        let mut network = fake.started();
+        let off = items(Mode::Off);
+        let destinations = fake.0.borrow().destinations.clone();
+
+        // The app has the network, and a destination it is kept from.
+        destinations.store(true, Ordering::Relaxed);
+        network.enable(&mut entry(10001), &[], &off).unwrap();
+        assert!(fake.has_rules());
+        assert!(fake.0.borrow().listed.is_empty());
+
+        // The last such destination gone, and the app refreshed.
+        destinations.store(false, Ordering::Relaxed);
+        network.refresh(&entry(10001), &off).unwrap();
+        assert!(!fake.has_rules());
+
+        // Kept from the network as well, then only from a destination.
+        network
+            .update(&mut entry(10001), &[], &off, &items(Mode::On))
+            .unwrap();
+        destinations.store(true, Ordering::Relaxed);
+        network
+            .update(&mut entry(10001), &[], &items(Mode::On), &off)
+            .unwrap();
+        assert!(fake.has_rules());
+        destinations.store(false, Ordering::Relaxed);
+        network.disable(&mut entry(10001), &[], &off).unwrap();
+        assert!(!fake.has_rules());
     }
 
     #[test]

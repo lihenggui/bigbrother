@@ -33,6 +33,7 @@ import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxStatus
+import li.mercury.bigbrother.feature.jail.impl.network.networkMode
 import javax.inject.Inject
 
 data class JailSettingsUiState(
@@ -90,6 +91,10 @@ class JailSettingsViewModel @Inject constructor(
 
     fun choose(item: SandboxItem, mode: SandboxMode) {
         change { sandboxRepository.setGlobal(mapOf(item to mode)) }
+    }
+
+    fun setNetworkAllowed(allowed: Boolean) {
+        choose(SandboxItem.NETWORK, networkMode(allowed))
     }
 
     fun setAutoIsolate(on: Boolean) {

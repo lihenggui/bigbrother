@@ -28,6 +28,8 @@ use anyhow::Context as _;
 use rusqlite::{Connection, OpenFlags, OptionalExtension as _, params};
 use serde::Serialize;
 
+pub mod net;
+
 pub const DEFAULT_DB: &str = "/data/adb/big_brother/bb.db";
 
 /// Access mode bits, as stored in `access.mode`.
@@ -106,7 +108,7 @@ impl Category {
 /// Schema version stored in SQLite's `user_version`. Bump it whenever
 /// `SCHEMA` changes, and add the step from the previous version to
 /// `MIGRATIONS`.
-const SCHEMA_VERSION: i32 = 10;
+const SCHEMA_VERSION: i32 = 11;
 
 /// How a database written by a released build is brought to
 /// `SCHEMA_VERSION`: (from, to, statements), applied one after another.
@@ -121,6 +123,7 @@ const MIGRATIONS: &[(i32, i32, &str)] = &[
     ),
     (8, 9, RETIRED_SANDBOX),
     (9, 10, SANDBOX_AUTO_SCHEMA),
+    (10, 11, net::NET_SCHEMA),
 ];
 
 // The old install's settings and saved grants remain available to the owner
@@ -383,6 +386,8 @@ pub struct Writer {
     events: HashMap<EventKey, (u32, u32)>,
     /// Sensor sessions started, changed or ended, not yet written.
     sessions: Vec<SensorSession>,
+    /// What sandboxed apps connected to, not yet written (see `net`).
+    net: std::cell::RefCell<net::Pending>,
     /// The counters last written.
     written: Option<Counters>,
 }
@@ -434,6 +439,7 @@ impl Writer {
             pending: HashMap::new(),
             events: HashMap::new(),
             sessions: Vec::new(),
+            net: std::cell::RefCell::new(HashMap::new()),
             written: None,
         })
     }
@@ -554,7 +560,10 @@ impl Writer {
     }
 
     fn has_rows(&self) -> bool {
-        !self.pending.is_empty() || !self.events.is_empty() || !self.sessions.is_empty()
+        !self.pending.is_empty()
+            || !self.events.is_empty()
+            || !self.sessions.is_empty()
+            || !self.net.borrow().is_empty()
     }
 
     /// Write buffered rows, with the counters, in one transaction. Without
@@ -588,6 +597,7 @@ impl Writer {
             self.pending.clear();
             self.events.clear();
             self.sessions.clear();
+            self.net.get_mut().clear();
             self.buffered_bytes = 0;
             return Ok(());
         }
@@ -695,12 +705,14 @@ impl Writer {
                 meta.execute(params![key, value])?;
             }
         }
+        Self::write_net(&self.net.borrow(), &tx)?;
         tx.commit()?;
         // Only now: if anything above failed, the rows stay buffered and
         // are written by the next flush.
         self.pending.clear();
         self.events.clear();
         self.sessions.clear();
+        self.net.get_mut().clear();
         self.buffered_bytes = 0;
         self.written = Some(counters.clone());
         Ok(())
@@ -754,6 +766,7 @@ impl Writer {
             params![cutoff],
         )?;
         self.delete_unused_paths()?;
+        self.prune_net(cutoff)?;
         Ok(self
             .conn
             .execute("DELETE FROM access WHERE last_ts < ?1", params![cutoff])?)
@@ -1117,6 +1130,7 @@ fn create_schema(conn: &mut Connection) -> anyhow::Result<()> {
     conn.execute_batch(SCHEMA)?;
     conn.execute_batch(RETIRED_SANDBOX)?;
     conn.execute_batch(SANDBOX_AUTO_SCHEMA)?;
+    conn.execute_batch(net::NET_SCHEMA)?;
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     conn.commit()?;
     Ok(())

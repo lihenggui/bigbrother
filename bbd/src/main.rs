@@ -26,6 +26,7 @@ mod helper;
 mod lifecycle;
 mod mounts;
 mod net;
+mod netctl;
 mod packages;
 mod paths;
 mod personal;
@@ -159,6 +160,15 @@ enum Command {
         #[command(subcommand)]
         command: SandboxCommand,
     },
+    /// The network of apps in the sandbox: where the ones whose connections
+    /// are recorded connected to, and the destinations apps are kept from.
+    Net {
+        /// Print the daemon's answer as JSON.
+        #[arg(long, global = true)]
+        json: bool,
+        #[command(subcommand)]
+        command: NetCommand,
+    },
     /// The app ops helper's lines that give every sandboxed app its app ops
     /// back, read from the database; for uninstall.sh, which may run without
     /// the daemon.
@@ -170,6 +180,68 @@ enum Command {
     /// Publish a fully prepared module directory with one filesystem operation.
     #[command(hide = true)]
     ModuleExchange { staged: PathBuf, installed: PathBuf },
+}
+
+#[derive(Subcommand)]
+enum NetCommand {
+    /// Where an app connected to since a time, as JSON: by site and by
+    /// address, with what it is kept from.
+    Activity {
+        package: String,
+        /// Seconds since the epoch.
+        #[arg(long)]
+        since: i64,
+        #[arg(long)]
+        until: Option<i64>,
+        /// What a bar of the chart spans: hour or day.
+        #[arg(long, default_value = "hour")]
+        bucket: String,
+        /// Seconds the device's time is ahead of UTC: where its days begin.
+        #[arg(long, default_value_t = 0, allow_negative_numbers = true)]
+        offset: i64,
+        /// Android user the app is installed for.
+        #[arg(long, default_value_t = 0)]
+        user: u32,
+    },
+    /// One destination of an app with the chart of its connections:
+    /// `domain:<site>` or `ip:<address>`.
+    Destination {
+        package: String,
+        target: String,
+        #[arg(long)]
+        since: i64,
+        #[arg(long, default_value = "hour")]
+        bucket: String,
+        #[arg(long, default_value_t = 0, allow_negative_numbers = true)]
+        offset: i64,
+        #[arg(long, default_value_t = 0)]
+        user: u32,
+    },
+    /// Keep an app from a destination: `domain:example.com` (and the names
+    /// under it), `host:t.example.com`, `ip:203.0.113.7` or
+    /// `ip:203.0.113.7:8080`. Needs the daemon.
+    Block {
+        package: String,
+        target: String,
+        /// The destination was typed, not chosen among the records.
+        #[arg(long)]
+        manual: bool,
+        #[arg(long, default_value_t = 0)]
+        user: u32,
+    },
+    /// Stop keeping an app from a destination. Needs the daemon.
+    Unblock {
+        package: String,
+        target: String,
+        #[arg(long, default_value_t = 0)]
+        user: u32,
+    },
+    /// Delete what is recorded of an app's network. Needs the daemon.
+    Clear {
+        package: String,
+        #[arg(long, default_value_t = 0)]
+        user: u32,
+    },
 }
 
 #[derive(Subcommand)]
@@ -385,6 +457,55 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Sandbox { json, command } => sandbox::command(&cli.db, command.into(), json),
+        Command::Net { json, command } => match command {
+            NetCommand::Activity {
+                package,
+                since,
+                until,
+                bucket,
+                offset,
+                user,
+            } => netctl::activity(&cli.db, &package, user, since, until, (&bucket, offset)),
+            NetCommand::Destination {
+                package,
+                target,
+                since,
+                bucket,
+                offset,
+                user,
+            } => netctl::destination(&cli.db, &package, user, &target, since, (&bucket, offset)),
+            NetCommand::Block {
+                package,
+                target,
+                manual,
+                user,
+            } => sandbox::command(
+                &cli.db,
+                control::Request::NetBlock {
+                    package,
+                    user,
+                    target,
+                    manual,
+                },
+                json,
+            ),
+            NetCommand::Unblock {
+                package,
+                target,
+                user,
+            } => sandbox::command(
+                &cli.db,
+                control::Request::NetUnblock {
+                    package,
+                    user,
+                    target,
+                },
+                json,
+            ),
+            NetCommand::Clear { package, user } => {
+                sandbox::command(&cli.db, control::Request::NetClear { package, user }, json)
+            }
+        },
         Command::ModuleStop { module } => lifecycle::stop(&module),
         Command::ModuleExchange { staged, installed } => {
             let staged = std::ffi::CString::new(staged.as_os_str().as_encoded_bytes())?;

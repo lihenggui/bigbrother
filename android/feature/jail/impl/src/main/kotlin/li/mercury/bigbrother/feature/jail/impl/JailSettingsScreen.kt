@@ -78,6 +78,7 @@ import li.mercury.bigbrother.core.model.SandboxStatus
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.SectionHeader
+import li.mercury.bigbrother.feature.jail.impl.network.globalNetworkSection
 import li.mercury.bigbrother.core.ui.R as UiR
 
 /** The global settings of the jail, item by item, and what works on this device. */
@@ -102,6 +103,7 @@ fun JailSettingsScreen(
         onSetAutoIsolate = viewModel::setAutoIsolate,
         onReleaseAll = viewModel::releaseAll,
         onErrorDismiss = viewModel::dismissError,
+        onAllowNetwork = viewModel::setNetworkAllowed,
         modifier = modifier,
     )
 }
@@ -118,6 +120,7 @@ internal fun JailSettingsScreen(
     onSetAutoIsolate: (Boolean) -> Unit,
     onReleaseAll: () -> Unit,
     onErrorDismiss: () -> Unit,
+    onAllowNetwork: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val snackbar = remember { SnackbarHostState() }
@@ -199,6 +202,14 @@ internal fun JailSettingsScreen(
                         }
                     }
                     item(key = "restart") { Note(stringResource(R.string.jail_restart_note), Modifier.padding(top = 8.dp)) }
+                    globalNetworkSection(
+                        mode = global[SandboxItem.NETWORK] ?: SandboxItem.NETWORK.default,
+                        unmet = state.status?.unmet(SandboxItem.NETWORK).orEmpty(),
+                        expanded = expanded == SandboxItem.NETWORK,
+                        onExpandedChange = { open -> expanded = if (open) SandboxItem.NETWORK else null },
+                        onSetAllowed = onAllowNetwork,
+                        onChoose = { mode -> onChoose(SandboxItem.NETWORK, mode) },
+                    )
                     item(key = "status_header") { SectionHeader(stringResource(R.string.jail_section_status)) }
                     item(key = "status") { StatusRow(state.status, state.autoIsolate) }
                     item(key = "release_all") {
@@ -273,6 +284,7 @@ private fun StatusRow(status: SandboxStatus?, autoIsolate: Boolean) {
         if (status != null && !status.gate) add(stringResource(R.string.jail_status_gate_missing))
         if (status != null && (!status.androidIdHook || !status.appListHook)) add(stringResource(R.string.jail_status_hook_missing))
         if (status != null && !status.appOps) add(stringResource(R.string.jail_status_appops_missing))
+        if (status != null && !status.network) add(stringResource(R.string.jail_status_network_missing))
         val pending = status?.newAppsPending ?: 0
         if (pending > 0) {
             val text = if (status?.newAppsHeld == true) R.plurals.jail_status_new_apps_held else R.plurals.jail_status_new_apps_pending

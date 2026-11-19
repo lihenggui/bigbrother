@@ -22,6 +22,19 @@ $bbd sandbox auto on                          # see Newly installed apps
 Every subcommand takes `--json`. The commands are sent to the running
 daemon (`bbd.ctl`, one JSON line each way); without it they fail.
 
+The network of an app in the sandbox has commands of its own (see
+Destinations):
+
+```sh
+$bbd sandbox set com.example.app network_record=on       # record where it connects
+$bbd net activity com.example.app --since 1763393520     # where it connected, as JSON
+$bbd net block com.example.app domain:adnet.example      # a name and those under it
+$bbd net block com.example.app host:t.example.com        # one name
+$bbd net block com.example.app ip:203.0.113.7            # an address; ip:203.0.113.7:8080 for one port
+$bbd net unblock com.example.app ip:203.0.113.7
+$bbd net clear com.example.app                           # delete what is recorded; the rules stay
+```
+
 Enabling and disabling end the app's running processes, so that it starts
 again as it should. An app that is not in the sandbox is not affected in
 any way.
@@ -91,11 +104,13 @@ Android's "only while using the app" does:
 | `notification_content` | No notification access: other apps' notifications cannot be read; its own still show | off, on |
 | `screen_content` | Its accessibility services off: what is on screen cannot be read or acted on | off, on |
 | `network` | No network: connections fail at once, and no name is looked up | off, on |
+| `network_record` | Nothing is kept from the app: where it connects is recorded | off, on |
 
 The global settings give every item a mode; an app has these, except for
 the items it has a mode of its own for. Every item is on unless set
-otherwise, except `network`, which is off: an app put in the sandbox keeps
-the network until it is taken from it. An app keeps its own settings when
+otherwise, except `network` and `network_record`, which are off: an app put
+in the sandbox keeps the network until it is taken from it, and its
+connections are recorded only once that is turned on for it. An app keeps its own settings when
 it leaves the sandbox.
 
 ```sh
@@ -111,6 +126,7 @@ mounted for it changes (`storage`, `cpu_info`), or an item that was off is
 turned on, to any mode but off: what the app read before, and may keep,
 goes with them. `network` ends none: the connections the app has are
 refused from then on, and the resolver is taken from the processes it has.
+Nor do `network_record` and the destinations an app is kept from.
 Making
 location coarse ends them too when the app had precise location: Android
 ends an app whenever it revokes a permission the app had. A change of the global
@@ -315,6 +331,36 @@ The rules are about the app's own sockets. Other apps and the system can
 still fetch something on the app's behalf (the download manager, a browser
 it opens).
 
+### Destinations
+
+An app in the sandbox can be kept from single destinations while it keeps
+the network (`bbd net block`): an address, one port of an address, a name,
+or a name with every name under it. The rules are the app's whether it is
+in the sandbox or not, and are carried out while it is.
+
+An address is refused by the same program of the packet filter: for an app
+that has such rules, and for no other, it reads the destination of the
+packet and looks it up among them. A name is refused where it is looked up
+(see The resolver), and the addresses the app was already given for it are
+refused with it, so that a connection it has, or an address it kept, does
+not go on. Two things follow from a name being more than one address and an
+address more than one name: a name that shares an address with one the app
+is kept from is not reached either, and an app that finds the address of a
+name by itself, without the system's resolver, is not kept from it; the
+connection is then recorded under the address, which it can be kept from.
+
+Where an app connects is recorded once `network_record` is on for it, and
+of no other app: the probes that report connections drop destinations on
+the internet in the kernel unless the app is listed. A row is an hour in
+which the app connected to a port of an address, under the name it was
+given the address for, with how many connections were tried and how many
+the sandbox refused. An app has rows for some hundreds of destinations
+in an hour; what it connects to past them is counted together. When a TCP
+connection ends, the kernel's own counts
+of the bytes sent and received over it are read once and added to the row;
+nothing is counted packet by packet, and other protocols have connection
+counts only. The rows are kept 30 days, apart from the other records.
+
 ### The resolver
 
 An app does not look names up itself: it asks netd, over the socket
@@ -341,6 +387,24 @@ The mount is made only in a namespace whose mounts do not pass to others,
 which an app's are: in one that shares them, it would take the resolver
 from every process. It shows among the app's own mounts as `/null` of
 `/dev`.
+
+An app whose connections are recorded, or that is kept from a name, is
+given a socket of the daemon's in place of netd's, in the same way, and
+the daemon stands between the two. It passes each request on to netd on a
+connection made with the app's uid as the effective one, so that netd
+chooses the network of the app and not of the daemon, and passes the
+answer back; it remembers which name the app was given each address for,
+and does not ask for a name the app is kept from. One request is taken on
+a connection. The socket carries the SELinux labels of netd's, which lets
+an app connect to it without a rule added to the policy, is open to the
+group netd's is open to, and serves only the apps given it, a few lookups
+of each at once: any process can find the socket, and an app kept from the
+network is to have no resolver at all. Where
+the daemon's domain may not label a socket so, names are not available:
+`bbd sandbox status` says so, connections are recorded under addresses,
+and an app cannot be kept from a name. While there is no daemon, the
+lookups of these apps fail; the daemon that starts next gives their
+processes its own socket.
 
 On a kernel where starting apps cannot be held, the resolver is left to
 the app; `bbd sandbox list` then names the mounts as missing for
@@ -426,8 +490,8 @@ minutes.
 
 `scripts/check-sandbox.sh` runs the canary app outside the sandbox, inside
 it and outside again, and checks what it reports seeing each time, an
-isolated process of it, a file it was let pick and a connection it tries
-to make among it. Picking the
+isolated process of it, a file it was let pick and the connections it
+tries to make among it. Picking the
 file goes through the system's file picker, driven with `uiautomator`:
 
 ```sh

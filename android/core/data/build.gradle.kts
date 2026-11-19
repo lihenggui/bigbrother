@@ -35,4 +35,6 @@ dependencies {
 
     testImplementation(libs.kotlin.test.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    // For org.json, which the daemon's answers are read with.
+    testImplementation(libs.robolectric)
 }

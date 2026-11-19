@@ -20,8 +20,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import li.mercury.bigbrother.core.data.RecordsException
-import li.mercury.bigbrother.core.data.root.ModulePaths.BBD
 import li.mercury.bigbrother.core.data.root.RootShell
+import li.mercury.bigbrother.core.data.root.bbd
 import li.mercury.bigbrother.core.data.root.shellQuoted
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
@@ -114,6 +114,11 @@ internal class RootSandboxRepository @Inject constructor(
             // Not reported by a daemon older than isolating new apps.
             newAppsPending = status.optInt("new_apps_pending"),
             newAppsHeld = status.optBoolean("new_apps_held"),
+            // Not reported by a daemon older than the network's control.
+            network = status.optBoolean("network"),
+            netRecord = status.optBoolean("net_record"),
+            dnsNames = status.optBoolean("dns_names"),
+            traffic = status.optBoolean("traffic"),
         )
     }
 
@@ -182,6 +187,8 @@ internal class RootSandboxRepository @Inject constructor(
         settings = getJSONObject("settings").toModes(),
         items = getJSONObject("items").toModes(),
         unmet = optJSONObject("unmet")?.toParts().orEmpty(),
+        networkRules = optInt("network_rules"),
+        recordingSince = if (isNull("recording_since")) null else getLong("recording_since"),
     )
 
     /** Items and the parts of each not in place; what this build doesn't know is left out. */
@@ -204,31 +211,9 @@ internal class RootSandboxRepository @Inject constructor(
         throw RecordsException.CommandFailed("unexpected output from bbd: ${e.message}")
     }
 
-    private suspend fun sandbox(args: String): String {
-        val result = rootShell.run(
-            "if [ -x $BBD ]; then $BBD sandbox $args --json; else echo $MISSING_MARKER >&2; false; fi",
-            label = "bbd sandbox ${args.substringBefore(' ')}",
-        )
-        if (!result.isSuccess) {
-            if (MISSING_MARKER in result.error) throw RecordsException.ModuleMissing()
-            // A daemon, or its command line, without this command: the
-            // module is older than this app.
-            if (OUTDATED.any { it in result.error }) throw RecordsException.ModuleOutdated()
-            throw RecordsException.CommandFailed(
-                result.error.removePrefix(ERROR_PREFIX).ifBlank { "bbd exited with ${result.code}" },
-            )
-        }
-        return result.output
-    }
+    private suspend fun sandbox(args: String): String = rootShell.bbd("sandbox", args)
 
     private companion object {
-        const val MISSING_MARKER = "bbd-not-installed"
         const val GLOBAL = "global"
-        const val ERROR_PREFIX = "Error: "
-        val OUTDATED = listOf(
-            "unrecognized subcommand",
-            "unexpected argument",
-            "unknown command",
-        )
     }
 }

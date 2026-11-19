@@ -27,7 +27,9 @@ import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.testing.MainDispatcherRule
 import li.mercury.bigbrother.core.testing.repository.TestAppInfoRepository
 import li.mercury.bigbrother.core.testing.repository.TestInstalledAppRepository
+import li.mercury.bigbrother.core.testing.repository.TestNetworkRepository
 import li.mercury.bigbrother.core.testing.repository.TestSandboxRepository
+import li.mercury.bigbrother.feature.jail.impl.network.emptyActivity
 import org.junit.Rule
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -51,7 +53,7 @@ class JailAppViewModelTest {
         packageName: String = PACKAGE,
         sandboxRepository: TestSandboxRepository = this@JailAppViewModelTest.sandboxRepository,
     ): JailAppViewModel {
-        val viewModel = JailAppViewModel(uid, packageName, sandboxRepository, TestAppInfoRepository(), installedAppRepository, currentUserId = 0)
+        val viewModel = JailAppViewModel(uid, packageName, sandboxRepository, TestAppInfoRepository(), installedAppRepository, TestNetworkRepository(emptyActivity()), currentUserId = 0)
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
         viewModel.refresh()
         return viewModel
@@ -140,6 +142,33 @@ class JailAppViewModelTest {
         viewModel.reset()
 
         assertTrue(viewModel.app().settings.isEmpty())
+    }
+
+    @Test
+    fun givenGlobalAllowed_whenNetworkSwitchedOff_thenDaemonGetsNetworkOn() = runTest {
+        val viewModel = viewModel()
+
+        viewModel.setNetworkAllowed(false)
+
+        assertEquals(mapOf(SandboxItem.NETWORK to SandboxMode.ON), viewModel.app().settings)
+        viewModel.setNetworkAllowed(true)
+        assertTrue(viewModel.app().settings.isEmpty())
+        assertEquals(SandboxMode.OFF, viewModel.app().modeOf(SandboxItem.NETWORK))
+    }
+
+    @Test
+    fun givenOwnNetworkAndRecording_whenReset_thenOnlyIsolationItemsFollowGlobalSettings() = runTest {
+        val viewModel = viewModel()
+        viewModel.setNetworkAllowed(false)
+        viewModel.setRecording(true)
+        viewModel.setOn(SandboxItem.CONTACTS, on = false)
+
+        viewModel.reset()
+
+        assertEquals(
+            mapOf(SandboxItem.NETWORK to SandboxMode.ON, SandboxItem.NETWORK_RECORD to SandboxMode.ON),
+            viewModel.app().settings,
+        )
     }
 
     @Test

@@ -54,6 +54,14 @@ JSON.
   kept from the network; with none, the chains and the jump to them are
   removed. A packet costs one rule and one map lookup whatever the number
   of apps: no rule per app.
+- Where apps connect on the internet is recorded only of the apps in the
+  sandbox with `network_record` on (`sandbox/destinations.rs`), and names
+  and addresses are never logged. The bytes of a connection are the
+  kernel's counts, read when it ends: nothing is counted per packet.
+- The daemon's resolver socket (`sandbox/names.rs`) takes one request per
+  connection, serves sandboxed apps only, and passes a request on with
+  the app's uid as the effective one. A lookup thread that cannot be root
+  again ends the daemon rather than go on as the app.
 - A mount made in a running process's namespace (`sandbox/resolver.rs`) is
   made only where it cannot pass to other namespaces
   (`resolver::spreads`): in the first namespace, or one that shares its
