@@ -435,6 +435,7 @@ pub fn command(db: &Path, request: &Request) -> anyhow::Result<serde_json::Value
 
 #[cfg(test)]
 mod tests {
+    use std::os::{fd::AsRawFd as _, unix::net::UnixListener as SyncListener};
     use std::time::Instant;
 
     use super::*;
@@ -444,6 +445,18 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    fn stale_socket(path: &Path) -> SyncListener {
+        let listener = SyncListener::bind(path).unwrap();
+        // A child forked by another test may inherit a descriptor. Stop
+        // listening explicitly so the socket refuses connections even then.
+        // SAFETY: the listener owns this descriptor throughout the call.
+        assert_eq!(
+            unsafe { libc::shutdown(listener.as_raw_fd(), libc::SHUT_RDWR) },
+            0
+        );
+        listener
     }
 
     /// Run a listener on `db`'s socket in a thread of its own; `serve` is
@@ -480,7 +493,7 @@ mod tests {
         let start = Instant::now();
         request_flush_within(&db, Duration::from_secs(5));
         // A socket left behind by a daemon that has gone.
-        drop(std::os::unix::net::UnixListener::bind(socket_path(&db)).unwrap());
+        let _stale = stale_socket(&socket_path(&db));
         request_flush_within(&db, Duration::from_secs(5));
         assert!(start.elapsed() < Duration::from_secs(1));
         fs::remove_dir_all(dir).unwrap();
@@ -627,7 +640,7 @@ mod tests {
         let e = command(&db, &Request::SandboxList).unwrap_err();
         assert_eq!(e.to_string(), "the daemon is not running");
         // A socket left behind by a daemon that has gone.
-        drop(std::os::unix::net::UnixListener::bind(command_socket_path(&db)).unwrap());
+        let _stale = stale_socket(&command_socket_path(&db));
         let e = command(&db, &Request::SandboxList).unwrap_err();
         assert_eq!(e.to_string(), "the daemon is not running");
         assert!(start.elapsed() < Duration::from_secs(1));
