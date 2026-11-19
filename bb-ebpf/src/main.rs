@@ -53,6 +53,10 @@
 //! * `gate_setresuid` — not a recorder: kprobe on `setresuid`, which stops a
 //!   starting app the user put in the sandbox until the daemon has replaced
 //!   the storage it will see.
+//! * `network_refused` — not a recorder either: a socket filter the kernel's
+//!   packet filter asks, for each packet leaving the device, whether the
+//!   socket it comes from is one of an app the sandbox keeps from the
+//!   network.
 //!
 //! Probing the specific syscall functions, rather than the `sys_enter` /
 //! `sys_exit` tracepoints, matters for overhead: the tracepoints run on every
@@ -73,9 +77,9 @@ use aya_ebpf::{
         bpf_probe_read_kernel_str_bytes, bpf_probe_read_user, bpf_probe_read_user_buf,
         bpf_probe_read_user_str_bytes,
     },
-    macros::{kprobe, kretprobe, map, raw_tracepoint},
+    macros::{kprobe, kretprobe, map, raw_tracepoint, socket_filter},
     maps::{Array, HashMap, LruHashMap, PerCpuArray, RingBuf},
-    programs::{ProbeContext, RawTracePointContext, RetProbeContext},
+    programs::{ProbeContext, RawTracePointContext, RetProbeContext, SkBuffContext},
 };
 use bb_common::filter::{
     NET_PUBLIC, ipv4_class, ipv6_class, netlink_matters, own_proc_entry_matters,
@@ -1301,6 +1305,30 @@ fn try_gate(ctx: &ProbeContext) -> Result<(), i32> {
 #[inline(always)]
 fn kill() {
     unsafe { aya_ebpf::helpers::generated::bpf_send_signal(SIGKILL) };
+}
+
+// ---- sandbox network --------------------------------------------------------
+
+/// The uids the sandbox keeps from the network.
+#[map]
+static NETWORK_REFUSED: HashMap<u32, u32> = HashMap::with_max_entries(1024, 0);
+
+/// Whether a packet is sent from a socket of an app kept from the network:
+/// the match of a rule of the packet filter (`-m bpf`), which refuses the
+/// packets it matches. Nonzero is a match.
+///
+/// The rule exists only while an app is kept from the network. While it
+/// does, this runs for every packet that leaves the device: a uid check,
+/// and for an app's packet one map lookup, however many apps are listed.
+#[socket_filter]
+pub fn network_refused(ctx: SkBuffContext) -> i64 {
+    // The uid of the socket's owner, whichever process is sending; the
+    // overflow uid for a packet that comes from no socket.
+    let uid = ctx.skb.get_socket_uid();
+    if uid % PER_USER_RANGE < FIRST_APPLICATION_UID {
+        return 0;
+    }
+    i64::from(unsafe { NETWORK_REFUSED.get(&uid) }.is_some())
 }
 
 /// Return of any tracked syscall, and of the `netlink_send` security hook.

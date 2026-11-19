@@ -20,7 +20,8 @@
 //! location, the camera and the microphone, foreground (the data only
 //! while the app is in use). The settings of a sandboxed app name the items
 //! it has its own mode for; every other item has the mode of the global
-//! settings, and every item is on unless set otherwise.
+//! settings, and every item is on unless set otherwise, except the network,
+//! which is off: an app put in the sandbox is not cut off by that alone.
 
 use std::collections::BTreeMap;
 
@@ -57,6 +58,8 @@ pub enum Item {
     /// What is on the screen in every app, read, and acted on, by an
     /// accessibility service the user let the app have.
     ScreenContent,
+    /// The network: what the app sends anywhere but to the device itself.
+    Network,
 }
 
 /// What an item does to the app.
@@ -88,7 +91,7 @@ pub enum OpMode {
 }
 
 impl Item {
-    pub const ALL: [Item; 15] = [
+    pub const ALL: [Item; 16] = [
         Item::Storage,
         Item::CpuInfo,
         Item::Contacts,
@@ -104,6 +107,7 @@ impl Item {
         Item::NearbyDevices,
         Item::NotificationContent,
         Item::ScreenContent,
+        Item::Network,
     ];
 
     /// The name the item goes by in the database, in commands and in JSON.
@@ -124,6 +128,18 @@ impl Item {
             Item::NearbyDevices => "nearby_devices",
             Item::NotificationContent => "notification_content",
             Item::ScreenContent => "screen_content",
+            Item::Network => "network",
+        }
+    }
+
+    /// The mode the item has where neither the app's settings nor the
+    /// global ones name it. The network is left to the app: with it on,
+    /// most apps do nothing at all, and an app sandboxed by a build that
+    /// did not know the item must keep the network it had.
+    pub fn default_mode(self) -> Mode {
+        match self {
+            Item::Network => Mode::Off,
+            _ => Mode::On,
         }
     }
 
@@ -191,6 +207,8 @@ impl Item {
                 "android:bluetooth_connect",
                 "android:nearby_wifi_devices",
             ],
+            // Refused by the packet filter.
+            Item::Network => &[],
         }
     }
 }
@@ -230,7 +248,8 @@ pub struct Settings(BTreeMap<Item, Mode>);
 /// What carries out an item. Most items are only app ops; storage is app
 /// ops, mounts, and the system server hook withholding the file grants
 /// the app kept from before; the device identifiers and the installed
-/// apps are app ops and an answer of the hook.
+/// apps are app ops and an answer of the hook; the network is the
+/// system's packet filter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Part {
@@ -239,6 +258,7 @@ pub enum Part {
     AndroidIdHook,
     AppListHook,
     UriGrantsHook,
+    PacketFilter,
 }
 
 impl Part {
@@ -249,6 +269,7 @@ impl Part {
             Part::AndroidIdHook => "android_id_hook",
             Part::AppListHook => "app_list_hook",
             Part::UriGrantsHook => "uri_grants_hook",
+            Part::PacketFilter => "packet_filter",
         }
     }
 }
@@ -261,6 +282,7 @@ pub struct InPlace {
     pub android_id_hook: bool,
     pub app_list_hook: bool,
     pub uri_grants_hook: bool,
+    pub packet_filter: bool,
 }
 
 /// What the sandbox mounts in an app's namespace as it starts.
@@ -336,13 +358,16 @@ impl Settings {
     }
 
     /// What applies: these settings where they name an item, `global` where
-    /// they do not, and on for an item neither names.
+    /// they do not, and the item's own default where neither names it.
     pub fn over(&self, global: &Settings) -> Settings {
         Self(
             Item::ALL
                 .into_iter()
                 .map(|item| {
-                    let mode = self.get(item).or(global.get(item)).unwrap_or(Mode::On);
+                    let mode = self
+                        .get(item)
+                        .or(global.get(item))
+                        .unwrap_or(item.default_mode());
                     (item, mode)
                 })
                 .collect(),
@@ -351,14 +376,29 @@ impl Settings {
 
     /// The mode of `item` in settings that apply ([`Self::over`]).
     pub fn mode(&self, item: Item) -> Mode {
-        self.get(item).unwrap_or(Mode::On)
+        self.get(item).unwrap_or(item.default_mode())
     }
 
     /// Whether any item does something to the app.
+    #[cfg(test)]
     pub fn any_on(&self) -> bool {
         Item::ALL
             .into_iter()
             .any(|item| self.mode(item) != Mode::Off)
+    }
+
+    /// Whether an item is on that keeps from the app what a running
+    /// process may already hold: every item but the network, which is
+    /// refused packet by packet.
+    pub fn any_held_by_a_process(&self) -> bool {
+        Item::ALL
+            .into_iter()
+            .any(|item| item != Item::Network && self.mode(item) != Mode::Off)
+    }
+
+    /// Whether the app is kept from the network.
+    pub fn network_refused(&self) -> bool {
+        self.mode(Item::Network) != Mode::Off
     }
 
     pub fn mounts(&self) -> Mounts {
@@ -448,6 +488,9 @@ impl Settings {
             }
             if item == Item::InstalledApps && !parts.app_list_hook {
                 missing.push(Part::AppListHook);
+            }
+            if item == Item::Network && !parts.packet_filter {
+                missing.push(Part::PacketFilter);
             }
             if !missing.is_empty() {
                 unmet.insert(item, missing);
@@ -569,6 +612,18 @@ mod tests {
         assert_eq!(applies.mode(Item::Camera), Mode::Off);
         assert_eq!(applies.mode(Item::Microphone), Mode::On);
         assert_eq!(applies.mode(Item::Contacts), Mode::On);
+        // The network is left to the app unless it is set.
+        assert_eq!(applies.mode(Item::Network), Mode::Off);
+        assert_eq!(
+            Settings::parse("network=on")
+                .over(&global)
+                .mode(Item::Network),
+            Mode::On
+        );
+        assert_eq!(
+            own.over(&Settings::parse("network=on")).mode(Item::Network),
+            Mode::On
+        );
         assert_eq!(applies.iter().count(), Item::ALL.len());
         // Following the global settings again.
         own.set(Item::Microphone, None).unwrap();
@@ -582,6 +637,7 @@ mod tests {
             android_id_hook: true,
             app_list_hook: true,
             uri_grants_hook: true,
+            packet_filter: true,
         };
         let items = Settings::all_on();
         assert!(items.unmet(&all, |_| true).is_empty());
@@ -605,6 +661,21 @@ mod tests {
             [Part::AppOps, Part::AppListHook]
         );
         assert_eq!(unmet[&Item::Camera], [Part::AppOps]);
+        assert_eq!(unmet[&Item::Network], [Part::PacketFilter]);
+    }
+
+    #[test]
+    fn the_network_is_not_something_a_process_holds() {
+        let mut own = Settings::default();
+        for item in Item::ALL {
+            own.set(item, Some(Mode::Off)).unwrap();
+        }
+        own.set(Item::Network, Some(Mode::On)).unwrap();
+        let items = own.over(&Settings::default());
+        assert!(items.any_on() && items.network_refused());
+        assert!(!items.any_held_by_a_process());
+        assert!(items.op_targets().is_empty());
+        assert!(own.set(Item::Network, Some(Mode::Foreground)).is_err());
     }
 
     #[test]
@@ -632,6 +703,7 @@ mod tests {
             android_id_hook: true,
             app_list_hook: true,
             uri_grants_hook: true,
+            packet_filter: true,
         };
         assert!(items.unmet(&all, |_| true).is_empty());
         let unmet = items.unmet(&all, |name| name != SCREEN_ACCESS);
@@ -677,6 +749,7 @@ mod tests {
         assert_eq!(applies.hooked(), (false, false));
         assert!(applies.op_targets().is_empty());
         assert!(applies.taken_permissions().is_empty());
+        assert!(!applies.network_refused());
     }
 
     #[test]

@@ -24,7 +24,8 @@
 //! goes with them. Turning items off, and changing one between the modes
 //! that keep something (on, coarse, foreground), takes effect in the
 //! running process: the app ops and permissions are looked up as the app
-//! asks.
+//! asks. The network is refused packet by packet, and no process is ended
+//! for it.
 //!
 //! Location made coarse takes the precise location permission away, and
 //! Android ends the processes of an app whenever it revokes a runtime
@@ -64,14 +65,14 @@ impl Effect for Restart {
         // Those that started since the gate held them have their mounts.
         if items.mounts().any() {
             end(entry, Which::Lacking(items.mounts()));
-        } else if items.any_on() {
+        } else if items.any_held_by_a_process() {
             end(entry, Which::All);
         }
         Ok(())
     }
 
     fn disable(&mut self, entry: &mut Entry, _: &[String], items: &Settings) -> anyhow::Result<()> {
-        if items.any_on() {
+        if items.any_held_by_a_process() {
             end(entry, Which::All);
         }
         Ok(())
@@ -84,9 +85,9 @@ impl Effect for Restart {
         before: &Settings,
         after: &Settings,
     ) -> anyhow::Result<()> {
-        let turned_on = Item::ALL
-            .into_iter()
-            .any(|item| before.mode(item) == Mode::Off && after.mode(item) != Mode::Off);
+        let turned_on = Item::ALL.into_iter().any(|item| {
+            item != Item::Network && before.mode(item) == Mode::Off && after.mode(item) != Mode::Off
+        });
         if before.mounts() != after.mounts() || turned_on {
             end(entry, Which::All);
         }

@@ -538,6 +538,14 @@ fn start_sandbox(
         &sandbox.global(),
     )));
     sandbox.add_effect(storage);
+    let network: Box<dyn sandbox::Effect> = match sandbox::network::Network::start(ebpf) {
+        Ok(network) => Box::new(network),
+        Err(e) => {
+            eprintln!("bbd: warning: apps cannot be kept from the network: {e:#}");
+            Box::new(sandbox::network::Unavailable::new())
+        }
+    };
+    sandbox.add_effect(network);
     sandbox.add_effect(Box::new(sandbox::sweep::Restart));
     sandbox.resume(&tracer.writer, &mut tracer.packages);
     Some(sandbox)
