@@ -34,7 +34,7 @@ import li.mercury.bigbrother.core.model.SandboxedApp
 class TestSandboxRepository(
     apps: List<SandboxedApp> = emptyList(),
     global: Map<SandboxItem, SandboxMode> = emptyMap(),
-    var status: SandboxStatus = SandboxStatus(gate = true, appOps = true, androidIdHook = true, appListHook = true),
+    var status: SandboxStatus = SandboxStatus(gate = true, appOps = true, androidIdHook = true, appListHook = true, uriGrantsHook = true),
     autoIsolate: Boolean = false,
 ) : SandboxRepository {
     /** Thrown by every call while set. */

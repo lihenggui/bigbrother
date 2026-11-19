@@ -76,6 +76,7 @@ import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.ui.AppIcon
 import li.mercury.bigbrother.core.ui.DataCategory
+import li.mercury.bigbrother.core.ui.InlineMessage
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.SectionHeader
@@ -183,7 +184,8 @@ private fun Content(
             FilesCard(files, state.appInfo, wide = columns > 1, onClick = { onOpenCategory(DataCategory.FILES) })
             if (state.categories.isEmpty()) {
                 if (files.readers.isEmpty() && files.lookedOnly == 0) {
-                    Message(stringResource(UiR.string.empty_title), "", Modifier.padding(top = 24.dp))
+                    // The column scrolls, so the message must not: see InlineMessage.
+                    InlineMessage(stringResource(UiR.string.empty_title), "", Modifier.padding(top = 24.dp))
                 }
             } else {
                 SectionHeader(

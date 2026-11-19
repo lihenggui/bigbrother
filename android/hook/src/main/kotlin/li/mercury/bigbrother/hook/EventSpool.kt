@@ -44,20 +44,16 @@ internal class EventSpool(private val directory: File) {
         }
     }
 
-    fun addQuery(uid: Int, uri: String, items: Int) = add(uid, "q", "", items, uri, "")
+    fun addQuery(uid: Int, uri: String, items: Int) = add(queryLine(now(), uid, uri, items))
 
-    fun addOpen(uid: Int, uri: String, mode: String, path: String) = add(uid, "o", mode, 0, uri, path)
+    fun addOpen(uid: Int, uri: String, mode: String, path: String) = add(openLine(now(), uid, uri, mode, path))
 
-    private fun add(uid: Int, op: String, mode: String, items: Int, uri: String, path: String) {
-        val time = System.currentTimeMillis() / 1000
-        val line = listOf(FORMAT_VERSION, time, uid, op, mode.clean(), items, uri.clean(), path.clean())
-            .joinToString("\t")
+    private fun now(): Long = System.currentTimeMillis() / 1000
+
+    private fun add(line: String) {
         // If the writer can't keep up, dropping records beats stalling the provider.
-        queue.offer(line)
+        if (line.isNotEmpty()) queue.offer(line)
     }
-
-    /** Tabs and line breaks would corrupt the format; they don't occur in real paths. */
-    private fun String.clean(): String = replace(SEPARATORS, " ")
 
     private fun writeLoop() {
         val batch = ArrayList<String>()
@@ -66,7 +62,7 @@ internal class EventSpool(private val directory: File) {
                 batch.add(queue.take())
                 // Let more records arrive so one write covers a burst.
                 TimeUnit.MILLISECONDS.sleep(BATCH_WINDOW_MS)
-                queue.drainTo(batch)
+                queue.drainTo(batch, 127)
                 write(batch)
             } catch (_: InterruptedException) {
                 return
@@ -83,20 +79,52 @@ internal class EventSpool(private val directory: File) {
         val file = File(directory, FILE_NAME)
         // The daemon removes the file as it reads. If it is not running, stop
         // growing the file rather than fill the provider's storage.
-        if (file.length() > MAX_FILE_BYTES) return
+        val payload = lines.joinToString(separator = "\n", postfix = "\n").toByteArray()
         // Opened per batch, not kept open: the daemon takes the file by
         // renaming it, and a held descriptor would keep writing to the old one.
         FileOutputStream(file, true).use { out ->
-            out.write(lines.joinToString(separator = "\n", postfix = "\n").toByteArray())
+            out.channel.tryLock()?.use {
+                if (out.channel.size() + payload.size <= MAX_FILE_BYTES) out.write(payload)
+            }
         }
     }
 
-    private companion object {
-        const val FORMAT_VERSION = "1"
-        const val FILE_NAME = "events.log"
-        const val QUEUE_CAPACITY = 10_000
-        const val BATCH_WINDOW_MS = 2_000L
-        const val MAX_FILE_BYTES = 4L * 1024 * 1024
-        val SEPARATORS = Regex("[\\t\\n\\r]")
+    internal companion object {
+        /** The line of a query at [time] (unix time) that returned [items] rows. */
+        fun queryLine(time: Long, uid: Int, uri: String, items: Int): String = line(time, uid, "q", "", items, uri, "")
+
+        /** The line of an open in [mode] at [time] that resolved to [path], or `""` if not known. */
+        fun openLine(time: Long, uid: Int, uri: String, mode: String, path: String): String = line(time, uid, "o", mode, 0, uri, path)
+
+        private fun line(time: Long, uid: Int, op: String, mode: String, items: Int, uri: String, path: String): String {
+            if (uri.length > 4096 || path.length > 4096 || mode.length > 4) return ""
+            val address = uri.substringBefore('?').substringBefore('#')
+            val rest = address.removePrefix("content://")
+            val authority = rest.substringBefore('/').substringAfterLast('@')
+            if (!address.startsWith("content://") || (authority !in PERSONAL && authority !in STORAGE)) return ""
+            val personal = authority in PERSONAL
+            val keptUri = if (personal) {
+                val collection = rest.substringAfter('/', "").substringBefore('/')
+                if (collection in COLLECTIONS) "content://$authority/$collection" else "content://$authority"
+            } else {
+                address
+            }
+            val line = listOf(FORMAT_VERSION, time, uid, op, mode.clean(), items, keptUri.clean(), if (personal) "" else path.clean()).joinToString("\t")
+            return if (line.toByteArray().size <= 8192) line else ""
+        }
+
+        private val STORAGE = setOf("media", "downloads", "com.android.providers.media.documents", "com.android.externalstorage.documents", "com.android.providers.downloads.documents", "com.android.mtp.documents", "com.google.android.apps.nbu.files.provider")
+        private val PERSONAL = setOf("contacts", "com.android.contacts", "icc", "call_log", "call_log_shadow", "com.android.voicemail", "sms", "mms", "mms-sms", "com.android.calendar", "telephony")
+        private val COLLECTIONS = setOf("contacts", "raw_contacts", "data", "groups", "profile", "phones", "adn", "fdn", "sdn", "calls", "voicemail", "inbox", "sent", "draft", "outbox", "conversations", "events", "calendars", "instances", "attendees", "reminders", "siminfo")
+
+        /** Tabs and line breaks would corrupt the format; they don't occur in real paths. */
+        private fun String.clean(): String = replace(SEPARATORS, " ")
+
+        private const val FORMAT_VERSION = "1"
+        private const val FILE_NAME = "events.log"
+        private const val QUEUE_CAPACITY = 512
+        private const val BATCH_WINDOW_MS = 2_000L
+        private const val MAX_FILE_BYTES = 4L * 1024 * 1024
+        private val SEPARATORS = Regex("[\\t\\n\\r]")
     }
 }

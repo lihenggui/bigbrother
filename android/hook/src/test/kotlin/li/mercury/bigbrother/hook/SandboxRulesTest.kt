@@ -114,74 +114,54 @@ class SandboxRulesTest {
     }
 
     @Test
-    fun givenWellFormedList_whenParsed_thenEveryPairKept() {
-        val text = "10205 0123456789abcdef\n1010150 fedcba9876543210\n"
-        assertEquals(
-            mapOf(10_205 to SandboxedUid("0123456789abcdef"), 1_010_150 to SandboxedUid("fedcba9876543210")),
-            parseSandboxList(text),
+    fun givenIsolatedStorage_whenAGrantIsWeighed_thenOnlyTheGrantsOfTheMomentCount() {
+        val read = 0x1
+        val readWrite = 0x3
+        // Kept from before, persisted only: nothing.
+        assertEquals(STRENGTH_NONE, strengthOfTheMoment(read, ownedModeFlags = 0, globalModeFlags = 0))
+        // Picked by the user just now, through an activity, or until restart.
+        assertEquals(STRENGTH_OWNED, strengthOfTheMoment(read, ownedModeFlags = read, globalModeFlags = 0))
+        assertEquals(STRENGTH_GLOBAL, strengthOfTheMoment(read, ownedModeFlags = read, globalModeFlags = read))
+        // Asked to write as well, with only reading granted.
+        assertEquals(STRENGTH_NONE, strengthOfTheMoment(readWrite, ownedModeFlags = read, globalModeFlags = 0))
+        // The persistable flag in the request is not a mode of its own.
+        assertEquals(STRENGTH_OWNED, strengthOfTheMoment(read or 0x40, ownedModeFlags = read, globalModeFlags = 0))
+    }
+
+    @Test
+    fun givenEveryListOfTheCases_whenParsed_thenTheAppsTheDaemonListed() {
+        val cases = protocolCases("sandbox-list.txt", types = setOf("line", "read", "bad"), keys = setOf("app"))
+        for (case in cases.ofType("line") + cases.ofType("read") + cases.ofType("bad")) {
+            val apps = case.all("app").associate { app ->
+                val parts = app.split('/')
+                parts[0].toInt() to SandboxedUid(
+                    parts[1],
+                    ownAndroidId = "device_ids" in parts,
+                    hidesApps = "installed_apps" in parts,
+                    isolatesStorage = "storage" in parts,
+                )
+            }
+            assertEquals(apps, parseSandboxList(case.line), case.line)
+        }
+    }
+
+    @Test
+    fun givenEveryStatusOfTheCases_whenWritten_thenTheTextTheDaemonReads() {
+        val cases = protocolCases(
+            "sandbox-status.txt",
+            types = setOf("line", "read"),
+            keys = setOf("android_id", "app_list", "uri_grants", "api", "list", "boot", "in_place", "now"),
         )
-    }
-
-    @Test
-    fun givenItemsLines_whenParsed_thenOnlyTheItemsNamedApply() {
-        val text = listOf(
-            "10205 0123456789abcdef",
-            "items 10205 installed_apps",
-            "10206 fedcba9876543210",
-            "items 10206 device_ids,installed_apps",
-            "10207 0123456789abcdef",
-            "items 10207 device_ids",
-            // Items of a uid that is not listed say nothing.
-            "items 10208 device_ids",
-            "items abc device_ids",
-        ).joinToString("\n")
-        assertEquals(
-            mapOf(
-                10_205 to SandboxedUid("0123456789abcdef", ownAndroidId = false, hidesApps = true),
-                10_206 to SandboxedUid("fedcba9876543210"),
-                10_207 to SandboxedUid("0123456789abcdef", ownAndroidId = true, hidesApps = false),
-            ),
-            parseSandboxList(text),
-        )
-    }
-
-    @Test
-    fun givenBlankAndMalformedLines_whenParsed_thenOnlyValidPairsKept() {
-        val text = listOf(
-            "",
-            "   ",
-            "10205 0123456789abcdef",
-            "10206",
-            "10207 0123456789abcdef extra",
-            "abc 0123456789abcdef",
-            "-10208 0123456789abcdef",
-            "10209 0123456789abcde",
-            "10210 0123456789abcdeg",
-            "\t10211\t0123456789ABCDEF  ",
-        ).joinToString("\n")
-        assertEquals(
-            mapOf(10_205 to SandboxedUid("0123456789abcdef"), 10_211 to SandboxedUid("0123456789abcdef")),
-            parseSandboxList(text),
-        )
-    }
-
-    @Test
-    fun givenSystemUid_whenParsed_thenSkipped() {
-        val text = "1000 0123456789abcdef\n101000 0123456789abcdef\n0 0123456789abcdef"
-        assertEquals(emptyMap(), parseSandboxList(text))
-    }
-
-    @Test
-    fun givenRepeatedUid_whenParsed_thenLastLineWins() {
-        val text = "10205 0123456789abcdef\n10205 fedcba9876543210"
-        assertEquals(mapOf(10_205 to SandboxedUid("fedcba9876543210")), parseSandboxList(text))
-    }
-
-    @Test
-    fun givenHookResults_whenStatusWritten_thenOneKeyValuePerLine() {
-        assertEquals(
-            "android_id=1\napp_list=0\napi=35\nlist=1\nboot=abc-1\n",
-            sandboxStatusText(androidId = true, appList = false, api = 35, listReadable = true, bootId = "abc-1"),
-        )
+        for (case in cases.ofType("line")) {
+            val text = sandboxStatusText(
+                androidId = case.get("android_id") == "1",
+                appList = case.get("app_list") == "1",
+                uriGrants = case.get("uri_grants") == "1",
+                api = case.get("api")!!.toInt(),
+                listReadable = case.get("list") == "1",
+                bootId = case.get("boot")!!,
+            )
+            assertEquals(case.line, text)
+        }
     }
 }

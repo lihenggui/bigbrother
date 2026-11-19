@@ -62,7 +62,7 @@
 
 pub mod appops;
 pub mod auto;
-mod dirs;
+pub(crate) mod dirs;
 pub mod gate;
 pub mod identity;
 pub mod items;
@@ -70,7 +70,7 @@ mod mounts;
 pub mod sweep;
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fs::File,
     io::{Read as _, Write as _},
     path::{Path, PathBuf},
@@ -87,7 +87,7 @@ use crate::{
 };
 
 pub use crate::store::SandboxEntry as Entry;
-use items::{Item, Mode, Settings};
+use items::{InPlace, Item, Mode, Part, Settings};
 
 /// App ids from here up belong to installed apps. Below are the system's
 /// own uids, which are shared by many components and cannot be sandboxed.
@@ -175,8 +175,18 @@ pub trait Effect {
     /// carries on.
     fn resume(&mut self, _apps: &[Resumed]) {}
 
+    /// Drop bookkeeping without changing permissions or signalling the successor.
+    fn forget(&mut self, _uid: u32) {}
+
     /// Fill in what the effect knows about its own state.
     fn report(&self, _status: &mut Status) {}
+
+    /// Bring the enabled `entries` up to date with what the effect found
+    /// changed by the user while their apps were sandboxed, since it was
+    /// last asked; the uids of the entries it changed, which are written.
+    fn found(&mut self, _entries: &mut HashMap<u32, Entry>) -> Vec<u32> {
+        Vec::new()
+    }
 }
 
 /// A sandboxed app taken up again by a daemon that just started.
@@ -262,6 +272,10 @@ pub struct ListedApp {
     pub settings: Settings,
     /// What applies to it: its own settings over the global ones.
     pub items: Settings,
+    /// For an app in the sandbox, the items that are on but not in effect,
+    /// each with the parts that are not in place.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub unmet: BTreeMap<Item, Vec<Part>>,
 }
 
 /// The answer to `sandbox.global` and `sandbox.set_global`: every item,
@@ -309,6 +323,12 @@ pub struct Status {
     pub new_apps_held: bool,
     /// How long starts were held, 95th percentile, in microseconds.
     pub hold_p95_us: u64,
+    /// The ops each sandboxed uid is held to and the system keeps, by uid:
+    /// what [`Sandbox::list`] reports per app.
+    #[serde(skip)]
+    pub gated_uids: BTreeSet<u32>,
+    #[serde(skip)]
+    pub held_ops: BTreeMap<u32, BTreeSet<String>>,
 }
 
 /// What the system server hook reports it has in place.
@@ -316,9 +336,14 @@ pub struct Status {
 pub struct HookStatus {
     pub android_id: bool,
     pub app_list: bool,
+    /// Whether file grants an app kept from before its storage was
+    /// isolated are withheld from it.
+    #[serde(default)]
+    pub uri_grants: bool,
 }
 
 pub struct Sandbox {
+    awaiting_storage: BTreeSet<u32>,
     snapshot: Snapshot,
     global: Global,
     effects: Vec<Box<dyn Effect>>,
@@ -355,6 +380,7 @@ impl Sandbox {
             user_data: user_data.map(Path::to_path_buf),
             auto: auto::Auto::load(writer)?,
             release_logged: None,
+            awaiting_storage: BTreeSet::new(),
         })
     }
 
@@ -386,115 +412,216 @@ impl Sandbox {
     /// Put the apps that were sandboxed when the daemon last stopped back
     /// in. To be called once, when the daemon starts.
     pub fn resume(&mut self, writer: &Writer, packages: &mut Packages) {
-        self.release_reassigned(writer, packages, None);
-        let mut apps: Vec<Resumed> = self
-            .snapshot_read()
-            .values()
-            .map(|entry| Resumed {
-                entry: entry.clone(),
+        if packages.refresh() && !packages.is_empty() {
+            self.reconcile_entries(writer, packages, None);
+        }
+        self.resume_verified(writer, packages);
+    }
+
+    fn resume_verified(&mut self, writer: &Writer, packages: &mut Packages) {
+        let mut owned = Vec::new();
+        let mut waiting = BTreeSet::new();
+        for entry in self.snapshot_read().values() {
+            if self.owns(entry) {
+                owned.push(entry.clone());
+            } else {
+                waiting.insert(entry.uid);
+            }
+        }
+        self.awaiting_storage = waiting;
+        let mut apps = Vec::new();
+        for entry in owned {
+            let entry = self.naming_taken_on_resume(writer, entry);
+            apps.push(Resumed {
                 packages: packages.for_uid(entry.uid).to_vec(),
-                items: self.items(entry),
-            })
-            .collect();
+                items: self.items(&entry),
+                entry,
+            });
+        }
         apps.sort_by_key(|app| app.entry.uid);
         for effect in &mut self.effects {
             effect.resume(&apps);
         }
     }
 
-    /// Take out the entries whose uid no longer runs the app that was put
-    /// in. Android hands the uid of an uninstalled app to one installed
-    /// later, which would otherwise find itself sandboxed, with the other's
-    /// identity. An app of several packages stays in while any of them is
-    /// installed, named after one that is. Entries that would be taken out
-    /// past `until` are left for the next time.
-    fn release_reassigned(
+    /// `entry`, taken up again, naming the permissions its items take that
+    /// it does not name yet, as enabling and changing items do before they
+    /// are taken: an item that takes one, new since the entry was last
+    /// written and on by the global settings, is taken as the helper
+    /// starts, and what it finds is kept only for what the entry names.
+    fn naming_taken_on_resume(&mut self, writer: &Writer, entry: Entry) -> Entry {
+        let named = appops::naming_taken(&entry, &self.items(&entry));
+        if named == entry {
+            return entry;
+        }
+        match writer.put_sandbox(&named) {
+            Ok(()) => {
+                self.snapshot_write().insert(named.uid, named.clone());
+                named
+            }
+            Err(e) => {
+                eprintln!(
+                    "bbd: sandbox: naming what uid {} is held to: {e:#}",
+                    entry.uid
+                );
+                entry
+            }
+        }
+    }
+
+    /// Read the current package list and retire entries whose installation
+    /// is gone. A verified shared UID member can continue to own the sandbox.
+    pub(crate) fn release_reassigned(&mut self, writer: &Writer, packages: &mut Packages) {
+        if !self.snapshot_read().is_empty() && packages.refresh() && !packages.is_empty() {
+            self.reconcile(writer, packages, None);
+        }
+    }
+
+    fn reconcile(
         &mut self,
         writer: &Writer,
         packages: &mut Packages,
         until: Option<std::time::Instant>,
     ) {
-        packages.refresh();
-        // Without the package list nothing can be told.
-        if packages.is_empty() {
-            return;
-        }
-        let mut entries: Vec<Entry> = self.snapshot_read().values().cloned().collect();
-        entries.sort_by_key(|entry| entry.uid);
-        for mut entry in entries {
-            let uid = entry.uid;
-            let current = packages.for_uid(uid).to_vec();
-            let recorded = writer.sandbox_packages(uid).unwrap_or_default();
-            if current.contains(&entry.package) || current.iter().any(|p| recorded.contains(p)) {
-                self.keep_entry(writer, entry, &current, &recorded);
-                continue;
-            }
-            if until.is_some_and(|until| std::time::Instant::now() > until) {
-                continue;
-            }
-            let kept = entry.clone();
-            let items = self.items(&entry);
-            self.snapshot_write().remove(&uid);
-            entry.enabled = false;
-            // What was saved was the other app's: the uid goes back to the
-            // system's defaults, and a permission taken from the app that
-            // has it now to what it is, which the app may ask for again.
-            entry.saved_ops.clear();
-            entry.saved_permissions.clear();
-            let released = self
-                .run(&mut entry, &[], Change::Disable(&items))
-                .and_then(|()| writer.put_sandbox(&entry));
-            match released {
-                Ok(()) => {
-                    eprintln!("bbd: sandbox: the app of uid {uid} is gone; the uid is taken out");
-                }
-                Err(e) => {
-                    // Still sandboxed, and listed as such, rather than half
-                    // taken out with nothing to show it. Tried again with
-                    // the next command or look, and when the daemon next
-                    // starts.
-                    let quiet = self
-                        .release_logged
-                        .is_some_and(|at| at.elapsed() < RELEASE_LOG_INTERVAL);
-                    if !quiet {
-                        eprintln!("bbd: sandbox: uid {uid} cannot be taken out yet: {e:#}");
-                        self.release_logged = Some(std::time::Instant::now());
-                    }
-                    self.snapshot_write().insert(uid, kept);
-                }
-            }
+        let changed = self.reconcile_entries(writer, packages, until);
+        let available = self.awaiting_storage.iter().any(|uid| {
+            self.snapshot_read()
+                .get(uid)
+                .is_some_and(|entry| self.owns(entry))
+        });
+        if changed || available {
+            self.resume_verified(writer, packages);
         }
     }
 
-    /// Keep `entry`, of an app still installed under its uid as `current`
-    /// says: named after a package it has, and with its packages as they
-    /// are now.
-    fn keep_entry(
+    fn reconcile_entries(
         &mut self,
         writer: &Writer,
-        mut entry: Entry,
-        current: &[String],
-        recorded: &std::collections::BTreeSet<String>,
-    ) {
-        let uid = entry.uid;
-        if !current.contains(&entry.package) {
-            let Some(named) = current.iter().find(|p| recorded.contains(*p)) else {
-                return;
-            };
-            entry.package = named.clone();
-            match writer.put_sandbox(&entry) {
-                Ok(()) => {
-                    self.snapshot_write().insert(uid, entry);
+        packages: &Packages,
+        until: Option<std::time::Instant>,
+    ) -> bool {
+        let mut entries: Vec<Entry> = self.snapshot_read().values().cloned().collect();
+        entries.sort_by_key(|entry| entry.uid);
+        let mut changed = false;
+        for mut entry in entries {
+            if until.is_some_and(|until| std::time::Instant::now() >= until) {
+                break;
+            }
+            let uid = entry.uid;
+            let current = packages.packages_of(uid % PER_USER_RANGE);
+            let recorded = match writer.sandbox_packages(uid) {
+                Ok(recorded) => recorded,
+                Err(e) => {
+                    self.log_reconcile_error(uid, &e);
+                    continue;
                 }
-                Err(e) => eprintln!("bbd: sandbox: cannot write uid {uid}'s entry: {e:#}"),
+            };
+            match self.existing_owner(&entry, current, &recorded) {
+                Ok(Some(owner)) => {
+                    if entry.package != owner {
+                        entry.package = owner;
+                        if let Err(e) = writer.put_sandbox(&entry) {
+                            self.log_reconcile_error(uid, &e);
+                            continue;
+                        }
+                        self.snapshot_write().insert(uid, entry.clone());
+                        changed = true;
+                    }
+                    match self.remember_packages(writer, &entry, current, &recorded) {
+                        Ok(updated) => changed |= updated,
+                        Err(e) => self.log_reconcile_error(uid, &e),
+                    }
+                }
+                Ok(None) => {
+                    entry.enabled = false;
+                    if let Err(e) = writer.put_sandbox(&entry) {
+                        self.log_reconcile_error(uid, &e);
+                        continue;
+                    }
+                    self.snapshot_write().remove(&uid);
+                    self.awaiting_storage.remove(&uid);
+                    // Nothing saved for the old installation may be applied
+                    // to the one the uid belongs to now.
+                    for effect in &mut self.effects {
+                        effect.forget(uid);
+                    }
+                }
+                Err(_) => {
+                    // A directory may be unavailable while the user starts.
+                }
             }
         }
-        let now: std::collections::BTreeSet<String> = current.iter().cloned().collect();
-        if now != *recorded
-            && let Err(e) = writer.put_sandbox_packages(uid, current)
+        changed
+    }
+
+    fn log_reconcile_error(&mut self, uid: u32, e: &anyhow::Error) {
+        if self
+            .release_logged
+            .is_none_or(|at| at.elapsed() >= RELEASE_LOG_INTERVAL)
         {
-            eprintln!("bbd: sandbox: cannot write uid {uid}'s packages: {e:#}");
+            eprintln!("bbd: sandbox: cannot reconcile uid {uid}: {e:#}");
+            self.release_logged = Some(std::time::Instant::now());
         }
+    }
+
+    fn owns(&self, entry: &Entry) -> bool {
+        self.matches_package(entry, &entry.package).unwrap_or(false)
+    }
+
+    fn matches_package(&self, entry: &Entry, package: &str) -> std::io::Result<bool> {
+        match &self.user_data {
+            Some(root) => dirs::matches_install(root, package, entry.uid, &entry.install_id),
+            None => Ok(true),
+        }
+    }
+
+    fn existing_owner(
+        &self,
+        entry: &Entry,
+        current: &[String],
+        recorded: &BTreeSet<String>,
+    ) -> std::io::Result<Option<String>> {
+        let mut unavailable = None;
+        let siblings = current
+            .iter()
+            .filter(|pkg| *pkg != &entry.package && recorded.contains(*pkg));
+        for package in std::iter::once(&entry.package)
+            .filter(|pkg| current.contains(pkg))
+            .chain(siblings)
+        {
+            match self.matches_package(entry, package) {
+                Ok(true) => return Ok(Some(package.clone())),
+                Ok(false) => {}
+                Err(e) => unavailable = Some(e),
+            }
+        }
+        unavailable.map_or(Ok(None), Err)
+    }
+
+    fn remember_packages(
+        &self,
+        writer: &Writer,
+        entry: &Entry,
+        current: &[String],
+        recorded: &BTreeSet<String>,
+    ) -> anyhow::Result<bool> {
+        let verified: BTreeSet<String> = current
+            .iter()
+            .filter(|package| {
+                recorded.contains(*package)
+                    || *package == &entry.package
+                    || self.user_data.as_deref().is_none_or(|root| {
+                        dirs::share_install(root, package, entry.uid, &entry.install_id).is_ok()
+                    })
+            })
+            .cloned()
+            .collect();
+        if verified == *recorded {
+            return Ok(false);
+        }
+        let names: Vec<String> = verified.into_iter().collect();
+        writer.put_sandbox_packages(entry.uid, &names)?;
+        Ok(true)
     }
 
     fn snapshot_read(&self) -> std::sync::RwLockReadGuard<'_, HashMap<u32, Entry>> {
@@ -506,14 +633,38 @@ impl Sandbox {
         self.snapshot.write().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// Keep in the entries, and write, what the effects found changed by
+    /// the user while the apps were sandboxed (`Effect::found`): called
+    /// with every write of the records, and before every command, which
+    /// may give back what the entries hold.
+    pub fn keep_found(&mut self, writer: &Writer) {
+        let snapshot = self.snapshot.clone();
+        let mut entries = snapshot.write().unwrap_or_else(|e| e.into_inner());
+        let mut changed: Vec<u32> = Vec::new();
+        for effect in &mut self.effects {
+            changed.extend(effect.found(&mut entries));
+        }
+        changed.sort_unstable();
+        changed.dedup();
+        for uid in changed {
+            if let Some(entry) = entries.get(&uid)
+                && let Err(e) = writer.put_sandbox(entry)
+            {
+                // Kept here all the same, and written with the next change.
+                eprintln!("bbd: sandbox: cannot write what was found for uid {uid}: {e:#}");
+            }
+        }
+    }
+
     /// Answer a request line from `bbd.ctl`.
     pub fn answer(&mut self, line: &str, writer: &Writer, packages: &mut Packages) -> String {
         let request = match Request::parse(line) {
             Ok(request) => request,
             Err(e) => return control::failure(&e),
         };
+        self.keep_found(writer);
         if !matches!(request, Request::SandboxStatus) {
-            self.release_reassigned(writer, packages, None);
+            self.release_reassigned(writer, packages);
         }
         let answer = match request {
             Request::SandboxEnable { package, user } => self
@@ -555,46 +706,53 @@ impl Sandbox {
         now: i64,
     ) -> anyhow::Result<Enabled> {
         let uid = uid_of(packages, package, user)?;
-        if let Some(user_data) = &self.user_data {
-            anyhow::ensure!(
-                user_data.join(user.to_string()).join(package).exists(),
-                "{package} is not installed for user {user}"
-            );
-        }
-        let sharing = packages.for_uid(uid).to_vec();
+        let sharing = packages.packages_of(uid % PER_USER_RANGE).to_vec();
         anyhow::ensure!(
             !sharing.iter().any(|p| OWN_PACKAGES.contains(&p.as_str())),
             "Big Brother cannot sandbox itself"
         );
         let also = sharing.iter().filter(|p| *p != package).cloned().collect();
-        // An entry is the app's if it was made for one of its packages. One
-        // another app left under the uid, which Android gave this one after
-        // that was uninstalled, is not.
+        let before = writer.sandbox_entry(uid)?;
         let recorded = writer.sandbox_packages(uid)?;
-        let ours = |entry: &Entry| {
-            sharing.contains(&entry.package) || sharing.iter().any(|p| recorded.contains(p))
+        let owner = match &before {
+            Some(entry) => self
+                .existing_owner(entry, &sharing, &recorded)
+                .with_context(|| format!("cannot verify the installation for user {user}"))?,
+            None => None,
+        };
+        // Even when another package owns the sandbox, the requested package
+        // must belong to this UID and be installed for the requested user.
+        let install_id = match &self.user_data {
+            Some(root) => {
+                if let (Some(old), Some(_)) = (&before, &owner) {
+                    dirs::share_install(root, package, uid, &old.install_id).with_context(
+                        || format!("cannot verify the installation for user {user}"),
+                    )?;
+                    old.install_id.clone()
+                } else {
+                    dirs::install_id(root, package, uid, true).with_context(|| {
+                        format!("cannot verify the installation for user {user}")
+                    })?
+                }
+            }
+            None => package.to_owned(),
         };
         if let Some(held) = self.snapshot_read().get(&uid) {
-            // Held still for the app that had the uid, which could not be
-            // taken out yet: this one is not in the sandbox until it is.
             anyhow::ensure!(
-                ours(held),
-                "uid {uid} is still held for the app that had it before"
+                owner.as_ref().is_some_and(|owner| owner == &held.package) && self.owns(held),
+                "the uid still has an unverified sandbox entry"
             );
             return Ok(Enabled { uid, also });
         }
 
-        let before = writer.sandbox_entry(uid)?;
-        // The identity and the settings it had stay; another app's entry is
-        // written over.
-        let own = before.as_ref().filter(|old| ours(old));
-        let mut entry = match own {
-            Some(old) => Entry {
-                package: package.to_string(),
+        let mut entry = match (&before, owner) {
+            (Some(old), Some(owner)) => Entry {
+                package: owner,
                 enabled: true,
                 ..old.clone()
             },
-            None => Entry {
+            _ => Entry {
+                install_id,
                 uid,
                 package: package.to_string(),
                 enabled: true,
@@ -631,11 +789,18 @@ impl Sandbox {
             }
             return Err(e);
         }
-        self.snapshot_write().insert(uid, entry);
-        // Without them the entry is the app's by its name alone.
-        if let Err(e) = writer.put_sandbox_packages(uid, &sharing) {
-            eprintln!("bbd: sandbox: cannot write uid {uid}'s packages: {e:#}");
+        let previous_packages = if before
+            .as_ref()
+            .is_some_and(|old| old.install_id == entry.install_id)
+        {
+            recorded
+        } else {
+            BTreeSet::new()
+        };
+        if let Err(e) = self.remember_packages(writer, &entry, &sharing, &previous_packages) {
+            self.log_reconcile_error(uid, &e);
         }
+        self.snapshot_write().insert(uid, entry);
         Ok(Enabled { uid, also })
     }
 
@@ -720,6 +885,7 @@ impl Sandbox {
         change: Change,
     ) -> anyhow::Result<()> {
         for done in 0..self.effects.len() {
+            anyhow::ensure!(self.owns(entry), "the installation has changed");
             let effect = &mut self.effects[done];
             if let Err(e) = change.apply(effect.as_mut(), entry, packages) {
                 let failed = effect.name();
@@ -750,13 +916,28 @@ impl Sandbox {
     /// Every entry, enabled or not.
     fn list(&self, writer: &Writer) -> anyhow::Result<Listed> {
         let global = self.global_read();
+        let status = self.status();
         let apps = writer
             .sandbox_entries()?
             .into_iter()
             .map(|entry| {
+                let in_place = InPlace {
+                    mounts: status.gate && status.gated_uids.contains(&entry.uid),
+                    android_id_hook: status.hook.android_id,
+                    app_list_hook: status.hook.app_list,
+                    uri_grants_hook: status.hook.uri_grants,
+                };
                 let settings = Settings::parse(&entry.settings);
+                let items = settings.over(&global);
+                let unmet = if entry.enabled {
+                    let held = status.held_ops.get(&entry.uid);
+                    items.unmet(&in_place, |op| held.is_some_and(|held| held.contains(op)))
+                } else {
+                    BTreeMap::new()
+                };
                 ListedApp {
-                    items: settings.over(&global),
+                    unmet,
+                    items,
                     uid: entry.uid,
                     package: entry.package,
                     enabled: entry.enabled,
@@ -794,16 +975,17 @@ impl Sandbox {
             Some(entry) => Some(entry),
             None => writer.sandbox_entry(uid)?,
         };
-        // Not the entry of an app that had the uid before this one.
+        let mut entry = entry.with_context(|| format!("{package} is not in the sandbox"))?;
+        let current = packages.packages_of(uid % PER_USER_RANGE);
         let recorded = writer.sandbox_packages(uid)?;
-        let current = packages.for_uid(uid).to_vec();
-        let mut entry = entry
-            .filter(|entry| {
-                entry.package == package
-                    || current.contains(&entry.package)
-                    || current.iter().any(|p| recorded.contains(p))
-            })
+        let owner = self
+            .existing_owner(&entry, current, &recorded)?
             .with_context(|| format!("{package} is not in the sandbox"))?;
+        anyhow::ensure!(
+            !entry.enabled || entry.package == owner,
+            "the installation has changed"
+        );
+        entry.package = owner;
         let mut own = Settings::parse(&entry.settings);
         for (item, mode) in changes {
             own.set(*item, *mode)?;
@@ -1021,7 +1203,7 @@ impl Sandbox {
 fn uid_of(packages: &mut Packages, package: &str, user: u32) -> anyhow::Result<u32> {
     // What was installed or removed since the list was last read counts:
     // a name could otherwise lead to the uid of another app.
-    packages.refresh();
+    anyhow::ensure!(packages.refresh(), "the package list cannot be read");
     let app_id = packages
         .app_id_of(package)
         .with_context(|| format!("{package} is not installed"))?;
@@ -1055,12 +1237,21 @@ fn random_bytes<const N: usize>() -> std::io::Result<[u8; N]> {
 pub fn restore_lines(db: &Path) -> anyhow::Result<Vec<String>> {
     let reader = crate::store::Reader::open(db)?;
     let global = Settings::parse(&reader.sandbox_global()?);
-    Ok(reader
-        .sandbox_entries()?
-        .iter()
-        .filter(|entry| entry.enabled)
-        .filter_map(|entry| appops::restore_line(entry, &items_of(entry, &global)))
-        .collect())
+    let mut lines = Vec::new();
+    for entry in reader.sandbox_entries()?.iter().filter(|e| e.enabled) {
+        if let Some(command) = appops::restore_line(entry, &items_of(entry, &global)) {
+            anyhow::ensure!(
+                entry.install_id.len() == 32
+                    && entry.install_id.bytes().all(|c| c.is_ascii_hexdigit()),
+                "recovery record has no verified installation"
+            );
+            lines.push(format!(
+                "bound {} {} {command}",
+                entry.package, entry.install_id
+            ));
+        }
+    }
+    Ok(lines)
 }
 
 // ---- command line ----------------------------------------------------------
@@ -1156,6 +1347,16 @@ fn print_list(out: &mut impl std::io::Write, listed: &Listed) -> std::io::Result
             format!(" ({})", not_on.join(", "))
         };
         writeln!(out, "{:<10} {state:<9} {}{not_on}", app.uid, app.package)?;
+        for (item, parts) in &app.unmet {
+            let parts: Vec<&str> = parts.iter().map(|part| part.name()).collect();
+            writeln!(
+                out,
+                "{:<20} {} not in effect, missing {}",
+                "",
+                item.name(),
+                parts.join(", ")
+            )?;
+        }
     }
     Ok(())
 }
@@ -1199,6 +1400,7 @@ fn print_status(out: &mut impl std::io::Write, status: &Status) -> std::io::Resu
     writeln!(out, "App ops:           {}", on(status.appops))?;
     writeln!(out, "ANDROID_ID hook:   {}", on(status.hook.android_id))?;
     writeln!(out, "App list hook:     {}", on(status.hook.app_list))?;
+    writeln!(out, "File grants hook:  {}", on(status.hook.uri_grants))?;
     writeln!(out, "Starts admitted:   {}", status.admitted)?;
     writeln!(out, "Starts failed:     {}", status.failed)?;
     writeln!(out, "New apps held:     {}", on(status.new_apps_held))?;
@@ -1327,6 +1529,17 @@ mod tests {
 
         fn report(&self, status: &mut Status) {
             status.gate = true;
+            status.gated_uids.insert(10100);
+        }
+
+        /// Finds every entry's permission granted.
+        fn found(&mut self, entries: &mut HashMap<u32, Entry>) -> Vec<u32> {
+            let mut changed = Vec::new();
+            for entry in entries.values_mut() {
+                entry.saved_permissions = format!("{}=granted", self.name);
+                changed.push(entry.uid);
+            }
+            changed
         }
     }
 
@@ -1583,6 +1796,29 @@ mod tests {
     }
 
     #[test]
+    fn what_the_effects_find_changed_is_kept_and_written() {
+        let mut f = Fixture::new("sandbox-found");
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let mut sandbox = f.sandbox_with(vec![Recorder::new("appops", &log)]);
+        sandbox
+            .enable(&f.writer, &mut f.packages, "com.app", 0, 1000)
+            .unwrap();
+        sandbox.keep_found(&f.writer);
+        assert_eq!(
+            sandbox.snapshot_read()[&10100].saved_permissions,
+            "appops=granted"
+        );
+        assert_eq!(
+            f.writer
+                .sandbox_entry(10100)
+                .unwrap()
+                .unwrap()
+                .saved_permissions,
+            "appops=granted"
+        );
+    }
+
+    #[test]
     fn effects_run_in_order_and_what_they_change_is_kept() {
         let mut f = Fixture::new("sandbox-effects");
         let log = Rc::new(RefCell::new(Vec::new()));
@@ -1700,6 +1936,82 @@ mod tests {
     }
 
     #[test]
+    fn gate_coverage_only_counts_for_registered_uids() {
+        let mut f = Fixture::new("sandbox-per-uid-gate");
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let mut sandbox = f.sandbox_with(vec![Recorder::new("gate", &log)]);
+        for name in ["com.app", "com.shared.one"] {
+            sandbox
+                .enable(&f.writer, &mut f.packages, name, 0, 1000)
+                .unwrap();
+        }
+        let list = sandbox.list(&f.writer).unwrap();
+        for app in list.apps {
+            let missing = app
+                .unmet
+                .get(&Item::Storage)
+                .is_some_and(|parts| parts.contains(&Part::Mounts));
+            assert_eq!(missing, app.uid != 10100);
+        }
+    }
+
+    #[test]
+    fn a_disabled_sandbox_is_not_inherited_by_the_next_package_at_its_uid() {
+        let mut f = Fixture::new("sandbox-new-install");
+        let mut sandbox = f.sandbox();
+        sandbox
+            .enable(&f.writer, &mut f.packages, "com.app", 0, 1000)
+            .unwrap();
+        sandbox
+            .disable(&f.writer, &mut f.packages, "com.app", 0)
+            .unwrap();
+        let mut old = f.writer.sandbox_entry(10100).unwrap().unwrap();
+        old.saved_ops = "android:camera=0".into();
+        old.settings = "camera=off".into();
+        f.writer.put_sandbox(&old).unwrap();
+        std::fs::write(f.dir.join("packages.list"), "com.successor 10100 0 /d x\n").unwrap();
+        sandbox
+            .enable(&f.writer, &mut f.packages, "com.successor", 0, 2000)
+            .unwrap();
+        let next = f.writer.sandbox_entry(10100).unwrap().unwrap();
+        assert_ne!(old.android_id, next.android_id);
+        assert_ne!(old.install_id, next.install_id);
+        assert_eq!(next.created, 2000);
+        assert!(next.saved_ops.is_empty() && next.settings.is_empty());
+    }
+
+    #[test]
+    fn what_an_app_is_held_to_is_named_as_the_daemon_starts() {
+        let mut f = Fixture::new("sandbox-resume-named");
+        let mut sandbox = f.sandbox_with(Vec::new());
+        sandbox
+            .enable(&f.writer, &mut f.packages, "com.app", 0, 1000)
+            .unwrap();
+        // As written before the items that take the access were there.
+        let mut entry = f.writer.sandbox_entry(10100).unwrap().unwrap();
+        entry.saved_permissions.clear();
+        f.writer.put_sandbox(&entry).unwrap();
+
+        let mut restarted = f.sandbox_with(Vec::new());
+        restarted.resume(&f.writer, &mut f.packages);
+        let named = f
+            .writer
+            .sandbox_entry(10100)
+            .unwrap()
+            .unwrap()
+            .saved_permissions;
+        assert_eq!(
+            named,
+            format!(
+                "{}=default,{}=default",
+                items::NOTIFICATION_ACCESS,
+                items::SCREEN_ACCESS
+            )
+        );
+        assert_eq!(restarted.snapshot_read()[&10100].saved_permissions, named);
+    }
+
+    #[test]
     fn a_uid_handed_to_another_app_is_taken_out() {
         let mut f = Fixture::new("sandbox-reassigned");
         let log = Rc::new(RefCell::new(Vec::new()));
@@ -1724,9 +2036,9 @@ mod tests {
         assert_eq!(enabled(&restarted), [10200]);
         let released = f.writer.sandbox_entry(10100).unwrap().unwrap();
         assert!(!released.enabled);
-        assert_eq!(released.saved_ops, "");
+        assert_eq!(released.package, "com.app");
         // Taken off the one, taken up again for the other.
-        assert_eq!(*log.borrow(), ["-gate", "~gate 10200"]);
+        assert_eq!(*log.borrow(), ["~gate 10200"]);
 
         // Without a package list nothing is concluded.
         std::fs::remove_file(f.dir.join("packages.list")).unwrap();
@@ -1735,46 +2047,28 @@ mod tests {
     }
 
     #[test]
-    fn an_app_given_a_uid_another_left_has_none_of_its_entry() {
-        let mut f = Fixture::new("sandbox-reused-uid");
-        let mut sandbox = f.sandbox();
-        sandbox
+    fn a_missing_user_directory_defers_resume_without_retiring_the_sandbox() {
+        let mut f = Fixture::new("sandbox-deferred-user");
+        f.sandbox()
             .enable(&f.writer, &mut f.packages, "com.app", 0, 1000)
             .unwrap();
-        sandbox
-            .configure(
-                &f.writer,
-                &mut f.packages,
-                "com.app",
-                0,
-                &camera(Some(Mode::Off)),
-            )
-            .unwrap();
-        let left = f.writer.sandbox_entry(10100).unwrap().unwrap();
-        // com.app was uninstalled, and its uid given to an app installed
-        // after it.
-        std::fs::write(f.dir.join("packages.list"), "com.newcomer 10100 0 /d x\n").unwrap();
-        let mut restarted = f.sandbox();
-        restarted.resume(&f.writer, &mut f.packages);
-
-        // Neither its settings nor its identity are the newcomer's.
-        let e = restarted
-            .configure(&f.writer, &mut f.packages, "com.newcomer", 0, &camera(None))
-            .unwrap_err();
-        assert_eq!(e.to_string(), "com.newcomer is not in the sandbox");
-        restarted
-            .enable(&f.writer, &mut f.packages, "com.newcomer", 0, 2000)
-            .unwrap();
-        let entry = f.writer.sandbox_entry(10100).unwrap().unwrap();
-        assert_eq!(
-            (
-                entry.package.as_str(),
-                entry.settings.as_str(),
-                entry.created
-            ),
-            ("com.newcomer", "", 2000)
-        );
-        assert_ne!(entry.android_id, left.android_id);
+        let original = f.writer.sandbox_entry(10100).unwrap().unwrap();
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let mut sandbox = Sandbox::load(
+            &f.writer,
+            vec![Recorder::new("gate", &log)],
+            Some(&f.dir.join("unavailable")),
+        )
+        .unwrap();
+        sandbox.resume(&f.writer, &mut f.packages);
+        sandbox.release_reassigned(&f.writer, &mut f.packages);
+        assert!(log.borrow().is_empty());
+        assert_eq!(f.writer.sandbox_entry(10100).unwrap().unwrap(), original);
+        // Use the fixture's matching owner once the storage is available.
+        sandbox.user_data = None;
+        sandbox.release_reassigned(&f.writer, &mut f.packages);
+        sandbox.release_reassigned(&f.writer, &mut f.packages);
+        assert_eq!(*log.borrow(), ["~gate 10100"]);
     }
 
     #[test]
@@ -1786,10 +2080,15 @@ mod tests {
         let e = sandbox
             .enable(&f.writer, &mut f.packages, "com.app", 10, 1000)
             .unwrap_err();
-        assert_eq!(e.to_string(), "com.app is not installed for user 10");
-        sandbox
-            .enable(&f.writer, &mut f.packages, "com.app", 0, 1000)
-            .unwrap();
+        assert_eq!(e.to_string(), "cannot verify the installation for user 10");
+        // A directory with a different owner cannot establish an installation.
+        if unsafe { libc::geteuid() } != 10100 {
+            assert!(
+                sandbox
+                    .enable(&f.writer, &mut f.packages, "com.app", 0, 1000)
+                    .is_err()
+            );
+        }
         // A user whose uids Android could not hold.
         assert!(
             sandbox
@@ -2094,6 +2393,14 @@ mod tests {
         let location = |mode| BTreeMap::from([(Item::Location, Some(mode))]);
         let global = |mode| BTreeMap::from([(Item::Location, mode)]);
         let mut sandbox = f.sandbox_with(vec![taker()]);
+        // Only location takes a permission here.
+        let others_off = BTreeMap::from([
+            (Item::NotificationContent, Mode::Off),
+            (Item::ScreenContent, Mode::Off),
+        ]);
+        sandbox
+            .set_global(&f.writer, &mut f.packages, &others_off)
+            .unwrap();
 
         // Put in with location coarse: named before the state is known,
         // and written down with it after.
@@ -2204,6 +2511,14 @@ mod tests {
         let fine = items::PRECISE_LOCATION;
         let location = |mode| BTreeMap::from([(Item::Location, Some(mode))]);
         let row = || f.writer.sandbox_entry(10100).unwrap().unwrap();
+        // Only location takes a permission here.
+        let others_off = BTreeMap::from([
+            (Item::NotificationContent, Mode::Off),
+            (Item::ScreenContent, Mode::Off),
+        ]);
+        sandbox
+            .set_global(&f.writer, &mut f.packages, &others_off)
+            .unwrap();
         sandbox
             .enable(&f.writer, &mut f.packages, "com.app", 0, 1000)
             .unwrap();
@@ -2263,6 +2578,7 @@ mod tests {
             enabled,
             android_id: "0123456789abcdef".into(),
             saved_ops: "android:camera=4".into(),
+            install_id: "a".repeat(32),
             saved_permissions: saved_permissions.into(),
             created: 1000,
             settings: settings.into(),
@@ -2302,8 +2618,12 @@ mod tests {
         assert_eq!(
             restore_lines(&f.dir.join("bb.db")).unwrap(),
             [
-                format!("restore 10100 {fine}=denied+user_set"),
-                format!("restore 10200 android:camera=4,{fine}=default"),
+                format!(
+                    "bound com.app aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa restore 10100 {fine}=denied+user_set"
+                ),
+                format!(
+                    "bound com.app aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa restore 10200 android:camera=4,{fine}=default"
+                ),
             ]
         );
     }
@@ -2323,7 +2643,14 @@ mod tests {
                 .enable(&f.writer, &mut f.packages, package, 0, 1000)
                 .unwrap();
         }
-        let list = || std::fs::read_to_string(f.dir.join("list")).unwrap();
+        let list = || {
+            std::fs::read_to_string(f.dir.join("list"))
+                .unwrap()
+                .split_once('\n')
+                .unwrap()
+                .1
+                .to_owned()
+        };
         let listed = list();
 
         // The first app's change fails after its line was written.
@@ -2396,7 +2723,8 @@ mod tests {
                     "storage": "on", "cpu_info": "on", "contacts": "on", "messages": "on",
                     "calendar": "on", "clipboard_accounts": "on", "location": "coarse", "camera": "off",
                     "microphone": "on", "body_sensors": "on", "device_ids": "on",
-                    "installed_apps": "on", "nearby_devices": "on",
+                    "installed_apps": "on", "nearby_devices": "on", "notification_content": "on",
+                    "screen_content": "on",
                 },
             })
         );
@@ -2443,7 +2771,7 @@ mod tests {
             ask(r#"{"cmd":"sandbox.status"}"#),
             serde_json::json!({
                 "ok": true, "gate": false, "appops": false,
-                "hook": {"android_id": false, "app_list": false},
+                "hook": {"android_id": false, "app_list": false, "uri_grants": false},
                 "admitted": 0, "failed": 0, "new_apps_stopped": 0, "new_apps_pending": 0,
                 "new_apps_held": false, "hold_p95_us": 0,
             })
@@ -2483,6 +2811,7 @@ mod tests {
                         created: 0,
                         settings: Settings::default(),
                         items: Settings::default(),
+                        unmet: BTreeMap::new(),
                     },
                     ListedApp {
                         uid: 10200,
@@ -2492,6 +2821,10 @@ mod tests {
                         settings: Settings::parse("camera=off"),
                         items: Settings::parse("camera=off")
                             .over(&Settings::parse("location=coarse")),
+                        unmet: BTreeMap::from([(
+                            Item::DeviceIds,
+                            vec![Part::AppOps, Part::AndroidIdHook],
+                        )]),
                     },
                 ],
             },
@@ -2505,6 +2838,7 @@ mod tests {
              UID        STATE     PACKAGE\n\
              10100      disabled  com.app\n\
              10200      enabled   com.shared.one (location coarse, camera off)\n\
+             \x20                    device_ids not in effect, missing app_ops, android_id_hook\n\
              No apps in the sandbox.\n"
         );
     }

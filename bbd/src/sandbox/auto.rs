@@ -119,6 +119,8 @@ pub struct Auto {
     /// How long into a look apps are still put in.
     look_wait: Duration,
     failures: FailureLog,
+    #[cfg(test)]
+    user_data_fixture: Option<PathBuf>,
 }
 
 /// Tells libraries from apps.
@@ -183,6 +185,8 @@ impl Auto {
             told_apps: BTreeSet::new(),
             look_wait: DISABLE_ALL_WAIT,
             failures: FailureLog::default(),
+            #[cfg(test)]
+            user_data_fixture: None,
         })
     }
 
@@ -505,8 +509,10 @@ impl Sandbox {
             return Ok(self.auto_switch());
         }
         let known = if on {
-            packages.refresh();
-            anyhow::ensure!(!packages.is_empty(), "the package list cannot be read");
+            anyhow::ensure!(
+                packages.refresh() && !packages.is_empty(),
+                "the package list cannot be read"
+            );
             Known::installed(packages)
         } else {
             Known::default()
@@ -543,20 +549,16 @@ impl Sandbox {
         // then waits no longer than a command does, and the rest are left
         // for the next look, with their starts held meanwhile.
         let until = started + self.auto.look_wait;
-        if put_in {
-            // An app uninstalled while in the sandbox is taken out first,
-            // as before a command: an app given its uid since is new. This
-            // reads the package list again.
-            self.release_reassigned(writer, packages, Some(until));
-        } else {
-            packages.refresh();
-        }
+        let fresh = packages.refresh();
         let users = self.users();
         // Without the package list, or the users, nothing can be told, and
         // nothing known is forgotten.
-        if packages.is_empty() || users.is_empty() {
+        if !fresh || packages.is_empty() || users.is_empty() {
             self.auto.put_off();
             return;
+        }
+        if put_in {
+            self.reconcile(writer, packages, Some(until));
         }
         let plan = plan(&self.auto.known, packages, &users, |user, package| {
             self.installed_for(user, package)
@@ -713,10 +715,18 @@ impl Sandbox {
         self.auto.sync();
     }
 
+    fn auto_user_data(&self) -> Option<&Path> {
+        #[cfg(test)]
+        if let Some(path) = &self.auto.user_data_fixture {
+            return Some(path);
+        }
+        self.user_data.as_deref()
+    }
+
     /// The Android users, by their directories in `user_data`; user 0 alone
     /// where that is not checked.
     fn users(&self) -> Vec<u32> {
-        let Some(dir) = &self.user_data else {
+        let Some(dir) = self.auto_user_data() else {
             return vec![0];
         };
         let mut users: Vec<u32> = std::fs::read_dir(dir)
@@ -732,8 +742,7 @@ impl Sandbox {
 
     /// Whether `package` is installed for Android user `user`.
     fn installed_for(&self, user: u32, package: &str) -> bool {
-        self.user_data
-            .as_ref()
+        self.auto_user_data()
             .is_none_or(|dir| dir.join(user.to_string()).join(package).exists())
     }
 }
@@ -1058,7 +1067,15 @@ mod tests {
         }
 
         fn sandbox(&self) -> Sandbox {
-            Sandbox::load(&self.writer, Vec::new(), Some(&self.user_data())).unwrap()
+            self.sandbox_with(Vec::new())
+        }
+
+        fn sandbox_with(&self, effects: Vec<Box<dyn super::super::Effect>>) -> Sandbox {
+            // The planner needs per-user directories. Verification of
+            // trusted installation cookies needs a rooted Android device.
+            let mut sandbox = Sandbox::load(&self.writer, effects, None).unwrap();
+            sandbox.auto.user_data_fixture = Some(self.user_data());
+            sandbox
         }
     }
 
@@ -1586,8 +1603,7 @@ mod tests {
             refusing: refusing.clone(),
             tries: tries.clone(),
         };
-        let mut sandbox =
-            Sandbox::load(&f.writer, vec![Box::new(effect)], Some(&f.user_data())).unwrap();
+        let mut sandbox = f.sandbox_with(vec![Box::new(effect)]);
         sandbox.set_auto(&f.writer, &mut f.packages, true).unwrap();
         f.list(&[NEW]);
         f.install(0, "com.example.new");
@@ -1854,47 +1870,6 @@ mod tests {
         assert_ne!(other.android_id, first.android_id);
     }
 
-    /// Takes nothing out while `refusing` is set, as when the app ops
-    /// helper does not answer.
-    struct NoRelease {
-        refusing: std::rc::Rc<std::cell::Cell<bool>>,
-    }
-
-    impl crate::sandbox::Effect for NoRelease {
-        fn name(&self) -> &'static str {
-            "app ops"
-        }
-
-        fn enable(
-            &mut self,
-            _: &mut crate::sandbox::Entry,
-            _: &[String],
-            _: &crate::sandbox::items::Settings,
-        ) -> anyhow::Result<()> {
-            Ok(())
-        }
-
-        fn disable(
-            &mut self,
-            _: &mut crate::sandbox::Entry,
-            _: &[String],
-            _: &crate::sandbox::items::Settings,
-        ) -> anyhow::Result<()> {
-            anyhow::ensure!(!self.refusing.get(), "the helper did not answer");
-            Ok(())
-        }
-
-        fn update(
-            &mut self,
-            _: &mut crate::sandbox::Entry,
-            _: &[String],
-            _: &crate::sandbox::items::Settings,
-            _: &crate::sandbox::items::Settings,
-        ) -> anyhow::Result<()> {
-            Ok(())
-        }
-    }
-
     #[test]
     fn an_app_of_two_packages_stays_in_while_either_is_installed() {
         let mut f = Fixture::new("auto-pair-stays");
@@ -1932,12 +1907,8 @@ mod tests {
     #[test]
     fn an_app_given_a_uid_still_held_for_another_is_put_in_once_that_is_out() {
         let mut f = Fixture::new("auto-release-fails");
-        let refusing = std::rc::Rc::new(std::cell::Cell::new(false));
-        let effect = NoRelease {
-            refusing: refusing.clone(),
-        };
-        let mut sandbox =
-            Sandbox::load(&f.writer, vec![Box::new(effect)], Some(&f.user_data())).unwrap();
+        let conn = rusqlite::Connection::open(f.dir.join("bb.db")).unwrap();
+        let mut sandbox = f.sandbox();
         sandbox.set_auto(&f.writer, &mut f.packages, true).unwrap();
         f.list(&[NEW]);
         f.install(0, "com.example.new");
@@ -1946,7 +1917,12 @@ mod tests {
 
         // Uninstalled, its uid given to another app, and it cannot be taken
         // out: the other is not in the sandbox under its entry.
-        refusing.set(true);
+        conn.execute_batch(
+            "CREATE TRIGGER refuse_retirement BEFORE UPDATE OF enabled ON sandbox
+             WHEN NEW.enabled = 0
+             BEGIN SELECT RAISE(ABORT, 'refuse retirement'); END;",
+        )
+        .unwrap();
         f.list(&["com.example.other 10230 0 /d default none 0 1 1 @null"]);
         f.uninstall(0, "com.example.new");
         f.install(0, "com.example.other");
@@ -1961,7 +1937,8 @@ mod tests {
         );
 
         // Taken out at last: the other is put in, with an entry of its own.
-        refusing.set(false);
+        conn.execute_batch("DROP TRIGGER refuse_retirement")
+            .unwrap();
         sandbox.auto.retries.get_mut(&10230).unwrap().at = Instant::now();
         sandbox.isolate_new(&f.writer, &mut f.packages);
         assert_eq!(sandboxed(&sandbox), [10230]);
@@ -2066,8 +2043,7 @@ mod tests {
             refusing: refusing.clone(),
             tries,
         };
-        let mut sandbox =
-            Sandbox::load(&f.writer, vec![Box::new(effect)], Some(&f.user_data())).unwrap();
+        let mut sandbox = f.sandbox_with(vec![Box::new(effect)]);
         sandbox.set_auto(&f.writer, &mut f.packages, true).unwrap();
         f.list(&[NEW]);
         f.install(0, "com.example.new");

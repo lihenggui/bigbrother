@@ -52,10 +52,33 @@ pub fn collection(uri: &str) -> Option<String> {
     let authority = authority(uri)?;
     let path = &uri[SCHEME.len()..];
     let path = &path[..path.find(['?', '#']).unwrap_or(path.len())];
-    let segment = path
-        .split('/')
-        .nth(1)
-        .filter(|s| !s.is_empty() && !s.bytes().all(|b| b.is_ascii_digit()));
+    let segment = path.split('/').nth(1).filter(|s| {
+        matches!(
+            *s,
+            "contacts"
+                | "raw_contacts"
+                | "data"
+                | "groups"
+                | "profile"
+                | "phones"
+                | "adn"
+                | "fdn"
+                | "sdn"
+                | "calls"
+                | "voicemail"
+                | "inbox"
+                | "sent"
+                | "draft"
+                | "outbox"
+                | "conversations"
+                | "events"
+                | "calendars"
+                | "instances"
+                | "attendees"
+                | "reminders"
+                | "siminfo"
+        )
+    });
     Some(match segment {
         Some(segment) => format!("{SCHEME}{authority}/{segment}"),
         None => format!("{SCHEME}{authority}"),

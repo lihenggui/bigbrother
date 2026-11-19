@@ -15,7 +15,7 @@
 //! `bbd run`: load the eBPF programs and turn kernel events into stored rows.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     path::Path,
     ptr,
@@ -31,8 +31,9 @@ use aya::{
 use bb_common::{
     BinderEvent, BinderKey, BinderValue, ConnectEvent, EV_BINDER, EV_CONNECT, EV_EXEC, EV_FILE,
     EV_NETLINK, EV_PATH, EV_PROCESS, EV_RESULT, EXEC_ARGS, EventHeader, ExecEvent,
-    FUSE_SUPER_MAGIC, FileEvent, NetlinkEvent, OFF_MISSING, OP_PROBE, OP_WATCH, PROC_SUPER_MAGIC,
-    PROCESS_READ, PROCESS_WRITE, PathEvent, ProcessEvent, ResultEvent, SELINUX_MAGIC, SYSFS_MAGIC,
+    FUSE_SUPER_MAGIC, FileEvent, NetlinkEvent, OFF_COUNT, OFF_MISSING, OP_PROBE, OP_WATCH,
+    PROC_SUPER_MAGIC, PROCESS_READ, PROCESS_WRITE, PathEvent, ProcessEvent, ResultEvent,
+    SELINUX_MAGIC, SYSFS_MAGIC,
 };
 use tokio::{
     io::{Interest, unix::AsyncFd},
@@ -51,7 +52,7 @@ use crate::{
     packages::{FIRST_ISOLATED_APP_ID, PER_USER_RANGE, Packages},
     paths, personal, rules,
     sandbox::{self, Sandbox},
-    sensors,
+    selftest, sensors,
     spool::{self, Spool},
     store::{
         Category, Counters, MODE_CALL, MODE_CONNECT, MODE_DIR, MODE_EXEC, MODE_ISOLATED,
@@ -127,16 +128,6 @@ pub struct Options<'a> {
 }
 
 pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
-    // Kernels before 5.11 account BPF memory against RLIMIT_MEMLOCK
-    // (https://lwn.net/Articles/837122/); GKI 5.10 is one of them.
-    let rlim = libc::rlimit {
-        rlim_cur: libc::RLIM_INFINITY,
-        rlim_max: libc::RLIM_INFINITY,
-    };
-    if unsafe { libc::setrlimit(libc::RLIMIT_MEMLOCK, &rlim) } != 0 {
-        eprintln!("bbd: warning: could not raise RLIMIT_MEMLOCK");
-    }
-
     let writer = Writer::open(opts.db)?;
     let pruned = writer.prune(opts.retention_days, now())?;
     // Sensors the previous run saw turned on and not off. When it was last
@@ -169,55 +160,19 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         None
     };
 
-    let offsets = Btf::from_kernel()?.kernel_offsets()?;
-    let mut ebpf = EbpfLoader::new()
-        .override_global("OFFSETS", &offsets[..], true)
-        .load(aya::include_bytes_aligned!(concat!(
-            env!("OUT_DIR"),
-            "/bb-ebpf"
-        )))
-        .context("loading eBPF object (need root and a BPF-enabled kernel)")?;
-
-    let kprobe: &mut KProbe = ebpf
-        .program_mut("file_open")
-        .context("program file_open missing from object")?
-        .try_into()?;
-    kprobe.load().context("verifier rejected file_open")?;
-    kprobe
-        .attach("security_file_open", 0)
-        .context("attaching kprobe security_file_open")?;
-
-    // Syscall probes: one entry program per argument layout plus a shared
-    // return program, attached to each syscall function this kernel has.
-    let symbols = syscalls::kernel_symbols().context("reading /proc/kallsyms")?;
-    anyhow::ensure!(
-        symbols.contains(syscalls::REQUIRED),
-        "{} not in /proc/kallsyms (unsupported kernel, or kallsyms restricted)",
-        syscalls::REQUIRED
-    );
-    // The return program is shared by every feature that reports outcomes.
-    let returns: &mut KProbe = ebpf
-        .program_mut("sys_ret")
-        .context("program sys_ret missing from object")?
-        .try_into()?;
-    returns.load().context("verifier rejected sys_ret")?;
-    let mut functions = attach_feature(&mut ebpf, &syscalls::FILES, &symbols, &offsets)
-        .context("setting up the file probes")?;
-
-    // Everything else is recorded where the kernel allows it. A probe that
-    // can't be set up costs its own records, not the daemon: what is and
-    // isn't covered is stored for `bbd stats` to report.
-    for feature in syscalls::FEATURES {
-        let attached = attach_feature(&mut ebpf, feature, &symbols, &offsets);
-        match &attached {
-            Ok(count) => functions += count,
-            Err(e) => eprintln!("bbd: warning: not recording {}: {e:#}", feature.name),
-        }
-        writer.set_meta(
-            &format!("coverage_{}", feature.name),
-            i64::from(attached.is_ok()),
-        )?;
-    }
+    let Probes {
+        mut ebpf,
+        offsets,
+        symbols,
+        selinux,
+        features,
+    } = load_probes()?;
+    let functions = features
+        .iter()
+        .filter_map(|(_, attached)| attached.as_ref().ok())
+        .flatten()
+        .filter(|(program, _)| *program != "file_open")
+        .count();
 
     // The system's own permission usage records, read periodically.
     writer.set_meta("coverage_appops", COVERAGE_PENDING)?;
@@ -244,11 +199,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     let dropped: PerCpuArray<MapData, u64> =
         PerCpuArray::try_from(ebpf.take_map("DROPPED").context("DROPPED map missing")?)?;
     // Events the kernel side lost, summed over CPUs.
-    let dropped_events = || {
-        dropped
-            .get(&0, 0)
-            .map_or(0, |per_cpu| per_cpu.iter().sum::<u64>())
-    };
+    let dropped_events = || selftest::dropped_events(&dropped);
     let ring = RingBuf::try_from(ebpf.take_map("EVENTS").context("EVENTS map missing")?)?;
     // SAFETY: the RingBuf owns its fd, which stays open and unchanged for as
     // long as the AsyncFd owns the RingBuf.
@@ -278,7 +229,47 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         verbose: opts.verbose,
         explain_discards: opts.explain_discards,
         ingest_provider_events: opts.ingest_provider_events,
+        selftest: selftest::Seen::default(),
     };
+    // A probe can attach and never fire (see `selftest`): what is covered
+    // is what fires. The events of other processes meanwhile are handled
+    // as usual. Drained first, so that the buffer has room for the child's
+    // events and only drops while it runs count.
+    let checking = Instant::now();
+    tracer.drain(ring.get_mut());
+    let dropped_before = dropped_events();
+    let (made, child) = selftest::exercise();
+    tracer.selftest = selftest::Seen::of(child);
+    tracer.drain(ring.get_mut());
+    let lost = dropped_events() > dropped_before;
+    let seen = std::mem::take(&mut tracer.selftest);
+    let states = selftest::judge(&features, made, seen, lost);
+    for ((feature, _), (_, state)) in features.iter().zip(&states) {
+        match state {
+            selftest::State::Silent(function) => eprintln!(
+                "bbd: warning: not recording {}: the probe on {function} attached but did not fire",
+                feature.name
+            ),
+            selftest::State::Unchecked(function) => eprintln!(
+                "bbd: warning: could not check whether the {} probe on *{function} fires",
+                feature.name
+            ),
+            selftest::State::Fires | selftest::State::NotAttached => {}
+        }
+        tracer.writer.set_meta(
+            &format!("coverage_{}", feature.name),
+            i64::from(state.covered()),
+        )?;
+    }
+    eprintln!(
+        "bbd: probe self-check: {} of {} features fire ({} ms)",
+        states
+            .iter()
+            .filter(|(_, state)| *state == selftest::State::Fires)
+            .count(),
+        states.len(),
+        checking.elapsed().as_millis()
+    );
     if let Some(map) = &mut binder_watch {
         let fixed = Catalog::parse("");
         match watch(map, &fixed) {
@@ -296,6 +287,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         start_sandbox(
             &mut ebpf,
             &symbols,
+            selinux,
             &offsets,
             &mut tracer,
             opts.db,
@@ -436,8 +428,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
             // The kernel side's buffer is filling up.
             guard = ring.readable_mut() => {
                 let mut guard = guard?;
-                tracer.drain(guard.get_inner_mut());
-                guard.clear_ready();
+                if tracer.drain(guard.get_inner_mut()) { guard.clear_ready(); }
                 continue;
             }
         };
@@ -461,6 +452,10 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
             }
         }
         tracer.settle_sensors(SENSOR_LIST_WAIT);
+        if let Some(sandbox) = sandbox.as_mut() {
+            sandbox.release_reassigned(&tracer.writer, &mut tracer.packages);
+            sandbox.keep_found(&tracer.writer);
+        }
         // A failed write (disk full, database busy) keeps the batch for the
         // next attempt; it is not a reason to stop recording.
         let written = match request {
@@ -487,6 +482,9 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     tracer.settle_sensors(Duration::from_secs(2));
     tracer.counters.dropped = dropped_events();
     tracer.expire(i64::MAX);
+    if let Some(sandbox) = sandbox.as_mut() {
+        sandbox.keep_found(&tracer.writer);
+    }
     tracer.writer.flush(&tracer.counters, now())?;
     // Sensors still on when it stopped were on at least until now; the next
     // run ends them here if their apps have ended by then.
@@ -567,13 +565,15 @@ async fn next_request(listener: Option<&UnixListener>) -> Option<UnixStream> {
 /// start it ended (see `sandbox::auto`).
 fn start_sandbox(
     ebpf: &mut aya::Ebpf,
-    symbols: &std::collections::HashSet<&'static str>,
+    symbols: &HashSet<&'static str>,
+    selinux: bool,
     offsets: &[u32],
     tracer: &mut Tracer,
     db: &Path,
     new_starts: tokio::sync::mpsc::Sender<u32>,
 ) -> Option<Sandbox> {
-    let mut sandbox = match Sandbox::load(&tracer.writer, Vec::new(), Some(Path::new(USER_DATA))) {
+    let user_data = Path::new(USER_DATA);
+    let mut sandbox = match Sandbox::load(&tracer.writer, Vec::new(), Some(user_data)) {
         Ok(sandbox) => sandbox,
         Err(e) => {
             eprintln!("bbd: warning: the sandbox is off: {e:#}");
@@ -583,7 +583,7 @@ fn start_sandbox(
     // Attached while no uid is listed for it, so it holds nothing yet. The
     // uids are listed next, and what started in between is ended last
     // (`sweep`): no start falls between the two.
-    let storage = attach_feature(ebpf, &syscalls::GATE, symbols, offsets)
+    let storage = attach_feature(ebpf, &syscalls::GATE, symbols, selinux, offsets)
         .and_then(|_| sandbox::gate::Storage::start(ebpf, &db.with_file_name("scratch")));
     let _ = tracer.writer.set_meta(
         &format!("coverage_{}", syscalls::GATE.name),
@@ -623,14 +623,103 @@ fn start_sandbox(
     Some(sandbox)
 }
 
-/// Load and attach the probes of one optional feature. Returns how many
-/// kernel functions they were attached to.
+/// The eBPF programs, loaded, with the recorders attached.
+pub struct Probes {
+    pub ebpf: aya::Ebpf,
+    pub offsets: [u32; OFF_COUNT],
+    pub symbols: HashSet<&'static str>,
+    /// Whether SELinux is running (see `syscalls`).
+    pub selinux: bool,
+    /// The file probes, then each optional feature, with what it is
+    /// attached to or why it is not. The file probes' plan begins with the
+    /// security hook `file_open` is attached to.
+    pub features: Vec<(&'static syscalls::Feature, anyhow::Result<selftest::Plan>)>,
+}
+
+/// Load the eBPF programs and attach the file probes and every optional
+/// feature the kernel allows. Fails only without the file probes.
+pub fn load_probes() -> anyhow::Result<Probes> {
+    // Kernels before 5.11 account BPF memory against RLIMIT_MEMLOCK
+    // (https://lwn.net/Articles/837122/); GKI 5.10 is one of them.
+    let rlim = libc::rlimit {
+        rlim_cur: libc::RLIM_INFINITY,
+        rlim_max: libc::RLIM_INFINITY,
+    };
+    if unsafe { libc::setrlimit(libc::RLIMIT_MEMLOCK, &rlim) } != 0 {
+        eprintln!("bbd: warning: could not raise RLIMIT_MEMLOCK");
+    }
+
+    let offsets = Btf::from_kernel()?.kernel_offsets()?;
+    let mut ebpf = EbpfLoader::new()
+        .override_global("OFFSETS", &offsets[..], true)
+        .load(aya::include_bytes_aligned!(concat!(
+            env!("OUT_DIR"),
+            "/bb-ebpf"
+        )))
+        .context("loading eBPF object (need root and a BPF-enabled kernel)")?;
+
+    let symbols = syscalls::kernel_symbols().context("reading /proc/kallsyms")?;
+    anyhow::ensure!(
+        symbols.contains(syscalls::REQUIRED),
+        "{} not in /proc/kallsyms (unsupported kernel, or kallsyms restricted)",
+        syscalls::REQUIRED
+    );
+
+    let kprobe: &mut KProbe = ebpf
+        .program_mut("file_open")
+        .context("program file_open missing from object")?
+        .try_into()?;
+    kprobe.load().context("verifier rejected file_open")?;
+    let selinux = syscalls::selinux_running();
+    let hook = syscalls::file_open_hook(&symbols, selinux);
+    kprobe
+        .attach(hook, 0)
+        .with_context(|| format!("attaching kprobe {hook}"))?;
+    eprintln!("bbd: file_open on {hook}");
+
+    // Syscall probes: one entry program per argument layout plus a shared
+    // return program, attached to each syscall function this kernel has.
+    // The return program is shared by every feature that reports outcomes.
+    let returns: &mut KProbe = ebpf
+        .program_mut("sys_ret")
+        .context("program sys_ret missing from object")?
+        .try_into()?;
+    returns.load().context("verifier rejected sys_ret")?;
+    let mut files = vec![("file_open", hook)];
+    files.extend(
+        attach_feature(&mut ebpf, &syscalls::FILES, &symbols, selinux, &offsets)
+            .context("setting up the file probes")?,
+    );
+    let mut features = vec![(&syscalls::FILES, Ok(files))];
+
+    // Everything else is recorded where the kernel allows it. A probe that
+    // can't be set up costs its own records, not the daemon: what is and
+    // isn't covered is stored for `bbd stats` to report.
+    for feature in syscalls::FEATURES {
+        let attached = attach_feature(&mut ebpf, feature, &symbols, selinux, &offsets);
+        if let Err(e) = &attached {
+            eprintln!("bbd: warning: not recording {}: {e:#}", feature.name);
+        }
+        features.push((feature, attached));
+    }
+    Ok(Probes {
+        ebpf,
+        offsets,
+        symbols,
+        selinux,
+        features,
+    })
+}
+
+/// Load and attach the probes of one optional feature. Returns the
+/// (program, kernel function) pairs attached.
 fn attach_feature(
     ebpf: &mut aya::Ebpf,
     feature: &syscalls::Feature,
-    symbols: &std::collections::HashSet<&'static str>,
+    symbols: &HashSet<&'static str>,
+    selinux: bool,
     offsets: &[u32],
-) -> anyhow::Result<usize> {
+) -> anyhow::Result<selftest::Plan> {
     anyhow::ensure!(
         feature
             .offsets
@@ -638,7 +727,7 @@ fn attach_feature(
             .all(|&slot| offsets[slot] != OFF_MISSING),
         "this kernel's type information lacks a field it reads"
     );
-    let plan = syscalls::attach_plan(feature.table, symbols);
+    let plan = syscalls::attach_plan(feature, symbols, selinux);
     anyhow::ensure!(
         !plan.is_empty(),
         "this kernel has none of the functions it attaches to"
@@ -680,7 +769,13 @@ fn attach_feature(
         }
         return Err(e);
     }
-    Ok(plan.len())
+    // Which of the alternatives was taken depends on the kernel.
+    if feature.alternatives {
+        for (_, function) in &plan {
+            eprintln!("bbd: {} on {function}", feature.name);
+        }
+    }
+    Ok(plan)
 }
 
 /// Load and attach the binder tracepoint program, and return the map that
@@ -982,7 +1077,7 @@ fn clock_ns(clock: libc::clockid_t) -> i64 {
 }
 
 /// Reinterpret ring buffer bytes as an event struct.
-fn cast<T: Copy>(bytes: &[u8]) -> Option<T> {
+pub fn cast<T: Copy>(bytes: &[u8]) -> Option<T> {
     // SAFETY: only used with the repr(C) plain-data event structs from
     // bb-common, for which any bit pattern is valid.
     (bytes.len() >= size_of::<T>()).then(|| unsafe { ptr::read_unaligned(bytes.as_ptr().cast()) })
@@ -1055,6 +1150,8 @@ struct Tracer {
     verbose: bool,
     explain_discards: bool,
     ingest_provider_events: bool,
+    /// The self-check's events (see `selftest`), which are not recorded.
+    selftest: selftest::Seen,
 }
 
 impl Tracer {
@@ -1077,18 +1174,34 @@ impl Tracer {
         self.writer.set_meta("coverage_binder", covered).ok();
     }
 
-    /// Take in everything waiting in the ring buffer.
-    fn drain(&mut self, ring: &mut RingBuf<MapData>) {
+    /// Yield to control requests even when the kernel keeps producing.
+    fn drain(&mut self, ring: &mut RingBuf<MapData>) -> bool {
         let clock = EventClock::now();
-        while let Some(item) = ring.next() {
+        for _ in 0..1024 {
+            let Some(item) = ring.next() else { return true };
             self.on_event(&item, &clock);
         }
+        false
+    }
+
+    fn hold_result(&mut self, tid: u32, event: Held) {
+        if self.awaiting_result.len() < 1024 || self.awaiting_result.contains_key(&tid) {
+            let waiting = self.awaiting_result.entry(tid).or_default();
+            if waiting.len() < 16 {
+                waiting.push(event);
+                return;
+            }
+        }
+        self.counters.unresolved += 1;
     }
 
     fn on_event(&mut self, bytes: &[u8], clock: &EventClock) {
         let Some(hdr) = cast::<EventHeader>(bytes) else {
             return;
         };
+        if self.selftest.claim(bytes) {
+            return;
+        }
         let ts = clock.unix_secs(hdr.boot_ns());
         match hdr.kind {
             EV_FILE => {
@@ -1101,12 +1214,12 @@ impl Tracer {
                 // different, wrong file.
                 if ev.truncated != 0 {
                     self.counters.unresolved += 1;
-                    self.explain("file", "truncated");
+                    self.explain("file");
                     return;
                 }
                 let Some(path) = self.file_path(&ev) else {
                     self.counters.unresolved += 1;
-                    self.explain("file", "unresolved");
+                    self.explain("file");
                     return;
                 };
                 let opened = Opened {
@@ -1117,10 +1230,7 @@ impl Tracer {
                     ts,
                 };
                 if ev.in_syscall != 0 {
-                    self.awaiting_result
-                        .entry(hdr.tid)
-                        .or_default()
-                        .push(Held::File(opened));
+                    self.hold_result(hdr.tid, Held::File(opened));
                 } else {
                     self.record(&opened, true);
                 }
@@ -1150,7 +1260,7 @@ impl Tracer {
                         Some(p) => p,
                         None => {
                             self.counters.unresolved += 1;
-                            self.explain("path-relative", &raw);
+                            self.explain("path-relative");
                             return;
                         }
                     }
@@ -1183,20 +1293,20 @@ impl Tracer {
                     .map(|slot| lossy(slot.split(|&b| b == 0).next().unwrap_or_default()))
                     .collect();
                 let Some(subject) = commands::subject(&path, &args) else {
-                    self.explain("exec", &path);
+                    self.explain("exec");
                     return;
                 };
                 let (uid, origin) = self.owner_uid(hdr.uid, hdr.pid);
-                self.awaiting_result
-                    .entry(hdr.tid)
-                    .or_default()
-                    .push(Held::Command {
+                self.hold_result(
+                    hdr.tid,
+                    Held::Command {
                         uid,
                         pid: hdr.pid,
                         subject,
                         origin,
                         ts,
-                    });
+                    },
+                );
             }
             EV_PROCESS => {
                 let Some(ev) = cast::<ProcessEvent>(bytes) else {
@@ -1210,7 +1320,7 @@ impl Tracer {
                 // the app looking at itself. A process that is already gone
                 // can't be attributed and is skipped.
                 if uid_of_pid(ev.target).is_none_or(|owner| owner == hdr.uid) {
-                    self.explain("process", "<own or gone>");
+                    self.explain("process");
                     return;
                 }
                 let mode = match ev.how {
@@ -1219,16 +1329,16 @@ impl Tracer {
                     _ => MODE_WATCH,
                 };
                 let (uid, origin) = self.owner_uid(hdr.uid, hdr.pid);
-                self.awaiting_result
-                    .entry(hdr.tid)
-                    .or_default()
-                    .push(Held::Record {
+                self.hold_result(
+                    hdr.tid,
+                    Held::Record {
                         uid,
                         cat: Category::Process,
                         subject: subject.to_string(),
                         mode: mode | origin,
                         ts,
-                    });
+                    },
+                );
             }
             EV_BINDER => {
                 let Some(ev) = cast::<BinderEvent>(bytes) else {
@@ -1279,7 +1389,7 @@ impl Tracer {
                     )
                 });
                 let Some(mut subject) = subject else {
-                    self.explain("binder", "<about itself, or not watched>");
+                    self.explain("binder");
                     return;
                 };
                 // Whether the app asked about is there is known only now: by
@@ -1311,16 +1421,16 @@ impl Tracer {
                     return;
                 };
                 let (uid, origin) = self.owner_uid(hdr.uid, hdr.pid);
-                self.awaiting_result
-                    .entry(hdr.tid)
-                    .or_default()
-                    .push(Held::Record {
+                self.hold_result(
+                    hdr.tid,
+                    Held::Record {
                         uid,
                         cat: Category::Network,
                         subject: subject.to_string(),
                         mode: MODE_READ | origin,
                         ts,
-                    });
+                    },
+                );
             }
             EV_CONNECT => {
                 let Some(ev) = cast::<ConnectEvent>(bytes) else {
@@ -1334,7 +1444,7 @@ impl Tracer {
                 // socket tables are compared by the uid the kernel sees.
                 if destination.is_loopback() && self.listeners.owned_by(destination.port(), hdr.uid)
                 {
-                    self.explain("connect", "<own port>");
+                    self.explain("connect");
                     return;
                 }
                 let (uid, origin) = self.owner_uid(hdr.uid, hdr.pid);
@@ -1467,9 +1577,9 @@ impl Tracer {
         Some(format!("{base}/{relative}"))
     }
 
-    fn explain(&self, source: &str, path: &str) {
+    fn explain(&self, source: &str) {
         if self.explain_discards {
-            println!("discard {source} {path}");
+            println!("discard {source}");
         }
     }
 
@@ -1485,7 +1595,7 @@ impl Tracer {
         let pkgs = self.packages.for_uid(uid);
         let (cat, path) = match paths::canonicalize(&opened.path, uid / PER_USER_RANGE) {
             Some(path) if paths::is_own_dir(&path, pkgs) => {
-                self.explain(source, "<own app directory>");
+                self.explain(source);
                 return;
             }
             Some(path) => (Category::Storage, path),
@@ -1495,7 +1605,7 @@ impl Tracer {
             None => match rules::classify(&opened.path, opened.uid, uid_of_pid) {
                 Some(hit) => hit,
                 None => {
-                    self.explain(source, &opened.path);
+                    self.explain(source);
                     return;
                 }
             },
@@ -1545,8 +1655,7 @@ impl Tracer {
         if !self.ingest_provider_events {
             return;
         }
-        let hosts = spool::hosts(|listed| self.packages.sharing_uid_with(listed));
-        for ev in self.spool.collect(&hosts) {
+        for ev in self.spool.collect() {
             self.counters.seen += 1;
             // Calls between system components are not app behaviour.
             if ev.uid % PER_USER_RANGE < FIRST_APPLICATION_UID {
@@ -1626,8 +1735,7 @@ impl Tracer {
         self.counters.kept += 1;
         if self.verbose {
             println!(
-                "uid={uid} pkg={} cat={} how={} {} {path}",
-                if pkg.is_empty() { "?" } else { pkg },
+                "cat={} how={} {}",
                 cat.as_str(),
                 mode_label(mode),
                 if ok { "ok" } else { "failed" },

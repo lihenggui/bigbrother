@@ -50,6 +50,9 @@ Assembling `:app` needs the daemons in `../out/` (`../scripts/build.sh`).
   `bbd/src/sandbox/appops.rs`.
 - The hook and the daemon share two files in `/data/system`; their formats
   are in `SandboxRules.kt` and `bbd/src/sandbox/identity.rs`.
+- The lines of these formats, and of the hook's spool (`EventSpool.kt`,
+  `bbd/src/spool.rs`), are listed with their meaning in `../testdata/protocol/`,
+  which the tests of both sides read. A change to a format changes its cases.
 
 ## Code
 

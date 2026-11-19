@@ -1,0 +1,162 @@
+# The line protocol between the daemon and the app ops helper
+# (bbd/src/sandbox/appops.rs and AppOpsGuardProtocol.kt), read by the
+# tests of both. The format of the cases is in README.md.
+#
+# command          the daemon writes the line for the meaning; the helper
+#                  reads the meaning from it
+# command-read     the helper reads the meaning; the daemon does not write
+#                  the line in this form
+# command-bad      the helper rejects the line
+# answer           the helper writes the line for the meaning; the daemon
+#                  reads the meaning from it
+# answer-bad       the daemon takes the line for no answer and no report
+#
+# The meaning is the kind of line, then:
+#
+# uid=<uid>
+# request=<number>             a read-only kind request and its answer
+# package=<package>            the package to classify
+# hold=<op>/<mode>             an op held at a mode: 1 ignored, 4 foreground
+# revoke=<permission>          a permission held revoked
+# op=<op>/<mode>[/<grant>]     an op's uid mode, or none; and the mode the
+#                              system gave it for its permission's grant
+# permission=<permission>/<state>[/user_set][/user_fixed][/service:<package>:<class>]...
+#                              a permission granted, denied or unknown,
+#                              with the flags that are the user's choice;
+#                              for a special access, the services it was
+#                              given to
+# name=<op or permission>      what the helper set back by itself
+# not_held=<op>                an op the system did not keep at its mode
+
+# set: hold a uid, and answer what it had.
+command	set 10100 android:camera=1,android:read_contacts=1	set	uid=10100	hold=android:camera/1	hold=android:read_contacts/1
+command	set 10100 android:camera=4,android:read_contacts=1	set	uid=10100	hold=android:camera/4	hold=android:read_contacts/1
+command	set 10100 android:camera=1,android.permission.ACCESS_FINE_LOCATION=revoked	set	uid=10100	hold=android:camera/1	revoke=android.permission.ACCESS_FINE_LOCATION
+command	set 1010100 android:coarse_location=4,android:fine_location=4	set	uid=1010100	hold=android:coarse_location/4	hold=android:fine_location/4
+command-read	  set\t10100 android:camera=1 \n	set	uid=10100	hold=android:camera/1
+command-read	set 10100 android.permission.ACCESS_FINE_LOCATION=revoked,android:camera=1	set	uid=10100	hold=android:camera/1	revoke=android.permission.ACCESS_FINE_LOCATION
+
+# verify: hold a uid again to what it is held to.
+command	verify 10100 android:camera=1,android:read_contacts=1	verify	uid=10100	hold=android:camera/1	hold=android:read_contacts/1
+command	verify 10100 android:record_audio=4	verify	uid=10100	hold=android:record_audio/4
+command	verify 10100 android.permission.ACCESS_FINE_LOCATION=revoked	verify	uid=10100	revoke=android.permission.ACCESS_FINE_LOCATION
+
+# release: stop holding a uid, and set back what the helper saved itself.
+command	release 10100	release	uid=10100
+
+# restore: set back the values given, and stop holding the uid.
+command	restore 10100 android:camera=4,android:read_contacts=default	restore	uid=10100	op=android:camera/4	op=android:read_contacts/none
+command	restore 10100 android:read_contacts=1/1,android:write_contacts=default,android:camera=default/4	restore	uid=10100	op=android:read_contacts/1/1	op=android:write_contacts/none	op=android:camera/none/4
+command	restore 10100 android:camera=4,android.permission.ACCESS_FINE_LOCATION=denied+user_set+user_fixed	restore	uid=10100	op=android:camera/4	permission=android.permission.ACCESS_FINE_LOCATION/denied/user_set/user_fixed
+command	restore 10100 android:camera=0,android.permission.ACCESS_FINE_LOCATION=granted	restore	uid=10100	op=android:camera/0	permission=android.permission.ACCESS_FINE_LOCATION/granted
+command	restore 10100 android.permission.ACCESS_FINE_LOCATION=default	restore	uid=10100	permission=android.permission.ACCESS_FINE_LOCATION/unknown
+# The notifications and the screen go back to the services that had them.
+command	restore 10100 android:camera=0,android.permission.BIND_NOTIFICATION_LISTENER_SERVICE=granted+service:com.example:com.example.Listener	restore	uid=10100	op=android:camera/0	permission=android.permission.BIND_NOTIFICATION_LISTENER_SERVICE/granted/service:com.example:com.example.Listener
+command	restore 10100 android.permission.BIND_ACCESSIBILITY_SERVICE=granted+service:com.example:com.example.A+service:com.example:com.example.B,android.permission.BIND_NOTIFICATION_LISTENER_SERVICE=denied	restore	uid=10100	permission=android.permission.BIND_ACCESSIBILITY_SERVICE/granted/service:com.example:com.example.A/service:com.example:com.example.B	permission=android.permission.BIND_NOTIFICATION_LISTENER_SERVICE/denied
+# A device that knows none of the ops saved none.
+command-read	restore 10100	restore	uid=10100
+
+# apply: set back what is no longer held, then hold the uid to the targets.
+command	apply 10100 android:camera=1 android:read_contacts=default,android:read_sms=4	apply	uid=10100	hold=android:camera/1	op=android:read_contacts/none	op=android:read_sms/4
+command	apply 10100 android:camera=1 -	apply	uid=10100	hold=android:camera/1
+command	apply 10100 android:coarse_location=4,android:fine_location=4 android:wifi_scan=default	apply	uid=10100	hold=android:coarse_location/4	hold=android:fine_location/4	op=android:wifi_scan/none
+command	apply 10100 android:fine_location=1 android.permission.ACCESS_FINE_LOCATION=granted+user_set	apply	uid=10100	hold=android:fine_location/1	permission=android.permission.ACCESS_FINE_LOCATION/granted/user_set
+command	apply 10100 android:camera=1,android.permission.ACCESS_FINE_LOCATION=revoked android:read_contacts=1/1	apply	uid=10100	hold=android:camera/1	revoke=android.permission.ACCESS_FINE_LOCATION	op=android:read_contacts/1/1
+command-read	apply 10100 - android:camera=0	apply	uid=10100	op=android:camera/0
+
+# kind: ask about a package without changing its permissions.
+command	kind 10240 7 com.example.app_2	kind	uid=10240	request=7	package=com.example.app_2
+
+command-bad
+command-bad	kind 10240
+command-bad	kind 10240 -1 com.example.app
+command-bad	kind 10240 7 com.example.app extra
+command-bad	kind 10240 7 com/example
+command-bad	set
+command-bad	set abc
+command-bad	set -1
+command-bad	set 10100
+command-bad	verify 10100
+command-bad	set 10100 extra
+command-bad	verify 10100 extra
+command-bad	set 10100 -
+command-bad	set 10100 android:camera=0
+command-bad	set 10100 android:camera=2
+command-bad	set 10100 android:camera=default
+command-bad	set 10100 android:camera=1/1
+command-bad	set 10100 android:camera=1,
+command-bad	set 10100 android:camera=1 more
+command-bad	set 10100 android.permission.ACCESS_FINE_LOCATION=granted
+command-bad	set 10100 android.permission.ACCESS_FINE_LOCATION=1
+command-bad	set 10100 android:camera=revoked
+command-bad	set 4294967296 android:camera=1
+command-bad	release
+command-bad	release 10100 extra
+command-bad	apply 10100 android:camera=1
+command-bad	apply 10100 android:camera=3 -
+command-bad	apply 10100 - android:camera=x
+command-bad	apply 10100 - android.permission.ACCESS_FINE_LOCATION=revoked
+command-bad	unset 10100
+command-bad	restore 10100 android:camera
+command-bad	restore 10100 android:camera=
+command-bad	restore 10100 android:camera=ignored
+command-bad	restore 10100 =1
+command-bad	restore 10100 android:camera=1,
+command-bad	restore 10100 android:camera=-1
+command-bad	restore 10100 android:camera=1/
+command-bad	restore 10100 android:camera=1/x
+command-bad	restore 10100 android:camera=1/-1
+command-bad	restore 10100 android:camera=/1
+command-bad	restore 10100 android:camera=1/1/1
+command-bad	restore 10100 android:camera=1 more
+command-bad	restore 10100 android.permission.ACCESS_FINE_LOCATION=granted+user_whatever
+command-bad	restore 10100 android.permission.ACCESS_FINE_LOCATION=maybe
+command-bad	restore 10100 android.permission.ACCESS_FINE_LOCATION=4
+# Services without the access, and a service without its package.
+command-bad	restore 10100 android.permission.BIND_NOTIFICATION_LISTENER_SERVICE=denied+service:com.example:com.example.Listener
+command-bad	restore 10100 android.permission.BIND_NOTIFICATION_LISTENER_SERVICE=granted+service:com.example.Listener
+
+# saved: what set found, as restore takes it.
+answer	saved 10100 android:camera=default,android:fine_location=4	saved	uid=10100	op=android:camera/none	op=android:fine_location/4
+answer	saved 10100 android:read_contacts=1/1,android:camera=default/4,android.permission.ACCESS_FINE_LOCATION=granted	saved	uid=10100	op=android:read_contacts/1/1	op=android:camera/none/4	permission=android.permission.ACCESS_FINE_LOCATION/granted
+answer	saved 10100 android:camera=4,android.permission.ACCESS_FINE_LOCATION=granted+user_set	saved	uid=10100	op=android:camera/4	permission=android.permission.ACCESS_FINE_LOCATION/granted/user_set
+answer	saved 10100 android:camera=1,android.permission.BIND_NOTIFICATION_LISTENER_SERVICE=granted+service:com.example:com.example.Listener	saved	uid=10100	op=android:camera/1	permission=android.permission.BIND_NOTIFICATION_LISTENER_SERVICE/granted/service:com.example:com.example.Listener
+# A device that knows none of the ops saved none.
+answer	saved 10100	saved	uid=10100
+
+answer	restored 1010100	restored	uid=1010100
+
+# applied: with the states of the permissions taken anew.
+answer	applied 10100	applied	uid=10100
+answer	applied 10100 android.permission.ACCESS_FINE_LOCATION=denied+user_set	applied	uid=10100	permission=android.permission.ACCESS_FINE_LOCATION/denied/user_set
+
+answer	failed 10100	failed	uid=10100
+
+# Reports of what the helper did by itself; they answer nothing.
+answer	verified 10100	verified	uid=10100
+answer	reverted 10100 android:camera	reverted	uid=10100	name=android:camera
+answer	reverted 10100 android.permission.ACCESS_FINE_LOCATION	reverted	uid=10100	name=android.permission.ACCESS_FINE_LOCATION
+# A permission found granted again and taken back: the state it was found
+# in is the one to give back from now on.
+answer	reverted 10100 android.permission.ACCESS_FINE_LOCATION=granted+user_set	reverted	uid=10100	permission=android.permission.ACCESS_FINE_LOCATION/granted/user_set
+answer	reverted 10100 android.permission.ACCESS_FINE_LOCATION=granted	reverted	uid=10100	permission=android.permission.ACCESS_FINE_LOCATION/granted
+answer	reverted 10100 android.permission.BIND_ACCESSIBILITY_SERVICE=granted+service:com.example:com.example.A	reverted	uid=10100	permission=android.permission.BIND_ACCESSIBILITY_SERVICE/granted/service:com.example:com.example.A
+answer	unheld 10100 android:camera,android:read_sms	unheld	uid=10100	not_held=android:camera	not_held=android:read_sms
+answer	unheld 10100 -	unheld	uid=10100
+
+# Read-only answers echo the request so a late answer can be ignored.
+answer	library 10240 7	library	uid=10240	request=7
+answer	app 10240 8	app	uid=10240	request=8
+answer	unknown 10240 9	unknown	uid=10240	request=9
+
+answer-bad
+answer-bad	library 10240
+answer-bad	app 10240 -1
+answer-bad	unknown 10240 7 extra
+answer-bad	saved
+answer-bad	saved x
+answer-bad	saved -1
+answer-bad	restored -1
+answer-bad	failed 4294967296
+answer-bad	hello 10100
+answer-bad	Saved 10100

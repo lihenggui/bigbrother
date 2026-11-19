@@ -209,7 +209,7 @@ fun GlobalSearchBar(
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun Results(
+internal fun Results(
     results: SearchResults,
     onOpenApp: (AppSummary, DataCategory?) -> Unit,
     onOpenCategory: (DataCategory) -> Unit,

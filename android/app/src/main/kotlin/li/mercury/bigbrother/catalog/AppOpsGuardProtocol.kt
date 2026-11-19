@@ -22,6 +22,9 @@ package li.mercury.bigbrother.catalog
  * that they can be tested on the JVM.
  */
 internal object AppOpsGuardProtocol {
+    /** `AppOpsManager.MODE_ALLOWED`. */
+    const val MODE_ALLOWED = 0
+
     /** `AppOpsManager.MODE_IGNORED`: the app is told no data, not refused. */
     const val MODE_IGNORED = 1
 
@@ -69,6 +72,9 @@ internal object AppOpsGuardProtocol {
         "android:record_audio",
         "android:body_sensors",
         "android:activity_recognition",
+        "android:read_heart_rate",
+        "android:read_skin_temperature",
+        "android:read_oxygen_saturation",
         "android:get_usage_stats",
         "android:read_external_storage",
         "android:write_external_storage",
@@ -107,8 +113,26 @@ internal object AppOpsGuardProtocol {
     private const val USER_SET = "user_set"
     private const val USER_FIXED = "user_fixed"
 
+    /** Starts a word of a state that names a service the access was given to. */
+    private const val SERVICE = "service:"
+
     /** Whether [name] names a permission rather than an op (`android:camera`). */
     fun isPermission(name: String): Boolean = name.startsWith("android.permission.")
+
+    /**
+     * The access to what the system hands an app's services itself: the
+     * notifications, to its notification listeners, and the screen, to its
+     * accessibility services. Named after the permission the system binds
+     * those services with, and taken and given back as a permission is,
+     * though the user grants it service by service: granted is the access
+     * given to some of the app's services, named in the state.
+     */
+    val SPECIAL_ACCESS = setOf(
+        "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE",
+        "android.permission.BIND_ACCESSIBILITY_SERVICE",
+    )
+
+    fun isSpecialAccess(name: String): Boolean = name in SPECIAL_ACCESS
 
     /** What to hold a uid to: [ops] at their modes, and [permissions] revoked. */
     data class Targets(val ops: Map<String, Int>, val permissions: Set<String>) {
@@ -119,15 +143,29 @@ internal object AppOpsGuardProtocol {
 
     /**
      * A runtime permission's state for a uid: whether it is granted, and
-     * the flags among [USER_FLAGS] it has.
+     * the flags among [USER_FLAGS] it has. For a special access
+     * ([SPECIAL_ACCESS]), the [services] it is given to, as
+     * `<package>/<class>`: granted if there are any, without flags.
      */
-    data class PermissionState(val granted: Boolean, val flags: Int)
+    data class PermissionState(val granted: Boolean, val flags: Int, val services: Set<String> = emptySet()) {
+        companion object {
+            /** A special access given to [services], or to none. */
+            fun ofServices(services: Set<String>): PermissionState = PermissionState(services.isNotEmpty(), 0, services)
+        }
+    }
 
     /**
      * What to set back: [ops] to uid modes, `null` for none; [permissions]
-     * to states, `null` where the state is not known.
+     * to states, `null` where the state is not known. [grants] has, for an
+     * op of a runtime permission, the mode the system gave it for the
+     * permission's grant when its uid mode was saved ([grantMode]); none
+     * where it has no such permission, or the mode was saved without it.
      */
-    data class Values(val ops: List<Pair<String, Int?>>, val permissions: List<Pair<String, PermissionState?>>) {
+    data class Values(
+        val ops: List<Pair<String, Int?>>,
+        val permissions: List<Pair<String, PermissionState?>>,
+        val grants: Map<String, Int> = emptyMap(),
+    ) {
         fun isEmpty(): Boolean = ops.isEmpty() && permissions.isEmpty()
 
         companion object {
@@ -154,7 +192,7 @@ internal object AppOpsGuardProtocol {
         data class Apply(override val uid: Int, val targets: Targets, val resets: Values) : Command
 
         /** Whether [packageName], a package of [uid], is a library rather than an app. */
-        data class Kind(override val uid: Int, val packageName: String) : Command
+        data class Kind(override val uid: Int, val request: Long, val packageName: String) : Command
     }
 
     /**
@@ -181,7 +219,11 @@ internal object AppOpsGuardProtocol {
 
             "release" -> if (words.size == 2) Command.Release(uid) else null
 
-            "kind" -> if (words.size == 3 && isPackageName(words[2])) Command.Kind(uid, words[2]) else null
+            "kind" -> {
+                if (words.size != 4 || !isPackageName(words[3])) return null
+                val request = words[2].toLongOrNull()?.takeIf { it >= 0 } ?: return null
+                Command.Kind(uid, request, words[3])
+            }
 
             "restore" -> when (words.size) {
                 // A device that knows none of the ops saved none.
@@ -201,12 +243,12 @@ internal object AppOpsGuardProtocol {
 
     /**
      * `<name>=<value>,...`, the form `saved` prints and `restore` takes: the
-     * ops first, each at its uid mode's number or `default` for none, then
-     * the permissions, each at its state, or `default` where that is not
-     * known.
+     * ops first, each at its uid mode's number or `default` for none,
+     * followed by `/` and its grant's mode where there is one, then the
+     * permissions, each at its state, or `default` where that is not known.
      */
     fun encodeValues(values: Values): String = (
-        values.ops.map { (name, mode) -> "$name=${mode ?: NO_UID_MODE}" } +
+        values.ops.map { (name, mode) -> "$name=${mode ?: NO_UID_MODE}${values.grants[name]?.let { "$GRANT_SEPARATOR$it" }.orEmpty()}" } +
             values.permissions.map { (name, state) -> "$name=${state?.let(::encodeState) ?: NO_UID_MODE}" }
         ).joinToString(",")
 
@@ -214,21 +256,76 @@ internal object AppOpsGuardProtocol {
     fun decodeValues(text: String): Values? {
         val ops = mutableListOf<Pair<String, Int?>>()
         val permissions = mutableListOf<Pair<String, PermissionState?>>()
+        val grants = mutableMapOf<String, Int>()
         for ((name, value) in decodePairs(text) ?: return null) {
             if (isPermission(name)) {
                 permissions += name to if (value == NO_UID_MODE) null else decodeState(value) ?: return null
             } else {
-                ops += name to if (value == NO_UID_MODE) null else value.toIntOrNull()?.takeIf { it >= 0 } ?: return null
+                // Written by earlier builds: the mode alone.
+                val mode = value.substringBefore(GRANT_SEPARATOR)
+                ops += name to if (mode == NO_UID_MODE) null else mode.toIntOrNull()?.takeIf { it >= 0 } ?: return null
+                if (GRANT_SEPARATOR in value) {
+                    grants[name] = value.substringAfter(GRANT_SEPARATOR).toIntOrNull()?.takeIf { it >= 0 } ?: return null
+                }
             }
         }
-        return Values(ops, permissions)
+        return Values(ops, permissions, grants)
     }
 
-    /** `granted` or `denied`, then `+user_set` and `+user_fixed` for the flags it has. */
+    /** Between an op's saved mode and its grant's. */
+    private const val GRANT_SEPARATOR = '/'
+
+    /**
+     * The mode the system gives the op of a runtime permission: allowed
+     * with the permission [granted], or only in the foreground for one
+     * whose background permission is not ([background] `false`; `null`
+     * for one without a background permission); ignored when it is not
+     * granted. Android sets the op so as the grant changes, and from
+     * Android 15 on reports it so whatever uid mode was set.
+     */
+    fun grantMode(granted: Boolean, background: Boolean?): Int = when {
+        !granted -> MODE_IGNORED
+        background == false -> MODE_FOREGROUND
+        else -> MODE_ALLOWED
+    }
+
+    /**
+     * The uid mode to set an op back to, or `null` for none: the one
+     * [saved], unless its permission's grant changed since ([grantThen] to
+     * [grantNow], each as [grantMode] has it). A mode saved for a
+     * permission that was not granted only followed from that, and one
+     * saved for a granted permission may be the user's own; but a grant
+     * that changed is the user's choice made since, and the system's mode
+     * for it is the one to have. Without both grants known, what was saved.
+     */
+    fun modeToRestore(saved: Int?, grantThen: Int?, grantNow: Int?): Int? = if (grantThen != null && grantNow != null && grantNow != grantThen) grantNow else saved
+
+    /**
+     * Whether the grant of [permission] now says what the user chose: not
+     * for an op without one, nor for a permission this program holds
+     * revoked or is about to give back ([held]), whose grant is its own
+     * doing. Such an op is set back to its mode saved.
+     */
+    fun comparesGrant(permission: String?, held: Set<String>): Boolean = permission != null && permission !in held
+
+    /**
+     * The permissions whose grant is this program's doing while ops are set
+     * back: those it holds or took ([holding]), and those it gives back
+     * along with the ops ([givenBack]). Not those it is about to take: their
+     * grant is still the user's.
+     */
+    fun heldWhileSettingBack(holding: Set<String>, givenBack: Values): Set<String> = holding + givenBack.permissions.map { it.first }
+
+    /**
+     * `granted` or `denied`, then `+user_set` and `+user_fixed` for the
+     * flags it has, and `+service:<package>:<class>` for each service.
+     */
     fun encodeState(state: PermissionState): String = buildString {
         append(if (state.granted) GRANTED else DENIED)
         if (state.flags and FLAG_USER_SET != 0) append("+$USER_SET")
         if (state.flags and FLAG_USER_FIXED != 0) append("+$USER_FIXED")
+        // `/` is not used in the line: a component's own separator is.
+        for (service in state.services.sorted()) append("+$SERVICE").append(service.replaceFirst('/', ':'))
     }
 
     /** The state [encodeState] wrote, or `null` for anything else. */
@@ -240,14 +337,24 @@ internal object AppOpsGuardProtocol {
             else -> return null
         }
         var flags = 0
+        val services = mutableSetOf<String>()
         for (word in words.drop(1)) {
+            if (word.startsWith(SERVICE)) {
+                val service = word.removePrefix(SERVICE)
+                if (':' !in service) return null
+                services += service.replaceFirst(':', '/')
+                continue
+            }
             flags = flags or when (word) {
                 USER_SET -> FLAG_USER_SET
                 USER_FIXED -> FLAG_USER_FIXED
                 else -> return null
             }
         }
-        return PermissionState(granted, flags)
+        // Granted with nothing given the access, or the other way round,
+        // is not a state of one.
+        if (services.isNotEmpty() && !granted) return null
+        return PermissionState(granted, flags, services)
     }
 
     /** The `<name>=<value>` pairs of [text], or `null` if one is not a pair. */
@@ -310,17 +417,52 @@ internal object AppOpsGuardProtocol {
     /** With the states of the permissions taken anew, in the form [encodeValues] writes. */
     fun appliedLine(uid: Int, found: List<Pair<String, PermissionState>>): String = if (found.isEmpty()) "applied $uid" else "applied $uid ${encodeValues(Values(emptyList(), found))}"
 
-    /** [name] is an op's or a permission's. */
-    fun revertedLine(uid: Int, name: String): String = "reverted $uid $name"
+    /**
+     * [name] is an op's or a permission's. A permission found granted
+     * again ([regranted]) is followed by the state it was found in, in the
+     * form [encodeValues] writes: the state to give back from now on.
+     */
+    fun revertedLine(uid: Int, name: String, regranted: PermissionState? = null): String = if (regranted == null) "reverted $uid $name" else "reverted $uid $name=${encodeState(regranted)}"
+
+    /**
+     * The state of a permission held revoked, as found ([found]), if it was
+     * granted again: then by the user, who chose so while the app was held,
+     * and that is the state to give back. `null` for one still revoked, or
+     * not requested.
+     */
+    fun regranted(found: PermissionState?): PermissionState? = found?.takeIf { it.granted }
+
+    /**
+     * What to keep for a permission taken back after it was found granted
+     * again ([found]), [kept] being what was kept before. A special access
+     * is given service by service: the user giving one service the access
+     * again took it from none of the others that had it, so they keep it
+     * too.
+     */
+    fun regrantedToKeep(kept: PermissionState?, found: PermissionState): PermissionState = if (kept != null && kept.granted && found.services.isNotEmpty()) {
+        found.copy(services = kept.services + found.services)
+    } else {
+        found
+    }
+
+    /**
+     * What to give a permission back as: what the daemon [sent], or, where
+     * it does not know, the state [kept] here. A permission found granted
+     * again ([regranted]) goes back as found, which the daemon may not have
+     * written down by the time it sends the command.
+     */
+    fun stateToGiveBack(sent: PermissionState?, kept: PermissionState?, regranted: Boolean): PermissionState? = if (regranted && kept != null) kept else sent ?: kept
 
     fun verifiedLine(uid: Int): String = "verified $uid"
+
+    fun unheldLine(uid: Int, ops: List<String>): String = "unheld $uid ${ops.joinToString(",").ifEmpty { NONE }}"
 
     fun failedLine(uid: Int): String = "failed $uid"
 
     /** The answer to `kind`: `null` where it cannot be told. */
-    fun kindLine(uid: Int, library: Boolean?): String = when (library) {
-        true -> "library $uid"
-        false -> "app $uid"
-        null -> "unknown $uid"
+    fun kindLine(uid: Int, request: Long, library: Boolean?): String = when (library) {
+        true -> "library $uid $request"
+        false -> "app $uid $request"
+        null -> "unknown $uid $request"
     }
 }

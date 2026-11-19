@@ -63,16 +63,16 @@ impl Effect for Restart {
         // What the app read before is gone with the processes that hold it.
         // Those that started since the gate held them have their mounts.
         if items.mounts().any() {
-            end(entry.uid, Which::Lacking(items.mounts()));
+            end(entry, Which::Lacking(items.mounts()));
         } else if items.any_on() {
-            end(entry.uid, Which::All);
+            end(entry, Which::All);
         }
         Ok(())
     }
 
     fn disable(&mut self, entry: &mut Entry, _: &[String], items: &Settings) -> anyhow::Result<()> {
         if items.any_on() {
-            end(entry.uid, Which::All);
+            end(entry, Which::All);
         }
         Ok(())
     }
@@ -88,14 +88,14 @@ impl Effect for Restart {
             .into_iter()
             .any(|item| before.mode(item) == Mode::Off && after.mode(item) != Mode::Off);
         if before.mounts() != after.mounts() || turned_on {
-            end(entry.uid, Which::All);
+            end(entry, Which::All);
         }
         Ok(())
     }
 
     fn resume(&mut self, apps: &[Resumed]) {
         for app in apps.iter().filter(|app| app.items.mounts().any()) {
-            end(app.entry.uid, Which::Lacking(app.items.mounts()));
+            end(&app.entry, Which::Lacking(app.items.mounts()));
         }
     }
 }
@@ -115,7 +115,8 @@ const PASS_PAUSE: std::time::Duration = std::time::Duration::from_millis(20);
 /// End processes of `uid`, looking again until a pass finds none to end:
 /// one may fork while the others are being ended, or have been about to
 /// take the uid when it was looked for.
-fn end(uid: u32, which: Which) {
+fn end(entry: &Entry, which: Which) {
+    let uid = entry.uid;
     // Looked up once: it is the same for every process of the uid. If it
     // cannot be, a process with its sandbox is ended too, and gets it again
     // as it starts.
@@ -129,7 +130,7 @@ fn end(uid: u32, which: Which) {
         }
         // Twice at least: what was just about to take the uid is not seen
         // the first time.
-        if end_once(uid, which, sandboxes.as_deref()) == 0 && pass > 0 {
+        if end_once(entry, which, sandboxes.as_deref()) == 0 && pass > 0 {
             break;
         }
     }
@@ -138,7 +139,8 @@ fn end(uid: u32, which: Which) {
 /// One pass; returns how many were ended. A process that cannot be looked
 /// at has ended already. `sandboxes` is the name of the directory of the
 /// sandboxes, if it could be found.
-fn end_once(uid: u32, which: Which, sandboxes: Option<&str>) -> u32 {
+fn end_once(entry: &Entry, which: Which, sandboxes: Option<&str>) -> u32 {
+    let uid = entry.uid;
     let Ok(processes) = fs::read_dir("/proc") else {
         return 0;
     };
@@ -169,11 +171,21 @@ fn end_once(uid: u32, which: Which, sandboxes: Option<&str>) -> u32 {
             Which::All => true,
             Which::Lacking(wanted) => fs::read_to_string(format!("/proc/{pid}/mountinfo"))
                 .map_or(true, |mountinfo| {
-                    !has_mounts(&mountinfo, uid, sandboxes, wanted)
+                    !has_mounts(&mountinfo, uid, sandboxes, &entry.install_id, wanted)
                 }),
         };
-        if to_end {
-            held.signal(libc::SIGKILL);
+        if to_end
+            && matches!(
+                dirs::matches_install(
+                    Path::new("/data/user_de"),
+                    &entry.package,
+                    uid,
+                    &entry.install_id
+                ),
+                Ok(true)
+            )
+            && held.signal(libc::SIGKILL).is_ok()
+        {
             ended += 1;
         }
     }
@@ -184,8 +196,14 @@ fn end_once(uid: u32, which: Which, sandboxes: Option<&str>) -> u32 {
 /// has those the sandbox gives it as `wanted` says. What else it has is
 /// not looked at: a mount on `/proc/cpuinfo` may be the system's, or
 /// another module's, in every app.
-fn has_mounts(mountinfo: &str, uid: u32, sandboxes: Option<&str>, wanted: Mounts) -> bool {
-    (!wanted.storage || has_sandbox(mountinfo, uid, sandboxes))
+fn has_mounts(
+    mountinfo: &str,
+    uid: u32,
+    sandboxes: Option<&str>,
+    installation: &str,
+    wanted: Mounts,
+) -> bool {
+    (!wanted.storage || has_sandbox(mountinfo, uid, sandboxes, installation))
         && (!wanted.cpu_info || has_cpu_info(mountinfo))
 }
 
@@ -207,9 +225,9 @@ fn has_cpu_info(mountinfo: &str) -> bool {
 /// A line is `<id> <parent> <dev> <root> <mount point> <options> ... -
 /// <type> <source> ...`, where the root is the mounted directory's path in
 /// its own filesystem.
-fn has_sandbox(mountinfo: &str, uid: u32, sandboxes: Option<&str>) -> bool {
+fn has_sandbox(mountinfo: &str, uid: u32, sandboxes: Option<&str>, installation: &str) -> bool {
     let storage = mounts::storage_root_of(uid);
-    let directory = sandboxes.map(|name| format!("/{name}/{uid}"));
+    let directory = sandboxes.map(|name| format!("/{name}/{uid}-{installation}"));
     mountinfo.lines().any(|line| {
         let mut fields = line.split(' ');
         let (Some(root), Some(mount_point), Some(options)) =
@@ -245,47 +263,96 @@ mod tests {
         2101 2100 0:96 / /storage/emulated rw,nosuid,nodev,noexec,noatime master:30 - fuse /dev/fuse rw,lazytime,user_id=0,group_id=0,allow_other\n\
         2102 2101 254:48 /media/0/Android/data/com.app /storage/emulated/0/Android/data/com.app rw,nosuid,nodev,noatime master:1 - ext4 /dev/block/dm-48 rw,seclabel\n";
 
+    const INSTALLATION: &str = "a03066efd0d34a02991a2cc106c71680";
     const SANDBOXES: Option<&str> = Some(".5f0c9a2e");
 
     #[test]
     fn a_process_with_the_sandbox_over_its_storage_is_sandboxed() {
         let sandboxed = format!(
-            "{ZYGOTE_MOUNTS}2200 2101 254:48 /media/0/.5f0c9a2e/10100 /storage/emulated/0 rw,nosuid,nodev,noatime - ext4 /dev/block/dm-48 rw,seclabel\n"
+            "{ZYGOTE_MOUNTS}2200 2101 254:48 /media/0/.5f0c9a2e/10100-a03066efd0d34a02991a2cc106c71680 /storage/emulated/0 rw,nosuid,nodev,noatime - ext4 /dev/block/dm-48 rw,seclabel\n"
         );
-        assert!(has_sandbox(&sandboxed, 10100, SANDBOXES));
+        assert!(has_sandbox(&sandboxed, 10100, SANDBOXES, INSTALLATION));
+        assert!(!has_sandbox(
+            &sandboxed,
+            10100,
+            SANDBOXES,
+            "5e153234809d4082b8b1cd64ce419972"
+        ));
+        assert!(!has_sandbox(
+            &sandboxed.replace(&format!("-{INSTALLATION}"), ""),
+            10100,
+            SANDBOXES,
+            INSTALLATION
+        ));
         // Another app's sandbox is not this one's, nor another user's.
-        assert!(!has_sandbox(&sandboxed, 10101, SANDBOXES));
-        assert!(!has_sandbox(&sandboxed, 1_010_100, SANDBOXES));
+        assert!(!has_sandbox(&sandboxed, 10101, SANDBOXES, INSTALLATION));
+        assert!(!has_sandbox(&sandboxed, 1_010_100, SANDBOXES, INSTALLATION));
         // Nor is a directory elsewhere, or one not known to be the daemon's.
-        assert!(!has_sandbox(&sandboxed, 10100, Some(".0000beef")));
-        assert!(!has_sandbox(&sandboxed, 10100, None));
-        assert!(!has_sandbox(ZYGOTE_MOUNTS, 10100, SANDBOXES));
-        assert!(!has_sandbox("", 10100, SANDBOXES));
-        assert!(!has_sandbox("garbage\n1 2\n", 10100, SANDBOXES));
+        assert!(!has_sandbox(
+            &sandboxed,
+            10100,
+            Some(".0000beef"),
+            INSTALLATION
+        ));
+        assert!(!has_sandbox(&sandboxed, 10100, None, INSTALLATION));
+        assert!(!has_sandbox(ZYGOTE_MOUNTS, 10100, SANDBOXES, INSTALLATION));
+        assert!(!has_sandbox("", 10100, SANDBOXES, INSTALLATION));
+        assert!(!has_sandbox(
+            "garbage\n1 2\n",
+            10100,
+            SANDBOXES,
+            INSTALLATION
+        ));
     }
 
     #[test]
     fn a_process_has_its_mounts_if_it_has_those_wanted() {
         let cpu = "2300 2099 0:139 /cpuinfo /proc/cpuinfo rw,relatime - tmpfs tmpfs rw,size=64k\n";
-        let storage = "2200 2101 254:48 /media/0/.5f0c9a2e/10100 /storage/emulated/0 rw - ext4 /dev/block/dm-48 rw\n";
+        let storage = "2200 2101 254:48 /media/0/.5f0c9a2e/10100-a03066efd0d34a02991a2cc106c71680 /storage/emulated/0 rw - ext4 /dev/block/dm-48 rw\n";
         let both = format!("{ZYGOTE_MOUNTS}{storage}{cpu}");
         let only_cpu = format!("{ZYGOTE_MOUNTS}{cpu}");
         let wanted = |storage, cpu_info| Mounts { storage, cpu_info };
-        assert!(has_mounts(&both, 10100, SANDBOXES, wanted(true, true)));
-        assert!(!has_mounts(&only_cpu, 10100, SANDBOXES, wanted(true, true)));
-        assert!(has_mounts(&only_cpu, 10100, SANDBOXES, wanted(false, true)));
+        assert!(has_mounts(
+            &both,
+            10100,
+            SANDBOXES,
+            INSTALLATION,
+            wanted(true, true)
+        ));
+        assert!(!has_mounts(
+            &only_cpu,
+            10100,
+            SANDBOXES,
+            INSTALLATION,
+            wanted(true, true)
+        ));
+        assert!(has_mounts(
+            &only_cpu,
+            10100,
+            SANDBOXES,
+            INSTALLATION,
+            wanted(false, true)
+        ));
         assert!(!has_mounts(
             ZYGOTE_MOUNTS,
             10100,
             SANDBOXES,
+            INSTALLATION,
             wanted(false, true)
         ));
         // A /proc/cpuinfo of somebody else's is not in the way.
-        assert!(has_mounts(&both, 10100, SANDBOXES, wanted(true, false)));
+        assert!(has_mounts(
+            &both,
+            10100,
+            SANDBOXES,
+            INSTALLATION,
+            wanted(true, false)
+        ));
         assert!(has_mounts(
             ZYGOTE_MOUNTS,
             10100,
             SANDBOXES,
+            INSTALLATION,
             wanted(false, false)
         ));
     }
@@ -297,19 +364,19 @@ mod tests {
         let locked = format!(
             "{ZYGOTE_MOUNTS}2200 2101 0:120 / /storage/emulated/0 ro,relatime - tmpfs tmpfs ro,seclabel,size=4k,mode=555\n"
         );
-        assert!(has_sandbox(&locked, 10100, None));
+        assert!(has_sandbox(&locked, 10100, None, INSTALLATION));
         // Another tmpfs there is not one, read-only or not.
         for other in [
             "ro,relatime - tmpfs tmpfs ro,seclabel",
             "rw,relatime - tmpfs tmpfs rw,seclabel,size=4k",
         ] {
             let other = format!("{ZYGOTE_MOUNTS}2200 2101 0:120 / /storage/emulated/0 {other}\n");
-            assert!(!has_sandbox(&other, 10100, None), "{other}");
+            assert!(!has_sandbox(&other, 10100, None, INSTALLATION), "{other}");
         }
         // Nor is the stand-in over something else (a hidden volume).
         let volume = format!(
             "{ZYGOTE_MOUNTS}2200 2100 0:120 / /storage/1A2B-3C4D ro,relatime - tmpfs tmpfs ro\n"
         );
-        assert!(!has_sandbox(&volume, 10100, None));
+        assert!(!has_sandbox(&volume, 10100, None, INSTALLATION));
     }
 }

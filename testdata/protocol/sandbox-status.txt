@@ -1,0 +1,29 @@
+# The status the hook writes about itself when system_server starts
+# (sandboxStatusText in SandboxRules.kt and bbd/src/sandbox/identity.rs),
+# read by the tests of both. A case is the whole file. The format of the
+# cases is in README.md.
+#
+# line    the hook writes the file for the meaning; the daemon reads from
+#         it which hooks are in place
+# read    the daemon reads which hooks are in place; the hook does not
+#         write the file in this form
+#
+# The meaning: what the hook reports, android_id=, app_list=, uri_grants= and list=
+# (1 or 0, list being whether it could read the sandbox list), api= and
+# boot=; in_place=, the hooks the daemon counts as in place in that boot,
+# separated by /; for a read case, now=, the boot the daemon reads it in.
+
+line	android_id=1\napp_list=1\nuri_grants=1\napi=35\nlist=1\nboot=abc-1\n	android_id=1	app_list=1	uri_grants=1	api=35	list=1	boot=abc-1	in_place=android_id/app_list/uri_grants
+line	android_id=1\napp_list=0\nuri_grants=0\napi=35\nlist=1\nboot=abc-1\n	android_id=1	app_list=0	uri_grants=0	api=35	list=1	boot=abc-1	in_place=android_id
+line	android_id=0\napp_list=1\nuri_grants=1\napi=31\nlist=1\nboot=abc-1\n	android_id=0	app_list=1	uri_grants=1	api=31	list=1	boot=abc-1	in_place=app_list/uri_grants
+# The hook could not read the list.
+line	android_id=1\napp_list=1\nuri_grants=1\napi=35\nlist=0\nboot=abc-1\n	android_id=1	app_list=1	uri_grants=1	api=35	list=0	boot=abc-1	in_place=
+
+# Left from a boot in which the hook was there.
+read	android_id=1\napp_list=1\napi=35\nlist=1\nboot=abc-1\n	now=abc-2	in_place=
+read	android_id=1\napp_list=1\napi=35\nlist=1\nboot=abc-1\n	now=	in_place=
+# Written by a hook from before the file grants were withheld.
+read	android_id=1\napp_list=1\napi=35\nlist=1\nboot=abc-1\n	now=abc-1	in_place=android_id/app_list
+# Written by a hook that does not say which boot.
+read	android_id=1\napp_list=1\napi=35\n	now=abc-1	in_place=
+read		now=abc-1	in_place=

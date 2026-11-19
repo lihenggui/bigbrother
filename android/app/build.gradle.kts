@@ -117,3 +117,9 @@ dependencies {
 dependencyGuard {
     configuration("releaseRuntimeClasspath")
 }
+
+// The tests read the protocol cases shared with the daemon's tests.
+val protocolCases = rootDir.resolve("../testdata/protocol")
+tasks.withType<Test>().configureEach {
+    inputs.dir(protocolCases).withPropertyName("protocolCases").withPathSensitivity(PathSensitivity.RELATIVE)
+}

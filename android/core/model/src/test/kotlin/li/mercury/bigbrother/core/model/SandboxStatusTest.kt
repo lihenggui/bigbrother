@@ -17,29 +17,39 @@
 package li.mercury.bigbrother.core.model
 
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class SandboxStatusTest {
-    private val appOpsNotHeld = SandboxStatus(gate = true, appOps = false, androidIdHook = true, appListHook = true)
+    private val appOpsNotHeld = SandboxStatus(gate = true, appOps = false, androidIdHook = true, appListHook = true, uriGrantsHook = true)
 
     @Test
     fun givenAppOpsNotHeld_whenAnAppKeepsPersonalData_thenPersonalDataNotInEffect() {
         val status = appOpsNotHeld.relevantTo(listOf(app(enabled = true, SandboxItem.entries.associateWith { SandboxMode.ON })))
 
         assertFalse(status.appOps)
-        assertFalse(status.supports(SandboxItem.CONTACTS))
-        assertTrue(status.supports(SandboxItem.STORAGE))
+        assertEquals(setOf(SandboxPart.APP_OPS), status.unmet(SandboxItem.CONTACTS))
+        assertEquals(setOf(SandboxPart.APP_OPS), status.unmet(SandboxItem.STORAGE))
+        assertEquals(emptySet(), status.unmet(SandboxItem.CPU_INFO))
     }
 
     @Test
     fun givenAppOpsNotHeld_whenNoAppKeepsPersonalData_thenNothingMissing() {
-        val personalOff = SandboxItem.entries.associateWith { if (it.needsAppOps) SandboxMode.OFF else SandboxMode.ON }
+        val personalOff = SandboxItem.entries.associateWith { if (SandboxPart.APP_OPS in it.parts) SandboxMode.OFF else SandboxMode.ON }
 
         val status = appOpsNotHeld.relevantTo(listOf(app(enabled = true, personalOff), app(enabled = false, emptyMap())))
 
         assertTrue(status.appOps)
-        assertTrue(status.supports(SandboxItem.CONTACTS))
+        assertEquals(emptySet(), status.unmet(SandboxItem.CONTACTS))
+    }
+
+    @Test
+    fun givenHookMissing_whenItemsChecked_thenOnlyTheHookPartsMissing() {
+        val status = SandboxStatus(gate = true, appOps = true, androidIdHook = false, appListHook = true, uriGrantsHook = true)
+
+        assertEquals(setOf(SandboxPart.ANDROID_ID_HOOK), status.unmet(SandboxItem.DEVICE_IDS))
+        assertEquals(emptySet(), status.unmet(SandboxItem.INSTALLED_APPS))
     }
 
     private fun app(enabled: Boolean, items: Map<SandboxItem, SandboxMode>) = SandboxedApp(10156, "com.example.notes", enabled, created = 0, settings = emptyMap(), items = items)

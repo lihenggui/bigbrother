@@ -23,9 +23,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.key
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.test.DarkMode
 import androidx.compose.ui.test.DeviceConfigurationOverride
+import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.onRoot
 import androidx.test.ext.junit.rules.ActivityScenarioRule
@@ -39,6 +41,7 @@ import com.github.takahirom.roborazzi.RoborazziOptions
 import com.github.takahirom.roborazzi.RoborazziOptions.CompareOptions
 import com.github.takahirom.roborazzi.RoborazziOptions.RecordOptions
 import com.github.takahirom.roborazzi.captureRoboImage
+import com.github.takahirom.roborazzi.captureScreenRoboImage
 import com.github.takahirom.roborazzi.checkRoboAccessibility
 import com.google.android.apps.common.testing.accessibility.framework.AccessibilityCheckPreset
 import com.google.android.apps.common.testing.accessibility.framework.AccessibilityViewCheckResult
@@ -128,32 +131,46 @@ internal fun <A : ComponentActivity> AndroidComposeTestRule<ActivityScenarioRule
                 override = DeviceConfigurationOverride.DarkMode(darkMode),
             ) {
                 BigBrotherTheme(useDynamicColor = false, darkTheme = darkMode) {
-                    body()
+                    // setContent on the same activity keeps the composition,
+                    // and with it what the last capture remembered: a test
+                    // that captures several states would see the first again.
+                    key(file.path) { body() }
                 }
             }
         }
     }
+    // A bottom sheet or a dialog is a window of its own, with a root of its
+    // own: each is checked, and the screen is captured with all of them.
+    val roots = onAllNodes(isRoot())
+    val rootCount = roots.fetchSemanticsNodes().size
+
     // Run Accessibility checks first so logging is included
     val accessibilityException = try {
-        this.onRoot().checkRoboAccessibility(
-            roborazziATFAccessibilityCheckOptions = RoborazziATFAccessibilityCheckOptions(
-                failureLevel = CheckLevel.Error,
-                checker = RoborazziATFAccessibilityChecker(
-                    preset = AccessibilityCheckPreset.LATEST,
-                    suppressions = accessibilitySuppressions,
+        repeat(rootCount) { index ->
+            roots[index].checkRoboAccessibility(
+                roborazziATFAccessibilityCheckOptions = RoborazziATFAccessibilityCheckOptions(
+                    failureLevel = CheckLevel.Error,
+                    checker = RoborazziATFAccessibilityChecker(
+                        preset = AccessibilityCheckPreset.LATEST,
+                        suppressions = accessibilitySuppressions,
+                    ),
                 ),
-            ),
-        )
+            )
+        }
         null
     } catch (e: AccessibilityViewCheckException) {
         e
     }
 
-    this.onRoot()
-        .captureRoboImage(
-            file.path,
-            roborazziOptions = roborazziOptions,
-        )
+    if (rootCount > 1) {
+        captureScreenRoboImage(file.path, roborazziOptions = roborazziOptions)
+    } else {
+        this.onRoot()
+            .captureRoboImage(
+                file.path,
+                roborazziOptions = roborazziOptions,
+            )
+    }
 
     // Rethrow the Accessibility exception once screenshots have passed
     if (accessibilityException != null) {

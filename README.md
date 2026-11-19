@@ -96,8 +96,9 @@ apd module install big_brother-<version>.zip        # APatch
 ### Updating
 
 Flash the new `.zip`, or install it over the old app as an `.apk`, then
-open the app. It replaces the module's files with its own and restarts the
-recording, without a restart of the device.
+open the app. It publishes the complete module in one filesystem operation
+and restarts recording. The previous module files are kept under
+`/data/adb/big_brother/previous-module`.
 
 ### Uninstalling
 

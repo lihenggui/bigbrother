@@ -24,7 +24,7 @@ import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
-import li.mercury.bigbrother.core.model.SandboxStatus
+import li.mercury.bigbrother.core.model.SandboxPart
 import li.mercury.bigbrother.core.testing.MainDispatcherRule
 import li.mercury.bigbrother.core.testing.repository.TestSandboxRepository
 import org.junit.Rule
@@ -108,11 +108,7 @@ class JailSettingsViewModelTest {
 
     @Test
     fun givenNewAppsNotIsolatedYet_whenLoaded_thenStatusSaysHowMany() = runTest {
-        sandboxRepository.status = SandboxStatus(
-            gate = true,
-            appOps = true,
-            androidIdHook = true,
-            appListHook = true,
+        sandboxRepository.status = sandboxRepository.status.copy(
             newAppsPending = 2,
             newAppsHeld = true,
         )
@@ -162,11 +158,11 @@ class JailSettingsViewModelTest {
     fun givenAppOpsNotHeld_whenAllReleased_thenNoLongerTold() = runTest {
         sandboxRepository.status = sandboxRepository.status.copy(appOps = false)
         val viewModel = viewModel()
-        assertEquals(false, viewModel.uiState.value.status?.supports(SandboxItem.CONTACTS))
+        assertEquals(setOf(SandboxPart.APP_OPS), viewModel.uiState.value.status?.unmet(SandboxItem.CONTACTS))
 
         viewModel.releaseAll()
 
         assertEquals(true, viewModel.uiState.value.status?.appOps)
-        assertEquals(true, viewModel.uiState.value.status?.supports(SandboxItem.CONTACTS))
+        assertEquals(emptySet(), viewModel.uiState.value.status?.unmet(SandboxItem.CONTACTS))
     }
 }

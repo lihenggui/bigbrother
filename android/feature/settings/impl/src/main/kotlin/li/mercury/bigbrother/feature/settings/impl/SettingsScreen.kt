@@ -56,6 +56,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -80,8 +81,15 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel) {
         viewModel.refresh()
         onPauseOrDispose {}
     }
+    // This app's own version, from the package manager here rather than in
+    // the stateless screen, which tests render without this app installed.
+    val context = LocalContext.current
+    val appVersion = remember(context) {
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()
+    }
     SettingsScreen(
         state = uiState,
+        appVersion = appVersion,
         onBack = onBack,
         onShowSystemApps = viewModel::setShowSystemApps,
         onUseDynamicColor = viewModel::setUseDynamicColor,
@@ -92,6 +100,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel) {
 
 /** Name of a kind of activity the daemon reports as `coverage_<id>`. */
 private fun featureLabel(id: String): Int? = when (id) {
+    "files" -> R.string.feature_files
     "exec" -> R.string.feature_exec
     "network" -> R.string.feature_network
     "process" -> R.string.feature_process
@@ -107,6 +116,7 @@ private const val SOURCE_URL = "https://github.com/lihenggui/bigbrother"
 @Composable
 internal fun SettingsScreen(
     state: SettingsUiState,
+    appVersion: String,
     onBack: () -> Unit,
     onShowSystemApps: (Boolean) -> Unit,
     onUseDynamicColor: (Boolean) -> Unit,
@@ -148,7 +158,6 @@ internal fun SettingsScreen(
     ) { padding ->
         val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
         val status = state.status
-        val version = context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()
         val unavailable = status?.unavailable.orEmpty().map { id -> featureLabel(id)?.let { stringResource(it) } ?: id }
         LazyColumn(
             // Settings read best in a column of moderate width.
@@ -227,7 +236,7 @@ internal fun SettingsScreen(
 
             item(key = "about") { SectionHeader(stringResource(R.string.section_about)) }
             item(key = "version") {
-                Row(icon = Icons.Outlined.Info, title = stringResource(R.string.version), summary = version, index = 0, count = 4)
+                Row(icon = Icons.Outlined.Info, title = stringResource(R.string.version), summary = appVersion, index = 0, count = 4)
             }
             item(key = "export-logs") {
                 Row(

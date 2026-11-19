@@ -1,0 +1,47 @@
+# The sandbox list the daemon writes for the hook in system_server
+# (bbd/src/sandbox/identity.rs and parseSandboxList in SandboxRules.kt),
+# read by the tests of both. A case is the whole file. The format of the
+# cases is in README.md.
+#
+# line    the daemon writes the file for the meaning; the hook reads the
+#         meaning from it
+# read    the hook reads the meaning; the daemon does not write the file
+#         in this form
+# bad     the hook finds no sandboxed app in the file
+#
+# The meaning has one word per sandboxed uid:
+# app=<uid>/<android id>[/device_ids][/installed_apps][/storage], naming
+# the hook's items that are on for it.
+
+line	10100 00000000000000aa\n	app=10100/00000000000000aa/device_ids/installed_apps
+line	10100 00000000000000aa\nitems 10100 device_ids\n	app=10100/00000000000000aa/device_ids
+line	10100 00000000000000aa\nitems 10100 installed_apps\n	app=10100/00000000000000aa/installed_apps
+line	10100 00000000000000bb\n1010100 00000000000000aa\n	app=10100/00000000000000bb/device_ids/installed_apps	app=1010100/00000000000000aa/device_ids/installed_apps
+line	10205 0123456789abcdef\nitems 10205 installed_apps\n10206 fedcba9876543210\n10207 0123456789abcdef\nitems 10207 device_ids\n	app=10205/0123456789abcdef/installed_apps	app=10206/fedcba9876543210/device_ids/installed_apps	app=10207/0123456789abcdef/device_ids
+line	10100 00000000000000aa\nitems 10100 device_ids,installed_apps,storage\n	app=10100/00000000000000aa/device_ids/installed_apps/storage
+line	10100 00000000000000aa\nitems 10100 storage\n	app=10100/00000000000000aa/storage
+line	10100 00000000000000aa\nitems 10100 device_ids,storage\n	app=10100/00000000000000aa/device_ids/storage
+# Nothing sandboxed: the daemon removes the file, and an empty one says the same.
+line
+
+read	\t10211\t0123456789ABCDEF  \n	app=10211/0123456789abcdef/device_ids/installed_apps
+read	10206 fedcba9876543210\nitems 10206 device_ids,installed_apps\n	app=10206/fedcba9876543210/device_ids/installed_apps
+read	items 10207 device_ids\n10207 0123456789abcdef	app=10207/0123456789abcdef/device_ids
+# An item the hook does not know is passed over.
+read	10100 00000000000000aa\nitems 10100 device_ids,later\n	app=10100/00000000000000aa/device_ids
+# The last line of a uid wins.
+read	10205 0123456789abcdef\n10205 fedcba9876543210	app=10205/fedcba9876543210/device_ids/installed_apps
+# Lines that do not have the shape are skipped, not the whole list.
+read	\n   \n10205 0123456789abcdef\n10206\nitems 10208 device_ids\nitems abc device_ids\n10209 0123456789abcde	app=10205/0123456789abcdef/device_ids/installed_apps
+
+bad	10206
+bad	10207 0123456789abcdef extra
+bad	abc 0123456789abcdef
+bad	-10208 0123456789abcdef
+bad	10209 0123456789abcde
+bad	10210 0123456789abcdeg
+bad	items 10208 device_ids
+# Uids of system components, which the daemon never sandboxes.
+bad	1000 0123456789abcdef
+bad	101000 0123456789abcdef
+bad	0 0123456789abcdef

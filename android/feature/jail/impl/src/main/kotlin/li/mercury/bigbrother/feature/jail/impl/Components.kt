@@ -74,6 +74,7 @@ import li.mercury.bigbrother.core.designsystem.icon.CageIcons
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
+import li.mercury.bigbrother.core.model.SandboxPart
 import li.mercury.bigbrother.core.ui.AppIcon
 import li.mercury.bigbrother.core.ui.R as UiR
 
@@ -160,7 +161,7 @@ internal fun ItemRow(
     mode: SandboxMode,
     choice: SandboxMode?,
     globalMode: SandboxMode?,
-    inEffect: Boolean,
+    unmet: Set<SandboxPart>,
     expanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
     onCheckedChange: (Boolean) -> Unit,
@@ -203,10 +204,11 @@ internal fun ItemRow(
                             Text(title, style = MaterialTheme.typography.bodyLarge)
                             if (globalMode != null && choice != null) CustomTag()
                         }
+                        val inEffect = unmet.isEmpty() || !mode.isOn
                         Text(
-                            text = if (inEffect || !mode.isOn) modeLabel(item, mode) else stringResource(R.string.jail_not_in_effect),
+                            text = if (inEffect) modeLabel(item, mode) else stringResource(notInEffect(unmet)),
                             style = MaterialTheme.typography.bodyMedium,
-                            color = if (inEffect || !mode.isOn) {
+                            color = if (inEffect) {
                                 MaterialTheme.colorScheme.onSurfaceVariant
                             } else {
                                 MaterialTheme.colorScheme.error

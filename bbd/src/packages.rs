@@ -59,7 +59,7 @@ impl Packages {
         this
     }
 
-    fn reload(&mut self) {
+    fn reload(&mut self) -> bool {
         self.loaded_at = Some(Instant::now());
         match fs::read_to_string(&self.source) {
             Ok(text) => {
@@ -71,15 +71,19 @@ impl Packages {
                     .iter()
                     .flat_map(|(id, names)| names.iter().map(move |name| (name.clone(), *id)))
                     .collect();
+                true
             }
-            Err(e) => eprintln!("bbd: cannot read {}: {e}", self.source),
+            Err(e) => {
+                eprintln!("bbd: cannot read {}: {e}", self.source);
+                false
+            }
         }
     }
 
     /// Read the list again now, whatever its age: for a decision that must
     /// not be taken on a package installed or removed since.
-    pub fn refresh(&mut self) {
-        self.reload();
+    pub fn refresh(&mut self) -> bool {
+        self.reload()
     }
 
     /// Whether no package is known, as when the list could not be read.
@@ -143,18 +147,6 @@ impl Packages {
             self.reload();
         }
         self.app_id_by_name.get(package).copied()
-    }
-
-    /// Every other package that shares a uid with one of `packages`.
-    pub fn sharing_uid_with(&self, packages: &[&str]) -> Vec<String> {
-        packages
-            .iter()
-            .filter_map(|package| self.app_id_by_name.get(*package))
-            .filter_map(|app_id| self.by_app_id.get(app_id))
-            .flatten()
-            .filter(|name| !packages.contains(&name.as_str()))
-            .cloned()
-            .collect()
     }
 
     /// The uid of the app an isolated process belongs to, given the process's
@@ -248,30 +240,6 @@ mod tests {
     }
 
     #[test]
-    fn finds_the_packages_sharing_a_uid() {
-        let dir = std::env::temp_dir().join(format!("bbd-test-shared-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let list = dir.join("packages.list");
-        std::fs::write(
-            &list,
-            "com.android.providers.contacts 10095 0 /d x\n\
-             com.android.providers.blockednumber 10095 0 /d x\n\
-             com.android.providers.userdictionary 10095 0 /d x\n\
-             com.other 10096 0 /d x\n",
-        )
-        .unwrap();
-        let packages = Packages::new(list.to_str().unwrap());
-        assert_eq!(
-            packages.sharing_uid_with(&["com.android.providers.contacts", "com.absent"]),
-            [
-                "com.android.providers.blockednumber",
-                "com.android.providers.userdictionary"
-            ]
-        );
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
     fn isolated_processes_map_to_their_owner() {
         let dir = std::env::temp_dir().join(format!("bbd-test-pkgs-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -292,11 +260,6 @@ mod tests {
         );
         assert_eq!(packages.owner_of_isolated(99_012, "com.unknown:x"), None);
         assert_eq!(packages.owner_of_isolated(99_012, ""), None);
-        assert!(
-            packages
-                .sharing_uid_with(&["com.android.chrome"])
-                .is_empty()
-        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

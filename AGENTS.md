@@ -13,8 +13,10 @@ building, checks and releasing in CONTRIBUTING.md.
 - `bbd/`: the daemon (`bbd run`) and the query CLI the app calls. See `bbd/AGENTS.md`.
 - `module/`: root module scripts, packaged into the app. See `module/AGENTS.md`.
 - `android/`: the app, the LSPosed hook and the canary test app. See `android/AGENTS.md`.
-- `scripts/`: `build.sh` (full build), `check-canary.sh` and `check-sandbox.sh`
-  (on-device checks of the records and of the sandbox).
+- `scripts/`: `build.sh` (full build), `check-kernels.sh` (`bbd selftest` on
+  Android kernels in QEMU), `check-canary.sh` and `check-sandbox.sh`
+  (on-device checks of the records and of the sandbox), and
+  `install-on-emulator.sh` (the module on an emulator without a root manager).
 
 The sandbox (`bbd sandbox`, `bbd/src/sandbox/`, `SandboxHook` in the hook,
 `AppOpsGuard` in the app) is described in docs/sandbox.md.
@@ -35,12 +37,17 @@ once before `:app` tasks that assemble the APK.
 
 ## Contracts between components
 
-- No compatibility with earlier versions is kept. `bbd` output and the
-  database schema change as needed, with the app in the same commit; the
-  daemon sets a database at another schema version aside (`bb.db.old`) and
-  starts a new one. The app updates the module when the installed one is older
-  or built differently, and maps a daemon that rejects a command or option
-  to "module update needed" (`RootAccessRepository`).
+- What a released version (v0.2.0 on) stored is carried over by every later
+  version: the records, the sandbox entries with their saved app ops and
+  identities, and the files in the sandboxes. A database schema change adds
+  a migration from the previous version (`MIGRATIONS` in `bbd/src/store.rs`);
+  only a database no released build wrote is set aside (`bb.db.old`, removed
+  once its records are 30 days old).
+- `bbd` output changes as needed, with the app in the same commit: the app
+  and the module ship together. The app updates the module when the
+  installed one is older or built differently, and maps a daemon that
+  rejects a command or option to "module update needed"
+  (`RootAccessRepository`).
 - Structs in `bb-common` are read by both sides byte for byte: `#[repr(C)]`,
   4-byte fields, no padding. Change both sides in the same commit.
 - `module/module.prop` is the single source of the version (`version`,

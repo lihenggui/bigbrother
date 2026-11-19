@@ -10,14 +10,25 @@ stay `GPL`, which the GPL-only helpers require.
 - Target GKI kernels from 5.10 on arm64 and x86_64. Use only helpers and
   program types those kernels have. Struct offsets are not compiled in: the
   daemon reads them from BTF at startup (`bbd/src/btf.rs`) and passes them in.
-- Only the `security_file_open` probe is required. Every other probe must be
-  optional: the daemon attaches what the kernel allows and reports the rest
-  as unavailable (`coverage_*` in `bbd stats`).
+- Only the `file_open` probe (on the `file_open` security hook) is
+  required. Every other probe must be optional: the daemon attaches what
+  the kernel allows and reports the rest as unavailable (`coverage_*` in
+  `bbd stats`). A probe that attaches but does not fire for the daemon's
+  self-check (`bbd/src/selftest.rs`) counts as unavailable too: the check
+  runs as uid 70000, which `should_trace` must keep tracing.
+- Probe security hooks at SELinux's hook function (`selinux_*`), not at the
+  `security_*` wrapper: link-time optimization can inline the wrapper, and
+  a probe on it then attaches but never fires (`bbd/src/syscalls.rs`).
 - The verifier allows 512 bytes of stack. Assemble large events in a per-CPU
   scratch map (as `file_open` does with `FILE_SCRATCH`), bound every loop, and
   read kernel and user memory only through the probe-read helpers.
 - Event layouts are shared with the daemon through `bb-common`: `#[repr(C)]`,
   4-byte fields, no padding. Change both sides together.
+- Every byte of a value passed from the stack to a helper (map keys and
+  values, `output`) must be written: kernels before 6.6 reject the program
+  otherwise. Structs that go on the stack have no padding, filling it with
+  an explicit zeroed field where needed, and each is checked with
+  `bb_common::assert_no_padding!`.
 
 ## Cost on the hot path
 
@@ -48,7 +59,10 @@ These programs run on every file open and many system calls of every process.
 
 ## Testing
 
-The programs cannot be unit tested. Load them on a device or emulator: build
+The programs cannot be unit tested. `scripts/check-kernels.sh` loads them
+on the kernel of each supported Android release in QEMU and checks that
+every probe fires; CI runs it on each change here. Then load them on a
+device or emulator: build
 with `./scripts/build.sh`, install the package, and open the app, which
 replaces the module with its own copy when the daemon differs. Then check that
 records arrive (`scripts/check-canary.sh` covers every kind), and that the

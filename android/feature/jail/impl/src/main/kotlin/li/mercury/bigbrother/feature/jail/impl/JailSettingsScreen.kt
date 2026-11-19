@@ -187,7 +187,7 @@ internal fun JailSettingsScreen(
                                     mode = mode,
                                     choice = mode,
                                     globalMode = null,
-                                    inEffect = state.status?.supports(item) ?: true,
+                                    unmet = state.status?.unmet(item).orEmpty(),
                                     expanded = expanded == item,
                                     onExpandedChange = { open -> expanded = if (open) item else null },
                                     onCheckedChange = { on -> onSetOn(item, on) },

@@ -18,7 +18,9 @@
 //!
 //! Two groups of programs cooperate:
 //!
-//! * `file_open` — kprobe on `security_file_open(struct file *)`. This is
+//! * `file_open` — kprobe on the `file_open` security hook,
+//!   `selinux_file_open(struct file *)`, or `security_file_open` on a kernel
+//!   without SELinux's hook (the daemon picks the function). This is
 //!   where the kernel has finished resolving the path, so we see the file
 //!   that is really being opened no matter how the app spelled the path
 //!   (`..`, symlinks, `/proc/self/root/...`). It classifies by filesystem and
@@ -39,7 +41,8 @@
 //!
 //! * `enter_ptrace` / `enter_vm_read` / `enter_vm_write` — attempts to trace
 //!   another process or reach into its memory.
-//! * `enter_netlink` — kprobe on `security_netlink_send`, where the kernel
+//! * `enter_netlink` — kprobe on the `netlink_send` security hook
+//!   (`selinux_netlink_send` or `security_netlink_send`), where the kernel
 //!   decides whether a netlink request is allowed: requests for the
 //!   interfaces, addresses, routes, neighbours and sockets of the device.
 //!
@@ -159,6 +162,8 @@ struct Destination {
     addr: [u8; 16],
 }
 
+bb_common::assert_no_padding!(Destination { tgid, port, addr });
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct Pending {
@@ -171,7 +176,21 @@ struct Pending {
     op: u32,
     /// Set by `file_open` once it has reported a file for this syscall.
     reported: u32,
+    /// Always 0. Fills what would be padding after `reported`, which no
+    /// store would write (see `assert_no_padding`).
+    _pad: u32,
 }
+
+bb_common::assert_no_padding!(Pending {
+    path_ptr,
+    how_ptr,
+    dfd,
+    flags,
+    abi,
+    op,
+    reported,
+    _pad
+});
 
 /// Which processes get recorded: everything that runs as an app, in any
 /// Android user. That is installed apps (app ids from 10000) and the isolated
@@ -266,7 +285,7 @@ fn leading_number<const N: usize>(bytes: &[u8; N]) -> Option<u32> {
     (i > 0).then_some(value)
 }
 
-// ---- security_file_open -----------------------------------------------------
+// ---- file_open security hook ------------------------------------------------
 
 #[inline(always)]
 unsafe fn read_at<T>(base: *const u8, offset: u32) -> Result<T, i32> {
@@ -610,6 +629,7 @@ fn syscall_enter(ctx: &ProbeContext, op: u32, shape: Shape) -> Result<(), i32> {
         },
         op,
         reported: 0,
+        _pad: 0,
     };
     PENDING
         .insert(&bpf_get_current_pid_tgid(), &pending, 0)
@@ -673,6 +693,7 @@ fn expect_result(pid_tgid: u64) -> Result<(), i32> {
         abi: ABI_NATIVE,
         op: OP_PAIRED,
         reported: 1,
+        _pad: 0,
     };
     PENDING.insert(&pid_tgid, &pending, 0).map_err(|e| e as i32)
 }
@@ -959,7 +980,8 @@ pub fn enter_vm_write(ctx: ProbeContext) -> u32 {
 /// 32-bit length.
 const NLMSG_TYPE_OFFSET: u32 = 4;
 
-/// security_netlink_send(struct sock *sk, struct sk_buff *skb)
+/// selinux_netlink_send(struct sock *sk, struct sk_buff *skb), or
+/// security_netlink_send with the same arguments.
 ///
 /// The hook's return value is the verdict: Android's SELinux policy refuses
 /// most of these requests to apps, and the attempt is recorded either way.
@@ -1248,6 +1270,10 @@ fn try_gate(ctx: &ProbeContext) -> Result<(), i32> {
     // that of the pool of spare processes it was taken from ("usap32",
     // "usap64"). Anything else taking the uid (`su`, `run-as`) is not an app
     // starting, and has no mount namespace of its own to change.
+    let task_id = bpf_get_current_pid_tgid();
+    if task_id as u32 != (task_id >> 32) as u32 {
+        return Ok(());
+    }
     let comm = bpf_get_current_comm().map_err(|e| e as i32)?;
     let zygote_child =
         (comm[0] == b'm' && comm[1] == b'a' && comm[2] == b'i' && comm[3] == b'n' && comm[4] == 0)
@@ -1261,8 +1287,16 @@ fn try_gate(ctx: &ProbeContext) -> Result<(), i32> {
     let waiting = GATE_WAITING_SINCE.get_ptr_mut(0).ok_or(-1)?;
     let since = unsafe { *waiting };
     let now = unsafe { bpf_ktime_get_ns() };
+    let task = unsafe { aya_ebpf::helpers::bpf_get_current_task() } as *const u8;
+    let Ok(start) = (unsafe { read_at::<u64>(task, OFFSETS.load()[bb_common::OFF_TASK_START]) })
+    else {
+        kill();
+        return Ok(());
+    };
     let event = GateEvent {
-        pid: (bpf_get_current_pid_tgid() >> 32) as u32,
+        start_low: start as u32,
+        start_high: (start >> 32) as u32,
+        pid: task_id as u32,
         uid,
         at_ns_low: now as u32,
         at_ns_high: (now >> 32) as u32,
@@ -1320,7 +1354,7 @@ fn kill() {
     unsafe { aya_ebpf::helpers::generated::bpf_send_signal(SIGKILL) };
 }
 
-/// Return of any tracked syscall, and of `security_netlink_send`.
+/// Return of any tracked syscall, and of the `netlink_send` security hook.
 #[kretprobe]
 pub fn sys_ret(ctx: RetProbeContext) -> u32 {
     let _ = try_sys_ret(&ctx);

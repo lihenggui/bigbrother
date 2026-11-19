@@ -31,6 +31,20 @@ cargo test
 (cd android && ./gradlew test)
 ```
 
+`scripts/check-kernels.sh` boots the kernel of each Android release from
+13 on (those of the x86_64 emulator images) in QEMU, with an initramfs
+that runs `bbd selftest`, and fails if a probe of the x86_64 build does
+not load, attach or fire on one of them; the arm64 build is checked on
+devices (`check-canary.sh`). It needs `qemu-system-x86_64` and a static
+busybox, and builds a static daemon for musl
+(`x86_64-unknown-linux-musl`, `musl-gcc`) unless given one (`--bbd`). The
+`Kernels` workflow runs it for every change to the daemon or the eBPF
+programs:
+
+```sh
+./scripts/check-kernels.sh                  # --api 33, or --kernel PATH
+```
+
 On a device with the module running, `scripts/check-canary.sh` installs a
 test app (`android/canary`) that does one of everything Big Brother is meant
 to notice, and checks that each left a record:
@@ -48,6 +62,21 @@ and outside again, and checks what it sees each time
 ```sh
 ./scripts/check-sandbox.sh              # --stress 200 adds cold starts
 ```
+
+Both run on an emulator as well. On a `google_apis` image, which allows
+`adb root`, `scripts/install-on-emulator.sh` installs the module and the app
+from `out/` with the module's own installer and starts the daemon, without
+a root manager:
+
+```sh
+./scripts/install-on-emulator.sh
+```
+
+The Device workflow (`.github/workflows/device.yml`) does this on emulators
+of API 33 to 36, nightly and for pull requests that touch the eBPF
+programs, the daemon, the Cargo manifests, the module, the scripts, the
+app, the hook, the canary, the Gradle build or the build setup. Without
+LSPosed there, the sandbox check skips what needs the hook.
 
 The unit tests include screenshot tests
 ([Roborazzi](https://github.com/takahirom/roborazzi)), which render the
@@ -96,6 +125,15 @@ It also runs Android lint on the release app and checks that every Rust and
 shell file has a license header.
 
 ## Releasing
+
+Every release must upgrade from the ones before it without losing records.
+In the commit that sets the new `version` in `module/module.prop`, add a
+database as the release writes it to `bbd/testdata/db/<version>.sql`: the
+statements of `SCHEMA` in `bbd/src/store.rs`, the schema version
+(`PRAGMA user_version`) and sample rows in every table, sandbox entries
+and settings included. List it in `RELEASES` in the tests of `store.rs`.
+`cargo test` fails until it is there, and from then on fails for a schema
+change that has no migration from it.
 
 Push a tag that matches `version` in `module/module.prop`, such as `v0.2.0`.
 `release.yml` builds the signed `.zip` and publishes it, with the R8

@@ -40,7 +40,6 @@ import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
-import li.mercury.bigbrother.core.model.SandboxStatus
 import li.mercury.bigbrother.core.model.SandboxedApp
 
 data class JailAppUiState(
@@ -54,8 +53,6 @@ data class JailAppUiState(
     /** The Android user the app belongs to, if not the one this app runs as. */
     val otherUser: Int? = null,
     val global: Map<SandboxItem, SandboxMode> = emptyMap(),
-    /** Null until known; as it bears on the apps in the sandbox. */
-    val status: SandboxStatus? = null,
     /**
      * The permissions the app asks for: which items concern it. Null if not
      * known, for an app not installed for this app's user.
@@ -100,7 +97,6 @@ class JailAppViewModel @AssistedInject constructor(
         loaded.copy(
             app = app,
             global = global.orEmpty(),
-            status = loaded.status?.relevantTo(apps.orEmpty()),
             left = released || (apps != null && app == null),
         )
     }.runningReduce { shown, next ->
@@ -111,11 +107,12 @@ class JailAppViewModel @AssistedInject constructor(
     fun refresh() {
         viewModelScope.launch {
             try {
-                if (sandboxRepository.apps.value == null) sandboxRepository.refresh()
-                val status = sandboxRepository.relevantStatus()
+                // Read again each time: what is in effect for the app is
+                // found when the list is read.
+                sandboxRepository.refresh()
                 val info = appInfoRepository.getAppInfo(packageName)
                 val requested = installedAppRepository.getRequestedPermissions(packageName)
-                load.update { it.copy(info = info, status = status, requested = requested, loading = false, failure = null) }
+                load.update { it.copy(info = info, requested = requested, loading = false, failure = null) }
             } catch (e: RecordsException) {
                 load.update { it.copy(loading = false, failure = e.toLoadFailure()) }
             }

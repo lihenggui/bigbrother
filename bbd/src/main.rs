@@ -23,13 +23,17 @@ mod btf;
 mod commands;
 mod control;
 mod helper;
+mod lifecycle;
 mod mounts;
 mod net;
 mod packages;
 mod paths;
 mod personal;
+#[cfg(test)]
+mod protocol_cases;
 mod rules;
 mod sandbox;
+mod selftest;
 mod sensors;
 mod spool;
 mod store;
@@ -144,6 +148,9 @@ enum Command {
     },
     /// Database and daemon counters.
     Stats,
+    /// Attach the probes and check that each fires; exits non-zero if one
+    /// does not. Requires root.
+    Selftest,
     /// Put apps in the sandbox and take them out again. Needs the daemon.
     Sandbox {
         /// Print the daemon's answer as JSON.
@@ -157,6 +164,12 @@ enum Command {
     /// the daemon.
     #[command(hide = true)]
     SandboxRestoreLines,
+    /// Stop the module processes before an update or removal.
+    #[command(hide = true)]
+    ModuleStop { module: PathBuf },
+    /// Publish a fully prepared module directory with one filesystem operation.
+    #[command(hide = true)]
+    ModuleExchange { staged: PathBuf, installed: PathBuf },
 }
 
 #[derive(Subcommand)]
@@ -297,7 +310,12 @@ fn main() -> anyhow::Result<()> {
     // now and then. The sandbox commands do not read them.
     if !matches!(
         cli.command,
-        Command::Run { .. } | Command::Sandbox { .. } | Command::SandboxRestoreLines
+        Command::Run { .. }
+            | Command::Sandbox { .. }
+            | Command::ModuleStop { .. }
+            | Command::ModuleExchange { .. }
+            | Command::SandboxRestoreLines
+            | Command::Selftest
     ) {
         control::request_flush(&cli.db);
     }
@@ -360,7 +378,32 @@ fn main() -> anyhow::Result<()> {
             stats: store::Reader::open(&cli.db)?.stats()?,
             daemon_running: control::daemon_running(&cli.db),
         }),
+        Command::Selftest => {
+            if !selftest::command()? {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
         Command::Sandbox { json, command } => sandbox::command(&cli.db, command.into(), json),
+        Command::ModuleStop { module } => lifecycle::stop(&module),
+        Command::ModuleExchange { staged, installed } => {
+            let staged = std::ffi::CString::new(staged.as_os_str().as_encoded_bytes())?;
+            let installed = std::ffi::CString::new(installed.as_os_str().as_encoded_bytes())?;
+            if unsafe {
+                libc::syscall(
+                    libc::SYS_renameat2,
+                    libc::AT_FDCWD,
+                    staged.as_ptr(),
+                    libc::AT_FDCWD,
+                    installed.as_ptr(),
+                    2, /* RENAME_EXCHANGE */
+                )
+            } != 0
+            {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            Ok(())
+        }
         Command::SandboxRestoreLines => {
             for line in sandbox::restore_lines(&cli.db)? {
                 println!("{line}");

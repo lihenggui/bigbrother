@@ -34,6 +34,8 @@ enum class SandboxItem(val id: String) {
     DEVICE_IDS("device_ids"),
     INSTALLED_APPS("installed_apps"),
     NEARBY_DEVICES("nearby_devices"),
+    NOTIFICATION_CONTENT("notification_content"),
+    SCREEN_CONTENT("screen_content"),
     ;
 
     /** The modes it can be set to, the one it starts with first. */
@@ -44,22 +46,24 @@ enum class SandboxItem(val id: String) {
             else -> listOf(SandboxMode.ON, SandboxMode.OFF)
         }
 
-    /** Carried out by the LSPosed hook in system_server. */
-    val needsHook: Boolean get() = this == DEVICE_IDS || this == INSTALLED_APPS
-
-    /** Carried out by mounts made as the app starts. */
-    val isMounted: Boolean get() = this == STORAGE || this == CPU_INFO
-
     /**
-     * Personal data, carried out by holding the app's app ops
-     * (`bbd/src/sandbox/appops.rs`): everything neither the hook nor the
-     * mounts carry out.
+     * What carries it out (`Settings::unmet` in `bbd/src/sandbox/items.rs`):
+     * it is in effect only with all of them.
      */
-    val needsAppOps: Boolean get() = !needsHook && !isMounted
+    val parts: Set<SandboxPart>
+        get() = when (this) {
+            STORAGE -> setOf(SandboxPart.MOUNTS, SandboxPart.APP_OPS, SandboxPart.URI_GRANTS_HOOK)
+            CPU_INFO -> setOf(SandboxPart.MOUNTS)
+            DEVICE_IDS -> setOf(SandboxPart.APP_OPS, SandboxPart.ANDROID_ID_HOOK)
+            INSTALLED_APPS -> setOf(SandboxPart.APP_OPS, SandboxPart.APP_LIST_HOOK)
+            else -> setOf(SandboxPart.APP_OPS)
+        }
 
     /**
-     * The permissions an app has to ask for to get this data at all. Empty for
-     * what every app can read: its effect is shown for every app.
+     * The permissions an app has to name to get this data at all: ask for
+     * them, or, for the notifications and the screen, bind a service with
+     * them. Empty for what every app can read: its effect is shown for
+     * every app.
      */
     val permissions: List<String>
         get() = when (this) {
@@ -75,7 +79,14 @@ enum class SandboxItem(val id: String) {
 
             MICROPHONE -> listOf("android.permission.RECORD_AUDIO")
 
-            BODY_SENSORS -> listOf("android.permission.BODY_SENSORS", "android.permission.ACTIVITY_RECOGNITION")
+            BODY_SENSORS -> listOf(
+                "android.permission.BODY_SENSORS",
+                "android.permission.ACTIVITY_RECOGNITION",
+                // What Android 16 splits the body sensors permission into.
+                "android.permission.health.READ_HEART_RATE",
+                "android.permission.health.READ_SKIN_TEMPERATURE",
+                "android.permission.health.READ_OXYGEN_SATURATION",
+            )
 
             NEARBY_DEVICES -> listOf(
                 "android.permission.BLUETOOTH_SCAN",
@@ -83,14 +94,44 @@ enum class SandboxItem(val id: String) {
                 "android.permission.NEARBY_WIFI_DEVICES",
             )
 
+            NOTIFICATION_CONTENT -> listOf("android.permission.BIND_NOTIFICATION_LISTENER_SERVICE")
+
+            SCREEN_CONTENT -> listOf("android.permission.BIND_ACCESSIBILITY_SERVICE")
+
             STORAGE, CPU_INFO, CLIPBOARD_ACCOUNTS, DEVICE_IDS, INSTALLED_APPS -> emptyList()
         }
 
-    /** Whether an app that asks for [requested] can get this data. */
+    /** Whether an app whose manifest names [requested] can get this data. */
     fun concerns(requested: Set<String>): Boolean = permissions.isEmpty() || permissions.any { it in requested }
 
     companion object {
         fun fromId(id: String): SandboxItem? = entries.firstOrNull { it.id == id }
+    }
+}
+
+/** What carries out an item, by the name the daemon gives it. */
+enum class SandboxPart(val id: String) {
+    /** Mounts made as the app starts. */
+    MOUNTS("mounts"),
+
+    /** The app's app ops, held by the daemon. */
+    APP_OPS("app_ops"),
+
+    /** The LSPosed hook in system_server, answering ANDROID_ID. */
+    ANDROID_ID_HOOK("android_id_hook"),
+
+    /** The LSPosed hook in system_server, hiding the installed apps. */
+    APP_LIST_HOOK("app_list_hook"),
+
+    /**
+     * The LSPosed hook in system_server, holding the app to the file grants
+     * of the moment rather than those it kept from before.
+     */
+    URI_GRANTS_HOOK("uri_grants_hook"),
+    ;
+
+    companion object {
+        fun fromId(id: String): SandboxPart? = entries.firstOrNull { it.id == id }
     }
 }
 
@@ -128,14 +169,19 @@ data class SandboxedApp(
     val settings: Map<SandboxItem, SandboxMode>,
     /** What applies to it: its own settings over the global ones. */
     val items: Map<SandboxItem, SandboxMode>,
+    /**
+     * For an app in the sandbox, the items that are on but not in effect,
+     * each with the parts not in place, as the daemon found them.
+     */
+    val unmet: Map<SandboxItem, Set<SandboxPart>> = emptyMap(),
 ) {
     val userId: Int get() = uid / PER_USER_RANGE
 
     /** The mode of [item] that applies. */
     fun modeOf(item: SandboxItem): SandboxMode = items[item] ?: SandboxMode.ON
 
-    /** In the sandbox with personal data kept from it, which takes app ops. */
-    val needsAppOps: Boolean get() = enabled && SandboxItem.entries.any { it.needsAppOps && modeOf(it).isOn }
+    /** In the sandbox with an item on that takes app ops. */
+    val needsAppOps: Boolean get() = enabled && SandboxItem.entries.any { SandboxPart.APP_OPS in it.parts && modeOf(it).isOn }
 
     private companion object {
         const val PER_USER_RANGE = 100_000
@@ -155,17 +201,22 @@ data class SandboxStatus(
     val androidIdHook: Boolean,
     /** The hook hides the installed apps. */
     val appListHook: Boolean,
+    /** The hook holds apps to the file grants of the moment. */
+    val uriGrantsHook: Boolean,
     /** Newly installed apps not isolated yet, with isolating new apps on. */
     val newAppsPending: Int = 0,
     /** Whether those are kept from starting until they are isolated. */
     val newAppsHeld: Boolean = false,
 ) {
-    /** Whether [item] can take effect here. */
-    fun supports(item: SandboxItem): Boolean = when (item) {
-        SandboxItem.DEVICE_IDS -> androidIdHook
-        SandboxItem.INSTALLED_APPS -> appListHook
-        SandboxItem.STORAGE, SandboxItem.CPU_INFO -> gate
-        else -> appOps
+    /** The parts of [item] not in place on this device, for every app. */
+    fun unmet(item: SandboxItem): Set<SandboxPart> = item.parts.filterTo(mutableSetOf()) { part ->
+        when (part) {
+            SandboxPart.MOUNTS -> !gate
+            SandboxPart.APP_OPS -> !appOps
+            SandboxPart.ANDROID_ID_HOOK -> !androidIdHook
+            SandboxPart.APP_LIST_HOOK -> !appListHook
+            SandboxPart.URI_GRANTS_HOOK -> !uriGrantsHook
+        }
     }
 
     /**

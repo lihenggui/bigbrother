@@ -30,7 +30,13 @@
 //! with the last.
 //!
 //! What the ops were before is kept in the app's entry (`saved_ops`), and
-//! put back when the app leaves the sandbox.
+//! put back when the app leaves the sandbox. For the op of a runtime
+//! permission the helper saves, with the mode, the mode the system gave it
+//! for the permission's grant then (`android:read_contacts=1/1`); where the
+//! grant has changed by the time the op is given back, the op gets the
+//! system's mode for the grant as it is then instead. The daemon keeps and
+//! hands back what the helper saved as it is; a mode written by earlier
+//! builds, without a grant, is put back as saved.
 //!
 //! Only the ops of the items that are on for the app are held (see
 //! `items::Settings::op_targets`), ignored, or, for an item left to the
@@ -46,18 +52,24 @@
 //! as it holds the ops (`items::Settings::taken_permissions`). What the
 //! permission was before, granted or not and with the user's flags, is
 //! kept in the entry (`saved_permissions`) and put back when the app leaves
-//! coarse. No mode of the items covers both the ops of one mode and the
+//! coarse. If the user grants it again in the meantime, the helper takes it
+//! back and reports the state it found (`reverted <uid>
+//! <permission>=<state>`): the user's latest choice, kept in the entry in
+//! place of the one before (`Effect::found`) and given back instead. No mode of the items covers both the ops of one mode and the
 //! permission of another (`items::Settings::covering`), so a permission is
 //! named in the entry before it is taken, its state not known yet
 //! ([`naming_taken`]), and whatever the entry names is put back when the app
 //! leaves the sandbox, whatever its items say.
 
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     io::{BufRead as _, BufReader, Write as _},
     os::fd::AsRawFd as _,
     process::ChildStdin,
-    sync::{Arc, Condvar, Mutex, MutexGuard},
+    sync::{
+        Arc, Condvar, Mutex, MutexGuard,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -65,7 +77,7 @@ use anyhow::Context as _;
 
 use super::{
     Effect, Entry, Resumed, Status,
-    items::{OpMode, Settings},
+    items::{self, OpMode, Settings},
 };
 use crate::helper;
 
@@ -99,9 +111,8 @@ enum Answer {
     /// To `apply`: the states of the permissions it took anew.
     Applied(String),
     /// To `kind`: whether the package is a library rather than an app, if
-    /// the helper could tell. Kept apart from the others (`State::kinds`):
-    /// one that comes late is never taken for the answer to a command.
-    Kind(Option<bool>),
+    /// the helper could tell, with the request number it was given.
+    Kind(u64, Option<bool>),
     Failed,
 }
 
@@ -117,13 +128,53 @@ fn parse_line(line: &str) -> Option<(u32, Option<Answer>)> {
         "restored" => Some(Answer::Restored),
         "applied" => Some(Answer::Applied(words.next().unwrap_or("").to_string())),
         "failed" => Some(Answer::Failed),
-        "library" => Some(Answer::Kind(Some(true))),
-        "app" => Some(Answer::Kind(Some(false))),
-        "unknown" => Some(Answer::Kind(None)),
-        "reverted" | "verified" => None,
+        "library" | "app" | "unknown" => {
+            let request = words.next()?.parse().ok()?;
+            if words.next().is_some() {
+                return None;
+            }
+            let library = match kind {
+                "library" => Some(true),
+                "app" => Some(false),
+                _ => None,
+            };
+            Some(Answer::Kind(request, library))
+        }
+        "reverted" | "verified" | "unheld" => None,
         _ => return None,
     };
     Some((uid, answer))
+}
+
+/// `unheld <uid> <op>,...` (or `-` for none): the ops of a guarded uid that
+/// the system did not keep at the mode the uid is held to, after the
+/// helper set them. Ops this Android version does not have are not named.
+fn parse_unheld(line: &str) -> Option<(u32, BTreeSet<String>)> {
+    let mut words = line.split_ascii_whitespace();
+    if words.next()? != "unheld" {
+        return None;
+    }
+    let uid = words.next()?.parse().ok()?;
+    let ops = match words.next() {
+        None | Some("-") => BTreeSet::new(),
+        Some(ops) => ops.split(',').map(str::to_string).collect(),
+    };
+    Some((uid, ops))
+}
+
+/// What a `reverted` line reports of a permission the helper found granted
+/// again while it held it revoked, and took back: the uid, and
+/// `<permission>=<state>`, the state it was found in.
+fn found_in(line: &str) -> Option<(u32, String)> {
+    let mut words = line.split_ascii_whitespace();
+    if words.next()? != "reverted" {
+        return None;
+    }
+    let uid = words.next()?.parse().ok()?;
+    let found = words.next()?;
+    let (name, state) = found.split_once('=')?;
+    (is_permission(name) && !state.is_empty() && words.next().is_none())
+        .then(|| (uid, found.to_string()))
 }
 
 #[derive(Default)]
@@ -141,6 +192,7 @@ struct State {
     /// `set` takes them. A helper that starts is told of each, so that it
     /// carries on where the last one ended.
     guarded: BTreeMap<u32, String>,
+    owners: BTreeMap<u32, (String, String)>,
     /// The uid of the command waiting for the helper's answer. What it is
     /// held to changes with the answer, and until then no `verify` names
     /// it: the helper would take that `verify` after the command, and hold
@@ -151,8 +203,15 @@ struct State {
     untold: bool,
     /// Answers not yet taken by who asked.
     answers: HashMap<u32, Answer>,
-    /// Answers to `kind` not yet taken.
-    kinds: HashMap<u32, Option<bool>>,
+    /// Kept apart from the mutating commands, with its request number so
+    /// a late answer cannot classify another package of the same uid.
+    kind: Option<(u32, u64, Option<bool>)>,
+    /// The ops of guarded uids that the running helper last found it could
+    /// not hold. A uid it has not reported on yet is not known to be held.
+    unheld: BTreeMap<u32, BTreeSet<String>>,
+    /// The permissions the helper found granted again, by uid, as
+    /// [`found_in`] reads them, not yet kept in the entries.
+    found: Vec<(u32, String)>,
 }
 
 impl State {
@@ -160,6 +219,22 @@ impl State {
     /// a pipe that does not block, and a line is short enough to be written
     /// whole or not at all.
     fn send(&mut self, line: &str) -> anyhow::Result<()> {
+        let uid = line
+            .split_ascii_whitespace()
+            .nth(1)
+            .and_then(|word| word.parse::<u32>().ok())
+            .context("invalid helper command")?;
+        let line = match self.owners.get(&uid) {
+            Some((package, id)) if !id.is_empty() => format!("bound {package} {id} {line}"),
+            #[cfg(test)]
+            _ => line.to_owned(),
+            #[cfg(not(test))]
+            _ => anyhow::bail!("missing installation identity"),
+        };
+        self.write_line(&line)
+    }
+
+    fn write_line(&mut self, line: &str) -> anyhow::Result<()> {
         let input = self
             .input
             .as_mut()
@@ -177,7 +252,7 @@ impl State {
             return;
         }
         if let Some(targets) = self.guarded.get(&uid) {
-            let line = format!("verify {uid} {targets}");
+            let line = Command::Verify(uid, targets).to_string();
             let _ = self.send(&line);
         }
     }
@@ -222,8 +297,8 @@ impl Shared {
         let deadline = Instant::now() + ANSWER_WAIT;
         self.ask_until(
             uid,
-            line,
             deadline,
+            |state| state.send(line),
             |state| state.answers.remove(&uid),
             settle,
         )
@@ -234,8 +309,8 @@ impl Shared {
     fn ask_until<A, T>(
         &self,
         uid: u32,
-        line: &str,
         deadline: Instant,
+        send: impl FnOnce(&mut State) -> anyhow::Result<()>,
         mut take: impl FnMut(&mut State) -> Option<A>,
         settle: impl FnOnce(&mut State, A) -> T,
     ) -> anyhow::Result<T> {
@@ -261,7 +336,11 @@ impl Shared {
         }
         // One left from an earlier command that was not waited for.
         take(&mut state);
-        state.send(line)?;
+        anyhow::ensure!(
+            Instant::now() < deadline,
+            "the app ops helper did not answer in time"
+        );
+        send(&mut state)?;
         state.asking = Some(uid);
         let settled = loop {
             if let Some(answer) = take(&mut state) {
@@ -312,6 +391,7 @@ impl AppOps {
     pub fn librarian(&self) -> Librarian {
         Librarian {
             shared: self.shared.clone(),
+            next_request: AtomicU64::new(1),
         }
     }
 
@@ -336,6 +416,7 @@ impl AppOps {
 /// it, which the package cannot set.
 pub struct Librarian {
     shared: Arc<Shared>,
+    next_request: AtomicU64,
 }
 
 impl super::auto::Libraries for Librarian {
@@ -349,12 +430,20 @@ impl super::auto::Libraries for Librarian {
             return None;
         }
         let deadline = until.min(Instant::now() + ANSWER_WAIT);
+        let request = self.next_request.fetch_add(1, Ordering::Relaxed);
+        let line = Command::Kind(uid, request, package).to_string();
         self.shared
             .ask_until(
                 uid,
-                &format!("kind {uid} {package}"),
                 deadline,
-                |state| state.kinds.remove(&uid),
+                |state| state.write_line(&line),
+                |state| {
+                    state
+                        .kind
+                        .take()
+                        .filter(|(id, number, _)| (*id, *number) == (uid, request))
+                        .map(|(_, _, kind)| kind)
+                },
                 |_, kind| kind,
             )
             // One the package manager cannot tell about counts as an app;
@@ -394,15 +483,48 @@ const NOT_KNOWN: &str = "default";
 /// op, with the mode's number, then `<permission>=revoked` for each
 /// permission taken, joined by commas. Empty if nothing.
 fn targets_of(items: &Settings) -> String {
-    let ops = items
-        .op_targets()
-        .into_iter()
-        .map(|(op, mode)| format!("{op}={}", mode_number(mode)));
-    let permissions = items
-        .taken_permissions()
-        .into_iter()
+    targets_text(&items.op_targets(), &items.taken_permissions())
+}
+
+/// `ops` at their modes and `permissions` revoked, as [`targets_of`]
+/// writes them.
+fn targets_text(ops: &[(&str, OpMode)], permissions: &[&str]) -> String {
+    let ops = ops
+        .iter()
+        .map(|(op, mode)| format!("{op}={}", mode_number(*mode)));
+    let permissions = permissions
+        .iter()
         .map(|permission| format!("{permission}={REVOKED}"));
     ops.chain(permissions).collect::<Vec<_>>().join(",")
+}
+
+/// A line the daemon tells the helper (`parseCommand` in
+/// `AppOpsGuardProtocol.kt`): targets as [`targets_of`] writes them,
+/// values as [`saved_values_of`] does.
+enum Command<'a> {
+    Set(u32, &'a str),
+    Verify(u32, &'a str),
+    Release(u32),
+    Restore(u32, &'a str),
+    Kind(u32, u64, &'a str),
+    /// The targets, then what to set back; nothing to set back is `-`.
+    Apply(u32, &'a str, &'a str),
+}
+
+impl std::fmt::Display for Command<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            Self::Set(uid, targets) => write!(f, "set {uid} {targets}"),
+            Self::Verify(uid, targets) => write!(f, "verify {uid} {targets}"),
+            Self::Release(uid) => write!(f, "release {uid}"),
+            Self::Restore(uid, values) => write!(f, "restore {uid} {values}"),
+            Self::Kind(uid, request, package) => write!(f, "kind {uid} {request} {package}"),
+            Self::Apply(uid, targets, resets) => {
+                let resets = if resets.is_empty() { "-" } else { resets };
+                write!(f, "apply {uid} {targets} {resets}")
+            }
+        }
+    }
 }
 
 /// Whether `name`, in what the helper is told, is a permission's rather
@@ -468,6 +590,46 @@ fn keep_found(entry: &mut Entry, found: &str) {
         .join(",");
 }
 
+/// Give the permissions `entry` names the states in `found`
+/// (`<permission>=<state>`) in place of the ones saved: each was granted
+/// again while the app was held to it revoked, the user's choice since it
+/// was taken, and what to give back now. One `entry` does not name was not
+/// taken from it. Whether anything changed.
+fn keep_regranted(entry: &mut Entry, found: &[String]) -> bool {
+    let found: HashMap<&str, &str> = found.iter().flat_map(|pair| pairs(pair)).collect();
+    let mut changed = false;
+    let kept: Vec<String> = pairs(&entry.saved_permissions)
+        .map(|(name, saved)| {
+            let state = found.get(name).map_or_else(
+                || saved.to_string(),
+                |found| regranted_state(name, saved, found),
+            );
+            changed |= state != saved;
+            format!("{name}={state}")
+        })
+        .collect();
+    entry.saved_permissions = kept.join(",");
+    changed
+}
+
+/// The state to keep for `name`, saved as `saved`, found granted again as
+/// `found`. A special access is given service by service: the user giving
+/// one service the access again takes it from none of the others that had
+/// it, so the services found join those saved. A helper that started
+/// again since it took the access knows only what it found.
+fn regranted_state(name: &str, saved: &str, found: &str) -> String {
+    if !items::SPECIAL_ACCESS.contains(&name) || !saved.starts_with("granted") {
+        return found.to_string();
+    }
+    let mut words: Vec<&str> = saved.split('+').collect();
+    for word in found.split('+').skip(1) {
+        if !words.contains(&word) {
+            words.push(word);
+        }
+    }
+    words.join("+")
+}
+
 /// Forget what `entry` saved for the permissions among `names`: they were
 /// given back.
 fn forget_given_back(entry: &mut Entry, names: &[String]) {
@@ -511,7 +673,8 @@ pub fn naming_taken(entry: &Entry, items: &Settings) -> Entry {
 pub fn restore_line(entry: &Entry, items: &Settings) -> Option<String> {
     let targets = targets_of(items);
     let names = to_give_back(entry, &targets);
-    (!names.is_empty()).then(|| format!("restore {} {}", entry.uid, saved_values_of(entry, &names)))
+    (!names.is_empty())
+        .then(|| Command::Restore(entry.uid, &saved_values_of(entry, &names)).to_string())
 }
 
 impl Effect for AppOps {
@@ -520,12 +683,16 @@ impl Effect for AppOps {
     }
 
     fn enable(&mut self, entry: &mut Entry, _: &[String], items: &Settings) -> anyhow::Result<()> {
+        self.shared
+            .state()
+            .owners
+            .insert(entry.uid, (entry.package.clone(), entry.install_id.clone()));
         let targets = targets_of(items);
         if targets.is_empty() {
             return Ok(());
         }
         let uid = entry.uid;
-        let line = format!("set {uid} {targets}");
+        let line = Command::Set(uid, &targets).to_string();
         let saved = self.shared.ask(uid, &line, |state, answer| match answer {
             Answer::Saved(saved) => {
                 state.guarded.insert(uid, targets);
@@ -543,7 +710,7 @@ impl Effect for AppOps {
             failed => {
                 // It may have set them all the same, or be about to: a
                 // helper that is there puts back what it saved itself.
-                let _ = self.shared.state().send(&format!("release {uid}"));
+                let _ = self.shared.state().send(&Command::Release(uid).to_string());
                 self.shared.rest_if_unused();
                 failed?;
                 anyhow::bail!("the system did not take the app ops")
@@ -570,11 +737,12 @@ impl Effect for AppOps {
         // them down) their uid modes are cleared, and the system's defaults
         // apply; a permission without a saved state is left revoked, but
         // the app may ask for it again.
-        let line = format!("restore {uid} {}", saved_values_of(entry, &names));
+        let line = Command::Restore(uid, &saved_values_of(entry, &names)).to_string();
         let restored = self.shared.ask(uid, &line, |state, answer| {
             let restored = answer == Answer::Restored;
             if restored {
                 state.guarded.remove(&uid);
+                state.unheld.remove(&uid);
             }
             restored
         })?;
@@ -613,16 +781,13 @@ impl Effect for AppOps {
                 .collect()
         };
         let resets = |names: &[String]| {
-            if names.is_empty() {
-                return "-".to_string();
-            }
             let names: Vec<&str> = names.iter().map(String::as_str).collect();
             saved_values_of(entry, &names)
         };
         let (let_go, taken_back) = (released(&held, &holding), released(&holding, &held));
         let uid = entry.uid;
-        let line = format!("apply {uid} {holding} {}", resets(&let_go));
-        let back = format!("apply {uid} {held} {}", resets(&taken_back));
+        let line = Command::Apply(uid, &holding, &resets(&let_go)).to_string();
+        let back = Command::Apply(uid, &held, &resets(&taken_back)).to_string();
         let applied = self.shared.ask(uid, &line, |state, answer| match answer {
             Answer::Applied(found) => {
                 state.guarded.insert(uid, holding.clone());
@@ -648,17 +813,69 @@ impl Effect for AppOps {
 
     fn resume(&mut self, apps: &[Resumed]) {
         let mut state = self.shared.state();
+        state.owners.extend(apps.iter().map(|app| {
+            (
+                app.entry.uid,
+                (app.entry.package.clone(), app.entry.install_id.clone()),
+            )
+        }));
         // The helper is told of them as it starts.
         state.guarded.extend(apps.iter().filter_map(|app| {
             let targets = targets_of(&app.items);
             (!targets.is_empty()).then_some((app.entry.uid, targets))
         }));
         state.wanted = !state.guarded.is_empty();
+        if state.input.is_some() {
+            state.tell_guarded();
+        }
         self.shared.changed.notify_all();
     }
 
+    fn forget(&mut self, uid: u32) {
+        let mut state = self.shared.state();
+        state.owners.remove(&uid);
+        state.guarded.remove(&uid);
+        state.unheld.remove(&uid);
+        state.found.retain(|(id, _)| *id != uid);
+        drop(state);
+        self.shared.rest_if_unused();
+    }
+
     fn report(&self, status: &mut Status) {
-        status.appops = self.shared.state().input.is_some();
+        let state = self.shared.state();
+        status.appops = state.input.is_some();
+        // Without a helper nothing holds the ops: the system may already
+        // have set them back. A uid it has not reported on since it
+        // started is not known to be held either.
+        if status.appops {
+            status.held_ops = state
+                .guarded
+                .iter()
+                .filter_map(|(uid, targets)| {
+                    let unheld = state.unheld.get(uid)?;
+                    let held = names_in(targets)
+                        .into_iter()
+                        .filter(|name| !unheld.contains(*name))
+                        .map(str::to_string)
+                        .collect();
+                    Some((*uid, held))
+                })
+                .collect();
+        }
+    }
+
+    fn found(&mut self, entries: &mut HashMap<u32, Entry>) -> Vec<u32> {
+        let found = std::mem::take(&mut self.shared.state().found);
+        let mut changed = Vec::new();
+        for (uid, state) in found {
+            if let Some(entry) = entries.get_mut(&uid)
+                && keep_regranted(entry, &[state])
+                && !changed.contains(&uid)
+            {
+                changed.push(uid);
+            }
+        }
+        changed
     }
 }
 
@@ -744,18 +961,28 @@ fn run_helper(shared: &Shared) -> anyhow::Error {
         shared.changed.notify_all();
     }
     for line in BufReader::new(output).lines().map_while(Result::ok) {
-        if let Some((uid, Some(answer))) = parse_line(&line) {
+        if let Some((uid, ops)) = parse_unheld(&line) {
+            shared.state().unheld.insert(uid, ops);
+        } else if let Some((uid, Some(answer))) = parse_line(&line) {
             let mut state = shared.state();
-            match answer {
-                Answer::Kind(kind) => state.kinds.insert(uid, kind).map(|_| ()),
-                answer => state.answers.insert(uid, answer).map(|_| ()),
-            };
+            if let Answer::Kind(request, kind) = answer {
+                state.kind = Some((uid, request, kind));
+            } else {
+                state.answers.insert(uid, answer);
+            }
             drop(state);
             shared.changed.notify_all();
+        } else if let Some(found) = found_in(&line) {
+            shared.state().found.push(found);
         }
     }
-    // Closes its input, if it is still there to notice.
-    shared.state().input = None;
+    // Closes its input, if it is still there to notice. The next helper
+    // reports again on every uid it is told of.
+    {
+        let mut state = shared.state();
+        state.input = None;
+        state.unheld.clear();
+    }
     shared.changed.notify_all();
     let status = match helper.wait() {
         Ok(status) => status.to_string(),
@@ -772,64 +999,141 @@ fn run_helper(shared: &Shared) -> anyhow::Error {
 mod tests {
     use super::*;
 
+    /// The `<name>=<value>` of a value word of a case (`op=` or
+    /// `permission=`), as the helper writes it and the daemon keeps it and
+    /// hands it back unread: an op's mode, `default` for none, then `/`
+    /// and its grant's mode; a permission's state with its flags joined by
+    /// `+`, `default` where it is not known.
+    fn value_of(word: &str) -> (&str, String) {
+        let mut parts = word.split('/');
+        let name = parts.next().unwrap();
+        let first = match parts.next().unwrap() {
+            "none" | "unknown" => NOT_KNOWN,
+            value => value,
+        };
+        let rest: Vec<&str> = std::iter::once(first).chain(parts).collect();
+        let value = rest.join(if is_permission(name) { "+" } else { "/" });
+        (name, value)
+    }
+
+    /// The values a case names, in order.
+    fn values_of(case: &crate::protocol_cases::Case) -> Vec<(&str, String)> {
+        case.meaning
+            .iter()
+            .filter(|(key, _)| key == "op" || key == "permission")
+            .map(|(_, word)| value_of(word))
+            .collect()
+    }
+
+    fn joined(values: &[(&str, String)], permissions: bool) -> String {
+        values
+            .iter()
+            .filter(|(name, _)| is_permission(name) == permissions)
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
     #[test]
-    fn the_helpers_lines_are_read_as_it_prints_them() {
-        assert_eq!(
-            parse_line("saved 10100 android:camera=default,android:fine_location=4"),
-            Some((
-                10100,
-                Some(Answer::Saved(
-                    "android:camera=default,android:fine_location=4".into()
-                ))
-            ))
-        );
-        // A device that knows none of the ops saved none.
-        assert_eq!(
-            parse_line("saved 10100"),
-            Some((10100, Some(Answer::Saved(String::new()))))
-        );
-        assert_eq!(
-            parse_line("restored 1010100"),
-            Some((1_010_100, Some(Answer::Restored)))
-        );
-        assert_eq!(
-            parse_line("failed 10100"),
-            Some((10100, Some(Answer::Failed)))
-        );
-        // What the helper did by itself answers nothing.
-        assert_eq!(
-            parse_line("reverted 10100 android:camera"),
-            Some((10100, None))
-        );
-        assert_eq!(parse_line("verified 10100"), Some((10100, None)));
-        assert_eq!(
-            parse_line("applied 10100"),
-            Some((10100, Some(Answer::Applied(String::new()))))
-        );
-        // With the states of the permissions it took.
-        assert_eq!(
-            parse_line("applied 10100 android.permission.ACCESS_FINE_LOCATION=granted+user_set"),
-            Some((
-                10100,
-                Some(Answer::Applied(
-                    "android.permission.ACCESS_FINE_LOCATION=granted+user_set".into()
-                ))
-            ))
-        );
-        assert_eq!(
-            parse_line("library 10240"),
-            Some((10240, Some(Answer::Kind(Some(true)))))
-        );
-        assert_eq!(
-            parse_line("app 10240"),
-            Some((10240, Some(Answer::Kind(Some(false)))))
-        );
-        assert_eq!(
-            parse_line("unknown 10240"),
-            Some((10240, Some(Answer::Kind(None))))
-        );
-        for line in ["", "saved", "saved x", "hello 10100", "restored -1"] {
+    fn every_command_is_written_as_the_helper_reads_it() {
+        let cases = crate::protocol_cases::appops();
+        for case in crate::protocol_cases::of(&cases, &["command"]) {
+            let uid: u32 = case.get("uid").unwrap().parse().unwrap();
+            let ops: Vec<(&str, OpMode)> = case
+                .all("hold")
+                .map(|word| {
+                    let (op, mode) = word.split_once('/').unwrap();
+                    let mode = match mode {
+                        "1" => OpMode::Ignored,
+                        "4" => OpMode::Foreground,
+                        other => panic!("no op is held at {other}"),
+                    };
+                    (op, mode)
+                })
+                .collect();
+            let permissions: Vec<&str> = case.all("revoke").collect();
+            let targets = targets_text(&ops, &permissions);
+            // What the entry saved; a value not known is not in it, and
+            // is sent as not known all the same.
+            let values = values_of(case);
+            let known: Vec<(&str, String)> = values
+                .iter()
+                .filter(|(_, value)| value != NOT_KNOWN)
+                .cloned()
+                .collect();
+            let entry = Entry {
+                saved_ops: joined(&known, false),
+                saved_permissions: joined(&known, true),
+                ..sandboxed(uid)
+            };
+            let names: Vec<&str> = values.iter().map(|(name, _)| *name).collect();
+            let saved = saved_values_of(&entry, &names);
+            let line = match case.first() {
+                "set" => Command::Set(uid, &targets),
+                "verify" => Command::Verify(uid, &targets),
+                "release" => Command::Release(uid),
+                "restore" => Command::Restore(uid, &saved),
+                "apply" => Command::Apply(uid, &targets, &saved),
+                "kind" => Command::Kind(
+                    uid,
+                    case.get("request").unwrap().parse().unwrap(),
+                    case.get("package").unwrap(),
+                ),
+                other => panic!("no command {other}"),
+            }
+            .to_string();
+            assert_eq!(line, case.line);
+        }
+    }
+
+    #[test]
+    fn every_answer_and_report_is_read_as_the_helper_writes_it() {
+        let cases = crate::protocol_cases::appops();
+        for case in crate::protocol_cases::of(&cases, &["answer"]) {
+            let line = case.line.as_str();
+            let uid: u32 = case.get("uid").unwrap().parse().unwrap();
+            let values = values_of(case);
+            let text = values
+                .iter()
+                .map(|(name, value)| format!("{name}={value}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            let answer = match case.first() {
+                "saved" => Some(Answer::Saved(text.clone())),
+                "restored" => Some(Answer::Restored),
+                "applied" => Some(Answer::Applied(text.clone())),
+                "failed" => Some(Answer::Failed),
+                "library" | "app" | "unknown" => {
+                    let request = case.get("request").unwrap().parse().unwrap();
+                    let library = match case.first() {
+                        "library" => Some(true),
+                        "app" => Some(false),
+                        _ => None,
+                    };
+                    Some(Answer::Kind(request, library))
+                }
+                "verified" | "reverted" | "unheld" => None,
+                other => panic!("no answer {other}"),
+            };
+            assert_eq!(parse_line(line), Some((uid, answer)), "{line}");
+            if case.first() == "saved" {
+                assert_eq!(
+                    split_saved(&text),
+                    (joined(&values, false), joined(&values, true)),
+                    "{line}"
+                );
+            }
+            let unheld = (case.first() == "unheld")
+                .then(|| (uid, case.all("not_held").map(str::to_string).collect()));
+            assert_eq!(parse_unheld(line), unheld, "{line}");
+            let found = (case.first() == "reverted" && !values.is_empty()).then_some((uid, text));
+            assert_eq!(found_in(line), found, "{line}");
+        }
+        for case in crate::protocol_cases::of(&cases, &["answer-bad"]) {
+            let line = case.line.as_str();
             assert_eq!(parse_line(line), None, "{line:?}");
+            assert_eq!(parse_unheld(line), None, "{line:?}");
+            assert_eq!(found_in(line), None, "{line:?}");
         }
     }
 
@@ -840,6 +1144,7 @@ mod tests {
             enabled: true,
             android_id: String::new(),
             saved_ops: String::new(),
+            install_id: String::new(),
             saved_permissions: String::new(),
             created: 0,
             settings: String::new(),
@@ -994,6 +1299,7 @@ mod tests {
         assert_eq!(
             sent.join().unwrap(),
             [
+                "verify 10100 android:coarse_location=1,android:fine_location=1,android:wifi_scan=1,android:camera=1".to_owned(),
                 // The Wi-Fi scan goes back to what it was, and then with
                 // the coarse location, its switch op, to the foreground.
                 "apply 10100 android:coarse_location=4,android:fine_location=4,\
@@ -1119,16 +1425,17 @@ mod tests {
         assert_eq!(librarian.is_library(10230, "com.example.new", until), None);
         // Its answer comes late, as the app is put in: the command gets
         // its own.
-        let late = parse_line("app 10230").unwrap().1.unwrap();
-        assert_eq!(late, Answer::Kind(Some(false)));
-        appops.shared.state().kinds.insert(10230, Some(false));
+        let (uid, Some(Answer::Kind(request, kind))) = parse_line("app 10230 1").unwrap() else {
+            panic!("expected a kind answer");
+        };
+        appops.shared.state().kind = Some((uid, request, kind));
         let mut entry = sandboxed(10230);
         appops
             .enable(&mut entry, &[], &camera_and_microphone(true))
             .unwrap();
         appops.shared.state().input = None;
         let sent = sent.join().unwrap();
-        assert_eq!(sent[0], "kind 10230 com.example.new");
+        assert_eq!(sent[0], "kind 10230 1 com.example.new");
         assert!(sent[1].starts_with("set 10230 "));
         // A name no package can have is not asked about.
         assert_eq!(librarian.is_library(10230, "com.example app", until), None);
@@ -1281,7 +1588,7 @@ mod tests {
         assert_eq!(entry.saved_permissions, "");
         assert_eq!(
             sent.join().unwrap(),
-            [format!(
+            ["verify 10100 android:coarse_location=1,android:fine_location=1,android:wifi_scan=1".to_owned(), format!(
                 "restore 10100 android:coarse_location=default,android:fine_location=default,\
                  android:wifi_scan=default,{FINE}=default"
             )]
@@ -1321,6 +1628,124 @@ mod tests {
             restore_line(&coarse, &only(&[(Item::Location, Mode::Coarse)])).as_deref(),
             Some("restore 10100 android.permission.ACCESS_FINE_LOCATION=denied+user_set")
         );
+    }
+
+    #[test]
+    fn ops_saved_with_their_grants_go_back_with_them() {
+        use super::super::items::{Item, Mode};
+        let (ops, permissions) = split_saved(&format!(
+            "android:read_contacts=1/1,android:camera=default/4,{FINE}=granted"
+        ));
+        assert_eq!(ops, "android:read_contacts=1/1,android:camera=default/4");
+        assert_eq!(permissions, format!("{FINE}=granted"));
+        let entry = Entry {
+            saved_ops: ops,
+            ..sandboxed(10100)
+        };
+        // The helper sets each op by its grant then and now.
+        assert_eq!(
+            restore_line(
+                &entry,
+                &only(&[(Item::Camera, Mode::On), (Item::Contacts, Mode::On)])
+            )
+            .as_deref(),
+            Some(
+                "restore 10100 android:read_contacts=1/1,android:write_contacts=default,\
+                 android:camera=default/4"
+            )
+        );
+    }
+
+    #[test]
+    fn a_permission_found_granted_again_is_read_from_the_helpers_lines() {
+        assert_eq!(
+            found_in(&format!("reverted 10100 {FINE}=granted+user_set")),
+            Some((10100, format!("{FINE}=granted+user_set")))
+        );
+        // Answers nothing.
+        assert_eq!(
+            parse_line(&format!("reverted 10100 {FINE}=granted")),
+            Some((10100, None))
+        );
+        for line in [
+            format!("reverted 10100 {FINE}"),
+            "reverted 10100 android:camera".to_string(),
+            "reverted 10100 android:camera=1".to_string(),
+            format!("reverted 10100 {FINE}="),
+            format!("verified 10100 {FINE}=granted"),
+            format!("reverted x {FINE}=granted"),
+        ] {
+            assert_eq!(found_in(&line), None, "{line}");
+        }
+    }
+
+    #[test]
+    fn a_service_given_the_access_again_keeps_the_others_that_had_it() {
+        let access = items::NOTIFICATION_ACCESS;
+        let both = format!("{access}=granted+service:a:a.A+service:a:a.B");
+        let mut entry = Entry {
+            saved_permissions: both.clone(),
+            ..sandboxed(10100)
+        };
+        // One of the two given it again: both keep it.
+        assert!(!keep_regranted(
+            &mut entry,
+            &[format!("{access}=granted+service:a:a.A")]
+        ));
+        assert_eq!(entry.saved_permissions, both);
+        // One that did not have it, given it by the user: it joins them.
+        assert!(keep_regranted(
+            &mut entry,
+            &[format!("{access}=granted+service:a:a.C")]
+        ));
+        assert_eq!(entry.saved_permissions, format!("{both}+service:a:a.C"));
+        // Nothing known before: what was found.
+        let mut unknown = Entry {
+            saved_permissions: format!("{access}=default"),
+            ..sandboxed(10100)
+        };
+        assert!(keep_regranted(
+            &mut unknown,
+            &[format!("{access}=granted+service:a:a.A")]
+        ));
+        assert_eq!(
+            unknown.saved_permissions,
+            format!("{access}=granted+service:a:a.A")
+        );
+    }
+
+    #[test]
+    fn a_permission_granted_again_while_held_is_given_back_granted() {
+        use super::super::items::{Item, Mode};
+        let mut appops = AppOps {
+            shared: Arc::new(Shared::default()),
+        };
+        let entry = Entry {
+            saved_permissions: format!("{FINE}=denied+user_set"),
+            ..sandboxed(10100)
+        };
+        let mut entries = HashMap::from([(10100, entry), (10101, sandboxed(10101))]);
+        appops.shared.state().found.extend([
+            (10100, format!("{FINE}=granted+user_set")),
+            // Not taken from this one, nor is there an entry for the last.
+            (10101, format!("{FINE}=granted")),
+            (10102, format!("{FINE}=granted")),
+        ]);
+
+        assert_eq!(appops.found(&mut entries), [10100]);
+        assert!(appops.shared.state().found.is_empty());
+        assert_eq!(entries[&10101].saved_permissions, "");
+        assert_eq!(
+            restore_line(&entries[&10100], &only(&[(Item::Location, Mode::Coarse)])).as_deref(),
+            Some("restore 10100 android.permission.ACCESS_FINE_LOCATION=granted+user_set")
+        );
+        // Found again as it is now: nothing to write.
+        appops
+            .shared
+            .state()
+            .found
+            .push((10100, format!("{FINE}=granted+user_set")));
+        assert!(appops.found(&mut entries).is_empty());
     }
 
     #[test]

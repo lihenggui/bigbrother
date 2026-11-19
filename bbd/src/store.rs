@@ -20,7 +20,8 @@
 
 use std::{
     collections::{BTreeSet, HashMap},
-    path::Path,
+    path::{Path, PathBuf},
+    time::{Duration, SystemTime},
 };
 
 use anyhow::Context as _;
@@ -102,9 +103,74 @@ impl Category {
     }
 }
 
-/// Schema version stored in SQLite's `user_version`. A database at any
-/// other version is refused: bump it whenever `SCHEMA` changes.
-const SCHEMA_VERSION: i32 = 8;
+/// Schema version stored in SQLite's `user_version`. Bump it whenever
+/// `SCHEMA` changes, and add the step from the previous version to
+/// `MIGRATIONS`.
+const SCHEMA_VERSION: i32 = 10;
+
+/// How a database written by a released build is brought to
+/// `SCHEMA_VERSION`: (from, to, statements), applied one after another.
+/// Versions that only development builds wrote have no step; such a
+/// database is set aside. v0.2.0 wrote version 3.
+const MIGRATIONS: &[(i32, i32, &str)] = &[
+    (3, 7, MIGRATE_3_TO_7),
+    (
+        7,
+        8,
+        "ALTER TABLE sandbox ADD COLUMN install_id TEXT NOT NULL DEFAULT '';",
+    ),
+    (8, 9, RETIRED_SANDBOX),
+    (9, 10, SANDBOX_AUTO_SCHEMA),
+];
+
+// The old install's settings and saved grants remain available to the owner
+// for recovery. Only the live sandbox table is ever used to authorize work.
+const RETIRED_SANDBOX: &str = "
+CREATE TABLE sandbox_retired AS
+    SELECT uid, package, enabled, android_id, saved_ops, saved_permissions, created, settings, install_id
+    FROM sandbox WHERE 0;
+CREATE UNIQUE INDEX retired_install ON sandbox_retired(uid, package, install_id, android_id);
+CREATE TRIGGER retain_replaced_install BEFORE UPDATE OF install_id ON sandbox
+WHEN OLD.install_id != NEW.install_id
+BEGIN
+    INSERT OR REPLACE INTO sandbox_retired
+    VALUES(OLD.uid, OLD.package, OLD.enabled, OLD.android_id, OLD.saved_ops,
+           OLD.saved_permissions, OLD.created, OLD.settings, OLD.install_id);
+END;
+";
+
+/// v0.2.0 had the accesses and individual accesses: the sensor sessions and
+/// the sandbox, added since, start empty.
+const MIGRATE_3_TO_7: &str = "
+CREATE TABLE sensor_session (
+    uid        INTEGER NOT NULL,
+    pid        INTEGER NOT NULL,
+    proc_start INTEGER NOT NULL,
+    connection INTEGER NOT NULL,
+    handle     INTEGER NOT NULL,
+    sensor     TEXT    NOT NULL,
+    continuous INTEGER NOT NULL,
+    period_ns  INTEGER NOT NULL,
+    start_ts   INTEGER NOT NULL,
+    end_ts     INTEGER,
+    PRIMARY KEY (uid, pid, connection, handle, start_ts)
+) WITHOUT ROWID;
+CREATE INDEX sensor_session_end ON sensor_session (end_ts);
+CREATE TABLE sandbox (
+    uid        INTEGER PRIMARY KEY,
+    package    TEXT    NOT NULL,
+    enabled    INTEGER NOT NULL,
+    android_id TEXT    NOT NULL,
+    saved_ops  TEXT    NOT NULL,
+    saved_permissions TEXT NOT NULL,
+    created    INTEGER NOT NULL,
+    settings   TEXT    NOT NULL
+) WITHOUT ROWID;
+CREATE TABLE sandbox_global (
+    item TEXT PRIMARY KEY,
+    mode TEXT NOT NULL
+) WITHOUT ROWID;
+";
 
 /// Most entries returned for one path's history.
 const HISTORY_LIMIT: u32 = 2000;
@@ -214,17 +280,21 @@ CREATE TABLE sandbox (
     enabled    INTEGER NOT NULL,
     android_id TEXT    NOT NULL,      -- 16 hex digits, drawn on the first enable
     saved_ops  TEXT    NOT NULL,      -- the uid's app-op modes before it was enabled,
-                                      -- 'op=mode,...', restored when it is disabled
+                                      -- 'op=mode[/grant],...', restored when it is disabled
     saved_permissions TEXT NOT NULL,  -- the runtime permissions the sandbox may have
                                       -- taken, each with its state before, or 'default'
                                       -- where that is not known: 'permission=state,...'
     created    INTEGER NOT NULL,
-    settings   TEXT    NOT NULL       -- 'item=mode,...'
+    settings   TEXT    NOT NULL,      -- 'item=mode,...'
+    install_id TEXT NOT NULL DEFAULT ''
 ) WITHOUT ROWID;
 CREATE TABLE sandbox_global (
     item TEXT PRIMARY KEY,
     mode TEXT NOT NULL
 ) WITHOUT ROWID;
+";
+
+const SANDBOX_AUTO_SCHEMA: &str = "
 CREATE TABLE sandbox_packages (
     uid     INTEGER NOT NULL,
     package TEXT    NOT NULL,
@@ -295,8 +365,19 @@ struct EventKey {
     ts: i64,
 }
 
+// Bound telemetry independently of the state required to undo sandbox changes.
+const BUFFER_BYTES: usize = 4 * 1024 * 1024;
+const DB_BYTES: u64 = 256 * 1024 * 1024;
+const FREE_RESERVE: u64 = 64 * 1024 * 1024;
+
 pub struct Writer {
+    recording_pages: u32,
+    recovery_pages: u32,
+    buffered_bytes: usize,
+    dropped: u64,
     conn: Connection,
+    /// Where the database is, to find the one set aside next to it.
+    path: PathBuf,
     pending: HashMap<Key, Agg>,
     /// Individual accesses not yet written: (allowed, refused) per key.
     events: HashMap<EventKey, (u32, u32)>,
@@ -307,10 +388,12 @@ pub struct Writer {
 }
 
 impl Writer {
-    /// Open the database at `path`, creating it if new. One at another
-    /// schema version is neither upgraded nor read with the wrong layout:
-    /// it is set aside as `<path>.old`, over the one set aside before, and
-    /// recording starts over in a new one.
+    /// Open the database at `path`, creating it if new. One that a
+    /// released build wrote at an earlier schema version is migrated,
+    /// keeping the records and the sandbox. One at a version with no
+    /// migration (a development build's, or a newer build's) is not read
+    /// with the wrong layout: it is set aside as `<path>.old`, over the one
+    /// set aside before, and recording starts over in a new one.
     pub fn open(path: &Path) -> anyhow::Result<Self> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
@@ -318,19 +401,36 @@ impl Writer {
         let open = || Connection::open(path).with_context(|| format!("opening {}", path.display()));
         let mut conn = open()?;
         if let Some(version) = other_version(&conn)? {
-            drop(conn);
-            set_aside(path)?;
-            eprintln!(
-                "bbd: the database was version {version}, not {SCHEMA_VERSION}: set aside, starting a new one"
-            );
-            conn = open()?;
+            if migrate(&mut conn, version)? {
+                eprintln!("bbd: the database was version {version}: migrated to {SCHEMA_VERSION}");
+            } else {
+                drop(conn);
+                set_aside(path)?;
+                eprintln!(
+                    "bbd: the database was version {version}, not {SCHEMA_VERSION}: set aside, starting a new one"
+                );
+                conn = open()?;
+            }
         }
         // WAL lets `bbd` query commands read while the daemon writes.
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
+        conn.pragma_update(None, "journal_size_limit", 8 * 1024 * 1024)?;
         create_schema(&mut conn)?;
+        let page_size: u32 = conn.pragma_query_value(None, "page_size", |r| r.get(0))?;
+        let pages: u32 = conn.pragma_query_value(None, "page_count", |r| r.get(0))?;
+        // A transaction can overshoot the telemetry watermark. Preserve room
+        // for sandbox recovery on devices that already have a larger database.
+        let limit = u64::from(pages).max(DB_BYTES / u64::from(page_size))
+            + FREE_RESERVE / u64::from(page_size);
+        conn.pragma_update(None, "max_page_count", limit as i64)?;
         Ok(Self {
             conn,
+            path: path.to_owned(),
+            recording_pages: (DB_BYTES / u64::from(page_size)) as u32,
+            recovery_pages: limit.min(u64::from(u32::MAX)) as u32,
+            buffered_bytes: 0,
+            dropped: 0,
             pending: HashMap::new(),
             events: HashMap::new(),
             sessions: Vec::new(),
@@ -341,7 +441,18 @@ impl Writer {
     /// Write a sensor session with the next flush, over what was written of
     /// it before.
     pub fn sensor_session(&mut self, session: SensorSession) {
-        self.sessions.push(session);
+        if self.reserve_sample(session.sensor.len() + 128) {
+            self.sessions.push(session);
+        }
+    }
+
+    fn reserve_sample(&mut self, bytes: usize) -> bool {
+        if bytes > BUFFER_BYTES - self.buffered_bytes {
+            self.dropped = self.dropped.saturating_add(1);
+            return false;
+        }
+        self.buffered_bytes += bytes;
+        true
     }
 
     /// The sensor sessions not ended: those a previous run left open.
@@ -390,27 +501,38 @@ impl Writer {
         ts: i64,
         items: u32,
     ) {
-        let counts = self
-            .events
-            .entry(EventKey {
-                uid,
-                path: path.clone(),
-                mode,
-                ts,
-            })
-            .or_default();
-        if ok {
-            counts.0 += 1;
-        } else {
-            counts.1 += 1;
+        if path.len() > BUFFER_BYTES {
+            self.dropped = self.dropped.saturating_add(1);
+            return;
         }
-
+        let event = EventKey {
+            uid,
+            path: path.clone(),
+            mode,
+            ts,
+        };
         let key = Key {
             hour: ts / 3600,
             uid,
             path,
             mode,
         };
+        let mut bytes = 0;
+        if !self.events.contains_key(&event) {
+            bytes += 128 + event.path.capacity();
+        }
+        if !self.pending.contains_key(&key) {
+            bytes += 128 + key.path.capacity() + pkg.len();
+        }
+        if !self.reserve_sample(bytes) {
+            return;
+        }
+        let counts = self.events.entry(event).or_default();
+        if ok {
+            counts.0 = counts.0.saturating_add(1);
+        } else {
+            counts.1 = counts.1.saturating_add(1);
+        }
         let agg = self.pending.entry(key).or_insert_with(|| Agg {
             pkg: pkg.to_string(),
             cat,
@@ -422,9 +544,9 @@ impl Writer {
         });
         agg.items = agg.items.max(items);
         if ok {
-            agg.ok += 1;
+            agg.ok = agg.ok.saturating_add(1);
         } else {
-            agg.fail += 1;
+            agg.fail = agg.fail.saturating_add(1);
         }
         // Events from different sources are not strictly ordered in time.
         agg.first_ts = agg.first_ts.min(ts);
@@ -455,6 +577,29 @@ impl Writer {
     }
 
     fn write(&mut self, counters: &Counters, now: i64) -> anyhow::Result<()> {
+        if !self.room_for_records()? {
+            self.dropped = self.dropped.saturating_add(
+                self.events
+                    .values()
+                    .map(|(ok, fail)| u64::from(*ok) + u64::from(*fail))
+                    .sum::<u64>()
+                    + self.sessions.len() as u64,
+            );
+            self.pending.clear();
+            self.events.clear();
+            self.sessions.clear();
+            self.buffered_bytes = 0;
+            return Ok(());
+        }
+        self.conn
+            .pragma_update(None, "max_page_count", self.recording_pages)?;
+        let result = self.write_batch(counters, now);
+        self.conn
+            .pragma_update(None, "max_page_count", self.recovery_pages)?;
+        result
+    }
+
+    fn write_batch(&mut self, counters: &Counters, now: i64) -> anyhow::Result<()> {
         let tx = self.conn.transaction()?;
         {
             let mut upsert = tx.prepare_cached(
@@ -541,7 +686,10 @@ impl Writer {
                 ("events_seen", counters.seen as i64),
                 ("events_kept", counters.kept as i64),
                 ("events_unresolved", counters.unresolved as i64),
-                ("events_dropped", counters.dropped as i64),
+                (
+                    "events_dropped",
+                    counters.dropped.saturating_add(self.dropped) as i64,
+                ),
                 ("last_flush", now),
             ] {
                 meta.execute(params![key, value])?;
@@ -553,8 +701,34 @@ impl Writer {
         self.pending.clear();
         self.events.clear();
         self.sessions.clear();
+        self.buffered_bytes = 0;
         self.written = Some(counters.clone());
         Ok(())
+    }
+
+    fn room_for_records(&self) -> anyhow::Result<bool> {
+        let page_size: u64 = self
+            .conn
+            .pragma_query_value(None, "page_size", |r| r.get::<_, u32>(0).map(u64::from))?;
+        let pages: u64 = self
+            .conn
+            .pragma_query_value(None, "page_count", |r| r.get::<_, u32>(0).map(u64::from))?;
+        let free: u64 = self.conn.pragma_query_value(None, "freelist_count", |r| {
+            r.get::<_, u32>(0).map(u64::from)
+        })?;
+        let mut wal = self.path.as_os_str().to_owned();
+        wal.push("-wal");
+        let wal_bytes = std::fs::metadata(wal).map_or(0, |m| m.len());
+        if pages.saturating_sub(free).saturating_mul(page_size) + wal_bytes >= DB_BYTES {
+            return Ok(false);
+        }
+        let path = std::ffi::CString::new(self.path.as_os_str().as_encoded_bytes())?;
+        let mut space = std::mem::MaybeUninit::uninit();
+        if unsafe { libc::statvfs(path.as_ptr(), space.as_mut_ptr()) } != 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        let space = unsafe { space.assume_init() };
+        Ok((space.f_bavail as u128) * (space.f_frsize as u128) >= u128::from(FREE_RESERVE))
     }
 
     pub fn set_meta(&self, key: &str, value: i64) -> anyhow::Result<()> {
@@ -569,6 +743,10 @@ impl Writer {
     /// Delete rows older than `days`. Returns the number removed.
     pub fn prune(&self, days: u32, now: i64) -> anyhow::Result<usize> {
         let cutoff = now - i64::from(days) * 86_400;
+        // Not removing it is no reason to keep the records here past their time.
+        if let Err(e) = remove_set_aside_before(&self.path, cutoff) {
+            eprintln!("bbd: could not remove the database set aside: {e:#}");
+        }
         self.conn
             .execute("DELETE FROM event WHERE ts < ?1", params![cutoff])?;
         self.conn.execute(
@@ -600,13 +778,13 @@ impl Writer {
     pub fn put_sandbox(&self, entry: &SandboxEntry) -> anyhow::Result<()> {
         self.conn.execute(
             "INSERT INTO sandbox (uid, package, enabled, android_id, saved_ops, saved_permissions,
-                                  created, settings)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                                  created, settings, install_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT (uid) DO UPDATE SET
                  package = excluded.package, enabled = excluded.enabled,
                  android_id = excluded.android_id, saved_ops = excluded.saved_ops,
                  saved_permissions = excluded.saved_permissions,
-                 created = excluded.created, settings = excluded.settings",
+                 created = excluded.created, settings = excluded.settings, install_id = excluded.install_id",
             params![
                 entry.uid,
                 entry.package,
@@ -615,7 +793,7 @@ impl Writer {
                 entry.saved_ops,
                 entry.saved_permissions,
                 entry.created,
-                entry.settings
+                entry.settings, entry.install_id
             ],
         )?;
         self.sync()
@@ -705,6 +883,7 @@ impl Writer {
 /// One app in the sandbox: a `sandbox` row.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SandboxEntry {
+    pub install_id: String,
     pub uid: u32,
     pub package: String,
     pub enabled: bool,
@@ -719,7 +898,7 @@ pub struct SandboxEntry {
 }
 
 const SANDBOX_SELECT: &str = "SELECT uid, package, enabled, android_id, saved_ops, \
-     saved_permissions, created, settings FROM sandbox";
+     saved_permissions, created, settings, install_id FROM sandbox";
 
 fn sandbox_entry(r: &rusqlite::Row<'_>) -> rusqlite::Result<SandboxEntry> {
     Ok(SandboxEntry {
@@ -731,6 +910,7 @@ fn sandbox_entry(r: &rusqlite::Row<'_>) -> rusqlite::Result<SandboxEntry> {
         saved_permissions: r.get(5)?,
         created: r.get(6)?,
         settings: r.get(7)?,
+        install_id: r.get(8)?,
     })
 }
 
@@ -862,6 +1042,70 @@ fn set_aside(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Bring a database at `from` to `SCHEMA_VERSION` with the steps of
+/// `MIGRATIONS`, in one transaction. False, with nothing changed, if there
+/// is no way from `from`.
+fn migrate(conn: &mut Connection, from: i32) -> anyhow::Result<bool> {
+    let mut steps = Vec::new();
+    let mut version = from;
+    while version != SCHEMA_VERSION {
+        let Some(&(_, to, statements)) = MIGRATIONS.iter().find(|(f, _, _)| *f == version) else {
+            return Ok(false);
+        };
+        steps.push(statements);
+        version = to;
+    }
+    // user_version is in the database header and written with the
+    // transaction: a migration stopped half way leaves the old version.
+    let tx = conn.transaction()?;
+    for statements in steps {
+        tx.execute_batch(statements)
+            .with_context(|| format!("migrating the database from version {from}"))?;
+    }
+    tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    tx.commit()?;
+    Ok(true)
+}
+
+/// Remove the database set aside next to `path` once all of it is older
+/// than `cutoff` (unix time). Nothing writes to it after it is set aside,
+/// so its last change, in the file or in its log (which holds the newest
+/// writes until they are copied into the file), is when its newest record
+/// was.
+fn remove_set_aside_before(path: &Path, cutoff: i64) -> anyhow::Result<()> {
+    let mut old = path.as_os_str().to_owned();
+    old.push(".old");
+    let modified = |suffix: &str| {
+        let mut file = old.clone();
+        file.push(suffix);
+        std::fs::metadata(&file).and_then(|m| m.modified())
+    };
+    let mut newest = match modified("") {
+        Ok(modified) => modified,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e).context("reading the database set aside"),
+    };
+    if let Ok(log) = modified("-wal") {
+        newest = newest.max(log);
+    }
+    let cutoff = SystemTime::UNIX_EPOCH + Duration::from_secs(cutoff.max(0).unsigned_abs());
+    if newest >= cutoff {
+        return Ok(());
+    }
+    // The file last: what is left after a failure is found and removed again.
+    for suffix in ["-wal", "-shm", ""] {
+        let mut file = old.clone();
+        file.push(suffix);
+        match std::fs::remove_file(&file) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                return Err(e).context("removing the database set aside");
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// Create the schema in a new database; one that has it is left alone.
 fn create_schema(conn: &mut Connection) -> anyhow::Result<()> {
     // One transaction for the tables and the version that records them: if
@@ -871,6 +1115,8 @@ fn create_schema(conn: &mut Connection) -> anyhow::Result<()> {
         return Ok(());
     }
     conn.execute_batch(SCHEMA)?;
+    conn.execute_batch(RETIRED_SANDBOX)?;
+    conn.execute_batch(SANDBOX_AUTO_SCHEMA)?;
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     conn.commit()?;
     Ok(())
@@ -1066,8 +1312,8 @@ pub struct Reader {
 
 impl Reader {
     /// Open the database at `path` to read. One at another schema version
-    /// is not read: its layout is not this build's, and the daemon sets it
-    /// aside when it starts.
+    /// is not read: its layout is not this build's, and the daemon migrates
+    /// it or sets it aside when it starts.
     pub fn open(path: &Path) -> anyhow::Result<Self> {
         let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
             .with_context(|| format!("opening {} (has the daemon run yet?)", path.display()))?;
@@ -1078,7 +1324,7 @@ impl Reader {
                 path.display()
             ),
             version => anyhow::bail!(
-                "{} is version {version}, not {SCHEMA_VERSION}: the daemon starts a new one when it starts",
+                "{} is version {version}, not {SCHEMA_VERSION}: the daemon brings it up to date when it starts",
                 path.display()
             ),
         }
@@ -1499,6 +1745,58 @@ impl Reader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn telemetry_over_budget_leaves_room_for_sandbox_recovery() {
+        let dir = std::env::temp_dir().join(format!("bbd-buffer-limit-{}", std::process::id()));
+        let mut w = Writer::open(&dir.join("bb.db")).unwrap();
+        w.record(
+            10100,
+            "example",
+            Category::Storage,
+            "x".repeat(BUFFER_BYTES),
+            MODE_READ,
+            true,
+            1,
+            0,
+        );
+        assert!(w.events.is_empty() && w.pending.is_empty());
+        assert_eq!(w.dropped, 1);
+        w.put_sandbox(&sandbox_entry_for(10100)).unwrap();
+        assert!(w.sandbox_entry(10100).unwrap().is_some());
+        drop(w);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_full_telemetry_transaction_preserves_the_sandbox_write_allowance() {
+        let dir = std::env::temp_dir().join(format!("bbd-recording-pages-{}", std::process::id()));
+        let mut w = Writer::open(&dir.join("bb.db")).unwrap();
+        let normal = w.recording_pages;
+        w.recording_pages = w
+            .conn
+            .pragma_query_value(None, "page_count", |row| row.get(0))
+            .unwrap();
+        w.record(
+            10100,
+            "example",
+            Category::Storage,
+            "a".repeat(64 * 1024),
+            MODE_READ,
+            true,
+            1,
+            0,
+        );
+        assert!(w.flush(&Counters::default(), 1).is_err());
+        assert_eq!(w.events.len(), 1);
+        w.put_sandbox(&sandbox_entry_for(10100)).unwrap();
+        w.recording_pages = normal;
+        w.flush(&Counters::default(), 2).unwrap();
+        assert!(w.events.is_empty());
+        assert!(w.sandbox_entry(10100).unwrap().is_some());
+        drop(w);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn aggregates_and_queries() {
@@ -1952,9 +2250,10 @@ mod tests {
         drop(w);
         assert!(!old.exists());
 
-        // Neither upgraded nor misread: an older database and a newer one
-        // are each set aside whole, and recording starts over.
-        for other in [SCHEMA_VERSION - 1, SCHEMA_VERSION + 1] {
+        // Neither upgraded nor misread: a database at a version no released
+        // build wrote, and a newer one, are each set aside whole, and
+        // recording starts over.
+        for other in [6, SCHEMA_VERSION + 1] {
             let w = Writer::open(&db).unwrap();
             w.put_sandbox_global(&[("camera", "off")]).unwrap();
             w.conn.pragma_update(None, "user_version", other).unwrap();
@@ -1979,9 +2278,7 @@ mod tests {
         let db = dir.join("bb.db");
         let w = Writer::open(&db).unwrap();
         assert!(Reader::open(&db).is_ok());
-        w.conn
-            .pragma_update(None, "user_version", SCHEMA_VERSION - 1)
-            .unwrap();
+        w.conn.pragma_update(None, "user_version", 6).unwrap();
         assert!(Reader::open(&db).is_err());
         drop(w);
         std::fs::remove_dir_all(dir).unwrap();
@@ -2032,6 +2329,338 @@ mod tests {
         // Turned off, nothing is known.
         w.put_sandbox_auto(false, &[]).unwrap();
         assert_eq!(w.sandbox_auto().unwrap(), (false, vec![]));
+    }
+
+    /// Every column of every table, and every index, of the database at
+    /// `path`, in an order that does not depend on how they were created.
+    fn layout(path: &Path) -> Vec<String> {
+        let conn = Connection::open(path).unwrap();
+        let mut layout: Vec<String> = conn
+            .prepare(
+                "SELECT m.type || ' ' || m.name || ' ' || coalesce(p.name || ' ' || p.type || ' ' \
+                 || p.\"notnull\" || ' ' || p.pk, '') \
+                 FROM sqlite_master m LEFT JOIN pragma_table_info(m.name) p ON m.type = 'table' \
+                 WHERE m.name NOT LIKE 'sqlite_%'",
+            )
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        layout.sort();
+        layout
+    }
+
+    /// A released version, the schema version of the database it wrote, and
+    /// a database it could have written: the statements of `bbd/testdata/db/`.
+    struct Release {
+        version: &'static str,
+        schema: i32,
+        fixture: &'static str,
+    }
+
+    /// Every release, oldest first. Each release adds itself here, with a
+    /// fixture (CONTRIBUTING.md), so that every later schema change has to
+    /// bring its database along.
+    const RELEASES: &[Release] = &[Release {
+        version: "v0.2.0",
+        schema: 3,
+        fixture: include_str!("../testdata/db/v0.2.0.sql"),
+    }];
+
+    /// The tables of the database, by name, each with its columns.
+    fn tables(conn: &Connection) -> Vec<(String, Vec<String>)> {
+        let names: Vec<String> = conn
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type = 'table' \
+                 AND name NOT LIKE 'sqlite_%' ORDER BY name",
+            )
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        names
+            .into_iter()
+            .map(|table| {
+                let columns = conn
+                    .prepare("SELECT name FROM pragma_table_info(?1) ORDER BY cid")
+                    .unwrap()
+                    .query_map([&table], |r| r.get(0))
+                    .unwrap()
+                    .map(Result::unwrap)
+                    .collect();
+                (table, columns)
+            })
+            .collect()
+    }
+
+    /// Every row of `table`, of the given columns only, sorted.
+    fn rows(conn: &Connection, table: &str, columns: &[String]) -> Vec<String> {
+        let mut stmt = conn
+            .prepare(&format!("SELECT {} FROM \"{table}\"", columns.join(", ")))
+            .unwrap();
+        let mut rows: Vec<String> = stmt
+            .query_map([], |r| {
+                (0..columns.len())
+                    .map(|i| r.get::<_, rusqlite::types::Value>(i))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(|values| format!("{values:?}"))
+            })
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        rows.sort();
+        rows
+    }
+
+    #[test]
+    fn the_database_of_every_release_is_migrated_with_everything_in_it() {
+        for release in RELEASES {
+            let version = release.version;
+            let dir = std::env::temp_dir()
+                .join(format!("bbd-test-release-{version}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let db = dir.join("bb.db");
+            let fresh = dir.join("fresh.db");
+
+            let conn = Connection::open(&db).unwrap();
+            conn.execute_batch(release.fixture).unwrap();
+            assert_eq!(
+                version_of(&conn).unwrap(),
+                release.schema,
+                "the fixture of {version} is at another schema version"
+            );
+            let before: Vec<(String, Vec<String>, Vec<String>)> = tables(&conn)
+                .into_iter()
+                .map(|(table, columns)| {
+                    let rows = rows(&conn, &table, &columns);
+                    (table, columns, rows)
+                })
+                .collect();
+            for (table, _, rows) in &before {
+                assert!(
+                    !rows.is_empty(),
+                    "the fixture of {version} has no rows in {table}"
+                );
+            }
+            drop(conn);
+
+            let w = Writer::open(&db).unwrap();
+            assert!(
+                !dir.join("bb.db.old").exists(),
+                "the database of {version} was set aside"
+            );
+            assert_eq!(version_of(&w.conn).unwrap(), SCHEMA_VERSION);
+            // Every row of every table it had, with every value, and nothing
+            // in the tables added since.
+            for (table, columns, rows_before) in &before {
+                assert_eq!(
+                    &rows(&w.conn, table, columns),
+                    rows_before,
+                    "{table} of {version} changed"
+                );
+            }
+            for (table, columns) in tables(&w.conn) {
+                if !before.iter().any(|(t, _, _)| *t == table) {
+                    assert!(
+                        rows(&w.conn, &table, &columns).is_empty(),
+                        "{table} has rows the database of {version} did not"
+                    );
+                }
+            }
+            drop(w);
+            drop(Writer::open(&fresh).unwrap());
+            assert_eq!(layout(&db), layout(&fresh), "{version}");
+
+            // Opened again, it is left as it is, and the sandbox works in it
+            // as in a new one.
+            let w = Writer::open(&db).unwrap();
+            for (table, columns, rows_before) in &before {
+                assert_eq!(&rows(&w.conn, table, columns), rows_before, "{version}");
+            }
+            w.put_sandbox(&sandbox_entry_for(10999)).unwrap();
+            assert_eq!(
+                w.sandbox_entry(10999).unwrap(),
+                Some(sandbox_entry_for(10999))
+            );
+            drop(w);
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn the_records_of_v0_2_0_read_as_they_were_recorded() {
+        let dir = std::env::temp_dir().join(format!("bbd-test-v0.2.0-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("bb.db");
+        Connection::open(&db)
+            .unwrap()
+            .execute_batch(RELEASES[0].fixture)
+            .unwrap();
+        drop(Writer::open(&db).unwrap());
+        let r = Reader::open(&db).unwrap();
+
+        let stats = r.stats().unwrap();
+        assert_eq!((stats.rows, stats.apps), (14, 4));
+        assert_eq!(
+            (stats.oldest_ts, stats.newest_ts),
+            (Some(1_760_004_000), Some(1_760_007_705))
+        );
+        assert_eq!(stats.meta.len(), 13);
+        assert_eq!(stats.meta["events_seen"], 1_234_567);
+        assert_eq!(stats.meta["last_flush"], 1_760_007_710);
+        assert_eq!(stats.meta["coverage_netlink"], 0);
+        assert_eq!(stats.meta["coverage_binder"], -1);
+
+        let apps = r.apps(0).unwrap();
+        let app = |uid: u32| apps.iter().find(|a| a.uid == uid).unwrap();
+        assert_eq!(apps.len(), 4);
+        let gallery = app(10123);
+        assert_eq!(gallery.pkg, "com.example.gallery");
+        assert_eq!((gallery.storage, gallery.provider), (2, 1));
+        assert_eq!(gallery.last_ts, 1_760_007_705);
+        let tracker = app(10124);
+        assert_eq!(
+            [
+                tracker.device,
+                tracker.system,
+                tracker.process,
+                tracker.network,
+                tracker.command,
+                tracker.personal,
+                tracker.service,
+                tracker.permission,
+            ],
+            [1; 8]
+        );
+        assert_eq!(app(10200).pkg, "");
+        assert_eq!(app(1_010_123).storage, 1);
+
+        let photo = "/storage/emulated/0/DCIM/Camera/IMG_0001.jpg";
+        let files = r
+            .files(&[10123], &[Category::Storage], None, None, 0, 50, 0)
+            .unwrap();
+        assert_eq!(files.len(), 2);
+        let merged = files.iter().find(|f| f.path == photo).unwrap();
+        assert_eq!((merged.mode, merged.ok, merged.fail), (MODE_READ, 4, 1));
+        assert_eq!(
+            (merged.first_ts, merged.last_ts),
+            (1_760_004_010, 1_760_007_705)
+        );
+        let document = files.iter().find(|f| f.path != photo).unwrap();
+        assert_eq!(
+            document.path,
+            "/storage/emulated/0/Documents/O'Brien résumé.pdf"
+        );
+        assert_eq!(document.mode, MODE_READ | MODE_VIA_PROVIDER);
+        let queried = r
+            .files(&[], &[Category::Personal], None, None, 0, 50, 0)
+            .unwrap();
+        assert_eq!(queried.len(), 1);
+        assert_eq!((queried[0].mode, queried[0].items), (MODE_QUERY, 120));
+
+        let history = r.history(10123, photo, 0).unwrap();
+        assert_eq!(
+            history
+                .iter()
+                .map(|h| (h.ts, h.ok, h.fail))
+                .collect::<Vec<_>>(),
+            [
+                (1_760_007_705, 0, 1),
+                (1_760_007_700, 1, 0),
+                (1_760_004_050, 1, 0),
+                (1_760_004_010, 2, 0),
+            ]
+        );
+        assert_eq!(
+            r.history(1_010_123, "/storage/emulated/10/Pictures/a.png", 0)
+                .unwrap()[0]
+                .mode,
+            MODE_WRITE
+        );
+        assert!(
+            !r.timeline(0, 1_760_010_000, 100)
+                .unwrap()
+                .entries
+                .is_empty()
+        );
+        assert!(r.sandbox_entries().unwrap().is_empty());
+        assert_eq!(r.sandbox_global().unwrap(), "");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_current_version_and_every_release_schema_have_a_way_to_this_one() {
+        // The version is raised when a release is made: the release has to
+        // add itself to RELEASES, with the database it writes.
+        let prop = include_str!("../../module/module.prop");
+        let current = prop
+            .lines()
+            .find_map(|line| line.strip_prefix("version="))
+            .unwrap()
+            .trim();
+        assert!(
+            RELEASES.iter().any(|r| r.version == current),
+            "{current} has no fixture in RELEASES (see CONTRIBUTING.md)"
+        );
+        for pair in RELEASES.windows(2) {
+            assert!(pair[0].schema <= pair[1].schema, "RELEASES is not in order");
+        }
+        // The steps from each release's schema, followed as `migrate` does,
+        // reach this one.
+        for release in RELEASES {
+            let mut version = release.schema;
+            for _ in 0..=MIGRATIONS.len() {
+                if version == SCHEMA_VERSION {
+                    break;
+                }
+                let Some(&(_, to, _)) = MIGRATIONS.iter().find(|(from, _, _)| *from == version)
+                else {
+                    break;
+                };
+                version = to;
+            }
+            assert_eq!(
+                version, SCHEMA_VERSION,
+                "the steps in MIGRATIONS from schema {} of {} end at {version}, not {SCHEMA_VERSION}",
+                release.schema, release.version
+            );
+        }
+    }
+
+    #[test]
+    fn the_database_set_aside_is_removed_once_its_records_are_out_of_date() {
+        let dir = std::env::temp_dir().join(format!("bbd-test-old-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let db = dir.join("bb.db");
+        let old = dir.join("bb.db.old");
+        let w = Writer::open(&db).unwrap();
+        std::fs::write(&old, "").unwrap();
+        std::fs::write(dir.join("bb.db.old-wal"), "").unwrap();
+        let day = 86_400;
+        let set_aside_at = 100 * day;
+        let touch = |path: &Path, at: i64| {
+            std::fs::File::options()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(at as u64))
+                .unwrap();
+        };
+        touch(&old, set_aside_at - 10 * day);
+        // The newest records are in the log, not yet in the file.
+        touch(&dir.join("bb.db.old-wal"), set_aside_at);
+
+        w.prune(30, set_aside_at + 29 * day).unwrap();
+        assert!(old.exists());
+        w.prune(30, set_aside_at + 31 * day).unwrap();
+        assert!(!old.exists());
+        assert!(!dir.join("bb.db.old-wal").exists());
+        // Nothing set aside: nothing to do.
+        w.prune(30, set_aside_at + 31 * day).unwrap();
         drop(w);
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -2043,10 +2672,35 @@ mod tests {
             enabled: true,
             android_id: "0123456789abcdef".into(),
             saved_ops: "android:camera=default".into(),
+            install_id: "test".into(),
             saved_permissions: "android.permission.ACCESS_FINE_LOCATION=granted+user_set".into(),
             created: 1000,
             settings: String::new(),
         }
+    }
+
+    #[test]
+    fn replacing_an_installation_archives_its_previous_recovery_state() {
+        let dir = std::env::temp_dir().join(format!("bbd-retired-install-{}", std::process::id()));
+        let w = Writer::open(&dir.join("bb.db")).unwrap();
+        let old = sandbox_entry_for(10100);
+        let mut new = old.clone();
+        new.install_id = "replacement".into();
+        new.saved_permissions.clear();
+        w.put_sandbox(&old).unwrap();
+        w.put_sandbox(&new).unwrap();
+        let kept: String = w
+            .conn
+            .query_row(
+                "SELECT saved_permissions FROM sandbox_retired WHERE uid=?1 AND install_id=?2",
+                params![old.uid, old.install_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(kept, old.saved_permissions);
+        assert_eq!(w.sandbox_entries().unwrap(), [new]);
+        drop(w);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
