@@ -598,13 +598,16 @@ object AppOpsGuard {
      */
     private fun setBack(op: Op, uid: Int, saved: Int?, grantThen: Int?, held: Set<String>): Boolean {
         val compared = grantThen != null && AppOpsGuardProtocol.comparesGrant(op.permission, held)
-        val grantNow = if (compared) grantMode(op, uid) else null
-        val mode = AppOpsGuardProtocol.modeToRestore(saved, grantThen, grantNow)
         // Setting an op's default mode removes the uid mode.
-        val expected = mode ?: op.defaultMode ?: MODE_DEFAULT
-        if (!setUidMode(op.name, op.code, uid, expected)) return false
-        val actual = states(uid, listOf(op)).single()
-        return (actual.uidMode ?: op.defaultMode ?: MODE_DEFAULT) == expected
+        val default = op.defaultMode ?: MODE_DEFAULT
+        return AppOpsGuardProtocol.restoreUidMode(
+            desiredMode = {
+                val grantNow = if (compared) grantMode(op, uid) else null
+                AppOpsGuardProtocol.modeToRestore(saved, grantThen, grantNow) ?: default
+            },
+            writeMode = { mode -> setUidMode(op.name, op.code, uid, mode) },
+            readMode = { states(uid, listOf(op)).single().uidMode ?: default },
+        )
     }
 
     /** The permissions this program holds revoked for a guarded uid, or took and has not given back. */

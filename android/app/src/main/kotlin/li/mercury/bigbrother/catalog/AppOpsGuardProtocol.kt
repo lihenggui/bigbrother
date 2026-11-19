@@ -300,6 +300,19 @@ internal object AppOpsGuardProtocol {
      */
     fun modeToRestore(saved: Int?, grantThen: Int?, grantNow: Int?): Int? = if (grantThen != null && grantNow != null && grantNow != grantThen) grantNow else saved
 
+    fun restoreUidMode(desiredMode: () -> Int, writeMode: (Int) -> Boolean, readMode: () -> Int): Boolean {
+        val expected = desiredMode()
+        if (!writeMode(expected)) return false
+        if (readMode() == expected) return true
+
+        // Android 13 and 14 can still be applying an earlier snapshot of
+        // the permission flags when setUidMode returns. The first write
+        // updated those flags. Recheck the grant and correct a stale mode
+        // once, keeping the readback check on the corrected value.
+        val current = desiredMode()
+        return readMode() == current || (writeMode(current) && readMode() == current)
+    }
+
     /**
      * Whether the grant of [permission] now says what the user chose: not
      * for an op without one, nor for a permission this program holds

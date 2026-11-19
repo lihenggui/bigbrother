@@ -153,6 +153,47 @@ class AppOpsGuardProtocolTest {
     }
 
     @Test
+    fun givenPermissionSyncOverwritesRestoredMode_whenReadBack_thenTheLatestGrantIsApplied() {
+        var grant = AppOpsGuardProtocol.MODE_ALLOWED
+        var actual = AppOpsGuardProtocol.MODE_IGNORED
+        val writes = mutableListOf<Int>()
+        assertTrue(
+            AppOpsGuardProtocol.restoreUidMode(
+                desiredMode = { grant },
+                writeMode = { mode ->
+                    writes += mode
+                    if (writes.size == 1) {
+                        // Android reapplied the previous mode and the user
+                        // changed the current grant before it was read back.
+                        grant = AppOpsGuardProtocol.MODE_FOREGROUND
+                    } else {
+                        actual = mode
+                    }
+                    true
+                },
+                readMode = { actual },
+            ),
+        )
+        assertEquals(listOf(AppOpsGuardProtocol.MODE_ALLOWED, AppOpsGuardProtocol.MODE_FOREGROUND), writes)
+    }
+
+    @Test
+    fun givenPermissionSyncKeepsOverwritingMode_whenRestored_thenFailure() {
+        var writes = 0
+        assertFalse(
+            AppOpsGuardProtocol.restoreUidMode(
+                desiredMode = { AppOpsGuardProtocol.MODE_ALLOWED },
+                writeMode = {
+                    writes++
+                    true
+                },
+                readMode = { AppOpsGuardProtocol.MODE_IGNORED },
+            ),
+        )
+        assertEquals(2, writes)
+    }
+
+    @Test
     fun givenOpsHeldInTheForeground_whenChecked_thenOnlyThoseWithAnotherModeAreSetAgain() {
         val states = listOf(
             OpState("android:camera", uidMode = 4, defaultMode = 0),
