@@ -34,7 +34,7 @@ any way.
 | Kernel information | `/proc/cpuinfo` without what names the chip | The same mounts | root |
 | Personal data | Nothing: contacts, calendar, messages, call log, accounts, location, clipboard, camera, microphone, body sensors, media, usage statistics, nearby devices | App ops set to "ignored" for the app's uid; for an approximate location, the precise location permission revoked | root |
 | Other apps' notifications, the screen | Nothing: its notification listeners and accessibility services lose the access the user gave them, which comes back when it leaves | The access taken as a permission is, and given back | root |
-| Identity | An ANDROID_ID of its own, fixed per app; no installed app other than itself and what came with the system | Hooks in system_server | LSPosed |
+| Identity | An ANDROID_ID of its own, fixed per app; an advertising ID of zeros; no installed app other than itself and what came with the system | Hooks in system_server | LSPosed |
 | Network | No connection: what the app sends is refused at once, but for what it sends to the device itself, and the names it looks up are not asked for. Off unless turned on | A rule in the kernel's packet filter, which looks the socket's uid up in a list; a mount over the socket of the system's resolver in the app's processes | root |
 
 The mounts, the app ops and the packet filter work without LSPosed. `bbd sandbox status` says which parts
@@ -42,8 +42,8 @@ are in place on the device. `bbd sandbox list` names, for each app, the
 items that are on but not in effect and the part each lacks: the mounts,
 the app ops (read back after they are set, and whenever the system changes
 them), a hook, or the packet filter. An item is in effect only with all its parts: the device
-identifiers, for one, need both the ANDROID_ID hook and the phone-state app
-ops.
+identifiers, for one, need the ANDROID_ID and advertising ID hooks and the
+phone-state app ops.
 
 The sandbox applies to a uid. Packages that share a uid are sandboxed
 together, and `enable` names them. The sandbox stays with a verified
@@ -85,7 +85,7 @@ Android's "only while using the app" does:
 | `camera` | No camera image | off, on, foreground |
 | `microphone` | Silence | off, on, foreground |
 | `body_sensors` | No body sensor or activity data, nor, from Android 16, heart rate, skin temperature or oxygen saturation | off, on |
-| `device_ids` | An ANDROID_ID of its own; no phone number or phone state | off, on |
+| `device_ids` | An ANDROID_ID of its own; an advertising ID of zeros; no phone number or phone state | off, on |
 | `installed_apps` | No installed app but itself and the system's; no usage statistics | off, on |
 | `nearby_devices` | No Bluetooth or Wi-Fi devices nearby | off, on |
 | `notification_content` | No notification access: other apps' notifications cannot be read; its own still show | off, on |
@@ -353,6 +353,18 @@ inside system_server. The app's LSPosed module hooks the settings
 provider's entry points (`ContentProvider.Transport.call` and `query`) and
 the package manager's visibility check (`shouldFilterApplication`), and
 answers by the calling uid, which Binder reports and an app cannot forge.
+
+The advertising ID is not Android's but Google Play services', which gives
+it to an app that targets Android 13 or later only if the app holds the
+`com.google.android.gms.permission.AD_ID` permission, and an ID of zeros
+otherwise, as to every app once the user deleted the ID. Play services
+asks the permission manager in system_server, and for an app with
+`device_ids` on, the hook answers that it does not hold it
+(`PermissionManagerService.checkPermission` and `checkUidPermission`).
+Processes keep the answers to such checks; as the system does when a
+permission changes, the hook has them forget the answers whenever the list
+changes. Play services gives an app that targets an earlier Android its
+ID without asking.
 
 A file the app was let pick through the system (a document, a folder, a
 photo) is opened by the provider that holds it, outside the sandbox, once

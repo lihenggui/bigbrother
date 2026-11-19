@@ -201,6 +201,54 @@ internal fun locateFilterArguments(parameterTypes: List<String>): FilterArgument
 internal fun hideFromSandboxed(callingUid: Int, targetAppId: Int, targetIsSystem: Boolean): Boolean = !targetIsSystem && targetAppId >= FIRST_APPLICATION_UID && targetAppId != callingUid % PER_USER_RANGE
 
 /**
+ * The permission Google Play services checks before it gives an app that
+ * targets Android 13 or later its advertising ID; to an app without it, it
+ * gives one of zeros, as to every app once the user deleted the ID.
+ */
+internal const val AD_ID_PERMISSION = "com.google.android.gms.permission.AD_ID"
+
+/** Where a check by package of [AD_ID_PERMISSION] names the package and the user. */
+internal data class PackageCheck(val packageName: String, val userId: Int)
+
+/**
+ * The package and user a `PermissionManagerService.checkPermission` is
+ * asked about, if it asks about [AD_ID_PERMISSION]; null for any other
+ * permission.
+ *
+ * Known shapes:
+ * - Android 12 / 12L: `(String permName, String pkgName, int userId)`
+ * - Android 13: `(String packageName, String permissionName, int userId)`
+ * - Android 14: `(String packageName, String permissionName, int deviceId, int userId)`
+ * - Android 15 to 17: `(String packageName, String permissionName,
+ *   String persistentDeviceId, int userId)`
+ *
+ * The package is the first string that is not the permission, the device
+ * coming after it; the user is the last `int`.
+ */
+internal fun adIdCheckByPackage(args: List<Any?>): PackageCheck? {
+    if (AD_ID_PERMISSION !in args) return null
+    val packageName = args.firstOrNull { it is String && it != AD_ID_PERMISSION } as String? ?: return null
+    val userId = args.lastOrNull { it is Int } as Int? ?: return null
+    return PackageCheck(packageName, userId)
+}
+
+/**
+ * The uid a `PermissionManagerService.checkUidPermission` is asked about,
+ * if it asks about [AD_ID_PERMISSION]; null for any other permission.
+ *
+ * Known shapes:
+ * - Android 12 / 12L: `(String permName, int uid)`
+ * - Android 13: `(int uid, String permissionName)`
+ * - Android 14 to 17: `(int uid, String permissionName, int deviceId)`
+ *
+ * The uid is the first `int`.
+ */
+internal fun adIdCheckByUid(args: List<Any?>): Int? {
+    if (AD_ID_PERMISSION !in args) return null
+    return args.firstOrNull { it is Int } as Int?
+}
+
+/**
  * The self-check the daemon reads (keep in sync with
  * `bbd/src/sandbox/identity.rs`): which hooks attached, on which release,
  * whether the sandbox list could be read, and in which boot this was written.
@@ -211,6 +259,7 @@ internal fun sandboxStatusText(
     androidId: Boolean,
     appList: Boolean,
     uriGrants: Boolean,
+    adId: Boolean,
     api: Int,
     listReadable: Boolean,
     bootId: String,
@@ -218,6 +267,7 @@ internal fun sandboxStatusText(
     append("android_id=").append(if (androidId) 1 else 0).append('\n')
     append("app_list=").append(if (appList) 1 else 0).append('\n')
     append("uri_grants=").append(if (uriGrants) 1 else 0).append('\n')
+    append("ad_id=").append(if (adId) 1 else 0).append('\n')
     append("api=").append(api).append('\n')
     append("list=").append(if (listReadable) 1 else 0).append('\n')
     append("boot=").append(bootId).append('\n')

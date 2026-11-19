@@ -150,18 +150,43 @@ class SandboxRulesTest {
         val cases = protocolCases(
             "sandbox-status.txt",
             types = setOf("line", "read"),
-            keys = setOf("android_id", "app_list", "uri_grants", "api", "list", "boot", "in_place", "now"),
+            keys = setOf("android_id", "app_list", "uri_grants", "ad_id", "api", "list", "boot", "in_place", "now"),
         )
         for (case in cases.ofType("line")) {
             val text = sandboxStatusText(
                 androidId = case.get("android_id") == "1",
                 appList = case.get("app_list") == "1",
                 uriGrants = case.get("uri_grants") == "1",
+                adId = case.get("ad_id") == "1",
                 api = case.get("api")!!.toInt(),
                 listReadable = case.get("list") == "1",
                 bootId = case.get("boot")!!,
             )
             assertEquals(case.line, text)
         }
+    }
+
+    @Test
+    fun givenEveryKnownShapeOfACheckByPackage_whenTheAdIdIsChecked_thenThePackageAndUserAreFound() {
+        val expected = PackageCheck("com.example", 10)
+        // Android 12, 13, 14, and 15 on.
+        assertEquals(expected, adIdCheckByPackage(listOf(AD_ID_PERMISSION, "com.example", 10)))
+        assertEquals(expected, adIdCheckByPackage(listOf("com.example", AD_ID_PERMISSION, 10)))
+        assertEquals(expected, adIdCheckByPackage(listOf("com.example", AD_ID_PERMISSION, 0, 10)))
+        assertEquals(expected, adIdCheckByPackage(listOf("com.example", AD_ID_PERMISSION, "default:0", 10)))
+    }
+
+    @Test
+    fun givenEveryKnownShapeOfACheckByUid_whenTheAdIdIsChecked_thenTheUidIsFound() {
+        // Android 12, 13, and 14 on.
+        assertEquals(10123, adIdCheckByUid(listOf(AD_ID_PERMISSION, 10123)))
+        assertEquals(10123, adIdCheckByUid(listOf(10123, AD_ID_PERMISSION)))
+        assertEquals(10123, adIdCheckByUid(listOf(10123, AD_ID_PERMISSION, 0)))
+    }
+
+    @Test
+    fun givenAnotherPermission_whenChecked_thenItIsNotLookedAt() {
+        assertNull(adIdCheckByPackage(listOf("com.example", "android.permission.CAMERA", "default:0", 0)))
+        assertNull(adIdCheckByUid(listOf(10123, "android.permission.CAMERA", 0)))
     }
 }

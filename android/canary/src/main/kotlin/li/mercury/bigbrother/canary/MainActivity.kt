@@ -37,6 +37,7 @@ import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Bundle
 import android.os.IBinder
+import android.os.Parcel
 import android.os.Process
 import android.provider.CalendarContract
 import android.provider.CallLog
@@ -59,6 +60,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketTimeoutException
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 import kotlin.math.roundToInt
@@ -282,6 +284,7 @@ class MainActivity : Activity() {
                 if (row.moveToFirst()) row.getString(row.getColumnIndexOrThrow("value")) else "none"
             }
         }
+        view("ad_id") { adId() }
         view("apps") {
             packageManager.getInstalledApplications(0)
                 .filter { it.flags and ApplicationInfo.FLAG_SYSTEM == 0 }
@@ -307,6 +310,36 @@ class MainActivity : Activity() {
         }
         if (bindService(Intent(this, IsolatedProbe::class.java), connection, BIND_AUTO_CREATE)) {
             reported.await(ISOLATED_WAIT_S, TimeUnit.SECONDS)
+            unbindService(connection)
+        }
+    }
+
+    /**
+     * The advertising ID Google Play services gives this app, asked for as
+     * its client library does; `none` without Play services.
+     */
+    private fun adId(): String {
+        val intent = Intent(AD_ID_ACTION).setPackage(PLAY_SERVICES)
+        val bound = LinkedBlockingQueue<IBinder>()
+        val connection = object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName, service: IBinder) = bound.put(service)
+            override fun onServiceDisconnected(name: ComponentName) = Unit
+        }
+        if (!bindService(intent, connection, BIND_AUTO_CREATE)) return "none"
+        try {
+            val service = bound.poll(AD_ID_WAIT_S, TimeUnit.SECONDS) ?: return "timeout"
+            val data = Parcel.obtain()
+            val reply = Parcel.obtain()
+            try {
+                data.writeInterfaceToken(AD_ID_INTERFACE)
+                service.transact(AD_ID_GET, data, reply, 0)
+                reply.readException()
+                return reply.readString() ?: "none"
+            } finally {
+                data.recycle()
+                reply.recycle()
+            }
+        } finally {
             unbindService(connection)
         }
     }
@@ -394,6 +427,13 @@ class MainActivity : Activity() {
         val DOWNLOADS: Uri = DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:Download")
 
         const val ISOLATED_WAIT_S = 10L
+
+        /** How Google Play services' client library reaches the advertising ID. */
+        const val PLAY_SERVICES = "com.google.android.gms"
+        const val AD_ID_ACTION = "com.google.android.gms.ads.identifier.service.START"
+        const val AD_ID_INTERFACE = "com.google.android.gms.ads.identifier.internal.IAdvertisingIdService"
+        const val AD_ID_GET = IBinder.FIRST_CALL_TRANSACTION
+        const val AD_ID_WAIT_S = 10L
 
         /** How long the sensors stay on: a known length for the recorded sessions. */
         const val SENSORS_ON_MS = 10_000L

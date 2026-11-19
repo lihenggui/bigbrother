@@ -347,6 +347,10 @@ pub struct HookStatus {
     /// isolated are withheld from it.
     #[serde(default)]
     pub uri_grants: bool,
+    /// Whether the advertising ID is withheld from the apps whose device
+    /// identifiers are.
+    #[serde(default)]
+    pub ad_id: bool,
 }
 
 pub struct Sandbox {
@@ -947,6 +951,7 @@ impl Sandbox {
                     android_id_hook: status.hook.android_id,
                     app_list_hook: status.hook.app_list,
                     uri_grants_hook: status.hook.uri_grants,
+                    ad_id_hook: status.hook.ad_id,
                     packet_filter: status.network,
                 };
                 let settings = Settings::parse(&entry.settings);
@@ -1425,6 +1430,7 @@ fn print_status(out: &mut impl std::io::Write, status: &Status) -> std::io::Resu
     writeln!(out, "ANDROID_ID hook:   {}", on(status.hook.android_id))?;
     writeln!(out, "App list hook:     {}", on(status.hook.app_list))?;
     writeln!(out, "File grants hook:  {}", on(status.hook.uri_grants))?;
+    writeln!(out, "Ad ID hook:        {}", on(status.hook.ad_id))?;
     writeln!(out, "Starts admitted:   {}", status.admitted)?;
     writeln!(out, "Starts failed:     {}", status.failed)?;
     writeln!(out, "New apps held:     {}", on(status.new_apps_held))?;
@@ -2795,7 +2801,7 @@ mod tests {
             ask(r#"{"cmd":"sandbox.status"}"#),
             serde_json::json!({
                 "ok": true, "gate": false, "appops": false, "network": false,
-                "hook": {"android_id": false, "app_list": false, "uri_grants": false},
+                "hook": {"android_id": false, "app_list": false, "uri_grants": false, "ad_id": false},
                 "admitted": 0, "failed": 0, "new_apps_stopped": 0, "new_apps_pending": 0,
                 "new_apps_held": false, "hold_p95_us": 0,
             })

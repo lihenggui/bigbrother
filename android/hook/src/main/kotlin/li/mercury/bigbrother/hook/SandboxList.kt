@@ -67,6 +67,9 @@ internal class SandboxList(
     /** The Android ID configured for [uid], or null if it keeps the real one. */
     fun androidIdOf(uid: Int): String? = entryOf(uid)?.takeIf { it.ownAndroidId }?.androidId
 
+    /** Whether [uid] is to get no advertising ID: it is, with its own Android ID. */
+    fun withholdsAdIdFrom(uid: Int): Boolean = entryOf(uid)?.ownAndroidId == true
+
     /** Whether [uid] is to see no installed app but itself and the system's. */
     fun hidesAppsFrom(uid: Int): Boolean = entryOf(uid)?.hidesApps == true
 

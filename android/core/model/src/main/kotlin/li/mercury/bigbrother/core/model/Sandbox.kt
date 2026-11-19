@@ -54,7 +54,7 @@ enum class SandboxItem(val id: String) {
         get() = when (this) {
             STORAGE -> setOf(SandboxPart.MOUNTS, SandboxPart.APP_OPS, SandboxPart.URI_GRANTS_HOOK)
             CPU_INFO -> setOf(SandboxPart.MOUNTS)
-            DEVICE_IDS -> setOf(SandboxPart.APP_OPS, SandboxPart.ANDROID_ID_HOOK)
+            DEVICE_IDS -> setOf(SandboxPart.APP_OPS, SandboxPart.ANDROID_ID_HOOK, SandboxPart.AD_ID_HOOK)
             INSTALLED_APPS -> setOf(SandboxPart.APP_OPS, SandboxPart.APP_LIST_HOOK)
             else -> setOf(SandboxPart.APP_OPS)
         }
@@ -128,6 +128,9 @@ enum class SandboxPart(val id: String) {
      * of the moment rather than those it kept from before.
      */
     URI_GRANTS_HOOK("uri_grants_hook"),
+
+    /** The LSPosed hook in system_server, withholding the advertising ID. */
+    AD_ID_HOOK("ad_id_hook"),
     ;
 
     companion object {
@@ -203,6 +206,8 @@ data class SandboxStatus(
     val appListHook: Boolean,
     /** The hook holds apps to the file grants of the moment. */
     val uriGrantsHook: Boolean,
+    /** The hook withholds the advertising ID. */
+    val adIdHook: Boolean,
     /** Newly installed apps not isolated yet, with isolating new apps on. */
     val newAppsPending: Int = 0,
     /** Whether those are kept from starting until they are isolated. */
@@ -216,6 +221,7 @@ data class SandboxStatus(
             SandboxPart.ANDROID_ID_HOOK -> !androidIdHook
             SandboxPart.APP_LIST_HOOK -> !appListHook
             SandboxPart.URI_GRANTS_HOOK -> !uriGrantsHook
+            SandboxPart.AD_ID_HOOK -> !adIdHook
         }
     }
 
