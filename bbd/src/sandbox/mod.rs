@@ -76,7 +76,7 @@ pub mod resolver;
 pub mod sweep;
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     fs::File,
     io::{Read as _, Write as _},
     path::{Path, PathBuf},
@@ -89,7 +89,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     control::{self, Request},
     packages::{PER_USER_RANGE, Packages},
-    store::Writer,
+    store::{Writer, net::RuleChange},
 };
 
 pub use crate::store::SandboxEntry as Entry;
@@ -204,6 +204,10 @@ pub trait Effect {
     fn refresh(&mut self, _entry: &Entry, _items: &Settings) -> anyhow::Result<()> {
         Ok(())
     }
+
+    /// Release state kept for undoing a refresh once its rule is committed
+    /// or the previous rules are back in the book.
+    fn finish_refresh(&mut self, _uid: u32) {}
 
     /// Fill in what the effect knows about its own state.
     fn report(&self, _status: &mut Status) {}
@@ -408,6 +412,8 @@ pub struct Sandbox {
     release_logged: Option<std::time::Instant>,
     /// The destinations apps are kept from, as written.
     book: destinations::Book,
+    /// Apps whose previous network rules could not be restored completely.
+    pending_net_refresh: VecDeque<u32>,
 }
 
 impl Sandbox {
@@ -439,6 +445,7 @@ impl Sandbox {
         }
         Ok(Self {
             book,
+            pending_net_refresh: VecDeque::new(),
             snapshot: Arc::new(RwLock::new(enabled)),
             global: Arc::new(RwLock::new(global)),
             effects,
@@ -839,30 +846,26 @@ impl Sandbox {
                 "the names apps look up cannot be refused on this device"
             ),
         }
-        let new = {
-            let mut book = self.book.lock().unwrap_or_else(|e| e.into_inner());
-            let targets = book.entry(uid).or_default();
+        if let Some(targets) = self
+            .book
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&uid)
+        {
             anyhow::ensure!(
                 targets.len() < RULES_PER_APP || targets.contains(&parsed),
                 "an app can be kept from {RULES_PER_APP} destinations at most"
             );
-            targets.insert(parsed.clone())
-        };
-        let rule = crate::store::net::NetRule {
-            uid,
-            target: parsed.to_text(),
-            created: crate::now(),
-            manual,
-        };
-        let done = writer.put_net_rule(&rule).and_then(|()| self.refresh(uid));
-        if let Err(e) = done {
-            // Not written, or not carried out: not a rule, unless it was
-            // one before.
-            if new {
-                self.forget_rule(writer, uid, &parsed);
-            }
-            return Err(e);
         }
+        self.change_net_rule(
+            writer,
+            uid,
+            &parsed,
+            RuleChange::Block {
+                created: crate::now(),
+                manual,
+            },
+        )?;
         Ok(serde_json::json!({}))
     }
 
@@ -876,41 +879,52 @@ impl Sandbox {
     ) -> anyhow::Result<serde_json::Value> {
         let uid = uid_of(packages, package, user)?;
         let parsed = Target::parse(target).context("not a domain or an address")?;
-        let had = self
-            .book
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get_mut(&uid)
-            .is_some_and(|targets| targets.remove(&parsed));
-        if let Err(e) = self.refresh(uid) {
-            // Still refused: still a rule.
-            if had {
-                self.book
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .entry(uid)
-                    .or_default()
-                    .insert(parsed);
-            }
-            return Err(e);
-        }
-        writer.delete_net_rule(uid, &parsed.to_text())?;
+        self.change_net_rule(writer, uid, &parsed, RuleChange::Unblock)?;
         Ok(serde_json::json!({}))
     }
 
-    /// Take a rule that could not be made out of the book and the
-    /// database, and out of the kernel as far as it got there.
-    fn forget_rule(&mut self, writer: &Writer, uid: u32, target: &Target) {
-        if let Some(targets) = self
-            .book
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get_mut(&uid)
-        {
-            targets.remove(target);
+    fn change_net_rule(
+        &mut self,
+        writer: &Writer,
+        uid: u32,
+        target: &Target,
+        change: RuleChange,
+    ) -> anyhow::Result<()> {
+        let blocked = matches!(change, RuleChange::Block { .. });
+        let mut before = None;
+        let result = writer.change_net_rule(uid, &target.to_text(), change, || {
+            before = Some(self.set_net_rule(uid, target, blocked));
+            self.refresh(uid, false)
+        });
+        let Some(before) = before else { return result };
+        self.pending_net_refresh.retain(|pending| *pending != uid);
+        let result = result.map_err(|error| {
+            // The transaction kept the old row. Effects may already have
+            // changed part of the filter or the app's resolver.
+            self.set_net_rule(uid, target, before);
+            match self.refresh(uid, true) {
+                Ok(()) => error,
+                Err(restore) => {
+                    self.pending_net_refresh.push_back(uid);
+                    error.context(restore)
+                }
+            }
+        });
+        for effect in &mut self.effects {
+            effect.finish_refresh(uid);
         }
-        let _ = writer.delete_net_rule(uid, &target.to_text());
-        let _ = self.refresh(uid);
+        result
+    }
+
+    /// Update the book and return whether the target was blocked before.
+    fn set_net_rule(&self, uid: u32, target: &Target, blocked: bool) -> bool {
+        let mut book = self.book.lock().unwrap_or_else(|e| e.into_inner());
+        if blocked {
+            !book.entry(uid).or_default().insert(target.clone())
+        } else {
+            book.get_mut(&uid)
+                .is_some_and(|targets| targets.remove(target))
+        }
     }
 
     /// Put `package`, as installed for Android user `user`, in the sandbox,
@@ -1151,18 +1165,38 @@ impl Sandbox {
         Ok(())
     }
 
-    /// Carry out, for the app of `uid` if it is in the sandbox, what
-    /// changed for it other than its items ([`Effect::refresh`]).
-    pub fn refresh(&mut self, uid: u32) -> anyhow::Result<()> {
+    /// Retry one incomplete restoration per periodic flush, taking turns
+    /// when several apps need a retry.
+    pub fn retry_net_refresh(&mut self) {
+        if let Some(uid) = self.pending_net_refresh.pop_front()
+            && self.refresh(uid, true).is_err()
+        {
+            self.pending_net_refresh.push_back(uid);
+        }
+    }
+
+    /// Carry out a change of destinations for a sandboxed app. Restoring
+    /// takes every effect back as far as possible even if one fails.
+    fn refresh(&mut self, uid: u32, restoring: bool) -> anyhow::Result<()> {
         let Some(entry) = self.snapshot_read().get(&uid).cloned() else {
             return Ok(());
         };
+        anyhow::ensure!(self.owns(&entry), "the installation could not be verified");
         let items = self.items(&entry);
+        let mut failed = Vec::new();
         for effect in &mut self.effects {
-            effect
-                .refresh(&entry, &items)
-                .with_context(|| effect.name().to_string())?;
+            if let Err(error) = effect.refresh(&entry, &items) {
+                if !restoring {
+                    return Err(error.context(effect.name()));
+                }
+                failed.push(effect.name());
+            }
         }
+        anyhow::ensure!(
+            failed.is_empty(),
+            "could not restore the previous network policy ({})",
+            failed.join(", ")
+        );
         Ok(())
     }
 
@@ -1693,14 +1727,14 @@ mod tests {
         assert!(DISABLE_ALL_WAIT + appops::ANSWER_WAIT < control::COMMAND_WAIT);
     }
 
-    struct Fixture {
-        dir: PathBuf,
-        writer: Writer,
-        packages: Packages,
+    pub(super) struct Fixture {
+        pub(super) dir: PathBuf,
+        pub(super) writer: Writer,
+        pub(super) packages: Packages,
     }
 
     impl Fixture {
-        fn new(name: &str) -> Self {
+        pub(super) fn new(name: &str) -> Self {
             let dir = std::env::temp_dir().join(format!("bbd-test-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
@@ -1724,7 +1758,7 @@ mod tests {
             }
         }
 
-        fn sandbox(&self) -> Sandbox {
+        pub(super) fn sandbox(&self) -> Sandbox {
             self.sandbox_with(Vec::new())
         }
 

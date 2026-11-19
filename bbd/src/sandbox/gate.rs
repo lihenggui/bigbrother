@@ -39,7 +39,7 @@
 //! the app in the sandbox: its next start is held as any sandboxed one.
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     fs::{self, File},
     io,
     os::{
@@ -213,6 +213,8 @@ pub struct Storage {
     /// The destinations apps are kept from, once the daemon listens for
     /// lookups (`names`).
     names: Option<Book>,
+    /// Running processes whose resolver mounts may differ from the gate.
+    resolver_unknown: HashSet<u32>,
 }
 
 impl Storage {
@@ -259,6 +261,7 @@ impl Storage {
             shared,
             network: false,
             names: None,
+            resolver_unknown: HashSet::new(),
         })
     }
 
@@ -394,12 +397,13 @@ impl Storage {
         wanted: Hold,
     ) -> anyhow::Result<()> {
         self.gate(entry, packages, wanted)?;
-        if was.1 == wanted.1 {
+        if was.1 == wanted.1 && !self.resolver_unknown.contains(&entry.uid) {
             return Ok(());
         }
         let Err(e) = resolver::set(entry, wanted.1)
             .context("changing what the app's processes find at the resolver's socket")
         else {
+            self.resolver_unknown.remove(&entry.uid);
             return Ok(());
         };
         if let Err(undo) = self.gate(entry, packages, was) {
@@ -409,7 +413,11 @@ impl Storage {
             );
         }
         // The processes gone through before it failed, back as they were.
-        let _ = resolver::set(entry, was.1);
+        if resolver::set(entry, was.1).is_err() {
+            self.resolver_unknown.insert(entry.uid);
+        } else {
+            self.resolver_unknown.remove(&entry.uid);
+        }
         Err(e)
     }
 }
@@ -458,7 +466,7 @@ impl Effect for Storage {
         // A rule on a name added or removed changes what the app is given
         // at the resolver's socket.
         let (was, wanted) = (self.holding(entry.uid), self.held_for(entry.uid, items));
-        if was == wanted {
+        if was == wanted && !self.resolver_unknown.contains(&entry.uid) {
             return Ok(());
         }
         let packages = self
@@ -505,6 +513,7 @@ impl Effect for Storage {
 
     fn forget(&mut self, uid: u32) {
         self.release(uid);
+        self.resolver_unknown.remove(&uid);
     }
 
     fn report(&self, status: &mut Status) {
