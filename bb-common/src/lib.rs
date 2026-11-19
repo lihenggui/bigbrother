@@ -472,3 +472,19 @@ pub const fn known_app_bit(app_id: u32) -> Option<(u32, u64)> {
     let index = app_id - FIRST_APP_ID;
     Some((index / 64, 1 << (index % 64)))
 }
+
+/// A destination an app is kept from: the key of the map the packet filter's
+/// program looks packets up in.
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct NetRuleKey {
+    /// The uid of the socket the packet is sent from.
+    pub uid: u32,
+    /// The destination port, host byte order; 0 for every port.
+    pub port: u32,
+    /// The destination address in network order; IPv4 uses the first 4
+    /// bytes, and the rest is zero.
+    pub addr: [u8; 16],
+}
+
+assert_no_padding!(NetRuleKey { uid, port, addr });

@@ -56,6 +56,7 @@ use crate::{
     sandbox::{self, Sandbox},
     selftest, sensors,
     spool::{self, Spool},
+    store::net::{NetKey, NetSeen},
     store::{
         Category, Counters, MODE_CALL, MODE_CONNECT, MODE_DIR, MODE_EXEC, MODE_ISOLATED,
         MODE_PROBE, MODE_QUERY, MODE_READ, MODE_VIA_PROVIDER, MODE_WATCH, MODE_WRITE, Mode, Writer,
@@ -219,6 +220,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         spool: Spool::new(),
         listeners: Listeners::new(),
         scans: net::Scans::default(),
+        net: None,
         searches: commands::Searches::default(),
         catalog: None,
         sensors,
@@ -604,7 +606,17 @@ fn start_sandbox(
     );
     let appops = sandbox::appops::AppOps::start();
     let mut new_apps = None;
-    let network = sandbox::network::Network::start(ebpf);
+    // Whether an app is kept from single destinations: what the one effect
+    // finds out and the other needs the packet filter's rules for.
+    let ruled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let destinations =
+        sandbox::destinations::Destinations::start(ebpf, sandbox.book(), ruled.clone());
+    let network = sandbox::network::Network::start(ebpf, ruled);
+    tracer.net = Some(sandbox::destinations::View {
+        snapshot: sandbox.snapshot(),
+        global: sandbox.global(),
+        book: sandbox.book(),
+    });
     let found = found.clone();
     appops.on_found(move || found.notify_one());
     let storage: Box<dyn sandbox::Effect> = match storage {
@@ -636,6 +648,10 @@ fn start_sandbox(
         &sandbox.snapshot(),
         &sandbox.global(),
     )));
+    match destinations {
+        Ok(destinations) => sandbox.add_effect(Box::new(destinations)),
+        Err(e) => eprintln!("bbd: warning: connections are not recorded: {e:#}"),
+    }
     let network: Box<dyn sandbox::Effect> = match network {
         Ok(network) => Box::new(network),
         Err(e) => {
@@ -649,6 +665,7 @@ fn start_sandbox(
     sandbox.add_effect(storage);
     sandbox.add_effect(Box::new(sandbox::sweep::Restart));
     sandbox.resume(&tracer.writer, &mut tracer.packages);
+    sandbox.note_recording(&tracer.writer);
     sandbox.resume_auto(new_apps, &tracer.writer, &mut tracer.packages);
     Some(sandbox)
 }
@@ -1161,6 +1178,9 @@ struct Tracer {
     listeners: Listeners,
     /// Ports each app has contacted, to recognise a scan.
     scans: net::Scans,
+    /// What the sandbox refuses of the network, for the connections
+    /// recorded of its apps.
+    net: Option<sandbox::destinations::View>,
     /// Commands being looked for along `PATH`.
     searches: commands::Searches,
     /// The service methods being watched; `None` until they are known.
@@ -1467,6 +1487,29 @@ impl Tracer {
                     return;
                 };
                 self.counters.seen += 1;
+                if let Some(address) = net::public(ev.family, ev.port, &ev.addr) {
+                    let (uid, _) = self.owner_uid(hdr.uid, hdr.pid);
+                    let refused = self
+                        .net
+                        .as_ref()
+                        .is_some_and(|net| net.refuses(uid, address));
+                    self.writer.net_record(
+                        NetKey {
+                            uid,
+                            hour: ts.div_euclid(3600),
+                            host: String::new(),
+                            addr: address.ip().to_string(),
+                            port: address.port(),
+                        },
+                        NetSeen {
+                            conn: u32::from(!refused),
+                            refused: u32::from(refused),
+                            ..NetSeen::default()
+                        },
+                        ts,
+                    );
+                    return;
+                }
                 let Some(destination) = Destination::new(ev.family, ev.port, &ev.addr) else {
                     return;
                 };

@@ -64,6 +64,7 @@
 
 pub mod appops;
 pub mod auto;
+pub mod destinations;
 pub(crate) mod dirs;
 pub mod gate;
 pub mod identity;
@@ -93,6 +94,8 @@ use crate::{
 pub use crate::store::SandboxEntry as Entry;
 use items::{InPlace, Item, Mode, Part, Settings};
 
+use crate::netctl::Target;
+
 /// App ids from here up belong to installed apps. Below are the system's
 /// own uids, which are shared by many components and cannot be sandboxed.
 const FIRST_APPLICATION_UID: u32 = 10_000;
@@ -119,6 +122,10 @@ const DISABLE_ALL_WAIT: std::time::Duration = control::COMMAND_WAIT
 /// Least time between two log lines about entries that cannot be taken out:
 /// each is tried again at every command and every look for new apps.
 const RELEASE_LOG_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The most destinations one app can be kept from: what bounds the list
+/// the kernel side looks packets up in.
+const RULES_PER_APP: usize = 1024;
 
 /// The sandboxed uids and their entries, enabled ones only.
 pub type Snapshot = Arc<RwLock<HashMap<u32, Entry>>>;
@@ -181,6 +188,13 @@ pub trait Effect {
 
     /// Drop bookkeeping without changing permissions or signalling the successor.
     fn forget(&mut self, _uid: u32) {}
+
+    /// Carry out what changed for an app in the sandbox other than its
+    /// items: the destinations it is kept from. `items` are those that
+    /// apply to it.
+    fn refresh(&mut self, _entry: &Entry, _items: &Settings) -> anyhow::Result<()> {
+        Ok(())
+    }
 
     /// Fill in what the effect knows about its own state.
     fn report(&self, _status: &mut Status) {}
@@ -280,6 +294,13 @@ pub struct ListedApp {
     /// each with the parts that are not in place.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub unmet: BTreeMap<Item, Vec<Part>>,
+    /// How many destinations it is kept from.
+    #[serde(default)]
+    pub network_rules: u32,
+    /// Since when its connections are recorded, in seconds since the
+    /// epoch, if they are.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recording_since: Option<i64>,
 }
 
 /// The answer to `sandbox.global` and `sandbox.set_global`: every item,
@@ -315,6 +336,15 @@ pub struct Status {
     /// The packet filter refuses the network to the apps kept from it.
     #[serde(default)]
     pub network: bool,
+    /// The connections of the apps the user chose can be recorded.
+    #[serde(default)]
+    pub net_record: bool,
+    /// The names apps look up are known, and can be refused.
+    #[serde(default)]
+    pub dns_names: bool,
+    /// The bytes of connections are counted.
+    #[serde(default)]
+    pub traffic: bool,
     pub hook: HookStatus,
     /// Starts of sandboxed apps let through, and those that were stopped.
     pub admitted: u64,
@@ -366,6 +396,8 @@ pub struct Sandbox {
     auto: auto::Auto,
     /// When an entry that could not be taken out was last logged.
     release_logged: Option<std::time::Instant>,
+    /// The destinations apps are kept from, as written.
+    book: destinations::Book,
 }
 
 impl Sandbox {
@@ -384,7 +416,19 @@ impl Sandbox {
             .map(|entry| (entry.uid, entry))
             .collect();
         let global = Settings::parse(&writer.sandbox_global()?);
+        let book = destinations::Book::default();
+        {
+            // A rule this build cannot read was written by a later one,
+            // and is left where it is.
+            let mut targets = book.lock().unwrap_or_else(|e| e.into_inner());
+            for rule in writer.net_rules()? {
+                if let Some(target) = Target::parse(&rule.target) {
+                    targets.entry(rule.uid).or_default().insert(target);
+                }
+            }
+        }
         Ok(Self {
+            book,
             snapshot: Arc::new(RwLock::new(enabled)),
             global: Arc::new(RwLock::new(global)),
             effects,
@@ -393,6 +437,11 @@ impl Sandbox {
             release_logged: None,
             awaiting_storage: BTreeSet::new(),
         })
+    }
+
+    /// The destinations apps are kept from, for what carries them out.
+    pub fn book(&self) -> destinations::Book {
+        self.book.clone()
     }
 
     /// The enabled entries, for an effect that needs them all.
@@ -704,8 +753,139 @@ impl Sandbox {
             Request::SandboxSetAuto { on } => {
                 self.set_auto(writer, packages, on).map(control::success)
             }
+            Request::NetBlock {
+                package,
+                user,
+                target,
+                manual,
+            } => self
+                .net_block(writer, packages, &package, user, &target, manual)
+                .map(control::success),
+            Request::NetUnblock {
+                package,
+                user,
+                target,
+            } => self
+                .net_unblock(writer, packages, &package, user, &target)
+                .map(control::success),
+            Request::NetClear { package, user } => uid_of(packages, &package, user)
+                .and_then(|uid| writer.net_clear(uid))
+                .map(|deleted| control::success(serde_json::json!({"deleted": deleted}))),
         };
+        self.note_recording(writer);
         answer.unwrap_or_else(|e| control::failure(&format!("{e:#}")))
+    }
+
+    /// Write down which apps have their connections recorded now, with
+    /// since when: those in the sandbox with the item on.
+    pub fn note_recording(&self, writer: &Writer) {
+        let recorded: Vec<u32> = {
+            let global = self.global_read();
+            self.snapshot_read()
+                .values()
+                .filter(|entry| items_of(entry, &global).network_recorded())
+                .map(|entry| entry.uid)
+                .collect()
+        };
+        if let Err(e) = writer.set_net_recording(&recorded, crate::now()) {
+            eprintln!("bbd: could not write which apps are recorded: {e:#}");
+        }
+    }
+
+    /// Keep `package` from the destination `target`. The rule is the
+    /// app's whether it is in the sandbox or not, and is carried out
+    /// while it is.
+    fn net_block(
+        &mut self,
+        writer: &Writer,
+        packages: &mut Packages,
+        package: &str,
+        user: u32,
+        target: &str,
+        manual: bool,
+    ) -> anyhow::Result<serde_json::Value> {
+        let uid = uid_of(packages, package, user)?;
+        let parsed = Target::parse(target).context("not a domain or an address")?;
+        let status = self.status();
+        match parsed {
+            Target::Ip(..) => anyhow::ensure!(
+                status.network,
+                "the packet filter is not available; destinations cannot be refused"
+            ),
+            Target::Domain(_) | Target::Host(_) => anyhow::ensure!(
+                status.dns_names,
+                "the names apps look up cannot be refused on this device"
+            ),
+        }
+        {
+            let mut book = self.book.lock().unwrap_or_else(|e| e.into_inner());
+            let targets = book.entry(uid).or_default();
+            anyhow::ensure!(
+                targets.len() < RULES_PER_APP || targets.contains(&parsed),
+                "an app can be kept from {RULES_PER_APP} destinations at most"
+            );
+            targets.insert(parsed.clone());
+        }
+        let rule = crate::store::net::NetRule {
+            uid,
+            target: parsed.to_text(),
+            created: crate::now(),
+            manual,
+        };
+        let done = writer.put_net_rule(&rule).and_then(|()| self.refresh(uid));
+        if let Err(e) = done {
+            // Not written, or not carried out: not a rule.
+            self.forget_rule(writer, uid, &parsed);
+            return Err(e);
+        }
+        Ok(serde_json::json!({}))
+    }
+
+    fn net_unblock(
+        &mut self,
+        writer: &Writer,
+        packages: &mut Packages,
+        package: &str,
+        user: u32,
+        target: &str,
+    ) -> anyhow::Result<serde_json::Value> {
+        let uid = uid_of(packages, package, user)?;
+        let parsed = Target::parse(target).context("not a domain or an address")?;
+        let had = self
+            .book
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(&uid)
+            .is_some_and(|targets| targets.remove(&parsed));
+        if let Err(e) = self.refresh(uid) {
+            // Still refused: still a rule.
+            if had {
+                self.book
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .entry(uid)
+                    .or_default()
+                    .insert(parsed);
+            }
+            return Err(e);
+        }
+        writer.delete_net_rule(uid, &parsed.to_text())?;
+        Ok(serde_json::json!({}))
+    }
+
+    /// Take a rule that could not be made out of the book and the
+    /// database, and out of the kernel as far as it got there.
+    fn forget_rule(&mut self, writer: &Writer, uid: u32, target: &Target) {
+        if let Some(targets) = self
+            .book
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(&uid)
+        {
+            targets.remove(target);
+        }
+        let _ = writer.delete_net_rule(uid, &target.to_text());
+        let _ = self.refresh(uid);
     }
 
     /// Put `package`, as installed for Android user `user`, in the sandbox,
@@ -929,6 +1109,21 @@ impl Sandbox {
         Ok(())
     }
 
+    /// Carry out, for the app of `uid` if it is in the sandbox, what
+    /// changed for it other than its items ([`Effect::refresh`]).
+    pub fn refresh(&mut self, uid: u32) -> anyhow::Result<()> {
+        let Some(entry) = self.snapshot_read().get(&uid).cloned() else {
+            return Ok(());
+        };
+        let items = self.items(&entry);
+        for effect in &mut self.effects {
+            effect
+                .refresh(&entry, &items)
+                .with_context(|| effect.name().to_string())?;
+        }
+        Ok(())
+    }
+
     pub fn status(&self) -> Status {
         let mut status = Status::default();
         for effect in &self.effects {
@@ -942,6 +1137,7 @@ impl Sandbox {
     fn list(&self, writer: &Writer) -> anyhow::Result<Listed> {
         let global = self.global_read();
         let status = self.status();
+        let (rules, recording) = (writer.net_rule_counts()?, writer.net_recording()?);
         let apps = writer
             .sandbox_entries()?
             .into_iter()
@@ -965,6 +1161,8 @@ impl Sandbox {
                 ListedApp {
                     unmet,
                     items,
+                    network_rules: rules.get(&entry.uid).copied().unwrap_or(0),
+                    recording_since: recording.get(&entry.uid).copied(),
                     uid: entry.uid,
                     package: entry.package,
                     enabled: entry.enabled,
@@ -1323,6 +1521,8 @@ pub fn command(db: &Path, request: Request, json: bool) -> anyhow::Result<()> {
             let switch: auto::Switch = serde_json::from_value(answer)?;
             auto::print(&mut out, switch.auto)
         }
+        Request::NetBlock { .. } | Request::NetUnblock { .. } => writeln!(out, "Done."),
+        Request::NetClear { .. } => writeln!(out, "Deleted {} rows.", answer["deleted"]),
     }?;
     Ok(())
 }
@@ -2754,7 +2954,7 @@ mod tests {
                     "calendar": "on", "clipboard_accounts": "on", "location": "coarse", "camera": "off",
                     "microphone": "on", "body_sensors": "on", "device_ids": "on",
                     "installed_apps": "on", "nearby_devices": "on", "notification_content": "on",
-                    "screen_content": "on", "network": "off",
+                    "screen_content": "on", "network": "off", "network_record": "off",
                 },
             })
         );
@@ -2801,6 +3001,7 @@ mod tests {
             ask(r#"{"cmd":"sandbox.status"}"#),
             serde_json::json!({
                 "ok": true, "gate": false, "appops": false, "network": false,
+                "net_record": false, "dns_names": false, "traffic": false,
                 "hook": {"android_id": false, "app_list": false, "uri_grants": false, "ad_id": false},
                 "admitted": 0, "failed": 0, "new_apps_stopped": 0, "new_apps_pending": 0,
                 "new_apps_held": false, "hold_p95_us": 0,
@@ -2842,6 +3043,8 @@ mod tests {
                         settings: Settings::default(),
                         items: Settings::default(),
                         unmet: BTreeMap::new(),
+                        network_rules: 0,
+                        recording_since: None,
                     },
                     ListedApp {
                         uid: 10200,
@@ -2855,6 +3058,8 @@ mod tests {
                             Item::DeviceIds,
                             vec![Part::AppOps, Part::AndroidIdHook],
                         )]),
+                        network_rules: 0,
+                        recording_since: None,
                     },
                 ],
             },

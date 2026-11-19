@@ -207,6 +207,32 @@ pub enum Request {
     /// Turn that on or off.
     #[serde(rename = "sandbox.set_auto")]
     SandboxSetAuto { on: bool },
+    /// Keep an app from a destination (`netctl::Target`).
+    #[serde(rename = "net.block")]
+    NetBlock {
+        package: String,
+        #[serde(default)]
+        user: u32,
+        target: String,
+        /// Whether the user typed the destination rather than chose it
+        /// among the records.
+        #[serde(default)]
+        manual: bool,
+    },
+    #[serde(rename = "net.unblock")]
+    NetUnblock {
+        package: String,
+        #[serde(default)]
+        user: u32,
+        target: String,
+    },
+    /// Delete what is recorded of an app's network; its rules stay.
+    #[serde(rename = "net.clear")]
+    NetClear {
+        package: String,
+        #[serde(default)]
+        user: u32,
+    },
 }
 
 impl Request {
@@ -238,6 +264,9 @@ fn is_known(cmd: &serde_json::Value) -> bool {
                 | "sandbox.set"
                 | "sandbox.global"
                 | "sandbox.set_global"
+                | "net.block"
+                | "net.unblock"
+                | "net.clear"
                 | "sandbox.auto"
                 | "sandbox.set_auto"
         )

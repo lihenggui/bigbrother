@@ -54,6 +54,19 @@ pub struct Destination {
     class: u32,
 }
 
+/// The destination of a `ConnectEvent` if it is on the internet: reported
+/// only of the sandboxed apps the user has the connections recorded of
+/// (`sandbox::destinations`), and kept apart from the other records.
+pub fn public(family: u32, port: u32, addr: &[u8; 16]) -> Option<SocketAddr> {
+    let ip = match family {
+        AF_INET => IpAddr::V4(Ipv4Addr::new(addr[0], addr[1], addr[2], addr[3])),
+        AF_INET6 => Ipv6Addr::from(*addr).to_canonical(),
+        _ => return None,
+    };
+    let port = u16::try_from(port).ok().filter(|p| *p != 0)?;
+    (class_of(ip) == NET_PUBLIC).then(|| SocketAddr::new(ip, port))
+}
+
 impl Destination {
     /// From the fields of a `ConnectEvent`. `None` for an address family
     /// that isn't IP, a destination on the internet, or port 0.

@@ -60,6 +60,8 @@ pub enum Item {
     ScreenContent,
     /// The network: what the app sends anywhere but to the device itself.
     Network,
+    /// Not something kept from the app: where it connects to is recorded.
+    NetworkRecord,
 }
 
 /// What an item does to the app.
@@ -91,7 +93,7 @@ pub enum OpMode {
 }
 
 impl Item {
-    pub const ALL: [Item; 16] = [
+    pub const ALL: [Item; 17] = [
         Item::Storage,
         Item::CpuInfo,
         Item::Contacts,
@@ -108,6 +110,7 @@ impl Item {
         Item::NotificationContent,
         Item::ScreenContent,
         Item::Network,
+        Item::NetworkRecord,
     ];
 
     /// The name the item goes by in the database, in commands and in JSON.
@@ -129,18 +132,27 @@ impl Item {
             Item::NotificationContent => "notification_content",
             Item::ScreenContent => "screen_content",
             Item::Network => "network",
+            Item::NetworkRecord => "network_record",
         }
     }
 
     /// The mode the item has where neither the app's settings nor the
     /// global ones name it. The network is left to the app: with it on,
     /// most apps do nothing at all, and an app sandboxed by a build that
-    /// did not know the item must keep the network it had.
+    /// did not know the item must keep the network it had. Connections
+    /// are recorded only of an app the user chose.
     pub fn default_mode(self) -> Mode {
         match self {
-            Item::Network => Mode::Off,
+            Item::Network | Item::NetworkRecord => Mode::Off,
             _ => Mode::On,
         }
+    }
+
+    /// Whether the item keeps from the app what a running process may
+    /// already hold. The network is refused packet by packet, and the
+    /// recording of connections keeps nothing from the app at all.
+    pub fn held_by_a_process(self) -> bool {
+        !matches!(self, Item::Network | Item::NetworkRecord)
     }
 
     pub fn from_name(name: &str) -> Option<Item> {
@@ -209,6 +221,7 @@ impl Item {
             ],
             // Refused by the packet filter.
             Item::Network => &[],
+            Item::NetworkRecord => &[],
         }
     }
 }
@@ -396,12 +409,17 @@ impl Settings {
     pub fn any_held_by_a_process(&self) -> bool {
         Item::ALL
             .into_iter()
-            .any(|item| item != Item::Network && self.mode(item) != Mode::Off)
+            .any(|item| item.held_by_a_process() && self.mode(item) != Mode::Off)
     }
 
     /// Whether the app is kept from the network.
     pub fn network_refused(&self) -> bool {
         self.mode(Item::Network) != Mode::Off
+    }
+
+    /// Whether the app's connections are recorded.
+    pub fn network_recorded(&self) -> bool {
+        self.mode(Item::NetworkRecord) != Mode::Off
     }
 
     pub fn mounts(&self) -> Mounts {

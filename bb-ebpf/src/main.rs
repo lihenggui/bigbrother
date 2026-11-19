@@ -92,11 +92,11 @@ use bb_common::{
     BINDER_WAKE, BinderEvent, BinderKey, BinderValue, ConnectEvent, DATA_START_LIMIT, EV_BINDER,
     EV_CONNECT, EV_EXEC, EV_FILE, EV_NETLINK, EV_PATH, EV_PROCESS, EV_RESULT, EXEC_ARG_CAP,
     EXEC_ARGS, EventHeader, ExecEvent, FUSE_SUPER_MAGIC, FileEvent, GATE_STALE_NS, GateEvent,
-    KNOWN_APP_WORDS, NAME_CAP, NetlinkEvent, OFF_COUNT, OFF_DENTRY_INODE, OFF_DENTRY_NAME,
-    OFF_DENTRY_PARENT, OFF_DENTRY_SB, OFF_FILE_DENTRY, OFF_FILE_FLAGS, OFF_INODE_MODE, OFF_SB_DEV,
-    OFF_SB_MAGIC, OFF_SKB_DATA, OFF_SOCK_PROTOCOL, OP_OPEN, OP_PAIRED, OP_PROBE, OP_WATCH,
-    PROC_SUPER_MAGIC, PROCESS_READ, PROCESS_TRACE, PROCESS_WRITE, PathEvent, ProcessEvent,
-    ResultEvent, SELINUX_MAGIC, SYSFS_MAGIC, known_app_bit,
+    KNOWN_APP_WORDS, NAME_CAP, NetRuleKey, NetlinkEvent, OFF_COUNT, OFF_DENTRY_INODE,
+    OFF_DENTRY_NAME, OFF_DENTRY_PARENT, OFF_DENTRY_SB, OFF_FILE_DENTRY, OFF_FILE_FLAGS,
+    OFF_INODE_MODE, OFF_SB_DEV, OFF_SB_MAGIC, OFF_SKB_DATA, OFF_SOCK_PROTOCOL, OP_OPEN, OP_PAIRED,
+    OP_PROBE, OP_WATCH, PROC_SUPER_MAGIC, PROCESS_READ, PROCESS_TRACE, PROCESS_WRITE, PathEvent,
+    ProcessEvent, ResultEvent, SELINUX_MAGIC, SYSFS_MAGIC, known_app_bit,
 };
 
 const AT_FDCWD: i32 = -100;
@@ -859,7 +859,9 @@ fn report_destination(uid: u32, sockaddr: u64, len: u64) -> Result<(), i32> {
     } else {
         return Ok(());
     };
-    if class == NET_PUBLIC {
+    // Destinations on the internet are those of the apps the user has the
+    // connections recorded of, and of no other.
+    if class == NET_PUBLIC && unsafe { NETWORK_RECORDED.get(&uid) }.is_none() {
         return Ok(());
     }
 
@@ -1364,13 +1366,36 @@ fn kill() {
 #[map]
 static NETWORK_REFUSED: HashMap<u32, u32> = HashMap::with_max_entries(1024, 0);
 
-/// Whether a packet is sent from a socket of an app kept from the network:
-/// the match of a rule of the packet filter (`-m bpf`), which refuses the
-/// packets it matches. Nonzero is a match.
+/// The uids of the sandboxed apps the user has the connections recorded of
+/// (see `report_destination`).
+#[map]
+static NETWORK_RECORDED: HashMap<u32, u32> = HashMap::with_max_entries(1024, 0);
+
+/// The uids that have destinations they are kept from, so that the packets
+/// of every other app are not looked into.
+#[map]
+static NETWORK_RULED: HashMap<u32, u32> = HashMap::with_max_entries(1024, 0);
+
+/// The destinations apps are kept from: an address with a port, or with
+/// port 0 for every port.
+#[map]
+static NETWORK_RULES: HashMap<NetRuleKey, u32> = HashMap::with_max_entries(8192, 0);
+
+/// `bpf_skb_load_bytes_relative`: offsets from the network header.
+const BPF_HDR_START_NET: u32 = 1;
+const IPPROTO_TCP: u8 = 6;
+const IPPROTO_UDP: u8 = 17;
+
+/// Whether a packet is sent from a socket of an app kept from the network,
+/// or to a destination the app is kept from: the match of a rule of the
+/// packet filter (`-m bpf`), which refuses the packets it matches. Nonzero
+/// is a match.
 ///
-/// The rule exists only while an app is kept from the network. While it
-/// does, this runs for every packet that leaves the device: a uid check,
-/// and for an app's packet one map lookup, however many apps are listed.
+/// The rule exists only while an app is kept from the network or from a
+/// destination. While it does, this runs for every packet that leaves the
+/// device: a uid check, and for an app's packet two map lookups, however
+/// many apps are listed. Only the packets of an app with destinations it
+/// is kept from are looked into, for two more lookups.
 #[socket_filter]
 pub fn network_refused(ctx: SkBuffContext) -> i64 {
     // The uid of the socket's owner, whichever process is sending; the
@@ -1379,7 +1404,69 @@ pub fn network_refused(ctx: SkBuffContext) -> i64 {
     if uid % PER_USER_RANGE < FIRST_APPLICATION_UID {
         return 0;
     }
-    i64::from(unsafe { NETWORK_REFUSED.get(&uid) }.is_some())
+    if unsafe { NETWORK_REFUSED.get(&uid) }.is_some() {
+        return 1;
+    }
+    if unsafe { NETWORK_RULED.get(&uid) }.is_none() {
+        return 0;
+    }
+    i64::from(destination_refused(&ctx, uid).unwrap_or(false))
+}
+
+/// Read `N` bytes of the packet at `offset` from its network header.
+#[inline(always)]
+fn packet_bytes<const N: usize>(ctx: &SkBuffContext, offset: u32) -> Option<[u8; N]> {
+    let mut bytes = [0u8; N];
+    let rc = unsafe {
+        aya_ebpf::helpers::generated::bpf_skb_load_bytes_relative(
+            aya_ebpf::EbpfContext::as_ptr(ctx) as *const _,
+            offset,
+            bytes.as_mut_ptr() as *mut _,
+            N as u32,
+            BPF_HDR_START_NET,
+        )
+    };
+    (rc == 0).then_some(bytes)
+}
+
+/// Whether the packet goes to a destination `uid` is kept from. A packet
+/// that cannot be read is let through: the rules are about destinations,
+/// and one without is not a connection to any.
+#[inline(always)]
+fn destination_refused(ctx: &SkBuffContext, uid: u32) -> Option<bool> {
+    let first: [u8; 1] = packet_bytes(ctx, 0)?;
+    let mut key = NetRuleKey {
+        uid,
+        port: 0,
+        addr: [0; 16],
+    };
+    // Where the transport header starts, and its protocol.
+    let (transport, protocol) = if first[0] >> 4 == 4 {
+        let address: [u8; 4] = packet_bytes(ctx, 16)?;
+        key.addr[0] = address[0];
+        key.addr[1] = address[1];
+        key.addr[2] = address[2];
+        key.addr[3] = address[3];
+        let protocol: [u8; 1] = packet_bytes(ctx, 9)?;
+        (u32::from(first[0] & 0xf) * 4, protocol[0])
+    } else if first[0] >> 4 == 6 {
+        key.addr = packet_bytes(ctx, 24)?;
+        // Without extension headers, as the packets of a connection are.
+        let next: [u8; 1] = packet_bytes(ctx, 6)?;
+        (40, next[0])
+    } else {
+        return Some(false);
+    };
+    // Every port of the address first: the port need not be read then.
+    if unsafe { NETWORK_RULES.get(&key) }.is_some() {
+        return Some(true);
+    }
+    if protocol != IPPROTO_TCP && protocol != IPPROTO_UDP {
+        return Some(false);
+    }
+    let port: [u8; 2] = packet_bytes(ctx, transport + 2)?;
+    key.port = u32::from(u16::from_be_bytes(port));
+    Some(unsafe { NETWORK_RULES.get(&key) }.is_some())
 }
 
 /// Return of any tracked syscall, and of the `netlink_send` security hook.
