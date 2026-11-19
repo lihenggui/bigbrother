@@ -221,6 +221,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         listeners: Listeners::new(),
         scans: net::Scans::default(),
         net: None,
+        refused_lookups: None,
         searches: commands::Searches::default(),
         catalog: None,
         sensors,
@@ -450,6 +451,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         tracer.expire(now() - RESULT_TIMEOUT_SECS);
         tracer.prune_isolated_owners();
         tracer.ingest_provider_events();
+        tracer.take_refused_lookups();
         while let Ok(reading) = permission_uses.try_recv() {
             // A reading at all shows the records can be read here. Written
             // when that changes, not with every reading.
@@ -612,10 +614,48 @@ fn start_sandbox(
     let destinations =
         sandbox::destinations::Destinations::start(ebpf, sandbox.book(), ruled.clone());
     let network = sandbox::network::Network::start(ebpf, ruled);
+    // The names apps look up, heard by standing between them and netd.
+    let names = std::sync::Arc::new(sandbox::names::Names::default());
+    let (lookups_refused, refused_lookups) = std::sync::mpsc::channel();
+    let refuses: sandbox::names::Refuses = {
+        let (snapshot, book) = (sandbox.snapshot(), sandbox.book());
+        std::sync::Arc::new(move |uid, host: &str| {
+            // Only of an app in the sandbox: taken out, it is kept from
+            // nothing.
+            snapshot
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains_key(&uid)
+                && book
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get(&uid)
+                    .is_some_and(|targets| targets.iter().any(|target| target.covers_name(host)))
+        })
+    };
+    let serves: sandbox::names::Serves = {
+        let snapshot = sandbox.snapshot();
+        std::sync::Arc::new(move |uid| {
+            snapshot
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains_key(&uid)
+        })
+    };
+    let relay = sandbox::names::start(names.clone(), serves, refuses, lookups_refused);
+    if let Err(e) = &relay {
+        eprintln!("bbd: warning: the names apps look up are not known: {e:#}");
+    }
+    let _ = tracer
+        .writer
+        .set_meta("coverage_net_names", i64::from(relay.is_ok()));
+    let names = relay.is_ok().then_some(names);
+    tracer.refused_lookups = Some(refused_lookups);
     tracer.net = Some(sandbox::destinations::View {
         snapshot: sandbox.snapshot(),
         global: sandbox.global(),
         book: sandbox.book(),
+        names: names.clone(),
     });
     let found = found.clone();
     appops.on_found(move || found.notify_one());
@@ -625,6 +665,9 @@ fn start_sandbox(
             // The resolver goes with the network, and stays without it.
             if network.is_ok() {
                 storage.with_network();
+            }
+            if names.is_some() {
+                storage.with_names(sandbox.book());
             }
             // Not waited for: the gate thread waits for nothing.
             storage.on_unknown(move |uid| {
@@ -663,6 +706,9 @@ fn start_sandbox(
     match destinations {
         Ok(mut destinations) => {
             destinations.with_traffic(traffic.is_ok());
+            if let Some(names) = names {
+                destinations.with_names(names);
+            }
             sandbox.add_effect(Box::new(destinations));
         }
         Err(e) => eprintln!("bbd: warning: connections are not recorded: {e:#}"),
@@ -1227,6 +1273,9 @@ struct Tracer {
     /// What the sandbox refuses of the network, for the connections
     /// recorded of its apps.
     net: Option<sandbox::destinations::View>,
+    /// The lookups refused since they were last taken in: the uid and the
+    /// name of each.
+    refused_lookups: Option<std::sync::mpsc::Receiver<(u32, String)>>,
     /// Commands being looked for along `PATH`.
     searches: commands::Searches,
     /// The service methods being watched; `None` until they are known.
@@ -1522,7 +1571,7 @@ impl Tracer {
                     NetKey {
                         uid: hdr.uid,
                         hour: ts.div_euclid(3600),
-                        host: String::new(),
+                        host: self.host_of(hdr.uid, address.ip()),
                         addr: address.ip().to_string(),
                         port: address.port(),
                     },
@@ -1570,7 +1619,7 @@ impl Tracer {
                         NetKey {
                             uid,
                             hour: ts.div_euclid(3600),
-                            host: String::new(),
+                            host: self.host_of(uid, address.ip()),
                             addr: address.ip().to_string(),
                             port: address.port(),
                         },
@@ -1764,6 +1813,40 @@ impl Tracer {
     /// Isolated processes run under a uid of their own. Best effort: when
     /// the process is gone and its uid was not seen recently, the record
     /// stays under the isolated uid, without the flag.
+    /// The name `uid` was given `address` for; empty if none is known.
+    fn host_of(&self, uid: u32, address: std::net::IpAddr) -> String {
+        self.net
+            .as_ref()
+            .and_then(|net| net.names.as_ref())
+            .and_then(|names| names.host_of(uid, address))
+            .unwrap_or_default()
+    }
+
+    /// Record the lookups refused since the last time: each an attempt at
+    /// a name that went to no address.
+    fn take_refused_lookups(&mut self) {
+        let Some(refused) = &self.refused_lookups else {
+            return;
+        };
+        let ts = now();
+        for (uid, host) in refused.try_iter() {
+            self.writer.net_record(
+                NetKey {
+                    uid,
+                    hour: ts.div_euclid(3600),
+                    host,
+                    addr: String::new(),
+                    port: 0,
+                },
+                NetSeen {
+                    refused: 1,
+                    ..NetSeen::default()
+                },
+                ts,
+            );
+        }
+    }
+
     fn owner_uid(&mut self, uid: u32, pid: u32) -> (u32, Mode) {
         if uid % PER_USER_RANGE < FIRST_ISOLATED_APP_ID {
             return (uid, 0);

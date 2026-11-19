@@ -33,6 +33,11 @@
 //! first, either way, and the processes the app has are gone through
 //! after.
 //!
+//! An app whose connections are recorded, or that is kept from names, is
+//! given the daemon's own socket in place of netd's, in the same way
+//! ([`super::names`]): its lookups go through the daemon, which passes
+//! them on.
+//!
 //! A connection the app opened before and kept is not closed by this.
 //!
 //! netd makes the socket anew when it starts again, and a mount on the
@@ -79,12 +84,47 @@ fn mount_point(line: &str) -> Option<(&str, impl Iterator<Item = &str>)> {
     Some((point, fields.take_while(|field| *field != "-")))
 }
 
-/// Whether the socket is covered in a namespace with these mounts.
-pub fn covered(mountinfo: &str) -> bool {
-    mountinfo
+/// What an app finds at the resolver's socket.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Cover {
+    /// netd's socket, as the system has it.
+    #[default]
+    None,
+    /// Nothing to connect to: its lookups fail.
+    Null,
+    /// The daemon's socket, which passes its lookups on (`names`).
+    Relay,
+}
+
+impl Cover {
+    /// What is mounted over the socket.
+    fn source(self) -> Option<&'static str> {
+        match self {
+            Cover::None => None,
+            Cover::Null => Some(STAND_IN),
+            Cover::Relay => Some(super::names::SOCKET),
+        }
+    }
+}
+
+/// What is on the socket in a namespace with these mounts: `Some` of a
+/// cover (none included), or `None` for a mount that is none of them, as
+/// the socket of a daemon that has ended is.
+pub fn found(mountinfo: &str) -> Option<Cover> {
+    // The last mount on the point is the one in view.
+    let Some(root) = mountinfo
         .lines()
-        .filter_map(mount_point)
-        .any(|(point, _)| point == SOCKET)
+        .filter(|line| mount_point(line).is_some_and(|(point, _)| point == SOCKET))
+        .filter_map(|line| line.split(' ').nth(3))
+        .next_back()
+    else {
+        return Some(Cover::None);
+    };
+    // The root of a mount of one file is the file's path in its
+    // filesystem, which for both is the one mounted at `/dev`.
+    [Cover::Null, Cover::Relay]
+        .into_iter()
+        .find(|cover| cover.source().and_then(|path| path.strip_prefix("/dev")) == Some(root))
 }
 
 /// Whether a mount made on the socket in a namespace with these mounts
@@ -108,23 +148,13 @@ pub fn spreads(mountinfo: &str) -> Option<bool> {
     holder.map(|(_, shared)| shared)
 }
 
-/// Cover the socket in every process the app of `entry` has.
-pub fn cover(entry: &Entry) -> anyhow::Result<()> {
-    change(entry, true)
-}
-
-/// Uncover it in every process the app of `entry` has.
-pub fn uncover(entry: &Entry) -> anyhow::Result<()> {
-    change(entry, false)
-}
-
-/// Cover the socket in the processes of the app of `entry`, or uncover it.
+/// Have every process the app of `entry` has find `cover` at the socket.
 ///
 /// On a thread of its own, which ends with the change: a thread can move
 /// to another mount namespace only if it shares its root and working
 /// directory with no other, and one that cannot come back is left behind
 /// rather than returned to the daemon.
-fn change(entry: &Entry, cover: bool) -> anyhow::Result<()> {
+pub fn set(entry: &Entry, cover: Cover) -> anyhow::Result<()> {
     let entry = entry.clone();
     std::thread::Builder::new()
         .name("resolver".into())
@@ -140,7 +170,7 @@ fn identity(namespace: &File) -> io::Result<(u64, u64)> {
     Ok((meta.dev(), meta.ino()))
 }
 
-fn in_namespaces(entry: &Entry, cover: bool) -> anyhow::Result<()> {
+fn in_namespaces(entry: &Entry, cover: Cover) -> anyhow::Result<()> {
     if unsafe { libc::unshare(libc::CLONE_FS) } != 0 {
         return Err(io::Error::last_os_error()).context("unshare(CLONE_FS)");
     }
@@ -176,7 +206,7 @@ fn in_namespaces(entry: &Entry, cover: bool) -> anyhow::Result<()> {
 
 /// One pass over the processes of `uid`; how many namespaces were changed.
 /// A process that cannot be looked at has ended.
-fn pass_once(uid: u32, cover: bool, home: &File, kept: &[(u64, u64)]) -> anyhow::Result<u32> {
+fn pass_once(uid: u32, cover: Cover, home: &File, kept: &[(u64, u64)]) -> anyhow::Result<u32> {
     let mut seen = HashSet::new();
     let mut changed = 0;
     for process in fs::read_dir("/proc")
@@ -218,7 +248,8 @@ fn pass_once(uid: u32, cover: bool, home: &File, kept: &[(u64, u64)]) -> anyhow:
         if kept.contains(&namespace) || !seen.insert(namespace) {
             continue;
         }
-        if covered(&mountinfo) == cover {
+        let has = found(&mountinfo);
+        if has == Some(cover) {
             continue;
         }
         anyhow::ensure!(
@@ -226,14 +257,15 @@ fn pass_once(uid: u32, cover: bool, home: &File, kept: &[(u64, u64)]) -> anyhow:
             "a process of the app shares its mounts with others"
         );
         enter(&theirs).context("entering a namespace")?;
-        let done = if cover { cover_here() } else { uncover_here() };
+        let done = (|| -> io::Result<()> {
+            if has != Some(Cover::None) {
+                uncover_here()?;
+            }
+            cover_here(cover)
+        })();
         // A thread that cannot come back ends here, with the change.
         enter(home).context("returning from a namespace")?;
-        done.context(if cover {
-            "covering the resolver's socket"
-        } else {
-            "uncovering the resolver's socket"
-        })?;
+        done.context("changing what is at the resolver's socket")?;
         changed += 1;
     }
     Ok(changed)
@@ -246,12 +278,16 @@ fn enter(namespace: &File) -> io::Result<()> {
     Ok(())
 }
 
-/// Cover the socket in the namespace the calling thread is in.
-pub fn cover_here() -> io::Result<()> {
-    let (stand_in, socket) = (CString::new(STAND_IN)?, CString::new(SOCKET)?);
+/// Put `cover` on the socket in the namespace the calling thread is in,
+/// where nothing is on it.
+pub fn cover_here(cover: Cover) -> io::Result<()> {
+    let Some(source) = cover.source() else {
+        return Ok(());
+    };
+    let (source, socket) = (CString::new(source)?, CString::new(SOCKET)?);
     let rc = unsafe {
         libc::mount(
-            stand_in.as_ptr(),
+            source.as_ptr(),
             socket.as_ptr(),
             std::ptr::null(),
             libc::MS_BIND,
@@ -287,18 +323,29 @@ mod tests {
 ";
 
     #[test]
-    fn the_socket_is_covered_where_something_is_mounted_on_it() {
-        assert!(!covered(APP));
-        let with = format!(
-            "{APP}19010 16380 0:18 /null /dev/socket/dnsproxyd rw,nosuid,relatime master:2 - tmpfs tmpfs rw,seclabel\n"
-        );
-        assert!(covered(&with));
+    fn what_is_on_the_socket_is_told_by_what_is_mounted_there() {
+        assert_eq!(found(APP), Some(Cover::None));
+        assert_eq!(found(""), Some(Cover::None));
+        let with = |root: &str| {
+            format!(
+                "{APP}19010 16380 0:18 {root} /dev/socket/dnsproxyd rw,nosuid,relatime master:2 - tmpfs tmpfs rw,seclabel\n"
+            )
+        };
+        assert_eq!(found(&with("/null")), Some(Cover::Null));
+        assert_eq!(found(&with("/socket/dnsproxyd_relay")), Some(Cover::Relay));
+        // The socket of a daemon that has ended, or anything else.
+        assert_eq!(found(&with("/socket/dnsproxyd_relay//deleted")), None);
+        assert_eq!(found(&with("/zero")), None);
         // Another socket, or a directory that only begins the same.
         let other = format!(
             "{APP}19010 16380 0:18 /null /dev/socket/dnsproxyd2 rw master:2 - tmpfs tmpfs rw\n"
         );
-        assert!(!covered(&other));
-        assert!(!covered(""));
+        assert_eq!(found(&other), Some(Cover::None));
+        // The last mounted there is the one in view.
+        let twice = format!("{}{}", with("/null"), with("/socket/dnsproxyd_relay"))
+            .replacen(APP, "", 1)
+            .replacen(APP, "", 1);
+        assert_eq!(found(&twice), Some(Cover::Relay));
     }
 
     #[test]

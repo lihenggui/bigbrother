@@ -38,7 +38,7 @@ use anyhow::Context as _;
 use aya::maps::{HashMap as BpfHashMap, MapData};
 use bb_common::NetRuleKey;
 
-use super::{Effect, Entry, Resumed, Status, items::Settings, network::Listed};
+use super::{Effect, Entry, Resumed, Status, items::Settings, names::Names, network::Listed};
 use crate::netctl::Target;
 
 /// The destinations each uid is kept from, as the user named them: shared
@@ -51,6 +51,8 @@ pub struct View {
     pub snapshot: super::Snapshot,
     pub global: super::Global,
     pub book: Book,
+    /// The names apps were given addresses for, where they are known.
+    pub names: Option<Arc<Names>>,
 }
 
 impl View {
@@ -63,10 +65,19 @@ impl View {
         if super::items_of(entry, &global).network_refused() {
             return true;
         }
+        // The name the app was given the address for, if it is kept from
+        // that name: the addresses of such a name are refused with it.
+        let host = self
+            .names
+            .as_ref()
+            .and_then(|names| names.host_of(uid, to.ip()));
         let book = self.book.lock().unwrap_or_else(|e| e.into_inner());
         book.get(&uid).is_some_and(|targets| {
             targets.contains(&Target::Ip(to.ip(), None))
                 || targets.contains(&Target::Ip(to.ip(), Some(to.port())))
+                || host
+                    .as_deref()
+                    .is_some_and(|host| targets.iter().any(|target| target.covers_name(host)))
         })
     }
 }
@@ -134,6 +145,8 @@ pub struct Destinations {
     any: Arc<AtomicBool>,
     /// Whether the bytes of the connections recorded are counted.
     traffic: bool,
+    /// The names apps were given addresses for, where they are known.
+    names: Option<Arc<Names>>,
 }
 
 impl Destinations {
@@ -173,7 +186,14 @@ impl Destinations {
             recording: BTreeSet::new(),
             any,
             traffic: false,
+            names: None,
         }
+    }
+
+    /// Have the addresses an app was given for a name it is kept from
+    /// refused with the name: the daemon hears the lookups (`names`).
+    pub fn with_names(&mut self, names: Arc<Names>) {
+        self.names = Some(names);
     }
 
     /// Say whether the bytes of the connections recorded are counted on
@@ -182,17 +202,28 @@ impl Destinations {
         self.traffic = counted;
     }
 
-    /// The addresses of the book's rules for `uid`.
+    /// The addresses of the book's rules for `uid`: those named, and those
+    /// the app was given for a name it is kept from. A name is refused
+    /// where it is looked up; a connection to an address the app already
+    /// has for it would otherwise go on.
     fn wanted(&self, uid: u32) -> BTreeSet<Address> {
         let book = self.book.lock().unwrap_or_else(|e| e.into_inner());
-        book.get(&uid)
-            .into_iter()
-            .flatten()
-            .filter_map(|target| match target {
-                Target::Ip(ip, port) => Some((*ip, *port)),
-                Target::Domain(_) | Target::Host(_) => None,
-            })
-            .collect()
+        let mut wanted = BTreeSet::new();
+        for target in book.get(&uid).into_iter().flatten() {
+            match (target, &self.names) {
+                (Target::Ip(ip, port), _) => {
+                    wanted.insert((*ip, *port));
+                }
+                (name, Some(names)) => wanted.extend(
+                    names
+                        .addresses_of(uid, |host| name.covers_name(host))
+                        .into_iter()
+                        .map(|ip| (ip, None)),
+                ),
+                (_, None) => {}
+            }
+        }
+        wanted
     }
 
     /// Bring what the kernel side `has` of the addresses `uid` is kept
@@ -300,6 +331,7 @@ impl Effect for Destinations {
     fn report(&self, status: &mut Status) {
         status.net_record = true;
         status.traffic = self.traffic;
+        status.dns_names = self.names.is_some();
     }
 }
 
@@ -523,6 +555,40 @@ mod tests {
         f.effect.forget(10004);
         f.effect.forget(10005);
         assert!(f.kernel.borrow().recorded.is_empty() && f.kernel.borrow().rules.is_empty());
+    }
+
+    #[test]
+    fn the_addresses_given_for_a_name_an_app_is_kept_from_are_refused_too() {
+        let mut f = fixture();
+        let names = Arc::new(Names::default());
+        f.effect.with_names(names.clone());
+        names.learn(10001, "t.adnet.example", &["203.0.113.50".parse().unwrap()]);
+        names.learn(10001, "api.example.com", &["203.0.113.10".parse().unwrap()]);
+        names.learn(10002, "t.adnet.example", &["203.0.113.51".parse().unwrap()]);
+        f.rule(10001, "domain:adnet.example");
+        f.effect
+            .enable(&mut entry(10001), &[], &items(Mode::Off))
+            .unwrap();
+        assert!(f.has(10001, "ip:203.0.113.50"));
+        // Not what it was given for other names, nor what another app was.
+        assert!(!f.has(10001, "ip:203.0.113.10") && !f.has(10001, "ip:203.0.113.51"));
+
+        let view = View {
+            snapshot: Default::default(),
+            global: Default::default(),
+            book: f.book.clone(),
+            names: Some(names),
+        };
+        // Not in the sandbox: nothing is refused.
+        assert!(!view.refuses(10001, "203.0.113.50:443".parse().unwrap()));
+        view.snapshot.write().unwrap().insert(10001, entry(10001));
+        assert!(view.refuses(10001, "203.0.113.50:443".parse().unwrap()));
+        assert!(!view.refuses(10001, "203.0.113.10:443".parse().unwrap()));
+
+        // With the rule gone the addresses are let through again.
+        f.unrule(10001, "domain:adnet.example");
+        f.effect.refresh(&entry(10001), &items(Mode::Off)).unwrap();
+        assert!(!f.has(10001, "ip:203.0.113.50"));
     }
 
     #[test]

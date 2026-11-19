@@ -60,11 +60,13 @@ use bb_common::{GATE_CLOSED, GateEvent};
 
 use super::{
     Effect, Entry, Resumed, Status,
+    destinations::Book,
     dirs::{self, MEDIA_RW},
     items::{Mounts, Settings},
     mounts::{self, Kernel},
-    resolver,
+    resolver::{self, Cover},
 };
+use crate::netctl::Target;
 
 /// How long a process is waited for to come to a stop. It stops as it leaves
 /// the system call it was caught in, which takes microseconds.
@@ -123,9 +125,9 @@ impl Process {
     }
 }
 
-/// What the starts of an app are held for: its mounts, and whether the
-/// socket of the system's resolver is covered.
-type Hold = (Mounts, bool);
+/// What the starts of an app are held for: its mounts, and what it finds
+/// at the socket of the system's resolver.
+type Hold = (Mounts, Cover);
 
 /// Starts that are not held.
 const NOT_HELD: Hold = (
@@ -133,8 +135,13 @@ const NOT_HELD: Hold = (
         storage: false,
         cpu_info: false,
     },
-    false,
+    Cover::None,
 );
+
+/// Whether starts are held at all for this.
+fn held(hold: Hold) -> bool {
+    hold.0.any() || hold.1 != Cover::None
+}
 
 /// Called with the uid of an app that was let through.
 type Told = Box<dyn Fn(u32) + Send>;
@@ -148,9 +155,8 @@ struct Gated {
     /// The packages that run under it.
     packages: Vec<String>,
     mounts: Mounts,
-    /// Whether the socket of the system's resolver is covered for it
-    /// (`resolver`).
-    resolver: bool,
+    /// What it finds at the socket of the system's resolver (`resolver`).
+    resolver: Cover,
 }
 
 /// What the gate thread and the daemon's main loop share.
@@ -204,6 +210,9 @@ pub struct Storage {
     /// Whether apps can be kept from the network on this device. Where
     /// they cannot, the resolver is left to them too.
     network: bool,
+    /// The destinations apps are kept from, once the daemon listens for
+    /// lookups (`names`).
+    names: Option<Book>,
 }
 
 impl Storage {
@@ -249,7 +258,16 @@ impl Storage {
             uids,
             shared,
             network: false,
+            names: None,
         })
+    }
+
+    /// Give the apps whose connections are recorded, and those kept from
+    /// names, the daemon's socket in place of the resolver's from now on:
+    /// the daemon is listening on it (`names`). `book` tells which apps
+    /// are kept from names.
+    pub fn with_names(&mut self, book: Book) {
+        self.names = Some(book);
     }
 
     /// Cover the resolver's socket from now on in the starting processes
@@ -258,9 +276,38 @@ impl Storage {
         self.network = true;
     }
 
-    /// What a start of an app with `items` is held for.
-    fn held_for(&self, items: &Settings) -> Hold {
-        (items.mounts(), self.network && items.network_refused())
+    /// What a start of the app of `uid`, with `items`, is held for.
+    fn held_for(&self, uid: u32, items: &Settings) -> Hold {
+        let kept_from_names = |book: &Book| {
+            let book = book.lock().unwrap_or_else(|e| e.into_inner());
+            book.get(&uid).is_some_and(|targets| {
+                targets
+                    .iter()
+                    .any(|target| !matches!(target, Target::Ip(..)))
+            })
+        };
+        let cover = if self.network && items.network_refused() {
+            Cover::Null
+        } else if self
+            .names
+            .as_ref()
+            .is_some_and(|book| items.network_recorded() || kept_from_names(book))
+        {
+            Cover::Relay
+        } else {
+            Cover::None
+        };
+        (items.mounts(), cover)
+    }
+
+    /// What the starts of `uid` are held for now.
+    fn holding(&self, uid: u32) -> Hold {
+        self.shared
+            .apps
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&uid)
+            .map_or(NOT_HELD, |gated| (gated.mounts, gated.resolver))
     }
 
     /// Stop holding starts of `uid`, if they were held.
@@ -281,15 +328,15 @@ impl Storage {
         *lock(&self.shared.unknown) = Some(Box::new(told));
     }
 
-    /// From now on, hold starts of `uid` and give them `mounts`, and with
-    /// `resolver` no resolver to ask. The gate thread is told first: a
-    /// start it knows nothing of is let through.
+    /// From now on, hold starts of `uid` and give them `mounts`, and
+    /// `resolver` at the resolver's socket. The gate thread is told first:
+    /// a start it knows nothing of is let through.
     fn hold(
         &mut self,
         entry: &Entry,
         packages: &[String],
         mounts: Mounts,
-        resolver: bool,
+        resolver: Cover,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.shared.open.load(Ordering::Relaxed),
@@ -316,7 +363,7 @@ impl Storage {
     /// Hold the starts of the app of `entry` as `held` says, or none.
     fn gate(&mut self, entry: &Entry, packages: &[String], held: Hold) -> anyhow::Result<()> {
         let (mounts, resolver) = held;
-        if !mounts.any() && !resolver {
+        if !self::held(held) {
             self.release(entry.uid);
             return Ok(());
         }
@@ -347,16 +394,12 @@ impl Storage {
         wanted: Hold,
     ) -> anyhow::Result<()> {
         self.gate(entry, packages, wanted)?;
-        let running = match (was.1, wanted.1) {
-            (false, true) => {
-                resolver::cover(entry).context("taking the resolver from the app's processes")
-            }
-            (true, false) => {
-                resolver::uncover(entry).context("giving the resolver back to the app's processes")
-            }
-            _ => Ok(()),
-        };
-        let Err(e) = running else {
+        if was.1 == wanted.1 {
+            return Ok(());
+        }
+        let Err(e) = resolver::set(entry, wanted.1)
+            .context("changing what the app's processes find at the resolver's socket")
+        else {
             return Ok(());
         };
         if let Err(undo) = self.gate(entry, packages, was) {
@@ -366,11 +409,7 @@ impl Storage {
             );
         }
         // The processes gone through before it failed, back as they were.
-        let _ = if was.1 {
-            resolver::cover(entry)
-        } else {
-            resolver::uncover(entry)
-        };
+        let _ = resolver::set(entry, was.1);
         Err(e)
     }
 }
@@ -386,7 +425,7 @@ impl Effect for Storage {
         packages: &[String],
         items: &Settings,
     ) -> anyhow::Result<()> {
-        self.change(entry, packages, NOT_HELD, self.held_for(items))
+        self.change(entry, packages, NOT_HELD, self.held_for(entry.uid, items))
     }
 
     fn disable(
@@ -395,7 +434,7 @@ impl Effect for Storage {
         packages: &[String],
         items: &Settings,
     ) -> anyhow::Result<()> {
-        self.change(entry, packages, self.held_for(items), NOT_HELD)
+        self.change(entry, packages, self.held_for(entry.uid, items), NOT_HELD)
     }
 
     fn update(
@@ -405,11 +444,33 @@ impl Effect for Storage {
         before: &Settings,
         after: &Settings,
     ) -> anyhow::Result<()> {
-        let (was, wanted) = (self.held_for(before), self.held_for(after));
+        let (was, wanted) = (
+            self.held_for(entry.uid, before),
+            self.held_for(entry.uid, after),
+        );
         if was == wanted {
             return Ok(());
         }
         self.change(entry, packages, was, wanted)
+    }
+
+    fn refresh(&mut self, entry: &Entry, items: &Settings) -> anyhow::Result<()> {
+        // A rule on a name added or removed changes what the app is given
+        // at the resolver's socket.
+        let (was, wanted) = (self.holding(entry.uid), self.held_for(entry.uid, items));
+        if was == wanted {
+            return Ok(());
+        }
+        let packages = self
+            .shared
+            .apps
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&entry.uid)
+            .map(|gated| gated.packages.clone());
+        // Not held so far: the packages are needed for the storage mounts
+        // only, which such an app has none of.
+        self.change(entry, &packages.unwrap_or_default(), was, wanted)
     }
 
     fn resume(&mut self, apps: &[Resumed]) {
@@ -417,8 +478,8 @@ impl Effect for Storage {
         // enabled, and cannot be reached before the user unlocks the device,
         // which is when the daemon usually starts.
         for app in apps {
-            let (mounts, resolver) = self.held_for(&app.items);
-            if !mounts.any() && !resolver {
+            let (mounts, resolver) = self.held_for(app.entry.uid, &app.items);
+            if !held((mounts, resolver)) {
                 continue;
             }
             if let Err(e) = self.hold(&app.entry, &app.packages, mounts, resolver) {
@@ -429,8 +490,11 @@ impl Effect for Storage {
                 continue;
             }
             // In the processes that started while there was no daemon to
-            // hold them.
-            if resolver && let Err(e) = resolver::cover(&app.entry) {
+            // hold them, and in those that have the socket of the daemon
+            // before, which nothing listens on any more.
+            if resolver != Cover::None
+                && let Err(e) = resolver::set(&app.entry, resolver)
+            {
                 eprintln!(
                     "bbd: sandbox: uid {} has the system's resolver: {e:#}",
                     app.entry.uid
@@ -799,7 +863,7 @@ impl Keeper {
             &[]
         };
 
-        if gated.resolver {
+        if gated.resolver != Cover::None {
             // A mount on the resolver's socket must stay in this
             // namespace: in one that passes its mounts on, it would take
             // the resolver from every app.

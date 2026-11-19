@@ -70,6 +70,7 @@ pub mod gate;
 pub mod identity;
 pub mod items;
 mod mounts;
+pub mod names;
 pub mod network;
 pub mod resolver;
 pub mod sweep;

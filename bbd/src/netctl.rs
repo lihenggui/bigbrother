@@ -103,7 +103,9 @@ pub fn name(text: &str) -> Option<String> {
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
     });
-    (text.len() <= 253 && text.contains('.') && labels_ok).then_some(text)
+    // An address written out is not a name.
+    (text.len() <= 253 && text.contains('.') && labels_ok && text.parse::<IpAddr>().is_err())
+        .then_some(text)
 }
 
 /// Second-level names under which sites are registered, as far as the
@@ -240,8 +242,11 @@ impl Query<'_> {
                 site
             };
             destination.total.add(row);
-            destination.addrs.insert(row.addr.clone());
-            destination.ports.entry(row.port).or_default().add(row);
+            // A lookup that was refused went to no address.
+            if !row.addr.is_empty() {
+                destination.addrs.insert(row.addr.clone());
+                destination.ports.entry(row.port).or_default().add(row);
+            }
             destination
                 .hours
                 .entry(row.hour * 3600)
@@ -553,6 +558,7 @@ mod tests {
             "domain:",
             "domain:localhost",
             "domain:exa mple.com",
+            "domain:203.0.113.7",
             "domain:example..com",
             "host:example.com/path",
             "ip:example.com",
