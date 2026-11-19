@@ -354,7 +354,9 @@ of no other app: the probes that report connections drop destinations on
 the internet in the kernel unless the app is listed. A row is an hour in
 which the app connected to a port of an address, under the name it was
 given the address for, with how many connections were tried and how many
-the sandbox refused. When a TCP connection ends, the kernel's own counts
+the sandbox refused. An app has rows for some hundreds of destinations
+in an hour; what it connects to past them is counted together. When a TCP
+connection ends, the kernel's own counts
 of the bytes sent and received over it are read once and added to the row;
 nothing is counted packet by packet, and other protocols have connection
 counts only. The rows are kept 30 days, apart from the other records.
@@ -395,7 +397,9 @@ answer back; it remembers which name the app was given each address for,
 and does not ask for a name the app is kept from. One request is taken on
 a connection. The socket carries the SELinux labels of netd's, which lets
 an app connect to it without a rule added to the policy, is open to the
-group netd's is open to, and serves the apps in the sandbox only. Where
+group netd's is open to, and serves only the apps given it, a few lookups
+of each at once: any process can find the socket, and an app kept from the
+network is to have no resolver at all. Where
 the daemon's domain may not label a socket so, names are not available:
 `bbd sandbox status` says so, connections are recorded under addresses,
 and an app cannot be kept from a name. While there is no daemon, the

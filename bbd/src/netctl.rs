@@ -233,6 +233,11 @@ impl Query<'_> {
         let mut sites: BTreeMap<String, Destination> = BTreeMap::new();
         let mut addrs: BTreeMap<String, Destination> = BTreeMap::new();
         for row in self.rows {
+            // What was seen past the most destinations listed of an hour:
+            // counted in the chart, and of no destination.
+            if row.host.is_empty() && row.addr.is_empty() {
+                continue;
+            }
             let destination: &mut Destination = if row.host.is_empty() {
                 addrs.entry(row.addr.clone()).or_default()
             } else {

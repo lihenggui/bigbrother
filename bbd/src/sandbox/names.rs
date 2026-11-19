@@ -30,10 +30,14 @@
 //!   them. netd would take more, and a second one would pass unread:
 //!   whatever else the app sends ends the connection.
 //!
-//! The socket is in a directory every process sees. It is open to whom
-//! netd's is, the group of the apps with the network permission, and
-//! serves the apps in the sandbox only: nobody gets through it what netd
-//! would not give them directly.
+//! The socket is in a directory every process sees, whatever is mounted
+//! for it. It is open to whom netd's is, the group of the apps with the
+//! network permission, and serves only the apps that are given it: those
+//! in the sandbox whose connections are recorded or that are kept from a
+//! name, and never one kept from the network, which is to have no
+//! resolver at all. Nobody gets through it what netd would not give them
+//! directly. An app has a few lookups relayed at once and no more, so
+//! that one app cannot keep the others from theirs.
 //! - The addresses in the answer are remembered for the name
 //!   ([`Names`]): a connection the app then makes to one of them is
 //!   recorded under the name.
@@ -87,16 +91,18 @@ const SOCKET_LABEL: &str = "u:object_r:dnsproxyd_socket:s0";
 /// network permission are in.
 const INET_GID: libc::gid_t = 3003;
 
-/// The most lookups relayed at once. One more is refused: the app's lookup
-/// fails, as it does when netd has too many.
+/// The most lookups relayed at once, for all apps and for one. One more
+/// is refused: the app's lookup fails, as it does when netd has too many.
 const MOST_AT_ONCE: usize = 64;
+const MOST_OF_ONE_APP: usize = 8;
 
 /// The longest request read, and the longest answer held to be read for
 /// its addresses; a longer one is passed on unread.
 const REQUEST_CAP: usize = 4096;
 const ANSWER_CAP: usize = 64 * 1024;
 
-/// How long a request is waited for, and how long netd is given to answer:
+/// How long a request is waited for, all of it, and how long netd is
+/// given to answer, after which the connection ends whatever was said:
 /// netd tries its servers for longer than an app usually waits.
 const REQUEST_WAIT: Duration = Duration::from_secs(5);
 const ANSWER_WAIT: Duration = Duration::from_secs(60);
@@ -160,8 +166,8 @@ impl Names {
 /// that could not be read, which an app kept from any name is refused.
 pub type Refuses = Arc<dyn Fn(u32, Option<&str>) -> bool + Send + Sync>;
 
-/// Whether a uid is one the daemon relays lookups for: an app in the
-/// sandbox.
+/// Whether a uid is one the daemon relays lookups for: an app given the
+/// daemon's socket.
 pub type Serves = Arc<dyn Fn(u32) -> bool + Send + Sync>;
 
 /// What the threads that relay lookups share.
@@ -172,6 +178,37 @@ struct Shared {
     /// Told the uid and the name of each lookup refused.
     refused: Mutex<Sender<(u32, String)>>,
     at_once: AtomicUsize,
+    /// How many lookups of each uid are being relayed.
+    of_each: Mutex<HashMap<u32, usize>>,
+}
+
+impl Shared {
+    /// Take a place for a lookup of `uid`, if it and all apps together
+    /// have one left.
+    fn take_place(&self, uid: u32) -> bool {
+        let mut of_each = self.of_each.lock().unwrap_or_else(|e| e.into_inner());
+        let of_this = of_each.entry(uid).or_insert(0);
+        if *of_this >= MOST_OF_ONE_APP || self.at_once.load(Ordering::Relaxed) >= MOST_AT_ONCE {
+            if *of_this == 0 {
+                of_each.remove(&uid);
+            }
+            return false;
+        }
+        *of_this += 1;
+        self.at_once.fetch_add(1, Ordering::Relaxed);
+        true
+    }
+
+    fn leave_place(&self, uid: u32) {
+        let mut of_each = self.of_each.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(of_this) = of_each.get_mut(&uid) {
+            *of_this -= 1;
+            if *of_this == 0 {
+                of_each.remove(&uid);
+            }
+        }
+        self.at_once.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 /// Start listening for the lookups of the apps given the daemon's socket,
@@ -189,6 +226,7 @@ pub fn start(
         refuses,
         refused: Mutex::new(refused),
         at_once: AtomicUsize::new(0),
+        of_each: Mutex::default(),
     });
     let (ready, started) = std::sync::mpsc::sync_channel(1);
     std::thread::Builder::new()
@@ -208,21 +246,26 @@ pub fn start(
                 }
             };
             for client in listener.incoming().flatten() {
-                if shared.at_once.fetch_add(1, Ordering::Relaxed) >= MOST_AT_ONCE {
-                    shared.at_once.fetch_sub(1, Ordering::Relaxed);
+                // Whose it is, and whether it is served, before anything
+                // is spent on it: the socket can be found by any process.
+                let Ok(uid) = peer_uid(&client) else {
+                    continue;
+                };
+                if !(shared.serves)(uid) || !shared.take_place(uid) {
                     continue;
                 }
-                let shared = shared.clone();
+                let lookup = shared.clone();
                 let spawned = std::thread::Builder::new()
                     .name("lookup".into())
                     .spawn(move || {
                         // What fails here fails the app's lookup, and
                         // says nothing: the reason would name the app.
-                        let _ = relay(client, &shared);
-                        shared.at_once.fetch_sub(1, Ordering::Relaxed);
+                        let _ = relay(client, uid, &lookup);
+                        lookup.leave_place(uid);
                     });
                 if spawned.is_err() {
-                    // The closure, with its count, was not run.
+                    // The closure was not run, nor its place left.
+                    shared.leave_place(uid);
                     std::thread::sleep(Duration::from_millis(100));
                 }
             }
@@ -316,18 +359,18 @@ fn connect_as(uid: u32) -> io::Result<UnixStream> {
     connected
 }
 
-fn relay(mut client: UnixStream, shared: &Shared) -> io::Result<()> {
-    let uid = peer_uid(&client)?;
-    // The socket can be found by any process; it is there for the apps in
-    // the sandbox.
-    if !(shared.serves)(uid) {
-        return Ok(());
-    }
-    client.set_read_timeout(Some(REQUEST_WAIT))?;
+fn relay(mut client: UnixStream, uid: u32, shared: &Shared) -> io::Result<()> {
     client.set_write_timeout(Some(REQUEST_WAIT))?;
+    // The whole request within the time, however slowly it comes.
+    let asked_by = Instant::now() + REQUEST_WAIT;
     let mut request = Vec::new();
     let mut chunk = [0u8; 1024];
     while !request.contains(&0) {
+        let left = asked_by.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Ok(());
+        }
+        client.set_read_timeout(Some(left))?;
         let n = client.read(&mut chunk)?;
         if n == 0 || request.len() + n > REQUEST_CAP {
             return Ok(());
@@ -353,24 +396,29 @@ fn relay(mut client: UnixStream, shared: &Shared) -> io::Result<()> {
     }
 
     let mut netd = connect_as(uid)?;
-    netd.set_read_timeout(Some(ANSWER_WAIT))?;
     netd.set_write_timeout(Some(REQUEST_WAIT))?;
     netd.write_all(&request)?;
+    let answered_by = Instant::now() + ANSWER_WAIT;
     // The answer to a lookup of addresses is read whole first, so that the
     // addresses are remembered before the app has them to connect to.
     let mut answer = Vec::new();
     if let Asked::Addresses(host) = &asked {
-        let deadline = Instant::now() + ANSWER_WAIT;
         loop {
             match addresses_in(&answer) {
                 Parsed::Whole(addresses) => {
                     shared.names.learn(uid, host, &addresses);
-                    break;
+                    // All there is to it: the app has no more to wait for.
+                    return client.write_all(&answer);
                 }
                 Parsed::Unknown => break,
-                Parsed::Partial if answer.len() > ANSWER_CAP || Instant::now() > deadline => break,
+                Parsed::Partial if answer.len() > ANSWER_CAP => break,
                 Parsed::Partial => {}
             }
+            let left = answered_by.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            netd.set_read_timeout(Some(left))?;
             let n = netd.read(&mut chunk)?;
             if n == 0 {
                 break;
@@ -379,8 +427,8 @@ fn relay(mut client: UnixStream, shared: &Shared) -> io::Result<()> {
         }
         client.write_all(&answer)?;
     }
-    // The rest of the answer, until one of them closes.
-    pump(&mut client, &mut netd)
+    // The rest of the answer, until one of them closes or the time is up.
+    pump(&mut client, &mut netd, answered_by)
 }
 
 /// Whether what was read is one command and nothing after it: text ended
@@ -390,10 +438,10 @@ fn one_command(request: &[u8]) -> bool {
     request.iter().position(|b| *b == 0) == Some(request.len().wrapping_sub(1))
 }
 
-/// Pass on what netd sends to the app, until one of them closes or netd
-/// says nothing for as long as an answer is waited for. Nothing more is
-/// passed on from the app: if it sends anything, the connection ends.
-fn pump(client: &mut UnixStream, netd: &mut UnixStream) -> io::Result<()> {
+/// Pass on what netd sends to the app, until one of them closes or it is
+/// `until`. Nothing more is passed on from the app: if it sends anything,
+/// the connection ends.
+fn pump(client: &mut UnixStream, netd: &mut UnixStream, until: Instant) -> io::Result<()> {
     let mut chunk = [0u8; 4096];
     loop {
         let mut fds = [
@@ -408,7 +456,11 @@ fn pump(client: &mut UnixStream, netd: &mut UnixStream) -> io::Result<()> {
                 revents: 0,
             },
         ];
-        let ready = unsafe { libc::poll(fds.as_mut_ptr(), 2, ANSWER_WAIT.as_millis() as i32) };
+        let left = until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Ok(());
+        }
+        let ready = unsafe { libc::poll(fds.as_mut_ptr(), 2, left.as_millis() as i32) };
         if ready <= 0 {
             return Ok(());
         }
@@ -685,6 +737,49 @@ mod tests {
             question(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, b'a']),
             None
         );
+    }
+
+    #[test]
+    fn an_app_has_a_few_lookups_at_once_and_all_apps_some_more() {
+        let (refused, _) = std::sync::mpsc::channel();
+        let shared = Shared {
+            names: Arc::default(),
+            serves: Arc::new(|_| true),
+            refuses: Arc::new(|_, _| false),
+            refused: Mutex::new(refused),
+            at_once: AtomicUsize::new(0),
+            of_each: Mutex::default(),
+        };
+        for _ in 0..MOST_OF_ONE_APP {
+            assert!(shared.take_place(10001));
+        }
+        // One more of the same app has none; another app has.
+        assert!(!shared.take_place(10001));
+        assert!(shared.take_place(10002));
+        shared.leave_place(10001);
+        assert!(shared.take_place(10001));
+        // All apps together.
+        let mut uid = 20000;
+        while shared.at_once.load(Ordering::Relaxed) < MOST_AT_ONCE {
+            uid += 1;
+            assert!(shared.take_place(uid));
+        }
+        assert!(!shared.take_place(30000));
+        assert!(!shared.of_each.lock().unwrap().contains_key(&30000));
+        shared.leave_place(uid);
+        assert!(shared.take_place(30000));
+        // Every place left is a place again.
+        let uids: Vec<u32> = shared.of_each.lock().unwrap().keys().copied().collect();
+        for uid in uids {
+            loop {
+                let has = shared.of_each.lock().unwrap().contains_key(&uid);
+                if !has {
+                    break;
+                }
+                shared.leave_place(uid);
+            }
+        }
+        assert_eq!(shared.at_once.load(Ordering::Relaxed), 0);
     }
 
     #[test]

@@ -1448,15 +1448,22 @@ fn try_sock_state(ctx: &RawTracePointContext) -> Result<(), i32> {
     }
     let family = u32::from(unsafe { read_at::<u16>(sk, off[OFF_SK_FAMILY])? });
     let mut addr = [0u8; 16];
-    if family == AF_INET {
+    let class = if family == AF_INET {
         let v4: [u8; 4] = unsafe { read_at(sk, off[OFF_SK_DADDR])? };
         addr[0] = v4[0];
         addr[1] = v4[1];
         addr[2] = v4[2];
         addr[3] = v4[3];
+        ipv4_class(v4)
     } else if family == AF_INET6 {
         addr = unsafe { read_at(sk, off[OFF_SK_V6_DADDR])? };
+        ipv6_class(&addr)
     } else {
+        return Ok(());
+    };
+    // Only what went to the internet is kept, as of the connections: an
+    // app talking to itself or to the local network fills no buffer.
+    if class != NET_PUBLIC {
         return Ok(());
     }
     let port = u16::from_be(unsafe { read_at::<u16>(sk, off[OFF_SK_DPORT])? });

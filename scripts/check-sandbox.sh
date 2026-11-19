@@ -628,6 +628,7 @@ network=no
 check "the network is left to an app in the sandbox ($(seen "$inside" network))" \
     [ "$(seen "$inside" network)" = "$(seen "$outside" network)" ]
 check "and so is the system's resolver ($(seen "$inside" resolver))" [ "$(seen "$inside" resolver)" = connected ]
+check "the daemon looks no name up for an app not given to it ($(seen "$inside" relay))" [ "$(seen "$inside" relay)" != answered ]
 # Other apps of the device may be kept from the network too.
 others_before="$(others_covered)"
 as_root "$BBD sandbox set $PACKAGE network=on" >/dev/null
@@ -637,6 +638,7 @@ run_canary
 check_if "$network" "$NO_NETWORK" "connections are refused ($(seen "$view" network))" [ "$(seen "$view" network)" = refused ]
 check "the app reaches itself over loopback ($(seen "$view" loopback))" [ "$(seen "$view" loopback)" = connected ]
 check "the system's resolver is out of reach ($(seen "$view" resolver))" [ "$(seen "$view" resolver)" = refused:IOException ]
+check "nor does the daemon look names up for it ($(seen "$view" relay))" [ "$(seen "$view" relay)" != answered ]
 check "no process but the app's lost the resolver" [ "$(others_covered)" = "$others_before" ]
 pids="$(adb shell pidof "$PACKAGE" | tr -d '\r')"
 as_root "$BBD sandbox set $PACKAGE network=off" >/dev/null
@@ -662,18 +664,19 @@ check "a connection to the internet is recorded" grep -q "\"addr\":\"$NET_PUBLIC
 check "and not counted as refused" [ "$(refused_of addr "$NET_PUBLIC" "$recorded")" = 0 ]
 as_root "$BBD net block $PACKAGE ip:$NET_PUBLIC" >/dev/null
 net="$NET_PUBLIC:80" run_canary
-check "kept from the address, the app is refused it ($(seen "$view" network))" [ "$(seen "$view" network)" = refused ]
+check_if "$network" "$NO_NETWORK" "kept from the address, the app is refused it ($(seen "$view" network))" \
+    [ "$(seen "$view" network)" = refused ]
 check "which is counted" [ "$(refused_of addr "$NET_PUBLIC" "$(activity)")" -gt 0 ]
 check "the app is listed with the rule" grep -q '"network_rules":1' <<<"$(as_root "$BBD sandbox list --json")"
 as_root "$BBD net unblock $PACKAGE ip:$NET_PUBLIC" >/dev/null
-check "no rule of the packet filter is left without one" \
-    [ "$(as_root "iptables -S OUTPUT" | grep -c bb_sandbox)" = 0 ]
+check "and no longer once the rule is gone" grep -q '"network_rules":0' <<<"$(as_root "$BBD sandbox list --json")"
 names=no
 [[ "$(status_field dns_names)" == true ]] && names=yes
 NO_NAMES="the daemon cannot stand in for the resolver here"
 check_if "$names" "$NO_NAMES" "the app's lookups go through the daemon" \
     [ "$(covered $(adb shell pidof "$PACKAGE" | tr -d '\r'))" -gt 0 ]
 check_if "$names" "$NO_NAMES" "and reach the resolver ($(seen "$view" resolver))" [ "$(seen "$view" resolver)" = connected ]
+check_if "$names" "$NO_NAMES" "which answers them ($(seen "$view" relay))" [ "$(seen "$view" relay)" = answered ]
 if [[ "$names" == yes ]]; then
     as_root "$BBD net block $PACKAGE domain:${NET_NAME#*.}" >/dev/null
     net="$NET_NAME:80" run_canary

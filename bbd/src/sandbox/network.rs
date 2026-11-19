@@ -448,6 +448,11 @@ impl Effect for Network {
         {
             eprintln!("bbd: sandbox: cannot clear the retired uid {uid}'s network rule: {e:#}");
         }
+        // The destinations it was kept from went before this: without any
+        // left, the rules go too.
+        if let Err(e) = self.settle() {
+            eprintln!("bbd: warning: the packet filter's rules are not as meant: {e:#}");
+        }
     }
 
     fn report(&self, status: &mut Status) {

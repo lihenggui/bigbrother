@@ -64,6 +64,12 @@ use crate::{
     syscalls,
 };
 
+/// A destination of the network records: a name, an address and a port.
+type NetDestination = (String, String, u16);
+
+/// The most destinations an app has rows of its own for in an hour.
+const NET_DESTINATIONS_PER_HOUR: usize = 512;
+
 const AT_FDCWD: i32 = -100;
 /// File type bits of an inode's mode.
 const S_IFMT: u32 = 0o170000;
@@ -222,6 +228,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         scans: net::Scans::default(),
         net: None,
         refused_lookups: None,
+        net_listed: (0, HashMap::new()),
         searches: commands::Searches::default(),
         catalog: None,
         sensors,
@@ -641,12 +648,27 @@ fn start_sandbox(
         })
     };
     let serves: sandbox::names::Serves = {
-        let snapshot = sandbox.snapshot();
+        let (snapshot, global, book) = (sandbox.snapshot(), sandbox.global(), sandbox.book());
         std::sync::Arc::new(move |uid| {
-            snapshot
-                .read()
-                .unwrap_or_else(|e| e.into_inner())
-                .contains_key(&uid)
+            // The apps given the daemon's socket, and no other: the socket
+            // can be found by any process, and an app kept from the
+            // network is to have no resolver at all.
+            let snapshot = snapshot.read().unwrap_or_else(|e| e.into_inner());
+            let Some(entry) = snapshot.get(&uid) else {
+                return false;
+            };
+            let items = sandbox::items_of(entry, &global.read().unwrap_or_else(|e| e.into_inner()));
+            !items.network_refused()
+                && (items.network_recorded()
+                    || book
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .get(&uid)
+                        .is_some_and(|targets| {
+                            targets
+                                .iter()
+                                .any(|target| !matches!(target, crate::netctl::Target::Ip(..)))
+                        }))
         })
     };
     let relay = sandbox::names::start(names.clone(), serves, refuses, lookups_refused);
@@ -1283,6 +1305,8 @@ struct Tracer {
     /// The lookups refused since they were last taken in: the uid and the
     /// name of each.
     refused_lookups: Option<std::sync::mpsc::Receiver<(u32, String)>>,
+    /// The destinations each app has rows of in the hour (see `net_key`).
+    net_listed: (i64, HashMap<u32, HashSet<NetDestination>>),
     /// Commands being looked for along `PATH`.
     searches: commands::Searches,
     /// The service methods being watched; `None` until they are known.
@@ -1574,14 +1598,10 @@ impl Tracer {
                     return;
                 };
                 let wide = |low: u32, high: u32| (u64::from(high) << 32) | u64::from(low);
+                let host = self.host_of(hdr.uid, address.ip());
+                let key = self.net_key(hdr.uid, ts, host, address.ip().to_string(), address.port());
                 self.writer.net_record(
-                    NetKey {
-                        uid: hdr.uid,
-                        hour: ts.div_euclid(3600),
-                        host: self.host_of(hdr.uid, address.ip()),
-                        addr: address.ip().to_string(),
-                        port: address.port(),
-                    },
+                    key,
                     NetSeen {
                         sent: wide(ev.sent_low, ev.sent_high),
                         recv: wide(ev.recv_low, ev.recv_high),
@@ -1622,14 +1642,10 @@ impl Tracer {
                         .net
                         .as_ref()
                         .is_some_and(|net| net.refuses(uid, address));
+                    let host = self.host_of(uid, address.ip());
+                    let key = self.net_key(uid, ts, host, address.ip().to_string(), address.port());
                     self.writer.net_record(
-                        NetKey {
-                            uid,
-                            hour: ts.div_euclid(3600),
-                            host: self.host_of(uid, address.ip()),
-                            addr: address.ip().to_string(),
-                            port: address.port(),
-                        },
+                        key,
                         NetSeen {
                             conn: u32::from(!refused),
                             refused: u32::from(refused),
@@ -1820,6 +1836,38 @@ impl Tracer {
     /// Isolated processes run under a uid of their own. Best effort: when
     /// the process is gone and its uid was not seen recently, the record
     /// stays under the isolated uid, without the flag.
+    /// What a row of the network records is about. An app has so many
+    /// destinations of its own in an hour; what it connects to past them
+    /// is counted together, of no destination: an app that goes through
+    /// addresses, or looks up names made up one after another, would
+    /// otherwise fill the database, which every record shares.
+    fn net_key(&mut self, uid: u32, ts: i64, host: String, addr: String, port: u16) -> NetKey {
+        let hour = ts.div_euclid(3600);
+        if self.net_listed.0 != hour {
+            self.net_listed = (hour, HashMap::new());
+        }
+        let listed = self.net_listed.1.entry(uid).or_default();
+        let destination = (host, addr, port);
+        if listed.len() >= NET_DESTINATIONS_PER_HOUR && !listed.contains(&destination) {
+            return NetKey {
+                uid,
+                hour,
+                host: String::new(),
+                addr: String::new(),
+                port: 0,
+            };
+        }
+        listed.insert(destination.clone());
+        let (host, addr, port) = destination;
+        NetKey {
+            uid,
+            hour,
+            host,
+            addr,
+            port,
+        }
+    }
+
     /// The name `uid` was given `address` for; empty if none is known.
     fn host_of(&self, uid: u32, address: std::net::IpAddr) -> String {
         self.net
@@ -1836,15 +1884,11 @@ impl Tracer {
             return;
         };
         let ts = now();
-        for (uid, host) in refused.try_iter() {
+        let lookups: Vec<(u32, String)> = refused.try_iter().collect();
+        for (uid, host) in lookups {
+            let key = self.net_key(uid, ts, host, String::new(), 0);
             self.writer.net_record(
-                NetKey {
-                    uid,
-                    hour: ts.div_euclid(3600),
-                    host,
-                    addr: String::new(),
-                    port: 0,
-                },
+                key,
                 NetSeen {
                     refused: 1,
                     ..NetSeen::default()

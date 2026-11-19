@@ -607,6 +607,16 @@ impl Sandbox {
                     for effect in &mut self.effects {
                         effect.forget(uid);
                     }
+                    // Nor what it was kept from, or what was recorded of it.
+                    self.book
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .remove(&uid);
+                    if let Err(e) = writer.net_forget(uid) {
+                        eprintln!(
+                            "bbd: sandbox: cannot delete the network records of a retired uid: {e:#}"
+                        );
+                    }
                 }
                 Err(_) => {
                     // A directory may be unavailable while the user starts.
@@ -818,15 +828,15 @@ impl Sandbox {
                 "the names apps look up cannot be refused on this device"
             ),
         }
-        {
+        let new = {
             let mut book = self.book.lock().unwrap_or_else(|e| e.into_inner());
             let targets = book.entry(uid).or_default();
             anyhow::ensure!(
                 targets.len() < RULES_PER_APP || targets.contains(&parsed),
                 "an app can be kept from {RULES_PER_APP} destinations at most"
             );
-            targets.insert(parsed.clone());
-        }
+            targets.insert(parsed.clone())
+        };
         let rule = crate::store::net::NetRule {
             uid,
             target: parsed.to_text(),
@@ -835,8 +845,11 @@ impl Sandbox {
         };
         let done = writer.put_net_rule(&rule).and_then(|()| self.refresh(uid));
         if let Err(e) = done {
-            // Not written, or not carried out: not a rule.
-            self.forget_rule(writer, uid, &parsed);
+            // Not written, or not carried out: not a rule, unless it was
+            // one before.
+            if new {
+                self.forget_rule(writer, uid, &parsed);
+            }
             return Err(e);
         }
         Ok(serde_json::json!({}))

@@ -147,6 +147,10 @@ pub struct Destinations {
     traffic: bool,
     /// The names apps were given addresses for, where they are known.
     names: Option<Arc<Names>>,
+    /// The addresses refused with each name an app is kept from: those it
+    /// was given for the name. Kept for as long as the rule is, whatever
+    /// becomes of what is remembered of the names.
+    with_names: HashMap<(u32, Target), BTreeSet<IpAddr>>,
 }
 
 impl Destinations {
@@ -187,6 +191,7 @@ impl Destinations {
             any,
             traffic: false,
             names: None,
+            with_names: HashMap::new(),
         }
     }
 
@@ -206,20 +211,26 @@ impl Destinations {
     /// the app was given for a name it is kept from. A name is refused
     /// where it is looked up; a connection to an address the app already
     /// has for it would otherwise go on.
-    fn wanted(&self, uid: u32) -> BTreeSet<Address> {
-        let book = self.book.lock().unwrap_or_else(|e| e.into_inner());
+    fn wanted(&mut self, uid: u32) -> BTreeSet<Address> {
+        let targets: BTreeSet<Target> = {
+            let book = self.book.lock().unwrap_or_else(|e| e.into_inner());
+            book.get(&uid).cloned().unwrap_or_default()
+        };
+        // Those of a rule that is gone go with it.
+        self.with_names
+            .retain(|(of, target), _| *of != uid || targets.contains(target));
         let mut wanted = BTreeSet::new();
-        for target in book.get(&uid).into_iter().flatten() {
-            match (target, &self.names) {
+        for target in targets {
+            match (&target, &self.names) {
                 (Target::Ip(ip, port), _) => {
                     wanted.insert((*ip, *port));
                 }
-                (name, Some(names)) => wanted.extend(
-                    names
-                        .addresses_of(uid, |host| name.covers_name(host))
-                        .into_iter()
-                        .map(|ip| (ip, None)),
-                ),
+                (name, Some(names)) => {
+                    let given = names.addresses_of(uid, |host| name.covers_name(host));
+                    let refused = self.with_names.entry((uid, target)).or_default();
+                    refused.extend(given);
+                    wanted.extend(refused.iter().map(|ip| (*ip, None)));
+                }
                 (_, None) => {}
             }
         }
@@ -261,6 +272,7 @@ impl Destinations {
         let wanted = if sandboxed {
             self.wanted(uid)
         } else {
+            self.with_names.retain(|(of, _), _| *of != uid);
             BTreeSet::new()
         };
         // What the kernel side has of them, kept as each step is done: a
@@ -585,10 +597,25 @@ mod tests {
         assert!(view.refuses(10001, "203.0.113.50:443".parse().unwrap()));
         assert!(!view.refuses(10001, "203.0.113.10:443".parse().unwrap()));
 
+        // They stay refused when the name is remembered for other
+        // addresses since, and another address given for it joins them.
+        view.names.as_ref().unwrap().learn(
+            10001,
+            "www.example.net",
+            &["203.0.113.50".parse().unwrap()],
+        );
+        view.names.as_ref().unwrap().learn(
+            10001,
+            "u.adnet.example",
+            &["203.0.113.52".parse().unwrap()],
+        );
+        f.effect.refresh(&entry(10001), &items(Mode::Off)).unwrap();
+        assert!(f.has(10001, "ip:203.0.113.50") && f.has(10001, "ip:203.0.113.52"));
+
         // With the rule gone the addresses are let through again.
         f.unrule(10001, "domain:adnet.example");
         f.effect.refresh(&entry(10001), &items(Mode::Off)).unwrap();
-        assert!(!f.has(10001, "ip:203.0.113.50"));
+        assert!(!f.has(10001, "ip:203.0.113.50") && !f.has(10001, "ip:203.0.113.52"));
     }
 
     #[test]

@@ -178,6 +178,18 @@ impl Writer {
             .execute("DELETE FROM net_dest WHERE uid = ?1", params![uid])?)
     }
 
+    /// Delete all that is kept of the network of `uid`: its records, its
+    /// rules and that it is recorded. For a uid that has gone to another
+    /// app, which none of them is about.
+    pub fn net_forget(&self, uid: u32) -> anyhow::Result<()> {
+        self.net_clear(uid)?;
+        self.conn
+            .execute("DELETE FROM net_rule WHERE uid = ?1", params![uid])?;
+        self.conn
+            .execute("DELETE FROM net_recording WHERE uid = ?1", params![uid])?;
+        Ok(())
+    }
+
     /// Every destination an app is kept from.
     pub fn net_rules(&self) -> anyhow::Result<Vec<NetRule>> {
         net_rules(&self.conn, None)
