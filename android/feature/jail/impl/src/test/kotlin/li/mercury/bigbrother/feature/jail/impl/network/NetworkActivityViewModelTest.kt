@@ -21,6 +21,8 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.RecordsException
+import li.mercury.bigbrother.core.model.ActivityBucket
+import li.mercury.bigbrother.core.model.BucketSize
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.NetworkTarget
 import li.mercury.bigbrother.core.model.SandboxItem
@@ -32,6 +34,8 @@ import li.mercury.bigbrother.core.testing.repository.TestAppInfoRepository
 import li.mercury.bigbrother.core.testing.repository.TestNetworkRepository
 import li.mercury.bigbrother.core.testing.repository.TestSandboxRepository
 import org.junit.Rule
+import java.time.Instant
+import java.time.ZoneId
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -138,11 +142,45 @@ class NetworkActivityViewModelTest {
         viewModel.selectBucket(night)
         assertEquals(night, viewModel.uiState.value.bucket)
         assertEquals(3, viewModel.uiState.value.totals.destinations)
+        assertEquals(night to (night + 3600), networkRepository.asked.last())
 
         viewModel.setRange(TimeRange.WEEK)
 
         assertNull(viewModel.uiState.value.bucket)
         assertEquals(38, viewModel.uiState.value.totals.destinations)
+    }
+
+    @Test
+    fun givenDailyChartAcrossClockChange_whenBarSelected_thenQueriesOnlyThatBarsShownInterval() = runTest {
+        val viewModel = viewModel()
+        viewModel.setRange(TimeRange.WEEK)
+        val transitions = listOf(
+            "2026-03-08T08:00:00Z" to "2026-03-09T07:00:00Z",
+            "2026-11-01T07:00:00Z" to "2026-11-02T08:00:00Z",
+        )
+        for ((dayStart, nextStart) in transitions) {
+            val day = Instant.parse(dayStart).epochSecond
+            val next = Instant.parse(nextStart).epochSecond
+            val previous = day - 86_400
+            val since = day - 5400
+            val until = next + 1800
+            networkRepository.activity = shopActivity().copy(
+                since = since,
+                until = until,
+                bucketSeconds = BucketSize.DAY.seconds,
+                buckets = listOf(previous, day, next).map { ActivityBucket(it, connections = 1, refused = 0) },
+                zone = ZoneId.of("America/Los_Angeles"),
+            )
+            viewModel.refresh()
+
+            for ((bar, start, end) in listOf(Triple(previous, since, day), Triple(day, day, next), Triple(next, next, until))) {
+                networkRepository.asked.clear()
+                viewModel.selectBucket(bar)
+
+                assertEquals(start to end, networkRepository.asked.single())
+                assertEquals(bar, viewModel.uiState.value.bucket)
+            }
+        }
     }
 
     @Test

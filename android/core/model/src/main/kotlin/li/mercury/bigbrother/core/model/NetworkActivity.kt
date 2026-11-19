@@ -17,6 +17,7 @@
 package li.mercury.bigbrother.core.model
 
 import java.net.IDN
+import java.time.ZoneId
 
 /**
  * What a block rule or a destination names. The daemon writes it as
@@ -245,7 +246,7 @@ data class DestinationActivity(
 /** Connections in the period from [start] (seconds since the epoch). */
 data class ActivityBucket(val start: Long, val connections: Int, val refused: Int)
 
-/** How long a period of [NetworkActivity.buckets] is. */
+/** How the chart is grouped. [seconds] identifies the grouping in the daemon's answer. */
 enum class BucketSize(val id: String, val seconds: Int) {
     HOUR("hour", 3_600),
     DAY("day", 86_400),
@@ -271,6 +272,8 @@ data class NetworkActivity(
     val addresses: List<DestinationActivity>,
     /** Every rule of the app, also those nothing tried to reach in the period. */
     val rules: List<NetworkRule>,
+    /** The device time zone used for this chart. */
+    val zone: ZoneId = ZoneId.systemDefault(),
 ) {
     /**
      * This activity with [target] blocked from [now], or not blocked by a
@@ -288,8 +291,13 @@ data class NetworkActivity(
     )
 }
 
-/** One destination of an app, with its connections in periods of [bucketSeconds]. */
-data class DestinationDetail(val destination: DestinationActivity, val buckets: List<ActivityBucket>, val bucketSeconds: Int = BucketSize.HOUR.seconds)
+/** One destination of an app, with its connections grouped by hour or by local day. */
+data class DestinationDetail(
+    val destination: DestinationActivity,
+    val buckets: List<ActivityBucket>,
+    val bucketSeconds: Int = BucketSize.HOUR.seconds,
+    val zone: ZoneId = ZoneId.systemDefault(),
+)
 
 /** This destination with [target] blocked, or the rule [target] gone if not [blocked]. */
 fun DestinationActivity.withRule(target: NetworkTarget, blocked: Boolean): DestinationActivity {

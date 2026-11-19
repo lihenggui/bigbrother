@@ -31,8 +31,11 @@ import li.mercury.bigbrother.core.model.NetworkTarget
 import li.mercury.bigbrother.core.model.PortActivity
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import java.util.TimeZone
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 import kotlin.test.Test
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -143,17 +146,86 @@ class RootNetworkRepositoryTest {
     }
 
     @Test
-    fun givenDays_whenRead_thenAsksForTheDevicesDays() = runTest {
-        val shell = TestRootShell("""{"ok":true,"since":0,"until":1,"bucket":86400}""")
-        val zone = TimeZone.getDefault()
-        TimeZone.setDefault(TimeZone.getTimeZone("GMT-05:30"))
-        try {
-            RootNetworkRepository(shell, Dispatchers.Unconfined).getActivity("com.example.shopping", 0, 0, bucket = BucketSize.DAY)
-        } finally {
-            TimeZone.setDefault(zone)
-        }
+    fun givenClockChanges_whenReadingDays_thenUsesMidnightsOnBothSidesOfEachChange() = runTest {
+        val zone = ZoneId.of("America/Los_Angeles")
+        val shell = TestRootShell(ACTIVITY)
+        val repository = RootNetworkRepository(shell, Dispatchers.Unconfined)
+        val transitions = listOf(
+            listOf("2026-03-07T08:00:00Z", "2026-03-08T08:00:00Z", "2026-03-09T07:00:00Z"),
+            listOf("2026-10-31T07:00:00Z", "2026-11-01T07:00:00Z", "2026-11-02T08:00:00Z"),
+        )
+        for (transition in transitions) {
+            val starts = transition.map { Instant.parse(it).epochSecond }
+            val until = starts.last() + 5400
+            for (days in listOf(7, 30)) {
+                val since = until - days * 86_400L
 
-        assertTrue("--bucket day --offset -19800 --user 0" in shell.lines.single())
+                val activity = repository.getActivity("com.example.shopping", 0, since, until, BucketSize.DAY, zone)
+
+                val args = "--since $since --until $until --bucket day --day-starts="
+                val line = shell.lines.last()
+                assertContains(line, args)
+                val actual = line.substringAfter(args).substringBefore(' ').split(',').map(String::toLong)
+                assertEquals(days + 1, actual.size)
+                assertEquals(starts, actual.takeLast(starts.size))
+                assertEquals(zone, activity.zone)
+            }
+        }
+    }
+
+    @Test
+    fun givenSkippedDate_whenReadingDays_thenNoBarForTheMissingDateOrExclusiveEnd() = runTest {
+        val shell = TestRootShell(ACTIVITY)
+        val start = Instant.parse("2011-12-29T10:00:00Z").epochSecond
+        val afterSkip = Instant.parse("2011-12-30T10:00:00Z").epochSecond
+        val end = Instant.parse("2011-12-31T10:00:00Z").epochSecond
+
+        RootNetworkRepository(shell, Dispatchers.Unconfined).getActivity(
+            "com.example.shopping",
+            0,
+            start + 1,
+            end,
+            BucketSize.DAY,
+            ZoneId.of("Pacific/Apia"),
+        )
+
+        assertContains(shell.lines.single(), "--day-starts=$start,$afterSkip ")
+    }
+
+    @Test
+    fun givenDaysUpToNow_whenReadingActivityAndDestination_thenBothSendBoundsInTheRequestedZone() = runTest {
+        val shell = TestRootShell("""{"ok":true,"since":0,"until":1,"bucket":86400,"addr":"198.51.100.53"}""")
+        val repository = RootNetworkRepository(shell, Dispatchers.Unconfined)
+        val zone = ZoneId.of("Asia/Kathmandu")
+        val first = LocalDate.now(zone).minusDays(2).atStartOfDay(zone).toEpochSecond()
+        val since = first + 3600
+        val before = Instant.now().epochSecond
+
+        repository.getActivity("com.example.shopping", 0, since, bucket = BucketSize.DAY, zone = zone)
+        val detail = repository.getDestination("com.example.shopping", 0, NetworkTarget.Address("198.51.100.53"), since, BucketSize.DAY, zone)
+
+        val after = Instant.now().epochSecond
+        val dayArgs = Regex("--since $since --until (\\d+) --bucket day --day-starts=([0-9,]+) ")
+        for (line in shell.lines) {
+            val (_, end, starts) = checkNotNull(dayArgs.find(line)).groupValues
+            val until = end.toLong()
+            assertTrue(until in before..after)
+            assertEquals(first, starts.substringBefore(',').toLong())
+            assertEquals(
+                Instant.ofEpochSecond(until - 1).atZone(zone).toLocalDate().atStartOfDay(zone).toEpochSecond(),
+                starts.substringAfterLast(',').toLong(),
+            )
+        }
+        assertEquals(zone, detail.zone)
+    }
+
+    @Test
+    fun givenDaemonWithoutDayStarts_whenReadingDays_thenModuleOutdated() = runTest {
+        val shell = TestRootShell("", error = "error: unexpected argument '--day-starts=0' found")
+
+        assertFailsWith<RecordsException.ModuleOutdated> {
+            RootNetworkRepository(shell, Dispatchers.Unconfined).getActivity("com.example.shopping", 0, 0, 1, BucketSize.DAY, ZoneId.of("UTC"))
+        }
     }
 
     @Test

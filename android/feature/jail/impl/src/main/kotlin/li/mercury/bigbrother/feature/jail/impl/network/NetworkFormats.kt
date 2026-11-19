@@ -23,9 +23,12 @@ import androidx.compose.ui.platform.LocalContext
 import li.mercury.bigbrother.core.model.BucketSize
 import li.mercury.bigbrother.core.model.TimeRange
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Formatter
 import java.util.Locale
+import java.util.TimeZone
 import kotlin.math.roundToLong
 
 private const val UNIT = 1024.0
@@ -86,7 +89,7 @@ internal fun TimeRange.since(now: Long): Long = now - when (this) {
     TimeRange.ALL -> RECORDS_KEPT_DAYS * 86_400L
 }
 
-/** How long the chart's bars are for a range: hours for a day, days beyond. */
+/** How the chart groups a range: hours for a day, local days beyond. */
 internal val TimeRange.bucketSize: BucketSize get() = if (this == TimeRange.DAY || this == TimeRange.HOUR) BucketSize.HOUR else BucketSize.DAY
 
 /** How long records are kept. */
@@ -107,16 +110,22 @@ internal fun dateTime(epochSeconds: Long): String = dateTime(LocalContext.curren
 
 /** A day, "Nov 16", in the device's locale. */
 @Composable
-internal fun shortDate(epochSeconds: Long): String = DateUtils.formatDateTime(
-    LocalContext.current,
-    epochSeconds * 1000,
-    DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH or DateUtils.FORMAT_NO_YEAR,
-)
+internal fun shortDate(epochSeconds: Long, zone: ZoneId): String {
+    val millis = epochSeconds * 1000
+    return DateUtils.formatDateRange(
+        LocalContext.current,
+        Formatter(Locale.getDefault()),
+        millis,
+        millis,
+        DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH or DateUtils.FORMAT_NO_YEAR,
+        TimeZone.getTimeZone(zone).id,
+    ).toString()
+}
 
 /** A bar of the chart: its hours, after its day if that is not today; or its day. */
 @Composable
-internal fun periodLabel(start: Long, seconds: Int): String = when {
-    seconds >= BucketSize.DAY.seconds -> shortDate(start)
-    DateUtils.isToday(start * 1000) -> hourRange(start, seconds)
-    else -> shortDate(start) + " " + hourRange(start, seconds)
+internal fun periodLabel(start: Long, bucketSeconds: Int, zone: ZoneId): String = when {
+    bucketSeconds == BucketSize.DAY.seconds -> shortDate(start, zone)
+    Instant.ofEpochSecond(start).atZone(zone).toLocalDate() == LocalDate.now(zone) -> hourRange(start, bucketSeconds, zone)
+    else -> shortDate(start, zone) + " " + hourRange(start, bucketSeconds, zone)
 }

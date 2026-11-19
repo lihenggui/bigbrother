@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import li.mercury.bigbrother.core.model.ActivityBucket
 import li.mercury.bigbrother.core.model.BucketSize
 import li.mercury.bigbrother.feature.jail.impl.R
+import java.time.ZoneId
 
 /**
  * Connections period by period as bars: those made, and above them, in the
@@ -58,6 +59,7 @@ import li.mercury.bigbrother.feature.jail.impl.R
 internal fun ActivityChart(
     buckets: List<ActivityBucket>,
     bucketSeconds: Int,
+    zone: ZoneId,
     selected: Long?,
     onSelect: ((Long?) -> Unit)?,
     modifier: Modifier = Modifier,
@@ -111,13 +113,13 @@ internal fun ActivityChart(
             }
             drawLine(axis, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx())
         }
-        AxisLabels(buckets, bucketSeconds)
+        AxisLabels(buckets, bucketSeconds, zone)
     }
 }
 
 /** A few times under the chart: its start, three between, and now at its end. */
 @Composable
-private fun AxisLabels(buckets: List<ActivityBucket>, bucketSeconds: Int) {
+private fun AxisLabels(buckets: List<ActivityBucket>, bucketSeconds: Int, zone: ZoneId) {
     if (buckets.size < 2) return
     val style = MaterialTheme.typography.labelSmall
     val color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -125,7 +127,7 @@ private fun AxisLabels(buckets: List<ActivityBucket>, bucketSeconds: Int) {
     Row(Modifier.fillMaxWidth()) {
         marks.forEach { index ->
             val start = buckets[index].start
-            val label = if (bucketSeconds >= BucketSize.DAY.seconds) shortDate(start) else clockTime(start)
+            val label = if (bucketSeconds == BucketSize.DAY.seconds) shortDate(start, zone) else clockTime(start, zone)
             Text(label, style = style, color = color, modifier = Modifier.weight(1f), maxLines = 1)
         }
         Text(stringResource(R.string.jail_net_now), style = style, color = color, textAlign = TextAlign.End, maxLines = 1)

@@ -40,7 +40,8 @@ import li.mercury.bigbrother.core.model.NetworkTarget
 import li.mercury.bigbrother.core.model.PortActivity
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.TimeZone
+import java.time.Instant
+import java.time.ZoneId
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -57,10 +58,24 @@ interface NetworkRepository {
     val changes: StateFlow<Int>
 
     /** An app's connections from [since] to [until] (now if null), in periods of [bucket]. */
-    suspend fun getActivity(packageName: String, userId: Int, since: Long, until: Long? = null, bucket: BucketSize = BucketSize.HOUR): NetworkActivity
+    suspend fun getActivity(
+        packageName: String,
+        userId: Int,
+        since: Long,
+        until: Long? = null,
+        bucket: BucketSize = BucketSize.HOUR,
+        zone: ZoneId = ZoneId.systemDefault(),
+    ): NetworkActivity
 
     /** One destination of an app, a domain or an address, from [since], in periods of [bucket]. */
-    suspend fun getDestination(packageName: String, userId: Int, target: NetworkTarget, since: Long, bucket: BucketSize = BucketSize.HOUR): DestinationDetail
+    suspend fun getDestination(
+        packageName: String,
+        userId: Int,
+        target: NetworkTarget,
+        since: Long,
+        bucket: BucketSize = BucketSize.HOUR,
+        zone: ZoneId = ZoneId.systemDefault(),
+    ): DestinationDetail
 
     /** Blocks [target] for an app at once; [manual] if it was typed in rather than chosen from the records. */
     suspend fun block(packageName: String, userId: Int, target: NetworkTarget, manual: Boolean = false)
@@ -84,24 +99,39 @@ internal class RootNetworkRepository @Inject constructor(
     // Package names come from the package manager and targets from the
     // daemon or the user: all are quoted. Everything else is a number or a
     // constant.
-    override suspend fun getActivity(packageName: String, userId: Int, since: Long, until: Long?, bucket: BucketSize): NetworkActivity {
-        val range = "--since $since" + (until?.let { " --until $it" } ?: "") + bars(bucket)
-        return net("activity ${packageName.shellQuoted()} $range --user $userId") { toActivity() }
+    override suspend fun getActivity(packageName: String, userId: Int, since: Long, until: Long?, bucket: BucketSize, zone: ZoneId): NetworkActivity {
+        val range = chartRange(since, until, bucket, zone)
+        return net("activity ${packageName.shellQuoted()} $range --user $userId") { toActivity(zone) }
     }
 
-    override suspend fun getDestination(packageName: String, userId: Int, target: NetworkTarget, since: Long, bucket: BucketSize): DestinationDetail {
-        val args = "destination ${packageName.shellQuoted()} ${target.id.shellQuoted()} --since $since${bars(bucket)} --user $userId"
+    override suspend fun getDestination(packageName: String, userId: Int, target: NetworkTarget, since: Long, bucket: BucketSize, zone: ZoneId): DestinationDetail {
+        val range = chartRange(since, null, bucket, zone)
+        val args = "destination ${packageName.shellQuoted()} ${target.id.shellQuoted()} $range --user $userId"
         return net(args) {
-            DestinationDetail(toDestination(), optJSONArray("buckets").toBuckets(), optInt("bucket", BucketSize.HOUR.seconds))
+            DestinationDetail(toDestination(), optJSONArray("buckets").toBuckets(), optInt("bucket", BucketSize.HOUR.seconds), zone)
         }
     }
 
     /**
-     * The bars of a chart. The daemon counts by the hour of UTC; days begin
-     * where the device has them, which only this side knows.
+     * The app and daemon need the same end of the range to agree on its
+     * last day. Only the app has the device's time zone rules.
      */
-    private fun bars(bucket: BucketSize): String = " --bucket ${bucket.id}" +
-        if (bucket == BucketSize.DAY) " --offset ${TimeZone.getDefault().getOffset(System.currentTimeMillis()) / MILLIS_PER_SECOND}" else ""
+    private fun chartRange(since: Long, until: Long?, bucket: BucketSize, zone: ZoneId): String {
+        if (bucket == BucketSize.HOUR) {
+            return "--since $since" + (until?.let { " --until $it" } ?: "") + " --bucket ${bucket.id}"
+        }
+        val end = until ?: Instant.now().epochSecond
+        if (since >= end) throw RecordsException.CommandFailed("the period is empty")
+        val firstDay = Instant.ofEpochSecond(since).atZone(zone).toLocalDate()
+        val starts = generateSequence(firstDay) { it.plusDays(1) }
+            .map { it.atStartOfDay(zone).toEpochSecond() }
+            .takeWhile { it < end }
+            .distinct() // A skipped date has the same start as the following date.
+            .take(MOST_BUCKETS + 1)
+            .toList()
+        if (starts.size > MOST_BUCKETS) throw RecordsException.CommandFailed("the period has more than $MOST_BUCKETS buckets")
+        return "--since $since --until $end --bucket ${bucket.id} --day-starts=${starts.joinToString(",")}"
+    }
 
     override suspend fun block(packageName: String, userId: Int, target: NetworkTarget, manual: Boolean) {
         net("block ${packageName.shellQuoted()} ${target.id.shellQuoted()}" + (if (manual) " --manual" else "") + " --user $userId") {
@@ -129,7 +159,7 @@ internal class RootNetworkRepository @Inject constructor(
         answer.map()
     }
 
-    private fun JSONObject.toActivity(): NetworkActivity {
+    private fun JSONObject.toActivity(zone: ZoneId): NetworkActivity {
         val destinations = optJSONArray("destinations").objects().map { it.toDestination() }
         val recording = optJSONObject("recording")
         return NetworkActivity(
@@ -150,6 +180,7 @@ internal class RootNetworkRepository @Inject constructor(
             rules = optJSONArray("rules").objects().mapNotNull { rule ->
                 NetworkTarget.fromId(rule.getString("target"))?.let { NetworkRule(it, rule.optLong("created"), rule.optBoolean("manual")) }
             },
+            zone = zone,
         )
     }
 
@@ -210,6 +241,6 @@ internal class RootNetworkRepository @Inject constructor(
     private fun JSONArray?.strings(): List<String> = if (this == null) emptyList() else List(length()) { getString(it) }
 
     private companion object {
-        const val MILLIS_PER_SECOND = 1000
+        const val MOST_BUCKETS = 1000
     }
 }

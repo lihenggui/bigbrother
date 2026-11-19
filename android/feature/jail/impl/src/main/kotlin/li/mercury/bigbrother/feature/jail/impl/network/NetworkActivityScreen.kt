@@ -509,6 +509,7 @@ private fun Summary(state: NetworkActivityUiState, activity: NetworkActivity, on
                 ActivityChart(
                     buckets = shown.buckets,
                     bucketSeconds = shown.bucketSeconds,
+                    zone = shown.zone,
                     selected = state.bucket,
                     onSelect = onSelect,
                     modifier = Modifier.padding(top = 12.dp),
@@ -544,7 +545,7 @@ private fun Filters(state: NetworkActivityUiState, actions: NetworkActivityActio
             InputChip(
                 selected = true,
                 onClick = { actions.onSelectBucket(null) },
-                label = { Text(periodLabel(bucket, activity.bucketSeconds)) },
+                label = { Text(periodLabel(bucket, activity.bucketSeconds, activity.zone)) },
                 trailingIcon = { Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(InputChipDefaults.IconSize)) },
             )
         }

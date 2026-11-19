@@ -63,9 +63,8 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
-import li.mercury.bigbrother.core.model.ActivityBucket
-import li.mercury.bigbrother.core.model.BucketSize
 import li.mercury.bigbrother.core.model.DestinationActivity
+import li.mercury.bigbrother.core.model.DestinationDetail
 import li.mercury.bigbrother.core.model.NetworkTarget
 import li.mercury.bigbrother.core.model.PortActivity
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
@@ -168,7 +167,7 @@ private fun LazyListScope.details(
             }
         }
     }
-    item(key = "stats") { Stats(destination, state.detail?.buckets.orEmpty(), state.detail?.bucketSeconds ?: BucketSize.HOUR.seconds) }
+    item(key = "stats") { state.detail?.let { Stats(destination, it) } }
     val site = (target as? NetworkTarget.Domain)?.name
     // A site seen under its own name alone has no names to list, unless that
     // name is blocked by itself: the rule is shown where it can be removed.
@@ -286,7 +285,7 @@ private fun Limit(text: String) {
 
 /** Data both ways and connections, then the hours it was reached in. */
 @Composable
-private fun Stats(destination: DestinationActivity, buckets: List<ActivityBucket>, bucketSeconds: Int) {
+private fun Stats(destination: DestinationActivity, detail: DestinationDetail) {
     val numbers = NumberFormat.getIntegerInstance()
     Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
@@ -294,11 +293,12 @@ private fun Stats(destination: DestinationActivity, buckets: List<ActivityBucket
             destination.received?.let { Stat(formatBytes(it), stringResource(R.string.jail_net_received), Modifier.weight(1f)) }
             Stat(numbers.format(destination.connections), stringResource(R.string.jail_net_connections_label), Modifier.weight(1f))
         }
-        if (buckets.isNotEmpty()) {
+        if (detail.buckets.isNotEmpty()) {
             Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceBright, modifier = Modifier.fillMaxWidth()) {
                 ActivityChart(
-                    buckets = buckets,
-                    bucketSeconds = bucketSeconds,
+                    buckets = detail.buckets,
+                    bucketSeconds = detail.bucketSeconds,
+                    zone = detail.zone,
                     selected = null,
                     onSelect = null,
                     height = 36.dp,
