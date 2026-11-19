@@ -438,6 +438,9 @@ check "the notifications are given to the listener ($(listening))" [ "$(listenin
 ad_id=no
 [[ "$(seen "$outside" ad_id)" =~ ^[0-9a-f-]{36}$ && "$(seen "$outside" ad_id)" != "$NO_AD_ID" ]] && ad_id=yes
 NO_REAL_AD_ID="Google Play services gives no advertising ID ($(seen "$outside" ad_id))"
+ad_services=no
+[[ "$(seen "$outside" ad_services)" == bound ]] && ad_services=yes
+NO_AD_SERVICES="Android's advertising ID service cannot be bound ($(seen "$outside" ad_services))"
 pick_marker
 if [[ -n "$picked" ]]; then
     run_canary
@@ -532,6 +535,8 @@ fi
 if [[ "$(status_field ad_id)" == true ]]; then
     check_if "$ad_id" "$NO_REAL_AD_ID" "the advertising ID is withheld ($(seen "$inside" ad_id))" \
         [ "$(seen "$inside" ad_id)" = "$NO_AD_ID" ]
+    check_if "$ad_services" "$NO_AD_SERVICES" "Android's advertising ID service is not found ($(seen "$inside" ad_services))" \
+        [ "$(seen "$inside" ad_services)" = not_bound ]
 else
     skip "the advertising ID: the hook is not in place"
 fi
@@ -709,6 +714,7 @@ check "the chip is named again" [ "$(seen "$after" cpu_named)" = true ]
 check_if "$network" "$NO_NETWORK" "the network is back ($(seen "$after" network))" [ "$(seen "$after" network)" = connected ]
 check "the Android ID is the real one" [ "$(seen "$after" android_id)" = "$(seen "$outside" android_id)" ]
 check_if "$ad_id" "$NO_REAL_AD_ID" "the advertising ID is the real one" [ "$(seen "$after" ad_id)" = "$(seen "$outside" ad_id)" ]
+check_if "$ad_services" "$NO_AD_SERVICES" "Android's advertising ID service is found again" [ "$(seen "$after" ad_services)" = bound ]
 check "the installed apps are visible again" [ "$(seen "$after" apps)" = "$(seen "$outside" apps)" ]
 check "the clipboard is readable again" [ "$(seen "$after" clipboard)" = "$(seen "$outside" clipboard)" ]
 # As the app finds them: `appops get` also lists an op once the app has

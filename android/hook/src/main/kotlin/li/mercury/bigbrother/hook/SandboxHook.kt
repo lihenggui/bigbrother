@@ -17,6 +17,8 @@
 package li.mercury.bigbrother.hook
 
 import android.annotation.SuppressLint
+import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.database.Cursor
 import android.database.MatrixCursor
@@ -53,6 +55,11 @@ import java.util.concurrent.atomic.AtomicBoolean
  * - Whether the app holds the advertising ID permission, which Google Play
  *   services asks the permission manager before it gives the ID. An app
  *   with an Android ID of its own is said not to, and gets an ID of zeros.
+ * - Which services and providers the app reaches. One with an Android ID
+ *   of its own finds none of those that give advertising and device
+ *   identifiers, as on a device without them: Android's own advertising
+ *   ID, the vendors' (OAID), and Play services' for an app it gives the ID
+ *   to without asking for the permission.
  *
  * The daemon lists the sandboxed uids in [LIST_PATH] and reads [STATUS_PATH]
  * to learn which hooks attached. Nothing else is shared with it.
@@ -180,19 +187,40 @@ internal class SandboxHook(private val module: XposedInterface) {
 
     /**
      * Google Play services checks the permission by package, and other
-     * releases of it may by uid: both are hooked, or neither counts. Only
-     * a check of [AD_ID_PERMISSION] is looked at further.
+     * releases of it may by uid: both are hooked. Only a check of
+     * [AD_ID_PERMISSION] is looked at further. The services and providers
+     * that give identifiers are kept from the app where it asks for them:
+     * binding a service (`ActiveServices.bindServiceLocked`, which every
+     * bind goes through, whether or not the service runs already) and
+     * getting a provider (`ContentProviderHelper.getContentProvider`).
+     * Every one of them is hooked, or none counts.
      */
     @SuppressLint("PrivateApi")
     private fun hookAdId(classLoader: ClassLoader, list: SandboxList): Boolean {
         val service = Class.forName(PERMISSION_MANAGER_CLASS, false, classLoader)
         val byPackage = service.declaredMethods.filter { it.name == "checkPermission" && it.returnType == Int::class.javaPrimitiveType }
         val byUid = service.declaredMethods.filter { it.name == "checkUidPermission" && it.returnType == Int::class.javaPrimitiveType }
-        if (byPackage.isEmpty() || byUid.isEmpty()) return false
-        val packageUid = packageUidMethod() ?: return false
+        val binds = Class.forName(ACTIVE_SERVICES_CLASS, false, classLoader).declaredMethods.filter {
+            it.name == "bindServiceLocked" && it.returnType == Int::class.javaPrimitiveType && Intent::class.java in it.parameterTypes
+        }
+        // (caller, callingPackage, name, userId, stable): the name is the
+        // last of the two strings.
+        val providers = Class.forName(PROVIDER_HELPER_CLASS, false, classLoader).declaredMethods.filter {
+            it.name == "getContentProvider" && it.parameterTypes.count { type -> type == String::class.java } == 2
+        }
+        if (byPackage.isEmpty() || byUid.isEmpty() || binds.isEmpty() || providers.isEmpty()) return false
+        val packageManagerClass = Class.forName("android.content.pm.IPackageManager")
+        val packageUid = packageUidMethod(packageManagerClass) ?: return false
+        val applicationInfo = packageManagerClass.methods.firstOrNull {
+            it.name == "getApplicationInfo" && it.parameterTypes.size == 3 && it.parameterTypes[0] == String::class.java
+        } ?: return false
+        val packagesForUid = packageManagerClass.getMethod("getPackagesForUid", Int::class.javaPrimitiveType)
         val packageManager = Class.forName("android.app.AppGlobals").getMethod("getPackageManager")
+        val targets = TargetSdks(packageManager, packagesForUid, applicationInfo)
         for (method in byPackage) module.hook(method).intercept(AdIdPackageHooker(module, list, packageManager, packageUid))
         for (method in byUid) module.hook(method).intercept(AdIdUidHooker(module, list))
+        for (method in binds) module.hook(method).intercept(IdServiceHooker(module, list, targets))
+        for (method in providers) module.hook(method).intercept(IdProviderHooker(module, list))
         return true
     }
 
@@ -200,8 +228,7 @@ internal class SandboxHook(private val module: XposedInterface) {
      * `IPackageManager.getPackageUid(String, flags, int userId)`, the flags
      * a `long` from Android 13 and an `int` before.
      */
-    @SuppressLint("PrivateApi")
-    private fun packageUidMethod(): Method? = Class.forName("android.content.pm.IPackageManager").methods.firstOrNull {
+    private fun packageUidMethod(packageManagerClass: Class<*>): Method? = packageManagerClass.methods.firstOrNull {
         it.name == "getPackageUid" && it.parameterTypes.size == 3 && it.parameterTypes[0] == String::class.java
     }
 
@@ -406,6 +433,72 @@ internal class SandboxHook(private val module: XposedInterface) {
         }
     }
 
+    /**
+     * The releases the packages of a uid target, as system_server sees
+     * them. `IPackageManager.getApplicationInfo(String, flags, userId)`
+     * takes its flags as a `long` from Android 13 and an `int` before.
+     */
+    private class TargetSdks(
+        private val packageManager: Method,
+        private val packagesForUid: Method,
+        private val applicationInfo: Method,
+    ) {
+        fun of(uid: Int): List<Int> {
+            val identity = Binder.clearCallingIdentity()
+            try {
+                val manager = packageManager.invoke(null)
+                val packages = packagesForUid.invoke(manager, uid) as Array<*>? ?: return emptyList()
+                val flags: Any = if (applicationInfo.parameterTypes[1] == Long::class.javaPrimitiveType) 0L else 0
+                return packages.mapNotNull { name ->
+                    (applicationInfo.invoke(manager, name, flags, uid / PER_USER_RANGE) as ApplicationInfo?)?.targetSdkVersion
+                }
+            } finally {
+                Binder.restoreCallingIdentity(identity)
+            }
+        }
+    }
+
+    /**
+     * Has a bind of an identifier service by an app with an Android ID of
+     * its own fail as if there were no such service: `bindService` returns
+     * false, which the identifier SDKs take for a device without it. Not
+     * an error of the system's, which would throw in the app. Named class,
+     * not a lambda: see `ProviderHook.RecordingHooker`.
+     */
+    private class IdServiceHooker(
+        module: XposedInterface,
+        private val list: SandboxList,
+        private val targets: TargetSdks,
+    ) : FailSafeHooker(module, "identifier services") {
+        override fun replacement(chain: XposedInterface.Chain): Any? {
+            val intent = chain.args.firstOrNull { it is Intent } as Intent? ?: return null
+            val component = intent.component
+            val kind = idServiceBound(component?.packageName ?: intent.`package`, component?.className, intent.action) ?: return null
+            // The app's own: the activity manager reads it the same way.
+            val uid = Binder.getCallingUid()
+            if (!list.withholdsAdIdFrom(uid)) return null
+            if (kind == IdServiceKind.PLAY_SERVICES && !playServicesGivesIdUnasked(targets.of(uid))) return null
+            return NOT_BOUND
+        }
+    }
+
+    /**
+     * Gives an app with an Android ID of its own no provider of a device
+     * identifier, as if there were none: what it asks of it returns
+     * nothing. Named class, not a lambda: see
+     * `ProviderHook.RecordingHooker`.
+     */
+    private class IdProviderHooker(
+        module: XposedInterface,
+        private val list: SandboxList,
+    ) : FailSafeHooker(module, "identifier providers") {
+        override fun replacement(chain: XposedInterface.Chain): Any? {
+            val name = chain.args.lastOrNull { it is String } as String? ?: return null
+            if (!isIdProvider(name) || !list.withholdsAdIdFrom(Binder.getCallingUid())) return null
+            return NULL_ANSWER
+        }
+    }
+
     /** As [AdIdPackageHooker], for a check by uid. */
     private class AdIdUidHooker(
         module: XposedInterface,
@@ -429,7 +522,10 @@ internal class SandboxHook(private val module: XposedInterface) {
     ) : XposedInterface.Hooker {
         private val failureLogged = AtomicBoolean(false)
 
-        /** The value to return in place of the original call, or null to let it run. */
+        /**
+         * The value to return in place of the original call, or null to let
+         * it run; [NULL_ANSWER] to return null.
+         */
         abstract fun replacement(chain: XposedInterface.Chain): Any?
 
         override fun intercept(chain: XposedInterface.Chain): Any? {
@@ -441,7 +537,11 @@ internal class SandboxHook(private val module: XposedInterface) {
                 }
                 null
             }
-            return replaced ?: chain.proceed()
+            return when {
+                replaced === NULL_ANSWER -> null
+                replaced != null -> replaced
+                else -> chain.proceed()
+            }
         }
     }
 
@@ -458,6 +558,16 @@ internal class SandboxHook(private val module: XposedInterface) {
         const val GUARD_DIR = "/data/system/big_brother_hook"
 
         const val PERMISSION_MANAGER_CLASS = "com.android.server.pm.permission.PermissionManagerService"
+        const val ACTIVE_SERVICES_CLASS = "com.android.server.am.ActiveServices"
+
+        /** Android 12 and later. */
+        const val PROVIDER_HELPER_CLASS = "com.android.server.am.ContentProviderHelper"
+
+        /** What `bindServiceLocked` returns for a service not found; `bindService` then returns false. */
+        const val NOT_BOUND = 0
+
+        /** A [FailSafeHooker.replacement] that has the hooked method return null. */
+        val NULL_ANSWER = Any()
 
         /** Android 11 and later. */
         const val URI_PERMISSION_CLASS = "com.android.server.uri.UriPermission"

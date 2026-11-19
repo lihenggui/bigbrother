@@ -297,6 +297,7 @@ class MainActivity : Activity() {
             }
         }
         view("ad_id") { adId() }
+        view("ad_services") { adServices() }
         view("apps") {
             packageManager.getInstalledApplications(0)
                 .filter { it.flags and ApplicationInfo.FLAG_SYSTEM == 0 }
@@ -324,6 +325,22 @@ class MainActivity : Activity() {
             reported.await(ISOLATED_WAIT_S, TimeUnit.SECONDS)
             unbindService(connection)
         }
+    }
+
+    /**
+     * Whether Android's own advertising ID service can be bound: `bound`,
+     * `not_bound`, or `none` on a device without it.
+     */
+    private fun adServices(): String {
+        val action = Intent(AD_SERVICES_ACTION)
+        val service = packageManager.queryIntentServices(action, 0).firstOrNull()?.serviceInfo ?: return "none"
+        val connection = object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName, service: IBinder) = Unit
+            override fun onServiceDisconnected(name: ComponentName) = Unit
+        }
+        val bound = bindService(action.setClassName(service.packageName, service.name), connection, BIND_AUTO_CREATE)
+        if (bound) unbindService(connection)
+        return if (bound) "bound" else "not_bound"
     }
 
     /**
@@ -460,6 +477,9 @@ class MainActivity : Activity() {
         const val AD_ID_INTERFACE = "com.google.android.gms.ads.identifier.internal.IAdvertisingIdService"
         const val AD_ID_GET = IBinder.FIRST_CALL_TRANSACTION
         const val AD_ID_WAIT_S = 10L
+
+        /** Android's own advertising ID service (`AdIdManager`), from Android 13. */
+        const val AD_SERVICES_ACTION = "android.adservices.ADID_SERVICE"
 
         /** How long the sensors stay on: a known length for the recorded sessions. */
         const val SENSORS_ON_MS = 10_000L

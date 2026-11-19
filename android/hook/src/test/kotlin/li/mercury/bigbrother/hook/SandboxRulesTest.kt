@@ -185,6 +185,47 @@ class SandboxRulesTest {
     }
 
     @Test
+    fun givenTheWaysToAnIdService_whenBound_thenEachIsFound() {
+        // Play services, by its action and by its class.
+        assertEquals(IdServiceKind.PLAY_SERVICES, idServiceBound("com.google.android.gms", null, "com.google.android.gms.ads.identifier.service.START"))
+        assertEquals(
+            IdServiceKind.PLAY_SERVICES,
+            idServiceBound("com.google.android.gms", "com.google.android.gms.ads.identifier.service.AdvertisingIdService", null),
+        )
+        // AdServices and Huawei in whichever package serves them.
+        assertEquals(IdServiceKind.OTHER, idServiceBound("com.google.android.adservices.api", null, "android.adservices.ADID_SERVICE"))
+        assertEquals(IdServiceKind.OTHER, idServiceBound("com.android.adservices.api", "com.android.adservices.adid.AdIdService", null))
+        assertEquals(IdServiceKind.OTHER, idServiceBound("com.huawei.hwid", null, "com.uodis.opendevice.OPENIDS_SERVICE"))
+        assertEquals(IdServiceKind.OTHER, idServiceBound("com.samsung.android.deviceidservice", "com.samsung.android.deviceidservice.DeviceIdService", null))
+        assertEquals(IdServiceKind.OTHER, idServiceBound("com.android.creator", null, "android.service.action.msa"))
+    }
+
+    @Test
+    fun givenAnotherServiceOfTheSamePackages_whenBound_thenItIsNotAnIdService() {
+        assertNull(idServiceBound("com.google.android.gms", "com.google.android.gms.chimera.GmsBoundBrokerService", "com.google.android.gms.measurement.START"))
+        assertNull(idServiceBound("com.huawei.hwid", null, "com.huawei.push.action.MESSAGING_EVENT"))
+        assertNull(idServiceBound("com.example", null, null))
+        // An action that names an identifier service only in its package.
+        assertNull(idServiceBound("com.example", null, "android.service.action.msa"))
+    }
+
+    @Test
+    fun givenThePackagesTargets_whenAsked_thenPlayServicesGivesTheIdUnaskedBeforeAndroid13() {
+        assertTrue(playServicesGivesIdUnasked(listOf(32)))
+        assertTrue(playServicesGivesIdUnasked(listOf(35, 30)))
+        assertFalse(playServicesGivesIdUnasked(listOf(33, 36)))
+        assertFalse(playServicesGivesIdUnasked(emptyList()))
+    }
+
+    @Test
+    fun givenAProviderName_whenAsked_thenTheIdProvidersAreKnownWithOrWithoutTheUser() {
+        assertTrue(isIdProvider("com.vivo.vms.IdProvider"))
+        assertTrue(isIdProvider("0@com.meizu.flyme.openidsdk"))
+        assertFalse(isIdProvider("settings"))
+        assertFalse(isIdProvider("com.example.provider"))
+    }
+
+    @Test
     fun givenAnotherPermission_whenChecked_thenItIsNotLookedAt() {
         assertNull(adIdCheckByPackage(listOf("com.example", "android.permission.CAMERA", "default:0", 0)))
         assertNull(adIdCheckByUid(listOf(10123, "android.permission.CAMERA", 0)))

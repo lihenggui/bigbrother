@@ -248,6 +248,92 @@ internal fun adIdCheckByUid(args: List<Any?>): Int? {
     return args.firstOrNull { it is Int } as Int?
 }
 
+/** The first release whose apps Play services asks for [AD_ID_PERMISSION]. */
+private const val AD_ID_PERMISSION_SINCE = 33
+
+/**
+ * Whether Play services gives a uid whose packages target these releases
+ * its advertising ID without asking for [AD_ID_PERMISSION]: it does for a
+ * package that targets one before Android 13, and the uid gets the ID if
+ * any of its packages does.
+ */
+internal fun playServicesGivesIdUnasked(targetSdks: List<Int>): Boolean = targetSdks.any { it < AD_ID_PERMISSION_SINCE }
+
+/** What gives the identifier a service in [ID_SERVICES] gives. */
+internal enum class IdServiceKind {
+    /**
+     * Google Play services' advertising ID, which an app that targets
+     * Android 13 or later is held from by [AD_ID_PERMISSION] instead: it
+     * then gets an ID of zeros rather than none.
+     */
+    PLAY_SERVICES,
+
+    /** Any other: Android's own advertising ID, or a vendor's (OAID). */
+    OTHER,
+}
+
+/**
+ * A service that gives an advertising or device identifier, as an app
+ * binds it: in [packageName] (any package if null), with [action] or by
+ * [className]. Either is enough, and neither names another service.
+ */
+private data class IdService(
+    val packageName: String?,
+    val action: String?,
+    val className: String?,
+    val kind: IdServiceKind = IdServiceKind.OTHER,
+)
+
+/**
+ * The services that give advertising and device identifiers. Those of
+ * the vendors are those the identifier SDKs (MSA and its open
+ * reimplementations) bind; the package alone is not enough, as the same
+ * package serves accounts, push messages and the like.
+ */
+private val ID_SERVICES = listOf(
+    IdService(
+        "com.google.android.gms",
+        "com.google.android.gms.ads.identifier.service.START",
+        "com.google.android.gms.ads.identifier.service.AdvertisingIdService",
+        IdServiceKind.PLAY_SERVICES,
+    ),
+    // Android's AdServices (`AdIdManager`), from Android 13.
+    IdService(null, "android.adservices.ADID_SERVICE", "com.android.adservices.adid.AdIdService"),
+    // Huawei (HMS), in com.huawei.hwid and its variants.
+    IdService(null, "com.uodis.opendevice.OPENIDS_SERVICE", null),
+    // OPPO, OnePlus and realme.
+    IdService("com.heytap.openid", "action.com.heytap.openid.OPEN_ID_SERVICE", "com.heytap.openid.IdentifyService"),
+    IdService("com.coloros.mcs", "action.com.oplus.stdid.ID_SERVICE", "com.oplus.stdid.IdentifyService"),
+    IdService("com.samsung.android.deviceidservice", null, "com.samsung.android.deviceidservice.DeviceIdService"),
+    // Lenovo and Motorola.
+    IdService("com.zui.deviceidservice", null, "com.zui.deviceidservice.DeviceidService"),
+    IdService("com.asus.msa.SupplementaryDID", "com.asus.msa.action.ACCESS_DID", "com.asus.msa.SupplementaryDID.SupplementaryDIDService"),
+    IdService("com.coolpad.deviceidsupport", null, "com.coolpad.deviceidsupport.DeviceIdService"),
+    IdService("com.qiku.id", "qiku.service.action.id", null),
+    IdService("com.android.creator", "android.service.action.msa", null),
+    IdService("com.mdid.msa", "com.bun.msa.action.bindto.service", "com.mdid.msa.service.MsaIdService"),
+)
+
+/** The providers that give vendors' device identifiers (vivo, Meizu, nubia), by authority. */
+private val ID_PROVIDERS = setOf("com.vivo.vms.IdProvider", "com.meizu.flyme.openidsdk", "cn.nubia.identity")
+
+/**
+ * Which identifier service an app binding a service reaches, or null if
+ * none: [packageName] is the package of the intent's component, or the
+ * package the intent is limited to (a service is bound with one or the
+ * other), [className] the component's class.
+ */
+internal fun idServiceBound(packageName: String?, className: String?, action: String?): IdServiceKind? = ID_SERVICES.firstOrNull { service ->
+    (service.packageName == null || service.packageName == packageName) &&
+        ((service.action != null && service.action == action) || (service.className != null && service.className == className))
+}?.kind
+
+/**
+ * Whether the provider an app asks for by [name] (an authority, which may
+ * name the user, `0@authority`) gives a device identifier.
+ */
+internal fun isIdProvider(name: String): Boolean = name.substringAfterLast('@') in ID_PROVIDERS
+
 /**
  * The self-check the daemon reads (keep in sync with
  * `bbd/src/sandbox/identity.rs`): which hooks attached, on which release,

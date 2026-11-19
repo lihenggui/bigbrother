@@ -428,7 +428,22 @@ asks the permission manager in system_server, and for an app with
 Processes keep the answers to such checks; as the system does when a
 permission changes, the hook has them forget the answers whenever the list
 changes. Play services gives an app that targets an earlier Android its
-ID without asking.
+ID without asking: to such an app, the hook makes Play services'
+advertising ID service as if it were not there.
+
+The other services that give advertising and device identifiers are not
+there for an app with `device_ids` on either: binding one fails
+(`ActiveServices.bindServiceLocked` returns as for a service not found,
+and `bindService` returns false), as on a device without it, rather than
+throwing in the app. These are Android's own advertising ID
+(AdServices, `AdIdManager`), which looks only at whether the app asks for
+its permission, and the vendors' identifiers (OAID) that are bound: those
+of Huawei, OPPO, Samsung, Lenovo, ASUS, Coolpad, 360, Freeme and the MSA
+service. The OAID providers of vivo, Meizu and nubia are not found either
+(`ContentProviderHelper.getContentProvider`). The vendors' services and
+providers are named as the identifier SDKs reach them; Xiaomi's OAID is
+read through a class of the system in the app's own process, which the
+hook does not reach.
 
 A file the app was let pick through the system (a document, a folder, a
 photo) is opened by the provider that holds it, outside the sandbox, once
