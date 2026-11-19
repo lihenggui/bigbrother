@@ -25,7 +25,7 @@ use std::{
 };
 
 use anyhow::Context as _;
-use rusqlite::{Connection, OpenFlags, OptionalExtension as _, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension as _, Transaction, params};
 use serde::Serialize;
 
 pub mod net;
@@ -789,46 +789,51 @@ impl Writer {
     /// before, which is nowhere else once they are changed. It must survive
     /// the daemon stopping, and the power going, right after.
     pub fn put_sandbox(&self, entry: &SandboxEntry) -> anyhow::Result<()> {
-        self.conn.execute(
-            "INSERT INTO sandbox (uid, package, enabled, android_id, saved_ops, saved_permissions,
-                                  created, settings, install_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-             ON CONFLICT (uid) DO UPDATE SET
-                 package = excluded.package, enabled = excluded.enabled,
-                 android_id = excluded.android_id, saved_ops = excluded.saved_ops,
-                 saved_permissions = excluded.saved_permissions,
-                 created = excluded.created, settings = excluded.settings, install_id = excluded.install_id",
-            params![
-                entry.uid,
-                entry.package,
-                entry.enabled,
-                entry.android_id,
-                entry.saved_ops,
-                entry.saved_permissions,
-                entry.created,
-                entry.settings, entry.install_id
-            ],
-        )?;
-        self.sync()
+        self.write_sandbox(|tx| {
+            tx.execute(
+                "INSERT INTO sandbox (uid, package, enabled, android_id, saved_ops, saved_permissions,
+                                      created, settings, install_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                 ON CONFLICT (uid) DO UPDATE SET
+                     package = excluded.package, enabled = excluded.enabled,
+                     android_id = excluded.android_id, saved_ops = excluded.saved_ops,
+                     saved_permissions = excluded.saved_permissions,
+                     created = excluded.created, settings = excluded.settings, install_id = excluded.install_id",
+                params![
+                    entry.uid, entry.package, entry.enabled, entry.android_id, entry.saved_ops,
+                    entry.saved_permissions, entry.created, entry.settings, entry.install_id,
+                ],
+            )?;
+            Ok(())
+        })
     }
 
-    /// Have what was written so far reach the disk now. The database
-    /// otherwise leaves that to the system (`synchronous = NORMAL`), which
-    /// is right for the records and not for the sandbox.
-    fn sync(&self) -> anyhow::Result<()> {
-        self.conn
-            .query_row("PRAGMA wal_checkpoint(FULL)", [], |_| Ok(()))?;
-        Ok(())
+    /// Sync the WAL at commit, even when readers prevent a checkpoint.
+    fn write_sandbox(
+        &self,
+        write: impl FnOnce(&Transaction<'_>) -> rusqlite::Result<()>,
+    ) -> anyhow::Result<()> {
+        self.conn.pragma_update(None, "synchronous", "FULL")?;
+        let result = (|| {
+            let tx = self.conn.unchecked_transaction()?;
+            write(&tx)?;
+            tx.commit()
+        })();
+        if let Err(e) = self.conn.pragma_update(None, "synchronous", "NORMAL") {
+            // A commit may already have succeeded. Report the transaction result.
+            eprintln!("bbd: could not restore the recording sync mode: {e}");
+        }
+        Ok(result?)
     }
 
     /// Forget the entry for `uid`. Only for undoing the first enable of an
     /// app when it failed: a disabled entry is otherwise kept.
     pub fn delete_sandbox(&self, uid: u32) -> anyhow::Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        tx.execute("DELETE FROM sandbox WHERE uid = ?1", params![uid])?;
-        tx.execute("DELETE FROM sandbox_packages WHERE uid = ?1", params![uid])?;
-        tx.commit()?;
-        self.sync()
+        self.write_sandbox(|tx| {
+            tx.execute("DELETE FROM sandbox WHERE uid = ?1", params![uid])?;
+            tx.execute("DELETE FROM sandbox_packages WHERE uid = ?1", params![uid])?;
+            Ok(())
+        })
     }
 
     /// The packages that ran under `uid` when its entry was last looked at.
@@ -843,16 +848,16 @@ impl Writer {
     /// Replace the packages that run under `uid`, written through to the
     /// disk with the entries.
     pub fn put_sandbox_packages(&self, uid: u32, packages: &[String]) -> anyhow::Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        tx.execute("DELETE FROM sandbox_packages WHERE uid = ?1", params![uid])?;
-        for package in packages {
-            tx.execute(
-                "INSERT OR IGNORE INTO sandbox_packages (uid, package) VALUES (?1, ?2)",
-                params![uid, package],
-            )?;
-        }
-        tx.commit()?;
-        self.sync()
+        self.write_sandbox(|tx| {
+            tx.execute("DELETE FROM sandbox_packages WHERE uid = ?1", params![uid])?;
+            for package in packages {
+                tx.execute(
+                    "INSERT OR IGNORE INTO sandbox_packages (uid, package) VALUES (?1, ?2)",
+                    params![uid, package],
+                )?;
+            }
+            Ok(())
+        })
     }
 
     /// The entry for `uid`, enabled or not.
@@ -880,16 +885,16 @@ impl Writer {
     /// Replace the global settings of the sandbox with `pairs` of item and
     /// mode. Written through to the disk, as the entries are.
     pub fn put_sandbox_global(&self, pairs: &[(&str, &str)]) -> anyhow::Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        tx.execute("DELETE FROM sandbox_global", [])?;
-        for (item, mode) in pairs {
-            tx.execute(
-                "INSERT INTO sandbox_global (item, mode) VALUES (?1, ?2)",
-                params![item, mode],
-            )?;
-        }
-        tx.commit()?;
-        self.sync()
+        self.write_sandbox(|tx| {
+            tx.execute("DELETE FROM sandbox_global", [])?;
+            for (item, mode) in pairs {
+                tx.execute(
+                    "INSERT INTO sandbox_global (item, mode) VALUES (?1, ?2)",
+                    params![item, mode],
+                )?;
+            }
+            Ok(())
+        })
     }
 }
 
@@ -986,14 +991,13 @@ impl Writer {
     /// entries are: what is known decides which apps are put in the
     /// sandbox.
     pub fn put_sandbox_auto(&self, on: bool, known: &[KnownApp]) -> anyhow::Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        tx.execute(
-            "INSERT INTO meta (key, value) VALUES (?1, ?2)
-             ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-            params![SANDBOX_AUTO, on],
-        )?;
-        tx.execute("DELETE FROM sandbox_known", [])?;
-        {
+        self.write_sandbox(|tx| {
+            tx.execute(
+                "INSERT INTO meta (key, value) VALUES (?1, ?2)
+                 ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                params![SANDBOX_AUTO, on],
+            )?;
+            tx.execute("DELETE FROM sandbox_known", [])?;
             let mut insert = tx.prepare(
                 "INSERT INTO sandbox_known (app_id, user, package, library)
                  VALUES (?1, ?2, ?3, ?4)",
@@ -1006,9 +1010,8 @@ impl Writer {
                     app.library
                 ])?;
             }
-        }
-        tx.commit()?;
-        self.sync()
+            Ok(())
+        })
     }
 }
 
@@ -1759,6 +1762,50 @@ impl Reader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sandbox_commits_are_durable_while_a_reader_holds_an_old_snapshot() {
+        let dir = std::env::temp_dir().join(format!("bbd-sandbox-sync-{}", std::process::id()));
+        let db = dir.join("bb.db");
+        let writer = Writer::open(&db).unwrap();
+        writer.conn.busy_timeout(Duration::ZERO).unwrap();
+        writer
+            .conn
+            .execute_batch(
+                "PRAGMA wal_autocheckpoint = 0;
+                 PRAGMA wal_checkpoint(TRUNCATE);
+                 CREATE TEMP TABLE sync_mode (value INTEGER NOT NULL);
+                 CREATE TEMP TRIGGER observe_sync BEFORE INSERT ON main.sandbox BEGIN
+                     INSERT INTO sync_mode SELECT synchronous FROM pragma_synchronous;
+                 END;",
+            )
+            .unwrap();
+        let reader = Connection::open_with_flags(&db, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        reader.execute_batch("BEGIN").unwrap();
+        let count = || {
+            reader
+                .query_row("SELECT count(*) FROM sandbox", [], |r| r.get::<_, u32>(0))
+                .unwrap()
+        };
+        assert_eq!(count(), 0);
+        writer.put_sandbox(&sandbox_entry_for(10100)).unwrap();
+        let mode: u32 = writer
+            .conn
+            .query_row("SELECT value FROM sync_mode", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(mode, 2, "the sandbox write must use synchronous=FULL");
+        let mode: u32 = writer
+            .conn
+            .pragma_query_value(None, "synchronous", |r| r.get(0))
+            .unwrap();
+        assert_eq!(mode, 1, "telemetry keeps synchronous=NORMAL");
+        assert_eq!(count(), 0);
+        reader.execute_batch("ROLLBACK").unwrap();
+        assert_eq!(count(), 1);
+        drop(reader);
+        drop(writer);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn telemetry_over_budget_leaves_room_for_sandbox_recovery() {

@@ -56,7 +56,7 @@ use std::{
 
 use anyhow::Context as _;
 use aya::maps::{Array, HashMap as BpfHashMap, MapData, RingBuf};
-use bb_common::{GATE_CLOSED, GateEvent};
+use bb_common::{GATE_CLOSED, GateEvent, read_event};
 
 use super::{
     Effect, Entry, Resumed, Status,
@@ -655,9 +655,8 @@ impl Thread {
                 return;
             }
             while let Some(item) = self.ring.next() {
-                if item.len() >= size_of::<GateEvent>() {
-                    // SAFETY: long enough, and any bytes are a GateEvent.
-                    events.push(unsafe { item.as_ptr().cast::<GateEvent>().read_unaligned() });
+                if let Some(event) = read_event::<GateEvent>(&item) {
+                    events.push(event);
                 }
             }
             for event in events.drain(..) {

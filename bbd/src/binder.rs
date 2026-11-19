@@ -641,8 +641,8 @@ fn package_argument(args: &[u8]) -> Option<String> {
 const HELPER_CLASS: &str = "BinderCatalog";
 
 /// Run the app's catalog program and read the device's transaction codes.
-pub fn load() -> anyhow::Result<Catalog> {
-    let catalog = Catalog::parse(&crate::helper::run(HELPER_CLASS, interfaces())?);
+pub async fn load() -> anyhow::Result<Catalog> {
+    let catalog = Catalog::parse(&crate::helper::run(HELPER_CLASS, interfaces()).await?);
     anyhow::ensure!(
         catalog.reflected > 0,
         "the catalog program found none of the watched methods"

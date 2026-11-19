@@ -92,6 +92,9 @@ pub fn appops() -> Vec<Case> {
             "answer-bad",
         ],
         &[
+            "capture",
+            "captured",
+            "capture-failed",
             "set",
             "verify",
             "release",

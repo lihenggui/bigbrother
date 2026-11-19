@@ -18,7 +18,6 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::Path,
-    ptr,
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -34,7 +33,7 @@ use bb_common::{
     EV_NETLINK, EV_PATH, EV_PROCESS, EV_RESULT, EV_TRAFFIC, EXEC_ARGS, EventHeader, ExecEvent,
     FUSE_SUPER_MAGIC, FileEvent, NetlinkEvent, OFF_COUNT, OFF_MISSING, OP_PROBE, OP_WATCH,
     PROC_SUPER_MAGIC, PROCESS_READ, PROCESS_WRITE, PathEvent, ProcessEvent, ResultEvent,
-    SELINUX_MAGIC, SYSFS_MAGIC,
+    SELINUX_MAGIC, SYSFS_MAGIC, read_event,
 };
 use tokio::{
     io::{Interest, unix::AsyncFd},
@@ -220,29 +219,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         opts.retention_days
     );
 
-    let mut tracer = Tracer {
-        packages: Packages::new(opts.packages_list),
-        mounts: Mounts::new(),
-        spool: Spool::new(),
-        listeners: Listeners::new(),
-        scans: net::Scans::default(),
-        net: None,
-        refused_lookups: None,
-        net_listed: (0, HashMap::new()),
-        searches: commands::Searches::default(),
-        catalog: None,
-        sensors,
-        sensors_dropped: 0,
-        sensors_dropped_log: RecurringLog::default(),
-        writer,
-        counters: Counters::default(),
-        awaiting_result: HashMap::new(),
-        isolated_owners: HashMap::new(),
-        verbose: opts.verbose,
-        explain_discards: opts.explain_discards,
-        ingest_provider_events: opts.ingest_provider_events,
-        selftest: selftest::Seen::default(),
-    };
+    let mut tracer = Tracer::new(&opts, writer, sensors);
     // A probe can attach and never fire (see `selftest`): what is covered
     // is what fires. The events of other processes meanwhile are handled
     // as usual. Drained first, so that the buffer has room for the child's
@@ -491,6 +468,10 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         }
     }
 
+    if let Some(loader) = catalog_loader {
+        loader.abort();
+        let _ = loader.await;
+    }
     control::unlisten(opts.db);
     if commands.is_some() {
         control::unlisten_commands(opts.db);
@@ -1158,23 +1139,23 @@ fn first_line(text: impl std::io::BufRead) -> Option<String> {
 /// before giving up. The first attempts fail while the system is starting.
 const CATALOG_RETRY: Duration = Duration::from_secs(30);
 const CATALOG_ATTEMPTS: u32 = 20;
+const CATALOG_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Look up the device's transaction codes on a thread of its own: starting
-/// the Java runtime that prints them takes about a second, and must not hold
-/// up recording. The task ends with the catalog, or `None` if it could not
-/// be had; the event loop waits for it alongside everything else.
+/// Look up the device's transaction codes without holding up recording.
+/// A retry and its subprocess wait are both cancellable at shutdown.
 fn spawn_catalog_loader() -> tokio::task::JoinHandle<Option<Catalog>> {
-    tokio::task::spawn_blocking(|| {
-        let mut last_error = None;
-        for _ in 0..CATALOG_ATTEMPTS {
-            match binder::load() {
-                Ok(catalog) => return Some(catalog),
-                Err(e) => last_error = Some(e),
+    tokio::spawn(async {
+        for attempt in 1..=CATALOG_ATTEMPTS {
+            let error = match tokio::time::timeout(CATALOG_TIMEOUT, binder::load()).await {
+                Ok(Ok(catalog)) => return Some(catalog),
+                Ok(Err(e)) => e,
+                Err(e) => anyhow::Error::new(e).context("reading the transaction catalog"),
+            };
+            if attempt == CATALOG_ATTEMPTS {
+                eprintln!("bbd: warning: not recording service calls: {error:#}");
+                break;
             }
-            std::thread::sleep(CATALOG_RETRY);
-        }
-        if let Some(e) = last_error {
-            eprintln!("bbd: warning: not recording service calls: {e:#}");
+            tokio::time::sleep(CATALOG_RETRY).await;
         }
         None
     })
@@ -1242,13 +1223,6 @@ fn clock_ns(clock: libc::clockid_t) -> i64 {
     // Cannot fail for these clocks and a valid pointer.
     unsafe { libc::clock_gettime(clock, &mut ts) };
     ts.tv_sec * 1_000_000_000 + ts.tv_nsec
-}
-
-/// Reinterpret ring buffer bytes as an event struct.
-pub fn cast<T: Copy>(bytes: &[u8]) -> Option<T> {
-    // SAFETY: only used with the repr(C) plain-data event structs from
-    // bb-common, for which any bit pattern is valid.
-    (bytes.len() >= size_of::<T>()).then(|| unsafe { ptr::read_unaligned(bytes.as_ptr().cast()) })
 }
 
 /// A file the kernel opened, held until the syscall's return value arrives.
@@ -1331,6 +1305,32 @@ struct Tracer {
 }
 
 impl Tracer {
+    fn new(opts: &Options<'_>, writer: Writer, sensors: sensors::Sensors) -> Self {
+        Self {
+            packages: Packages::new(opts.packages_list),
+            mounts: Mounts::new(),
+            spool: Spool::new(),
+            listeners: Listeners::new(),
+            scans: net::Scans::default(),
+            net: None,
+            refused_lookups: None,
+            net_listed: (0, HashMap::new()),
+            searches: commands::Searches::default(),
+            catalog: None,
+            sensors,
+            sensors_dropped: 0,
+            sensors_dropped_log: RecurringLog::default(),
+            writer,
+            counters: Counters::default(),
+            awaiting_result: HashMap::new(),
+            isolated_owners: HashMap::new(),
+            verbose: opts.verbose,
+            explain_discards: opts.explain_discards,
+            ingest_provider_events: opts.ingest_provider_events,
+            selftest: selftest::Seen::default(),
+        }
+    }
+
     /// Watch the services whose transaction codes the device's catalog gives,
     /// besides the fixed ones already watched. Without a catalog only the
     /// fixed ones stay watched, and service calls count as not recorded.
@@ -1372,7 +1372,7 @@ impl Tracer {
     }
 
     fn on_event(&mut self, bytes: &[u8], clock: &EventClock) {
-        let Some(hdr) = cast::<EventHeader>(bytes) else {
+        let Some(hdr) = read_event::<EventHeader>(bytes) else {
             return;
         };
         if self.selftest.claim(bytes) {
@@ -1381,7 +1381,7 @@ impl Tracer {
         let ts = clock.unix_secs(hdr.boot_ns());
         match hdr.kind {
             EV_FILE => {
-                let Some(ev) = cast::<FileEvent>(bytes) else {
+                let Some(ev) = read_event::<FileEvent>(bytes) else {
                     return;
                 };
                 self.counters.seen += 1;
@@ -1412,7 +1412,7 @@ impl Tracer {
                 }
             }
             EV_RESULT => {
-                let Some(ev) = cast::<ResultEvent>(bytes) else {
+                let Some(ev) = read_event::<ResultEvent>(bytes) else {
                     return;
                 };
                 for held in self.awaiting_result.remove(&hdr.tid).unwrap_or_default() {
@@ -1420,7 +1420,7 @@ impl Tracer {
                 }
             }
             EV_PATH => {
-                let Some(ev) = cast::<PathEvent>(bytes) else {
+                let Some(ev) = read_event::<PathEvent>(bytes) else {
                     return;
                 };
                 self.counters.seen += 1;
@@ -1456,7 +1456,7 @@ impl Tracer {
                 self.record(&opened, ev.ret >= 0);
             }
             EV_EXEC => {
-                let Some(ev) = cast::<ExecEvent>(bytes) else {
+                let Some(ev) = read_event::<ExecEvent>(bytes) else {
                     return;
                 };
                 self.counters.seen += 1;
@@ -1485,7 +1485,7 @@ impl Tracer {
                 );
             }
             EV_PROCESS => {
-                let Some(ev) = cast::<ProcessEvent>(bytes) else {
+                let Some(ev) = read_event::<ProcessEvent>(bytes) else {
                     return;
                 };
                 self.counters.seen += 1;
@@ -1517,7 +1517,7 @@ impl Tracer {
                 );
             }
             EV_BINDER => {
-                let Some(ev) = cast::<BinderEvent>(bytes) else {
+                let Some(ev) = read_event::<BinderEvent>(bytes) else {
                     return;
                 };
                 self.counters.seen += 1;
@@ -1589,7 +1589,7 @@ impl Tracer {
                 );
             }
             EV_TRAFFIC => {
-                let Some(ev) = cast::<bb_common::TrafficEvent>(bytes) else {
+                let Some(ev) = read_event::<bb_common::TrafficEvent>(bytes) else {
                     return;
                 };
                 self.counters.seen += 1;
@@ -1612,7 +1612,7 @@ impl Tracer {
                 );
             }
             EV_NETLINK => {
-                let Some(ev) = cast::<NetlinkEvent>(bytes) else {
+                let Some(ev) = read_event::<NetlinkEvent>(bytes) else {
                     return;
                 };
                 self.counters.seen += 1;
@@ -1632,7 +1632,7 @@ impl Tracer {
                 );
             }
             EV_CONNECT => {
-                let Some(ev) = cast::<ConnectEvent>(bytes) else {
+                let Some(ev) = read_event::<ConnectEvent>(bytes) else {
                     return;
                 };
                 self.counters.seen += 1;
@@ -2183,6 +2183,81 @@ pub fn mode_label(mode: Mode) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn complete_path_events_are_recorded_and_other_bytes_are_ignored() {
+        let dir = std::env::temp_dir().join(format!("bbd-trace-events-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("bb.db");
+        let list = dir.join("packages.list");
+        fs::write(
+            &list,
+            "com.example.reader 10100 0 /data/user/0/com.example.reader default none\n",
+        )
+        .unwrap();
+        let opts = Options {
+            db: &db,
+            packages_list: list.to_str().unwrap(),
+            retention_days: 30,
+            verbose: false,
+            profile: false,
+            explain_discards: false,
+            ingest_provider_events: false,
+            sandbox: false,
+        };
+        let mut tracer = Tracer::new(
+            &opts,
+            Writer::open(&db).unwrap(),
+            sensors::Sensors::new(sensors::dumpsys),
+        );
+        let clock = EventClock {
+            boot_unix_ns: 5_000_000_000,
+        };
+        let path = b"/sdcard/Documents/example.txt\0";
+        let mut event = PathEvent {
+            hdr: EventHeader {
+                kind: EV_PATH,
+                uid: 10100,
+                pid: 123,
+                tid: 123,
+                boot_ns_low: 0,
+                boot_ns_high: 0,
+            },
+            op: bb_common::OP_OPEN,
+            ret: 3,
+            dfd: AT_FDCWD,
+            flags: libc::O_RDONLY as u32,
+            abi: bb_common::ABI_NATIVE,
+            path_len: path.len() as u32,
+            path: [0; bb_common::PATH_CAP],
+        };
+        event.path[..path.len()].copy_from_slice(path);
+        let bytes = selftest::event_bytes(&event);
+        tracer.on_event(&bytes[..size_of::<EventHeader>() - 1], &clock);
+        tracer.on_event(&bytes[..bytes.len() - 1], &clock);
+        let mut unknown = event;
+        unknown.hdr.kind = u32::MAX;
+        tracer.on_event(selftest::event_bytes(&unknown), &clock);
+        let mut unaligned = vec![0];
+        unaligned.extend_from_slice(bytes);
+        tracer.on_event(&unaligned[1..], &clock);
+        tracer.writer.flush(&tracer.counters, 5).unwrap();
+        let rows = crate::store::Reader::open(&db)
+            .unwrap()
+            .files(&[10100], &[Category::Storage], None, None, 0, 10, 0)
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(row.pkg, "com.example.reader");
+        assert_eq!(row.path, "/storage/emulated/0/Documents/example.txt");
+        assert_eq!(
+            (row.ok, row.fail, row.mode, row.last_ts),
+            (1, 0, MODE_READ, 5)
+        );
+        assert_eq!(tracer.counters.seen, 1);
+        drop(tracer);
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn open_flags_and_file_type_set_the_mode() {

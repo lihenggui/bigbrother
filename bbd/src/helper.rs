@@ -21,7 +21,7 @@
 //! from the copy of the APK that was installed with the module.
 
 use std::{
-    fs,
+    fs, io,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
 };
@@ -65,12 +65,23 @@ fn command<'a>(class: &str, args: impl Iterator<Item = &'a str>) -> anyhow::Resu
     Ok(command)
 }
 
-/// Run `class` (a name within the app's helper package) to completion and
-/// return what it printed. Takes about a second: it starts a Java runtime.
-/// Fails while the system is still starting.
-pub fn run<'a>(class: &str, args: impl Iterator<Item = &'a str>) -> anyhow::Result<String> {
-    let output = command(class, args)?
-        .output()
+fn spawn_for_output(command: Command) -> io::Result<tokio::process::Child> {
+    tokio::process::Command::from(command)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        // The catalog is optional and its caller can stop waiting for it.
+        .kill_on_drop(true)
+        .spawn()
+}
+
+/// Run `class` to completion and return what it printed. Dropping the wait
+/// kills the helper, including one waiting for the system to come up.
+pub async fn run<'a>(class: &str, args: impl Iterator<Item = &'a str>) -> anyhow::Result<String> {
+    let output = spawn_for_output(command(class, args)?)
+        .with_context(|| format!("starting {APP_PROCESS}"))?
+        .wait_with_output()
+        .await
         .with_context(|| format!("running {APP_PROCESS}"))?;
     let printed = String::from_utf8_lossy(&output.stdout).into_owned();
     anyhow::ensure!(
@@ -97,4 +108,27 @@ pub fn spawn<'a>(class: &str, args: impl Iterator<Item = &'a str>) -> anyhow::Re
     // again when it ends, so it may be killed like any other process.
     let _ = fs::write(format!("/proc/{}/oom_score_adj", child.id()), "0");
     Ok(child)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn cancelling_a_helper_wait_ends_the_child() {
+        let mut command = Command::new("sleep");
+        command.arg("60");
+        let child = spawn_for_output(command).unwrap();
+        let process = crate::sandbox::gate::Process::open(child.id().unwrap() as i32).unwrap();
+        let (started, waiting) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            started.send(()).unwrap();
+            child.wait_with_output().await
+        });
+        waiting.await.unwrap();
+        assert!(!process.exited(0).unwrap());
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert!(process.exited(2000).unwrap());
+    }
 }

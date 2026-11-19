@@ -148,6 +148,8 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
     ) {
         /** What to give [permission] back as, the daemon having sent [sent]. */
         fun toGiveBack(permission: String, sent: PermissionState?): PermissionState? = AppOpsGuardProtocol.stateToGiveBack(sent, tookPermissions[permission], permission in chosen)
+
+        fun savedValues(): Values = Values(checkNotNull(saved), tookPermissions.toList(), savedGrants)
     }
 
     /** The guarded uids. */
@@ -170,28 +172,38 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
     /** What takes [name] from an app and gives it back. */
     private fun taking(name: String): Taking = if (AppOpsGuardProtocol.isSpecialAccess(name)) system.specialAccess() else runtimePermissions
 
+    private fun beforeSet(uid: Int, targets: Targets): Guard {
+        val guard = guarded[uid]
+        // A uid taken over with verify already has recovery values at the daemon.
+        check(guard == null || guard.saved != null) { "already guarded, with nothing saved" }
+        return Guard(
+            saved = guard?.saved ?: AppOpsGuardProtocol.savedModes(states(uid)),
+            targets = targets,
+            tookPermissions = statesBefore(uid, targets.permissions, guard?.tookPermissions.orEmpty()),
+            savedGrants = guard?.savedGrants ?: grantModes(uid),
+            chosen = guard?.chosen.orEmpty(),
+            held = guard?.held.orEmpty() intersect targets.permissions,
+            reported = guard?.reported.orEmpty(),
+        )
+    }
+
     fun handle(command: Command) {
         val uid = command.uid
         // What the check would find, had it run since the user's last
         // change: a command may come first.
-        val chosen = if (command is Command.Verify) emptySet() else takeChosen(uid)
+        val chosen = if (command is Command.Verify || command is Command.Capture) emptySet() else takeChosen(uid)
         when (command) {
+            is Command.Capture -> {
+                val values = beforeSet(uid, command.targets).savedValues()
+                system.emit(AppOpsGuardProtocol.capturedLine(uid, command.request, values))
+            }
+
             is Command.Set -> {
-                val guard = guarded[uid]
-                // Guarded since a `verify`, by a daemon carrying on: what the
-                // ops are now is this program's own doing, not what to go
-                // back to, and the daemon has that already.
-                if (guard != null && guard.saved == null) error("already guarded, with nothing saved")
-                // Asked again, the modes and states saved the first time are
-                // the ones to go back to: the current ones are this
-                // program's own.
-                val saved = guard?.saved ?: AppOpsGuardProtocol.savedModes(states(uid))
-                val grants = if (guard != null) guard.savedGrants else grantModes(uid)
                 val targets = command.targets
-                val found = statesBefore(uid, targets.permissions, guard?.tookPermissions.orEmpty())
+                val guard = beforeSet(uid, targets)
                 // Written down first, so that a `release` after a failure
                 // below puts back whatever was done.
-                guarded[uid] = Guard(saved, targets, found, grants, guard?.chosen.orEmpty(), guard?.held.orEmpty() intersect targets.permissions, guard?.reported.orEmpty())
+                guarded[uid] = guard
                 val taken = targets.ops.count { (name, mode) -> setKnown(name, uid, mode) }
                 // Ops this Android version doesn't have are nothing to hold.
                 if (targets.ops.keys.any(::isKnown) && taken == 0) error("the system took none of the modes")
@@ -199,7 +211,7 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
                 reportChosen(uid, chosen)
                 for (permission in targets.permissions) holdKnown(uid, permission)
                 reportUnheld(uid, verify(uid), always = true)
-                system.emit(AppOpsGuardProtocol.savedLine(uid, Values(saved, found.toList(), grants)))
+                system.emit(AppOpsGuardProtocol.savedLine(uid, guard.savedValues()))
             }
 
             is Command.Apply -> {

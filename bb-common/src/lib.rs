@@ -24,6 +24,23 @@
 
 pub mod filter;
 
+/// An event that can cross the kernel/userspace boundary as bytes.
+///
+/// # Safety
+///
+/// The layout must be stable and have no padding, and every initialized
+/// byte pattern of its size must be a valid value.
+pub unsafe trait EventData: Copy {}
+
+/// Read an event from a ring buffer record, which may be unaligned. A header
+/// can also be read from the beginning of a larger event.
+pub fn read_event<T: EventData>(bytes: &[u8]) -> Option<T> {
+    let bytes = bytes.get(..core::mem::size_of::<T>())?;
+    // SAFETY: the slice contains enough initialized bytes for T, and
+    // EventData guarantees their interpretation as a T is valid.
+    Some(unsafe { bytes.as_ptr().cast::<T>().read_unaligned() })
+}
+
 /// Fails to compile unless `$t` is exactly as large as its fields together,
 /// that is, has no padding. The fields must all be named: the pattern below
 /// does not compile when one is left out, so a field added later is checked
@@ -453,6 +470,30 @@ impl GateEvent {
         u64::from(self.at_ns_high) << 32 | u64::from(self.at_ns_low)
     }
 }
+
+macro_rules! event_data {
+    ($($event:ty),+ $(,)?) => {
+        $(
+            // SAFETY: repr(C), checked for padding, and made only of
+            // integers, byte arrays and the same kind of event header.
+            unsafe impl EventData for $event {}
+        )+
+    };
+}
+
+event_data!(
+    EventHeader,
+    FileEvent,
+    ResultEvent,
+    PathEvent,
+    ExecEvent,
+    ConnectEvent,
+    ProcessEvent,
+    NetlinkEvent,
+    BinderEvent,
+    GateEvent,
+    TrafficEvent,
+);
 
 /// How long the daemon may leave a stopped process waiting before the kernel
 /// side takes it to be stuck, and stops holding further starts for it: they

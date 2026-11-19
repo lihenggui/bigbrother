@@ -43,7 +43,8 @@ use anyhow::Context as _;
 use aya::maps::RingBuf;
 use aya::maps::{MapData, PerCpuArray};
 use bb_common::{
-    EV_CONNECT, EV_EXEC, EV_FILE, EV_NETLINK, EV_PATH, EV_PROCESS, EventHeader, OP_PROBE, PathEvent,
+    EV_CONNECT, EV_EXEC, EV_FILE, EV_NETLINK, EV_PATH, EV_PROCESS, EventHeader, OP_PROBE,
+    PathEvent, read_event,
 };
 
 use crate::{syscalls::Feature, trace};
@@ -143,7 +144,7 @@ impl Seen {
     /// `bbd selftest` run next to the daemon, are not recorded either: no
     /// app has the uid.
     pub fn claim(&mut self, bytes: &[u8]) -> bool {
-        let Some(hdr) = trace::cast::<EventHeader>(bytes) else {
+        let Some(hdr) = read_event::<EventHeader>(bytes) else {
             return false;
         };
         if hdr.uid != UID {
@@ -154,7 +155,7 @@ impl Seen {
         }
         // A failed open is an `EV_PATH` as well; only a stat-style call's
         // shows the faccessat probe fired.
-        if hdr.kind == EV_PATH && trace::cast::<PathEvent>(bytes).is_none_or(|ev| ev.op != OP_PROBE)
+        if hdr.kind == EV_PATH && read_event::<PathEvent>(bytes).is_none_or(|ev| ev.op != OP_PROBE)
         {
             return true;
         }
@@ -534,6 +535,12 @@ fn kernel_release() -> String {
 }
 
 #[cfg(test)]
+pub(crate) fn event_bytes<T: bb_common::EventData>(value: &T) -> &[u8] {
+    // SAFETY: EventData guarantees an initialized, padding-free layout.
+    unsafe { std::slice::from_raw_parts((value as *const T).cast::<u8>(), size_of::<T>()) }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::syscalls;
@@ -551,24 +558,18 @@ mod tests {
         }
     }
 
-    fn bytes<T: Copy>(value: &T) -> Vec<u8> {
-        // SAFETY: the plain-data event structs of bb-common, without padding.
-        unsafe { std::slice::from_raw_parts((value as *const T).cast::<u8>(), size_of::<T>()) }
-            .to_vec()
-    }
-
     /// An event of `kind` from `pid` as the ring buffer holds it; an
     /// `EV_PATH` of operation `op`.
     fn event(kind: u32, uid: u32, pid: u32, op: u32) -> Vec<u8> {
         let hdr = header(kind, uid, pid);
         if kind != EV_PATH {
-            return bytes(&hdr);
+            return event_bytes(&hdr).to_vec();
         }
         // SAFETY: PathEvent is plain data; all zeros is a valid value.
         let mut ev: PathEvent = unsafe { std::mem::zeroed() };
         ev.hdr = hdr;
         ev.op = op;
-        bytes(&ev)
+        event_bytes(&ev).to_vec()
     }
 
     fn seen(kinds: &[u32]) -> Seen {

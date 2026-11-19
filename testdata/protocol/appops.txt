@@ -30,6 +30,9 @@
 # name=<op or permission>      what the helper set back by itself
 # not_held=<op>                an op the system did not keep at its mode
 
+# capture: read the values that must be committed before set applies its targets.
+command	capture 10100 7 android:camera=1,android.permission.ACCESS_FINE_LOCATION=revoked	capture	uid=10100	request=7	hold=android:camera/1	revoke=android.permission.ACCESS_FINE_LOCATION
+
 # set: hold a uid, and answer what it had.
 command	set 10100 android:camera=1,android:read_contacts=1	set	uid=10100	hold=android:camera/1	hold=android:read_contacts/1
 command	set 10100 android:camera=4,android:read_contacts=1	set	uid=10100	hold=android:camera/4	hold=android:read_contacts/1
@@ -77,6 +80,9 @@ command-bad	kind 10240
 command-bad	kind 10240 -1 com.example.app
 command-bad	kind 10240 7 com.example.app extra
 command-bad	kind 10240 7 com/example
+command-bad	capture 10100
+command-bad	capture 10100 -1 android:camera=1
+command-bad	capture 10100 7 android:camera=1 extra
 command-bad	set
 command-bad	set abc
 command-bad	set -1
@@ -123,6 +129,11 @@ command-bad	restore 10100 android.permission.ACCESS_FINE_LOCATION=4
 command-bad	restore 10100 android.permission.BIND_NOTIFICATION_LISTENER_SERVICE=denied+service:com.example:com.example.Listener
 command-bad	restore 10100 android.permission.BIND_NOTIFICATION_LISTENER_SERVICE=granted+service:com.example.Listener
 
+# captured: the original values, with their request number, as restore takes them.
+answer	captured 10100 7 android:camera=4,android.permission.ACCESS_FINE_LOCATION=granted+user_set	captured	uid=10100	request=7	op=android:camera/4	permission=android.permission.ACCESS_FINE_LOCATION/granted/user_set
+answer	captured 10100 8	captured	uid=10100	request=8
+answer	capture-failed 10100 9	capture-failed	uid=10100	request=9
+
 # saved: what set found, as restore takes it.
 answer	saved 10100 android:camera=default,android:fine_location=4	saved	uid=10100	op=android:camera/none	op=android:fine_location/4
 answer	saved 10100 android:read_contacts=1/1,android:camera=default/4,android.permission.ACCESS_FINE_LOCATION=granted	saved	uid=10100	op=android:read_contacts/1/1	op=android:camera/none/4	permission=android.permission.ACCESS_FINE_LOCATION/granted
@@ -160,6 +171,10 @@ answer-bad
 answer-bad	library 10240
 answer-bad	app 10240 -1
 answer-bad	unknown 10240 7 extra
+answer-bad	captured 10100
+answer-bad	captured 10100 -1
+answer-bad	captured 10100 7 android:camera=4 extra
+answer-bad	capture-failed 10100 9 android:camera=4
 answer-bad	saved
 answer-bad	saved x
 answer-bad	saved -1

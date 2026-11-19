@@ -265,10 +265,12 @@ precise location as turned off.
 
 What the ops were, and whether the precise location permission was granted
 and with which of the user's choices, is kept in the database and put back
-when the app leaves the sandbox or location is no longer coarse. With
-the mode of an op of a runtime permission, the helper notes the mode the
-system gave the op for whether the permission was granted (allowed, in
-the foreground only, or ignored). If the user granted or revoked the
+when the app leaves the sandbox or location is no longer coarse. When an
+app enters the sandbox, the daemon writes the original values before the
+helper applies the restrictions. With the mode of an op of a runtime
+permission, the helper notes the mode the system gave the op for whether
+the permission was granted (allowed, in the foreground only, or ignored).
+If the user granted or revoked the
 permission while the app was in the sandbox, the op is given the
 system's mode for the permission as it is then, not the one saved. A
 permission revoked meanwhile loses the `REVOKED_COMPAT` mark Android gave

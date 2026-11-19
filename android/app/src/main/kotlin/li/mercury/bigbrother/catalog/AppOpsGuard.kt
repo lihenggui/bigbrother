@@ -289,7 +289,12 @@ object AppOpsGuard {
                     if (!handler.isGuarded(command.uid)) owners.remove(command.uid)
                 } catch (e: Throwable) {
                     System.err.println("${line.text.trim().substringBefore(' ')} ${command.uid}: ${describe(e)}")
-                    emit(AppOpsGuardProtocol.failedLine(command.uid))
+                    emit(
+                        when (command) {
+                            is AppOpsGuardProtocol.Command.Capture -> AppOpsGuardProtocol.captureFailedLine(command.uid, command.request)
+                            else -> AppOpsGuardProtocol.failedLine(command.uid)
+                        },
+                    )
                 }
             }
         }
