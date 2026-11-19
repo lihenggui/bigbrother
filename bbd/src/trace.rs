@@ -339,7 +339,12 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         let request = tokio::select! {
             _ = sigint.recv() => break,
             _ = sigterm.recv() => break,
-            _ = flush_tick.tick() => None,
+            _ = flush_tick.tick() => {
+                if let Some(sandbox) = sandbox.as_mut() {
+                    sandbox.retry_net_refresh();
+                }
+                None
+            },
             _ = found.notified() => None,
             // Sessions whose process has ended end now, and are written
             // with the next write. Sensors turned on since that did not
