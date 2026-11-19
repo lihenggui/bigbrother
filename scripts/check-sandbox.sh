@@ -64,6 +64,9 @@ ONLY_IDS+=" network=off"
 # connect to it outside the sandbox has the check of the network skipped.
 NET_TARGET=10.0.2.2:5037
 NO_NETWORK="the device does not reach $NET_TARGET"
+# The advertising ID Google Play services gives an app that may not have
+# one, or to every app once the user deleted it.
+NO_AD_ID=00000000-0000-0000-0000-000000000000
 
 # The app ops each item holds (`Item::ops` in bbd/src/sandbox/items.rs).
 declare -A ITEM_OPS=(
@@ -421,6 +424,11 @@ check_if "$location" "$NO_LOCATION" "a location is had ($(seen "$outside" locati
 check "the real storage is visible" [ "$(seen "$outside" marker)" = real ]
 check "the chip is named in /proc/cpuinfo" [ "$(seen "$outside" cpu_named)" = true ]
 check "the notifications are given to the listener ($(listening))" [ "$(listening)" = "$LISTENER" ]
+# Without Google Play services, or with the ID deleted, there is none to
+# withhold.
+ad_id=no
+[[ "$(seen "$outside" ad_id)" =~ ^[0-9a-f-]{36}$ && "$(seen "$outside" ad_id)" != "$NO_AD_ID" ]] && ad_id=yes
+NO_REAL_AD_ID="Google Play services gives no advertising ID ($(seen "$outside" ad_id))"
 pick_marker
 if [[ -n "$picked" ]]; then
     run_canary
@@ -512,6 +520,12 @@ if [[ "$(status_field android_id)" == true ]]; then
 else
     skip "the Android ID: the hook is not in place"
 fi
+if [[ "$(status_field ad_id)" == true ]]; then
+    check_if "$ad_id" "$NO_REAL_AD_ID" "the advertising ID is withheld ($(seen "$inside" ad_id))" \
+        [ "$(seen "$inside" ad_id)" = "$NO_AD_ID" ]
+else
+    skip "the advertising ID: the hook is not in place"
+fi
 if [[ "$(status_field app_list)" == true ]]; then
     check "no other installed app is visible ($(seen "$inside" apps))" \
         [ "$(seen "$inside" apps)" = "$PACKAGE" ]
@@ -562,6 +576,9 @@ if [[ "$(status_field android_id)" == true ]]; then
     check "only device_ids' app ops are ignored${not_held:+ (not held:$not_held)}${changed:+ (changed:$changed)}" \
         [ -z "$not_held$changed" ]
     check "the Android ID is the sandbox's" [ "$(seen "$only_id" android_id)" = "$want" ]
+    if [[ "$(status_field ad_id)" == true ]]; then
+        check_if "$ad_id" "$NO_REAL_AD_ID" "the advertising ID is withheld" [ "$(seen "$only_id" ad_id)" = "$NO_AD_ID" ]
+    fi
     pids="$(adb shell pidof "$PACKAGE" | tr -d '\r')"
     as_root "kill -9 \$(pidof bbd)"
     for _ in $(seq 1 30); do
@@ -636,6 +653,7 @@ fi
 check "the chip is named again" [ "$(seen "$after" cpu_named)" = true ]
 check_if "$network" "$NO_NETWORK" "the network is back ($(seen "$after" network))" [ "$(seen "$after" network)" = connected ]
 check "the Android ID is the real one" [ "$(seen "$after" android_id)" = "$(seen "$outside" android_id)" ]
+check_if "$ad_id" "$NO_REAL_AD_ID" "the advertising ID is the real one" [ "$(seen "$after" ad_id)" = "$(seen "$outside" ad_id)" ]
 check "the installed apps are visible again" [ "$(seen "$after" apps)" = "$(seen "$outside" apps)" ]
 check "the clipboard is readable again" [ "$(seen "$after" clipboard)" = "$(seen "$outside" clipboard)" ]
 # As the app finds them: `appops get` also lists an op once the app has
