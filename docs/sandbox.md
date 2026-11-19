@@ -2,7 +2,8 @@
 
 An app put in the sandbox keeps running, with its permissions shown as
 granted, but is given an empty or made-up answer where it would read the
-device's files, the user's personal data or the device's identity.
+device's files, the user's personal data or the device's identity. It can
+also be kept from the network.
 
 The app's Jail tab puts apps in the sandbox and sets its items. The same
 can be done from a root shell:
@@ -34,12 +35,13 @@ any way.
 | Personal data | Nothing: contacts, calendar, messages, call log, accounts, location, clipboard, camera, microphone, body sensors, media, usage statistics, nearby devices | App ops set to "ignored" for the app's uid; for an approximate location, the precise location permission revoked | root |
 | Other apps' notifications, the screen | Nothing: its notification listeners and accessibility services lose the access the user gave them, which comes back when it leaves | The access taken as a permission is, and given back | root |
 | Identity | An ANDROID_ID of its own, fixed per app; no installed app other than itself and what came with the system | Hooks in system_server | LSPosed |
+| Network | No connection: what the app sends is refused at once, but for what it sends to the device itself. Off unless turned on | A rule in the kernel's packet filter, which looks the socket's uid up in a list | root |
 
-The mounts and the app ops work without LSPosed. `bbd sandbox status` says which parts
+The mounts, the app ops and the packet filter work without LSPosed. `bbd sandbox status` says which parts
 are in place on the device. `bbd sandbox list` names, for each app, the
 items that are on but not in effect and the part each lacks: the mounts,
 the app ops (read back after they are set, and whenever the system changes
-them), or a hook. An item is in effect only with all its parts: the device
+them), a hook, or the packet filter. An item is in effect only with all its parts: the device
 identifiers, for one, need both the ANDROID_ID hook and the phone-state app
 ops.
 
@@ -88,22 +90,27 @@ Android's "only while using the app" does:
 | `nearby_devices` | No Bluetooth or Wi-Fi devices nearby | off, on |
 | `notification_content` | No notification access: other apps' notifications cannot be read; its own still show | off, on |
 | `screen_content` | Its accessibility services off: what is on screen cannot be read or acted on | off, on |
+| `network` | No network: connections fail at once | off, on |
 
 The global settings give every item a mode; an app has these, except for
 the items it has a mode of its own for. Every item is on unless set
-otherwise. An app keeps its own settings when it leaves the sandbox.
+otherwise, except `network`, which is off: an app put in the sandbox keeps
+the network until it is taken from it. An app keeps its own settings when
+it leaves the sandbox.
 
 ```sh
 $bbd sandbox global camera=off microphone=off
 $bbd sandbox set com.example.app camera=on location=coarse
 $bbd sandbox set com.example.app microphone=foreground
 $bbd sandbox set com.example.app camera=global   # follows the global settings again
+$bbd sandbox set com.example.app network=on      # no network
 ```
 
 A change takes effect at once. It ends the app's processes if what is
 mounted for it changes (`storage`, `cpu_info`), or an item that was off is
 turned on, to any mode but off: what the app read before, and may keep,
-goes with them. Making
+goes with them. `network` ends none: the connections the app has are
+refused from then on. Making
 location coarse ends them too when the app had precise location: Android
 ends an app whenever it revokes a permission the app had. A change of the global
 settings is made to every sandboxed app that follows them, or to none. An
@@ -280,6 +287,32 @@ notification service and the `enabled_accessibility_services` setting.
 Android also takes an app's accessibility services when the app is
 force-stopped.
 
+### The packet filter
+
+The daemon keeps a chain of its own in the `filter` table of the kernel's
+packet filter (netfilter), for IPv4 and for IPv6, which the `OUTPUT` chain
+jumps to first. Its one rule asks an eBPF program (`network_refused`,
+pinned at `/sys/fs/bpf/bb_network` for the rule to name) whether the
+socket a packet is sent from belongs to a uid kept from the network, and a
+packet that does is refused: TCP is answered with a reset, anything else
+with an ICMP error, so that a connection fails at once rather than timing
+out. What goes out over the loopback interface is passed: apps talk to
+their own processes that way.
+
+The uids are a map the program looks up, so a packet costs one rule and
+one lookup however many apps are kept from the network, and taking the
+network from an app or giving it back changes the map only. The rules are
+written when the first app is listed and removed with the last: with no
+app kept from the network, the packets of the device pass no rule of the
+sandbox. netd, which owns the other chains of `OUTPUT`, leaves the jump
+alone, also when it starts again.
+
+The rules are about the app's own sockets. A name the app looks up through
+the system's resolver is looked up by netd, under netd's uid, and the
+query for it leaves the device; the connection to the address that comes
+back is refused. Other apps and the system can still fetch something on
+the app's behalf (the download manager, a browser it opens).
+
 ### The hook
 
 `Settings.Secure.ANDROID_ID` and the list of installed apps are answered
@@ -326,6 +359,10 @@ minutes.
   storage, and what it read in that time it keeps. Early in boot that is
   little: shared storage cannot be read before the user first unlocks the
   device.
+- The packet filter's rules stay when the daemon stops or dies, with the
+  uids listed then, and are written again by the one that starts next. They
+  do not outlast a restart of the device: until the daemon has started, an
+  app has the network.
 - Isolated processes of a sandboxed app (a service declared
   `isolatedProcess`, a WebView renderer) run under uids of their own and
   are not given the mounts. Android gives them no shared storage, no
@@ -342,7 +379,8 @@ minutes.
 
 `scripts/check-sandbox.sh` runs the canary app outside the sandbox, inside
 it and outside again, and checks what it reports seeing each time, an
-isolated process of it and a file it was let pick among it. Picking the
+isolated process of it, a file it was let pick and a connection it tries
+to make among it. Picking the
 file goes through the system's file picker, driven with `uiautomator`:
 
 ```sh

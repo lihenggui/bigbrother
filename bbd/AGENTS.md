@@ -50,6 +50,10 @@ JSON.
 - Helper programs cost a Java runtime each. The app ops helper runs only
   while an app is sandboxed, or for a moment to say whether a newly
   installed package is a library (`sandbox/auto.rs`).
+- The packet filter (`sandbox/network.rs`) has rules only while an app is
+  kept from the network; with none, the chains and the jump to them are
+  removed. A packet costs one rule and one map lookup whatever the number
+  of apps: no rule per app.
 
 ## Database
 

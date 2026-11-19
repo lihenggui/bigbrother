@@ -94,4 +94,7 @@ if ! "$online" && [ -f /data/adb/big_brother/bb.db ]; then
     fi
 fi
 rm -rf /data/adb/big_brother
+# The program the packet filter's rules name. The rules went with the last
+# app taken out, and with the restart of the device otherwise.
+rm -f /sys/fs/bpf/bb_network
 # Sandboxed apps keep their files on shared storage.

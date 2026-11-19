@@ -57,6 +57,11 @@ These programs run on every file open and many system calls of every process.
   and reported like a sandboxed one. It must never let a sandboxed or new
   start through when it cannot report it: it kills the process instead.
 
+- `network_refused` is not a recorder: the packet filter runs it for every
+  packet leaving the device while an app is kept from the network, and not
+  at all otherwise (`bbd/src/sandbox/network.rs`). It costs a uid check
+  and, for an app's packet, one map lookup; it must stay that small.
+
 ## Testing
 
 The programs cannot be unit tested. `scripts/check-kernels.sh` loads them

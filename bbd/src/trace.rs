@@ -619,6 +619,16 @@ fn start_sandbox(
         &sandbox.snapshot(),
         &sandbox.global(),
     )));
+    let network: Box<dyn sandbox::Effect> = match sandbox::network::Network::start(ebpf) {
+        Ok(network) => Box::new(network),
+        Err(e) => {
+            eprintln!("bbd: warning: apps cannot be kept from the network: {e:#}");
+            Box::new(sandbox::network::Unavailable::new())
+        }
+    };
+    sandbox.add_effect(network);
+    // Adding the UID to the storage gate lets a held start proceed. Its
+    // other policies must already be in place at that point.
     sandbox.add_effect(storage);
     sandbox.add_effect(Box::new(sandbox::sweep::Restart));
     sandbox.resume(&tracer.writer, &mut tracer.packages);

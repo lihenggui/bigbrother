@@ -47,12 +47,15 @@ import android.util.Log
 import android.widget.ScrollView
 import android.widget.TextView
 import java.io.File
+import java.net.ConnectException
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
+import java.net.ServerSocket
 import java.net.Socket
+import java.net.SocketTimeoutException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
@@ -253,6 +256,16 @@ class MainActivity : Activity() {
                 "$op=$mode"
             }
         }
+        // The network: whether the address the check names (the `net`
+        // extra, `host:port`) can be connected to, and whether this app
+        // still reaches a socket of its own over loopback.
+        view("network") {
+            val (host, port) = intent.getStringExtra(EXTRA_NET).orEmpty().split(':').let { it[0] to it[1].toInt() }
+            reach(InetSocketAddress(host, port))
+        }
+        view("loopback") {
+            ServerSocket(0, 1, InetAddress.getLoopbackAddress()).use { reach(it.localSocketAddress as InetSocketAddress) }
+        }
         // Identity: the Android ID both ways to it, and the installed apps
         // that did not come with the system.
         view("android_id") { Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) }
@@ -342,12 +355,27 @@ class MainActivity : Activity() {
         Socket().use { it.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS) }
     }
 
+    /** What comes of connecting to [address]: `connected`, `refused` or `timeout`. */
+    private fun reach(address: InetSocketAddress): String = try {
+        Socket().use { it.connect(address, REACH_TIMEOUT_MS) }
+        "connected"
+    } catch (_: ConnectException) {
+        "refused"
+    } catch (_: SocketTimeoutException) {
+        "timeout"
+    }
+
     private companion object {
         const val TAG = "BigBrotherCanary"
         const val CONNECT_TIMEOUT_MS = 500
 
+        const val REACH_TIMEOUT_MS = 3_000
+
         /** The app ops `scripts/check-sandbox.sh` asks about, comma-separated. */
         const val EXTRA_OPS = "ops"
+
+        /** The address `scripts/check-sandbox.sh` has the network tried at, `host:port`. */
+        const val EXTRA_NET = "net"
 
         /** Set by `scripts/check-sandbox.sh` to have a file picked rather than the probes run. */
         const val EXTRA_PICK = "pick"
