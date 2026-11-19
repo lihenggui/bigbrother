@@ -47,18 +47,23 @@ class AppOpsGuardProtocolTest {
         return Triple(parts[0], parts[1].takeUnless { it == "none" }?.toInt(), parts.getOrNull(2)?.toInt())
     }
 
-    /** A permission's state, `null` if not known: `<permission>/<granted|denied|unknown>[/<flag>]...`. */
+    /**
+     * A permission's state, `null` if not known:
+     * `<permission>/<granted|denied|unknown>[/<flag>]...[/service:<package>:<class>]...`.
+     */
     private fun permissionValue(word: String): Pair<String, PermissionState?> {
         val parts = word.split('/')
         if (parts[1] == "unknown") return parts[0] to null
-        val flags = parts.drop(2).fold(0) { flags, flag ->
+        val (services, flagWords) = parts.drop(2).partition { it.startsWith("service:") }
+        val flags = flagWords.fold(0) { flags, flag ->
             flags or when (flag) {
                 "user_set" -> FLAG_USER_SET
                 "user_fixed" -> FLAG_USER_FIXED
                 else -> error("no flag $flag")
             }
         }
-        return parts[0] to PermissionState(granted = parts[1] == "granted", flags = flags)
+        val named = services.map { it.removePrefix("service:").replaceFirst(':', '/') }.toSet()
+        return parts[0] to PermissionState(granted = parts[1] == "granted", flags = flags, services = named)
     }
 
     private fun ProtocolCase.uid(): Int = get("uid")!!.toInt()
@@ -369,6 +374,21 @@ class AppOpsGuardProtocolTest {
         assertEquals("reverted 10123 $fine=granted+user_set", AppOpsGuardProtocol.revertedLine(10123, fine, found))
         assertEquals("reverted 10123 $fine", AppOpsGuardProtocol.revertedLine(10123, fine))
         assertEquals("reverted 10123 android:camera", AppOpsGuardProtocol.revertedLine(10123, "android:camera"))
+    }
+
+    @Test
+    fun givenAccessGivenAgainToOneService_whenKept_thenTheOthersThatHadItKeepIt() {
+        val both = PermissionState.ofServices(setOf("a/a.A", "a/a.B"))
+        val one = PermissionState.ofServices(setOf("a/a.A"))
+        assertEquals(both, AppOpsGuardProtocol.regrantedToKeep(both, one))
+        assertEquals(
+            PermissionState.ofServices(setOf("a/a.A", "a/a.B", "a/a.C")),
+            AppOpsGuardProtocol.regrantedToKeep(both, PermissionState.ofServices(setOf("a/a.C"))),
+        )
+        // Nothing kept, or a permission: what was found.
+        assertEquals(one, AppOpsGuardProtocol.regrantedToKeep(null, one))
+        val granted = PermissionState(granted = true, flags = FLAG_USER_SET)
+        assertEquals(granted, AppOpsGuardProtocol.regrantedToKeep(PermissionState(granted = true, flags = 0), granted))
     }
 
     @Test

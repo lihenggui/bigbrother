@@ -34,6 +34,8 @@ enum class SandboxItem(val id: String) {
     DEVICE_IDS("device_ids"),
     INSTALLED_APPS("installed_apps"),
     NEARBY_DEVICES("nearby_devices"),
+    NOTIFICATION_CONTENT("notification_content"),
+    SCREEN_CONTENT("screen_content"),
     ;
 
     /** The modes it can be set to, the one it starts with first. */
@@ -58,8 +60,10 @@ enum class SandboxItem(val id: String) {
         }
 
     /**
-     * The permissions an app has to ask for to get this data at all. Empty for
-     * what every app can read: its effect is shown for every app.
+     * The permissions an app has to name to get this data at all: ask for
+     * them, or, for the notifications and the screen, bind a service with
+     * them. Empty for what every app can read: its effect is shown for
+     * every app.
      */
     val permissions: List<String>
         get() = when (this) {
@@ -90,10 +94,14 @@ enum class SandboxItem(val id: String) {
                 "android.permission.NEARBY_WIFI_DEVICES",
             )
 
+            NOTIFICATION_CONTENT -> listOf("android.permission.BIND_NOTIFICATION_LISTENER_SERVICE")
+
+            SCREEN_CONTENT -> listOf("android.permission.BIND_ACCESSIBILITY_SERVICE")
+
             STORAGE, CPU_INFO, CLIPBOARD_ACCOUNTS, DEVICE_IDS, INSTALLED_APPS -> emptyList()
         }
 
-    /** Whether an app that asks for [requested] can get this data. */
+    /** Whether an app whose manifest names [requested] can get this data. */
     fun concerns(requested: Set<String>): Boolean = permissions.isEmpty() || permissions.any { it in requested }
 
     companion object {

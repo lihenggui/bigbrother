@@ -387,27 +387,57 @@ impl Sandbox {
     /// in. To be called once, when the daemon starts.
     pub fn resume(&mut self, writer: &Writer, packages: &mut Packages) {
         self.release_reassigned(writer, packages);
-        self.resume_verified(packages);
+        self.resume_verified(writer, packages);
     }
 
-    fn resume_verified(&mut self, packages: &mut Packages) {
-        let mut apps = Vec::new();
+    fn resume_verified(&mut self, writer: &Writer, packages: &mut Packages) {
+        let mut owned = Vec::new();
         let mut waiting = BTreeSet::new();
         for entry in self.snapshot_read().values() {
             if self.owns(entry) {
-                apps.push(Resumed {
-                    entry: entry.clone(),
-                    packages: packages.for_uid(entry.uid).to_vec(),
-                    items: self.items(entry),
-                });
+                owned.push(entry.clone());
             } else {
                 waiting.insert(entry.uid);
             }
         }
         self.awaiting_storage = waiting;
+        let mut apps = Vec::new();
+        for entry in owned {
+            let entry = self.naming_taken_on_resume(writer, entry);
+            apps.push(Resumed {
+                packages: packages.for_uid(entry.uid).to_vec(),
+                items: self.items(&entry),
+                entry,
+            });
+        }
         apps.sort_by_key(|app| app.entry.uid);
         for effect in &mut self.effects {
             effect.resume(&apps);
+        }
+    }
+
+    /// `entry`, taken up again, naming the permissions its items take that
+    /// it does not name yet, as enabling and changing items do before they
+    /// are taken: an item that takes one, new since the entry was last
+    /// written and on by the global settings, is taken as the helper
+    /// starts, and what it finds is kept only for what the entry names.
+    fn naming_taken_on_resume(&mut self, writer: &Writer, entry: Entry) -> Entry {
+        let named = appops::naming_taken(&entry, &self.items(&entry));
+        if named == entry {
+            return entry;
+        }
+        match writer.put_sandbox(&named) {
+            Ok(()) => {
+                self.snapshot_write().insert(named.uid, named.clone());
+                named
+            }
+            Err(e) => {
+                eprintln!(
+                    "bbd: sandbox: naming what uid {} is held to: {e:#}",
+                    entry.uid
+                );
+                entry
+            }
         }
     }
 
@@ -462,7 +492,7 @@ impl Sandbox {
                 .is_some_and(|entry| self.owns(entry))
         });
         if available {
-            self.resume_verified(packages);
+            self.resume_verified(writer, packages);
         }
     }
 
@@ -1753,6 +1783,37 @@ mod tests {
     }
 
     #[test]
+    fn what_an_app_is_held_to_is_named_as_the_daemon_starts() {
+        let mut f = Fixture::new("sandbox-resume-named");
+        let mut sandbox = f.sandbox_with(Vec::new());
+        sandbox
+            .enable(&f.writer, &mut f.packages, "com.app", 0, 1000)
+            .unwrap();
+        // As written before the items that take the access were there.
+        let mut entry = f.writer.sandbox_entry(10100).unwrap().unwrap();
+        entry.saved_permissions.clear();
+        f.writer.put_sandbox(&entry).unwrap();
+
+        let mut restarted = f.sandbox_with(Vec::new());
+        restarted.resume(&f.writer, &mut f.packages);
+        let named = f
+            .writer
+            .sandbox_entry(10100)
+            .unwrap()
+            .unwrap()
+            .saved_permissions;
+        assert_eq!(
+            named,
+            format!(
+                "{}=default,{}=default",
+                items::NOTIFICATION_ACCESS,
+                items::SCREEN_ACCESS
+            )
+        );
+        assert_eq!(restarted.snapshot_read()[&10100].saved_permissions, named);
+    }
+
+    #[test]
     fn a_uid_handed_to_another_app_is_taken_out() {
         let mut f = Fixture::new("sandbox-reassigned");
         let log = Rc::new(RefCell::new(Vec::new()));
@@ -2134,6 +2195,14 @@ mod tests {
         let location = |mode| BTreeMap::from([(Item::Location, Some(mode))]);
         let global = |mode| BTreeMap::from([(Item::Location, mode)]);
         let mut sandbox = f.sandbox_with(vec![taker()]);
+        // Only location takes a permission here.
+        let others_off = BTreeMap::from([
+            (Item::NotificationContent, Mode::Off),
+            (Item::ScreenContent, Mode::Off),
+        ]);
+        sandbox
+            .set_global(&f.writer, &mut f.packages, &others_off)
+            .unwrap();
 
         // Put in with location coarse: named before the state is known,
         // and written down with it after.
@@ -2244,6 +2313,14 @@ mod tests {
         let fine = items::PRECISE_LOCATION;
         let location = |mode| BTreeMap::from([(Item::Location, Some(mode))]);
         let row = || f.writer.sandbox_entry(10100).unwrap().unwrap();
+        // Only location takes a permission here.
+        let others_off = BTreeMap::from([
+            (Item::NotificationContent, Mode::Off),
+            (Item::ScreenContent, Mode::Off),
+        ]);
+        sandbox
+            .set_global(&f.writer, &mut f.packages, &others_off)
+            .unwrap();
         sandbox
             .enable(&f.writer, &mut f.packages, "com.app", 0, 1000)
             .unwrap();
@@ -2448,7 +2525,8 @@ mod tests {
                     "storage": "on", "cpu_info": "on", "contacts": "on", "messages": "on",
                     "calendar": "on", "clipboard_accounts": "on", "location": "coarse", "camera": "off",
                     "microphone": "on", "body_sensors": "on", "device_ids": "on",
-                    "installed_apps": "on", "nearby_devices": "on",
+                    "installed_apps": "on", "nearby_devices": "on", "notification_content": "on",
+                    "screen_content": "on",
                 },
             })
         );

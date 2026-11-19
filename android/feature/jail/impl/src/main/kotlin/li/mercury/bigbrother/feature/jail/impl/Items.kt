@@ -29,7 +29,9 @@ import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.LocationOn
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.PhotoCamera
+import androidx.compose.material.icons.outlined.ScreenshotMonitor
 import androidx.compose.material.icons.outlined.Sms
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -43,7 +45,14 @@ internal enum class ItemGroup(@StringRes val title: Int, val items: List<Sandbox
     FILES(R.string.jail_group_files, listOf(SandboxItem.STORAGE)),
     PERSONAL(
         R.string.jail_group_personal,
-        listOf(SandboxItem.CONTACTS, SandboxItem.MESSAGES, SandboxItem.CALENDAR, SandboxItem.CLIPBOARD_ACCOUNTS),
+        listOf(
+            SandboxItem.CONTACTS,
+            SandboxItem.MESSAGES,
+            SandboxItem.CALENDAR,
+            SandboxItem.CLIPBOARD_ACCOUNTS,
+            SandboxItem.NOTIFICATION_CONTENT,
+            SandboxItem.SCREEN_CONTENT,
+        ),
     ),
     SENSORS(
         R.string.jail_group_sensors,
@@ -74,6 +83,8 @@ internal val SandboxItem.title: Int
         SandboxItem.DEVICE_IDS -> R.string.jail_item_device_ids
         SandboxItem.INSTALLED_APPS -> R.string.jail_item_installed_apps
         SandboxItem.NEARBY_DEVICES -> R.string.jail_item_nearby_devices
+        SandboxItem.NOTIFICATION_CONTENT -> R.string.jail_item_notification_content
+        SandboxItem.SCREEN_CONTENT -> R.string.jail_item_screen_content
     }
 
 internal val SandboxItem.icon: ImageVector
@@ -91,6 +102,8 @@ internal val SandboxItem.icon: ImageVector
         SandboxItem.DEVICE_IDS -> Icons.Outlined.Fingerprint
         SandboxItem.INSTALLED_APPS -> Icons.Outlined.Apps
         SandboxItem.NEARBY_DEVICES -> Icons.Outlined.DevicesOther
+        SandboxItem.NOTIFICATION_CONTENT -> Icons.Outlined.Notifications
+        SandboxItem.SCREEN_CONTENT -> Icons.Outlined.ScreenshotMonitor
     }
 
 /** What the app gets with the item on, in a few words. */
@@ -110,6 +123,8 @@ private val SandboxItem.onLabel: Int
         SandboxItem.DEVICE_IDS -> R.string.jail_item_device_ids_on
         SandboxItem.INSTALLED_APPS -> R.string.jail_item_installed_apps_on
         SandboxItem.NEARBY_DEVICES -> R.string.jail_item_nearby_devices_on
+        SandboxItem.NOTIFICATION_CONTENT -> R.string.jail_item_notification_content_on
+        SandboxItem.SCREEN_CONTENT -> R.string.jail_item_screen_content_on
     }
 
 @get:StringRes
@@ -128,6 +143,8 @@ private val SandboxItem.onDetail: Int
         SandboxItem.DEVICE_IDS -> R.string.jail_item_device_ids_on_detail
         SandboxItem.INSTALLED_APPS -> R.string.jail_item_installed_apps_on_detail
         SandboxItem.NEARBY_DEVICES -> R.string.jail_item_nearby_devices_on_detail
+        SandboxItem.NOTIFICATION_CONTENT -> R.string.jail_item_notification_content_on_detail
+        SandboxItem.SCREEN_CONTENT -> R.string.jail_item_screen_content_on_detail
     }
 
 /** What the app gets from [item] in [mode], in a few words. */
