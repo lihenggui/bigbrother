@@ -46,6 +46,7 @@
 //!   differently.
 //! - [`gate`]: starting apps are held until [`mounts`] has replaced the
 //!   storage they see.
+//! - [`network`]: the packet filter refuses what the app sends.
 //! - [`sweep`]: the app's running processes are ended, so that it starts
 //!   again as it should. The system ends them itself when [`appops`] takes
 //!   a permission the app had: Android does whenever a runtime permission
@@ -56,7 +57,8 @@
 //!
 //! What each effect does depends on the app's [`items`]: the items the app
 //! has a mode of its own for, over the global settings. An item is on unless
-//! set otherwise, and an app with every item off has nothing done to it.
+//! set otherwise, except the network, and an app with every item off has
+//! nothing done to it.
 
 pub mod appops;
 pub(crate) mod dirs;
@@ -64,6 +66,7 @@ pub mod gate;
 pub mod identity;
 pub mod items;
 mod mounts;
+pub mod network;
 pub mod sweep;
 
 use std::{
@@ -297,6 +300,9 @@ pub struct Status {
     pub gate: bool,
     /// Personal data is refused through app ops.
     pub appops: bool,
+    /// The packet filter refuses the network to the apps kept from it.
+    #[serde(default)]
+    pub network: bool,
     pub hook: HookStatus,
     /// Starts of sandboxed apps let through, and those that were stopped.
     pub admitted: u64,
@@ -774,6 +780,7 @@ impl Sandbox {
                     android_id_hook: status.hook.android_id,
                     app_list_hook: status.hook.app_list,
                     uri_grants_hook: status.hook.uri_grants,
+                    packet_filter: status.network,
                 };
                 let settings = Settings::parse(&entry.settings);
                 let items = settings.over(&global);
@@ -1168,10 +1175,11 @@ fn print_list(out: &mut impl std::io::Write, listed: &Listed) -> std::io::Result
     writeln!(out, "{:<10} {:<9} PACKAGE", "UID", "STATE")?;
     for app in &listed.apps {
         let state = if app.enabled { "enabled" } else { "disabled" };
+        // What is not as an item is unless set otherwise.
         let not_on: Vec<String> = app
             .items
             .iter()
-            .filter(|(_, mode)| *mode != Mode::On)
+            .filter(|(item, mode)| *mode != item.default_mode())
             .map(|(item, mode)| format!("{} {}", item.name(), items::mode_name(mode)))
             .collect();
         let not_on = if not_on.is_empty() {
@@ -1231,6 +1239,7 @@ fn print_status(out: &mut impl std::io::Write, status: &Status) -> std::io::Resu
     let on = |active: bool| if active { "active" } else { "inactive" };
     writeln!(out, "Storage gate:      {}", on(status.gate))?;
     writeln!(out, "App ops:           {}", on(status.appops))?;
+    writeln!(out, "Packet filter:     {}", on(status.network))?;
     writeln!(out, "ANDROID_ID hook:   {}", on(status.hook.android_id))?;
     writeln!(out, "App list hook:     {}", on(status.hook.app_list))?;
     writeln!(out, "File grants hook:  {}", on(status.hook.uri_grants))?;
@@ -2526,7 +2535,7 @@ mod tests {
                     "calendar": "on", "clipboard_accounts": "on", "location": "coarse", "camera": "off",
                     "microphone": "on", "body_sensors": "on", "device_ids": "on",
                     "installed_apps": "on", "nearby_devices": "on", "notification_content": "on",
-                    "screen_content": "on",
+                    "screen_content": "on", "network": "off",
                 },
             })
         );
@@ -2572,7 +2581,7 @@ mod tests {
         assert_eq!(
             ask(r#"{"cmd":"sandbox.status"}"#),
             serde_json::json!({
-                "ok": true, "gate": false, "appops": false,
+                "ok": true, "gate": false, "appops": false, "network": false,
                 "hook": {"android_id": false, "app_list": false, "uri_grants": false},
                 "admitted": 0, "failed": 0, "hold_p95_us": 0,
             })

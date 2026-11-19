@@ -54,6 +54,16 @@ for item in $ITEMS; do
     ALL_GLOBAL+=" $item=global"
     [[ "$item" == device_ids ]] && ONLY_IDS+=" $item=on" || ONLY_IDS+=" $item=off"
 done
+# The network is left to the app but where it is checked: an app keeps it
+# when it is put in the sandbox.
+ALL_GLOBAL+=" network=global"
+ALL_ON+=" network=off"
+ONLY_IDS+=" network=off"
+# Where the canary tries the network: the adb server of the machine this
+# runs on, which an emulator reaches at this address. A device that cannot
+# connect to it outside the sandbox has the check of the network skipped.
+NET_TARGET=10.0.2.2:5037
+NO_NETWORK="the device does not reach $NET_TARGET"
 
 # The app ops each item holds (`Item::ops` in bbd/src/sandbox/items.rs).
 declare -A ITEM_OPS=(
@@ -167,7 +177,7 @@ run_canary() {
         as_shell cmd location providers set-test-provider-location gps --location 52.52,13.405 --accuracy 5
     fi
     clear_screen
-    adb shell am start -W -n "$PACKAGE/.MainActivity" --es ops "$ALL_OPS" >/dev/null
+    adb shell am start -W -n "$PACKAGE/.MainActivity" --es ops "$ALL_OPS" --es net "$NET_TARGET" >/dev/null
     local i log=""
     for ((i = 0; i < 90; i++)); do
         log="$(adb logcat -d -s BigBrotherCanary:I | tr -d '\r')"
@@ -569,6 +579,22 @@ check "and in front the app has them" \
 as_root "$BBD sandbox set $PACKAGE location=on camera=on microphone=on" >/dev/null
 check "the precise permission is back as it was" [ "$(precise)" = "$precise_before" ]
 
+echo "with the network kept from the app:"
+network=no
+[[ "$(seen "$outside" network)" == connected ]] && network=yes
+check "the network is left to an app in the sandbox ($(seen "$inside" network))" \
+    [ "$(seen "$inside" network)" = "$(seen "$outside" network)" ]
+as_root "$BBD sandbox set $PACKAGE network=on" >/dev/null
+status="$(as_root "$BBD sandbox status --json")"
+check "the packet filter is in place" [ "$(status_field network)" = true ]
+run_canary
+check_if "$network" "$NO_NETWORK" "connections are refused ($(seen "$view" network))" [ "$(seen "$view" network)" = refused ]
+check "the app reaches itself over loopback ($(seen "$view" loopback))" [ "$(seen "$view" loopback)" = connected ]
+pids="$(adb shell pidof "$PACKAGE" | tr -d '\r')"
+as_root "$BBD sandbox set $PACKAGE network=off" >/dev/null
+check "the app keeps running when the network is given back" [ "$(adb shell pidof "$PACKAGE" | tr -d '\r')" = "$pids" ]
+as_root "$BBD sandbox set $PACKAGE network=on" >/dev/null
+
 echo "disabling the sandbox:"
 as_root "$BBD sandbox disable $PACKAGE" >/dev/null
 run_canary
@@ -579,6 +605,7 @@ if [[ -n "$picked" ]]; then
     check "and so is the file picked before" [ "$(seen "$after" granted_file)" = real ]
 fi
 check "the chip is named again" [ "$(seen "$after" cpu_named)" = true ]
+check_if "$network" "$NO_NETWORK" "the network is back ($(seen "$after" network))" [ "$(seen "$after" network)" = connected ]
 check "the Android ID is the real one" [ "$(seen "$after" android_id)" = "$(seen "$outside" android_id)" ]
 check "the installed apps are visible again" [ "$(seen "$after" apps)" = "$(seen "$outside" apps)" ]
 check "the clipboard is readable again" [ "$(seen "$after" clipboard)" = "$(seen "$outside" clipboard)" ]
