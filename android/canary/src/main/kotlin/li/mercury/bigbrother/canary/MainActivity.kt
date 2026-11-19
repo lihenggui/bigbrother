@@ -50,6 +50,7 @@ import android.util.Log
 import android.widget.ScrollView
 import android.widget.TextView
 import java.io.File
+import java.io.IOException
 import java.net.ConnectException
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -398,7 +399,17 @@ class MainActivity : Activity() {
 
     /** What comes of connecting to [address]: `connected`, `refused` or `timeout`. */
     private fun reach(address: InetSocketAddress): String = try {
-        Socket().use { it.connect(address, REACH_TIMEOUT_MS) }
+        Socket().use {
+            it.connect(address, REACH_TIMEOUT_MS)
+            // A request and whatever answers it, so that bytes go both
+            // ways where something listens; what comes back is not looked at.
+            try {
+                it.soTimeout = REACH_TIMEOUT_MS
+                it.getOutputStream().write("GET / HTTP/1.0\r\n\r\n".toByteArray())
+                it.getInputStream().read(ByteArray(4096))
+            } catch (_: IOException) {
+            }
+        }
         "connected"
     } catch (_: ConnectException) {
         "refused"

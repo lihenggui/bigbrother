@@ -31,7 +31,7 @@ use aya::{
 };
 use bb_common::{
     BinderEvent, BinderKey, BinderValue, ConnectEvent, EV_BINDER, EV_CONNECT, EV_EXEC, EV_FILE,
-    EV_NETLINK, EV_PATH, EV_PROCESS, EV_RESULT, EXEC_ARGS, EventHeader, ExecEvent,
+    EV_NETLINK, EV_PATH, EV_PROCESS, EV_RESULT, EV_TRAFFIC, EXEC_ARGS, EventHeader, ExecEvent,
     FUSE_SUPER_MAGIC, FileEvent, NetlinkEvent, OFF_COUNT, OFF_MISSING, OP_PROBE, OP_WATCH,
     PROC_SUPER_MAGIC, PROCESS_READ, PROCESS_WRITE, PathEvent, ProcessEvent, ResultEvent,
     SELINUX_MAGIC, SYSFS_MAGIC,
@@ -648,8 +648,23 @@ fn start_sandbox(
         &sandbox.snapshot(),
         &sandbox.global(),
     )));
+    // What went over a connection is told by another program, which reads
+    // the same list of apps.
+    let traffic = destinations
+        .as_ref()
+        .map_err(|e| anyhow::anyhow!("{e:#}"))
+        .and_then(|_| attach_traffic(ebpf, offsets));
+    if let Err(e) = &traffic {
+        eprintln!("bbd: warning: the bytes of connections are not counted: {e:#}");
+    }
+    let _ = tracer
+        .writer
+        .set_meta("coverage_net_traffic", i64::from(traffic.is_ok()));
     match destinations {
-        Ok(destinations) => sandbox.add_effect(Box::new(destinations)),
+        Ok(mut destinations) => {
+            destinations.with_traffic(traffic.is_ok());
+            sandbox.add_effect(Box::new(destinations));
+        }
         Err(e) => eprintln!("bbd: warning: connections are not recorded: {e:#}"),
     }
     let network: Box<dyn sandbox::Effect> = match network {
@@ -823,6 +838,37 @@ fn attach_feature(
         }
     }
     Ok(plan)
+}
+
+/// Load and attach the program that reports what went over the TCP
+/// connections of the apps recorded, as each ends.
+fn attach_traffic(ebpf: &mut aya::Ebpf, offsets: &[u32]) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        [
+            bb_common::OFF_SOCK_PROTOCOL,
+            bb_common::OFF_SK_FAMILY,
+            bb_common::OFF_SK_DADDR,
+            bb_common::OFF_SK_DPORT,
+            bb_common::OFF_SK_V6_DADDR,
+            bb_common::OFF_SK_UID,
+            bb_common::OFF_TCP_ACKED,
+            bb_common::OFF_TCP_RECEIVED,
+        ]
+        .iter()
+        .all(|&slot| offsets[slot] != OFF_MISSING),
+        "this kernel's type information lacks a field it reads"
+    );
+    let program: &mut RawTracePoint = ebpf
+        .program_mut("inet_sock_set_state")
+        .context("program inet_sock_set_state missing from object")?
+        .try_into()?;
+    program
+        .load()
+        .context("verifier rejected inet_sock_set_state")?;
+    program
+        .attach("inet_sock_set_state")
+        .context("attaching to the inet_sock_set_state tracepoint")?;
+    Ok(())
 }
 
 /// Load and attach the binder tracepoint program, and return the map that
@@ -1460,6 +1506,33 @@ impl Tracer {
                     true,
                     ts,
                     0,
+                );
+            }
+            EV_TRAFFIC => {
+                let Some(ev) = cast::<bb_common::TrafficEvent>(bytes) else {
+                    return;
+                };
+                self.counters.seen += 1;
+                // Only what went to the internet, as the connections are.
+                let Some(address) = net::public(ev.family, ev.port, &ev.addr) else {
+                    return;
+                };
+                let wide = |low: u32, high: u32| (u64::from(high) << 32) | u64::from(low);
+                self.writer.net_record(
+                    NetKey {
+                        uid: hdr.uid,
+                        hour: ts.div_euclid(3600),
+                        host: String::new(),
+                        addr: address.ip().to_string(),
+                        port: address.port(),
+                    },
+                    NetSeen {
+                        sent: wide(ev.sent_low, ev.sent_high),
+                        recv: wide(ev.recv_low, ev.recv_high),
+                        counted: 1,
+                        ..NetSeen::default()
+                    },
+                    ts,
                 );
             }
             EV_NETLINK => {

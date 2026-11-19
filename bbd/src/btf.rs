@@ -266,6 +266,29 @@ impl Btf {
                 "task_struct",
                 &["start_boottime"],
             ),
+            (
+                bb_common::OFF_SK_FAMILY,
+                "sock",
+                &["__sk_common", "skc_family"],
+            ),
+            (
+                bb_common::OFF_SK_DADDR,
+                "sock",
+                &["__sk_common", "skc_daddr"],
+            ),
+            (
+                bb_common::OFF_SK_DPORT,
+                "sock",
+                &["__sk_common", "skc_dport"],
+            ),
+            (
+                bb_common::OFF_SK_V6_DADDR,
+                "sock",
+                &["__sk_common", "skc_v6_daddr"],
+            ),
+            (bb_common::OFF_SK_UID, "sock", &["sk_uid"]),
+            (bb_common::OFF_TCP_ACKED, "tcp_sock", &["bytes_acked"]),
+            (bb_common::OFF_TCP_RECEIVED, "tcp_sock", &["bytes_received"]),
         ] {
             offsets[slot] = self.offset_of(name, path).unwrap_or(OFF_MISSING);
         }
@@ -316,6 +339,19 @@ mod tests {
 
         // The optional ones resolve on a current kernel.
         assert_ne!(off[OFF_SOCK_PROTOCOL], OFF_MISSING);
+        // Those of a socket's peer and counts, some in unnamed unions.
+        for slot in [
+            bb_common::OFF_SK_FAMILY,
+            bb_common::OFF_SK_DADDR,
+            bb_common::OFF_SK_DPORT,
+            bb_common::OFF_SK_V6_DADDR,
+            bb_common::OFF_TCP_ACKED,
+            bb_common::OFF_TCP_RECEIVED,
+        ] {
+            assert_ne!(off[slot], OFF_MISSING, "offset {slot}");
+        }
+        assert_eq!(off[bb_common::OFF_SK_DADDR], 0);
+        assert!(off[bb_common::OFF_TCP_ACKED] > off[bb_common::OFF_SK_V6_DADDR]);
         assert_eq!(off[OFF_SKB_DATA] % 8, 0);
 
         assert!(btf.offset_of("file", &["no_such_field"]).is_err());

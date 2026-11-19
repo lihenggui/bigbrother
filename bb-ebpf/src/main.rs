@@ -90,13 +90,15 @@ use bb_common::{
     ABI_COMPAT32, ABI_NATIVE, AF_INET, AF_INET6, BINDER_ARGS_CAP, BINDER_ARGS_SHORT, BINDER_CODES,
     BINDER_KEY_HEAD, BINDER_KEY_LEN, BINDER_KEY_TAIL, BINDER_MAX_NAME, BINDER_MIN_NAME,
     BINDER_WAKE, BinderEvent, BinderKey, BinderValue, ConnectEvent, DATA_START_LIMIT, EV_BINDER,
-    EV_CONNECT, EV_EXEC, EV_FILE, EV_NETLINK, EV_PATH, EV_PROCESS, EV_RESULT, EXEC_ARG_CAP,
-    EXEC_ARGS, EventHeader, ExecEvent, FUSE_SUPER_MAGIC, FileEvent, GATE_STALE_NS, GateEvent,
-    KNOWN_APP_WORDS, NAME_CAP, NetRuleKey, NetlinkEvent, OFF_COUNT, OFF_DENTRY_INODE,
+    EV_CONNECT, EV_EXEC, EV_FILE, EV_NETLINK, EV_PATH, EV_PROCESS, EV_RESULT, EV_TRAFFIC,
+    EXEC_ARG_CAP, EXEC_ARGS, EventHeader, ExecEvent, FUSE_SUPER_MAGIC, FileEvent, GATE_STALE_NS,
+    GateEvent, KNOWN_APP_WORDS, NAME_CAP, NetRuleKey, NetlinkEvent, OFF_COUNT, OFF_DENTRY_INODE,
     OFF_DENTRY_NAME, OFF_DENTRY_PARENT, OFF_DENTRY_SB, OFF_FILE_DENTRY, OFF_FILE_FLAGS,
-    OFF_INODE_MODE, OFF_SB_DEV, OFF_SB_MAGIC, OFF_SKB_DATA, OFF_SOCK_PROTOCOL, OP_OPEN, OP_PAIRED,
-    OP_PROBE, OP_WATCH, PROC_SUPER_MAGIC, PROCESS_READ, PROCESS_TRACE, PROCESS_WRITE, PathEvent,
-    ProcessEvent, ResultEvent, SELINUX_MAGIC, SYSFS_MAGIC, known_app_bit,
+    OFF_INODE_MODE, OFF_SB_DEV, OFF_SB_MAGIC, OFF_SK_DADDR, OFF_SK_DPORT, OFF_SK_FAMILY,
+    OFF_SK_UID, OFF_SK_V6_DADDR, OFF_SKB_DATA, OFF_SOCK_PROTOCOL, OFF_TCP_ACKED, OFF_TCP_RECEIVED,
+    OP_OPEN, OP_PAIRED, OP_PROBE, OP_WATCH, PROC_SUPER_MAGIC, PROCESS_READ, PROCESS_TRACE,
+    PROCESS_WRITE, PathEvent, ProcessEvent, ResultEvent, SELINUX_MAGIC, SYSFS_MAGIC, TrafficEvent,
+    known_app_bit,
 };
 
 const AT_FDCWD: i32 = -100;
@@ -1411,6 +1413,75 @@ pub fn network_refused(ctx: SkBuffContext) -> i64 {
         return 0;
     }
     i64::from(destination_refused(&ctx, uid).unwrap_or(false))
+}
+
+/// The state a TCP socket ends in (`TCP_CLOSE`).
+const TCP_CLOSE: u64 = 7;
+
+/// A socket has changed state. For a TCP connection that has ended, of an
+/// app whose connections are recorded, reports what the kernel counted
+/// over it: nothing is counted here, packet by packet.
+///
+/// Runs for every state change of every socket: a comparison, and for a
+/// socket that ends, its owner looked up among the apps recorded.
+#[raw_tracepoint(tracepoint = "inet_sock_set_state")]
+pub fn inet_sock_set_state(ctx: RawTracePointContext) -> i32 {
+    let _ = try_sock_state(&ctx);
+    0
+}
+
+fn try_sock_state(ctx: &RawTracePointContext) -> Result<(), i32> {
+    // (sk, oldstate, newstate)
+    let new_state: u64 = ctx.arg(2);
+    if new_state != TCP_CLOSE {
+        return Ok(());
+    }
+    let sk: *const u8 = ctx.arg(0);
+    let off = OFFSETS.load();
+    let uid = unsafe { read_at::<u32>(sk, off[OFF_SK_UID])? };
+    if unsafe { NETWORK_RECORDED.get(&uid) }.is_none() {
+        return Ok(());
+    }
+    // The tracepoint is that of other protocols too; the counts are TCP's.
+    if unsafe { read_at::<u16>(sk, off[OFF_SOCK_PROTOCOL])? } != u16::from(IPPROTO_TCP) {
+        return Ok(());
+    }
+    let family = u32::from(unsafe { read_at::<u16>(sk, off[OFF_SK_FAMILY])? });
+    let mut addr = [0u8; 16];
+    if family == AF_INET {
+        let v4: [u8; 4] = unsafe { read_at(sk, off[OFF_SK_DADDR])? };
+        addr[0] = v4[0];
+        addr[1] = v4[1];
+        addr[2] = v4[2];
+        addr[3] = v4[3];
+    } else if family == AF_INET6 {
+        addr = unsafe { read_at(sk, off[OFF_SK_V6_DADDR])? };
+    } else {
+        return Ok(());
+    }
+    let port = u16::from_be(unsafe { read_at::<u16>(sk, off[OFF_SK_DPORT])? });
+    let sent = unsafe { read_at::<u64>(sk, off[OFF_TCP_ACKED])? };
+    let received = unsafe { read_at::<u64>(sk, off[OFF_TCP_RECEIVED])? };
+    // A socket that never connected, or carried nothing.
+    if port == 0 || (sent == 0 && received == 0) {
+        return Ok(());
+    }
+    let Some(mut entry) = EVENTS.reserve::<TrafficEvent>(0) else {
+        count_drop();
+        return Err(-1);
+    };
+    entry.write(TrafficEvent {
+        hdr: header(EV_TRAFFIC, uid, 0),
+        family,
+        port: u32::from(port),
+        addr,
+        sent_low: sent as u32,
+        sent_high: (sent >> 32) as u32,
+        recv_low: received as u32,
+        recv_high: (received >> 32) as u32,
+    });
+    entry.submit(wakeup_flags());
+    Ok(())
 }
 
 /// Read `N` bytes of the packet at `offset` from its network header.

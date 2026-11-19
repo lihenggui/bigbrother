@@ -132,6 +132,8 @@ pub struct Destinations {
     /// Whether any app is kept from a destination: the packet filter's
     /// rule is needed then ([`super::network::Network`] reads it).
     any: Arc<AtomicBool>,
+    /// Whether the bytes of the connections recorded are counted.
+    traffic: bool,
 }
 
 impl Destinations {
@@ -170,7 +172,14 @@ impl Destinations {
             listed: HashMap::new(),
             recording: BTreeSet::new(),
             any,
+            traffic: false,
         }
+    }
+
+    /// Say whether the bytes of the connections recorded are counted on
+    /// this device, for the status.
+    pub fn with_traffic(&mut self, counted: bool) {
+        self.traffic = counted;
     }
 
     /// The addresses of the book's rules for `uid`.
@@ -290,6 +299,7 @@ impl Effect for Destinations {
 
     fn report(&self, status: &mut Status) {
         status.net_record = true;
+        status.traffic = self.traffic;
     }
 }
 
