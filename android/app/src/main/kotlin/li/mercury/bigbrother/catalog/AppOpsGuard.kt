@@ -18,6 +18,7 @@ package li.mercury.bigbrother.catalog
 
 import android.annotation.SuppressLint
 import android.content.ComponentName
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.content.pm.PermissionInfo
@@ -89,6 +90,11 @@ import kotlin.system.exitProcess
  *   or the system does, is printed as `reverted <uid> <permission>=<state>`
  *   with the state it was found in: from then on the state to give back,
  *   here and in what the daemon keeps.
+ * - `kind <uid> <request> <package>`: prints `library <uid> <request>` for
+ *   a static shared library or SDK library, `app <uid> <request>` for
+ *   another package of the uid, and `unknown <uid> <request>` if it cannot
+ *   tell. This command reads from the package manager without changing
+ *   the uid's permissions or its installation cookie.
  *
  * In `<values>` an op has a mode, the framework's number for it, or
  * `default` for an op that had no uid mode, which `restore` removes again.
@@ -145,6 +151,12 @@ import kotlin.system.exitProcess
 object AppOpsGuard {
     /** How often to look again for a system service not registered yet. */
     private const val SERVICE_POLL_MS = 1000L
+
+    /** `PackageManager.MATCH_STATIC_SHARED_AND_SDK_LIBRARIES`. */
+    private const val MATCH_STATIC_SHARED_AND_SDK_LIBRARIES = 0x04000000
+
+    /** `PackageManager.MATCH_UNINSTALLED_PACKAGES`. */
+    private const val MATCH_UNINSTALLED_PACKAGES = 0x00002000
 
     /** How often every guarded uid is checked without being asked. */
     private const val CHECK_EVERY_MS = 60_000L
@@ -270,6 +282,11 @@ object AppOpsGuard {
         }
         while (true) {
             val line = lines.take() as? Line.Text ?: break
+            if (line.text.startsWith("kind ")) {
+                val query = AppOpsGuardProtocol.parseCommand(line.text) as? Command.Kind ?: continue
+                handle(query)
+                continue
+            }
             val parts = line.text.split(' ', limit = 4)
             if (parts.size != 4 || parts[0] != "bound" || !parts[1].matches(Regex("[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)*")) || !parts[2].matches(Regex("[0-9a-f]{32}"))) continue
             val owner = Installation(parts[1], parts[2])
@@ -507,6 +524,18 @@ object AppOpsGuard {
                 reportUnheld(uid, verify(uid), always = true)
                 emit(AppOpsGuardProtocol.verifiedLine(uid))
             }
+
+            is Command.Kind -> {
+                // Answered apart from the commands, `unknown` where it
+                // cannot be told: never taken for a command's answer.
+                val library = try {
+                    isLibrary(command.packageName, uid)
+                } catch (e: Throwable) {
+                    System.err.println("kind $uid: ${describe(e)}")
+                    null
+                }
+                emit(AppOpsGuardProtocol.kindLine(uid, command.request, library))
+            }
         }
     }
 
@@ -517,6 +546,40 @@ object AppOpsGuard {
     private fun statesBefore(uid: Int, names: Set<String>, known: Map<String, PermissionState>): Map<String, PermissionState> = names.mapNotNull { name ->
         (known[name] ?: taking(name).state(uid, name))?.let { name to it }
     }.toMap()
+
+    /**
+     * Whether [packageName], one of [uid]'s packages, is a library rather
+     * than an app, by the flags the package manager keeps for it.
+     */
+    private fun isLibrary(packageName: String, uid: Int): Boolean {
+        val manager = packageManager()
+        val managerType = Class.forName("android.content.pm.IPackageManager")
+
+        // Libraries are left out of what the package manager answers unless
+        // asked for.
+        val flags = MATCH_STATIC_SHARED_AND_SDK_LIBRARIES or MATCH_UNINSTALLED_PACKAGES
+        val userId = uid / PER_USER_RANGE
+        // The flags are a long from Android 13 on.
+        val int = Int::class.javaPrimitiveType!!
+        val withLong = managerType.optionalMethod("getApplicationInfo", String::class.java, Long::class.javaPrimitiveType!!, int)
+        val info = if (withLong != null) {
+            withLong.invoke(manager, packageName, flags.toLong(), userId)
+        } else {
+            managerType.getMethod("getApplicationInfo", String::class.java, int, int).invoke(manager, packageName, flags, userId)
+        } as ApplicationInfo? ?: error("no such package")
+        check(info.uid == uid) { "not a package of the uid" }
+        return info.isFlagged("isStaticSharedLibrary") || info.isFlagged("isSdkLibrary")
+    }
+
+    /** Whether [method], a flag this Android version may not have, is set. */
+    private fun ApplicationInfo.isFlagged(method: String): Boolean = javaClass.optionalMethod(method)?.invoke(this) as Boolean? ?: false
+
+    private fun packageManager(): Any {
+        val binder = systemService("package") ?: error("no package service")
+        return Class.forName("android.content.pm.IPackageManager\$Stub")
+            .getMethod("asInterface", IBinder::class.java)
+            .invoke(null, binder)!!
+    }
 
     /** Whether this device knows the op [name]. */
     private fun isKnown(name: String): Boolean = ops.any { it.name == name }
@@ -535,13 +598,16 @@ object AppOpsGuard {
      */
     private fun setBack(op: Op, uid: Int, saved: Int?, grantThen: Int?, held: Set<String>): Boolean {
         val compared = grantThen != null && AppOpsGuardProtocol.comparesGrant(op.permission, held)
-        val grantNow = if (compared) grantMode(op, uid) else null
-        val mode = AppOpsGuardProtocol.modeToRestore(saved, grantThen, grantNow)
         // Setting an op's default mode removes the uid mode.
-        val expected = mode ?: op.defaultMode ?: MODE_DEFAULT
-        if (!setUidMode(op.name, op.code, uid, expected)) return false
-        val actual = states(uid, listOf(op)).single()
-        return (actual.uidMode ?: op.defaultMode ?: MODE_DEFAULT) == expected
+        val default = op.defaultMode ?: MODE_DEFAULT
+        return AppOpsGuardProtocol.restoreUidMode(
+            desiredMode = {
+                val grantNow = if (compared) grantMode(op, uid) else null
+                AppOpsGuardProtocol.modeToRestore(saved, grantThen, grantNow) ?: default
+            },
+            writeMode = { mode -> setUidMode(op.name, op.code, uid, mode) },
+            readMode = { states(uid, listOf(op)).single().uidMode ?: default },
+        )
     }
 
     /** The permissions this program holds revoked for a guarded uid, or took and has not given back. */

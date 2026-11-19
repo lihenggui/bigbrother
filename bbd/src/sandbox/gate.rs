@@ -31,6 +31,12 @@
 //! the system starts the app again when it is next wanted. If the thread
 //! itself gets stuck or ends, the kernel side kills such starts on its own
 //! (`GATE_WAITING_SINCE`).
+//!
+//! While newly installed apps are put in the sandbox (`auto`), the kernel
+//! side also stops a start of an app the daemon has not dealt with yet: one
+//! installed and started before the daemon got to it. That start cannot be
+//! given a sandbox either. It is killed, and the main loop told, which puts
+//! the app in the sandbox: its next start is held as any sandboxed one.
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -139,12 +145,16 @@ struct Shared {
     open: AtomicBool,
     /// Told the uid of each app let through.
     admitted: Mutex<Option<Told>>,
+    /// Told the uid of each new app whose start was ended.
+    unknown: Mutex<Option<Told>>,
 }
 
 #[derive(Default)]
 struct Stats {
     admitted: u64,
     failed: u64,
+    /// Starts of new apps ended.
+    unknown: u64,
     /// The latest hold times, in microseconds.
     holds: VecDeque<u64>,
 }
@@ -197,6 +207,7 @@ impl Storage {
             stats: Mutex::default(),
             open: AtomicBool::new(true),
             admitted: Mutex::new(None),
+            unknown: Mutex::new(None),
         });
         let (ready, started) = std::sync::mpsc::sync_channel(1);
         let thread = Thread {
@@ -205,8 +216,7 @@ impl Storage {
                 waiting,
                 shared: shared.clone(),
             },
-            kernel: Kernel::new(scratch),
-            failures: FailureLog::default(),
+            keeper: Keeper::new(shared.clone(), scratch),
         };
         std::thread::Builder::new()
             .name("gate".into())
@@ -228,6 +238,12 @@ impl Storage {
     /// that was let through with its sandbox. It must not block.
     pub fn on_admitted(&self, told: impl Fn(u32) + Send + 'static) {
         *lock(&self.shared.admitted) = Some(Box::new(told));
+    }
+
+    /// Have `told` called, on the gate thread, with the uid of each new app
+    /// whose start was ended (see `auto`). It must not block.
+    pub fn on_unknown(&self, told: impl Fn(u32) + Send + 'static) {
+        *lock(&self.shared.unknown) = Some(Box::new(told));
     }
 
     /// From now on, hold starts of `uid` and give them `mounts`. The gate
@@ -334,6 +350,7 @@ impl Effect for Storage {
         status.gate = self.shared.open.load(Ordering::Relaxed);
         status.admitted = stats.admitted;
         status.failed = stats.failed;
+        status.new_apps_stopped = stats.unknown;
         status.hold_p95_us = stats.hold_p95_us();
     }
 }
@@ -394,6 +411,12 @@ fn write<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
 struct Thread {
     ring: RingBuf<MapData>,
     closing: Closing,
+    keeper: Keeper,
+}
+
+/// What the thread does with each process held.
+struct Keeper {
+    shared: Arc<Shared>,
     kernel: Kernel,
     failures: FailureLog,
 }
@@ -419,9 +442,14 @@ enum Held {
     Sandboxed,
     /// Not an app starting, or not sandboxed any more: let go as it is.
     NotOurs,
+    /// A new app, not in the sandbox yet: ended.
+    New,
+    /// The registered UID no longer belongs to the verified installation.
+    Stale,
 }
 
 /// The thread cannot go on: it is in a mount namespace it could not leave.
+#[derive(Debug)]
 struct Lost;
 
 impl Thread {
@@ -463,7 +491,7 @@ impl Thread {
                 }
             }
             for event in events.drain(..) {
-                let lost = self.admit(&event, &home, &cpuinfo).is_err();
+                let lost = self.keeper.admit(&event, &home, &cpuinfo).is_err();
                 // Nothing waits any more: a later start is timed anew.
                 let _ = self.closing.waiting.set(0, &0, 0);
                 if lost {
@@ -473,22 +501,38 @@ impl Thread {
             }
         }
     }
+}
+
+impl Keeper {
+    fn new(shared: Arc<Shared>, scratch: &Path) -> Self {
+        Self {
+            shared,
+            kernel: Kernel::new(scratch),
+            failures: FailureLog::default(),
+        }
+    }
 
     /// Give the stopped process of `event` its sandbox and let it go on, or
     /// kill it.
     fn admit(&mut self, event: &GateEvent, home: &File, cpuinfo: &str) -> Result<(), Lost> {
         let pid = event.pid as i32;
-        // The process is stopped and cannot end by itself; if something
-        // killed it, there is nothing left to do.
+        let unknown = event.unknown != 0;
+        // The process is stopped and cannot end by itself. Keep its event
+        // until we know we have the right process or that it is gone.
         let process = loop {
             match Process::open(pid) {
                 Ok(process) => break process,
-                Err(e) if e.raw_os_error() == Some(libc::ESRCH) => return Ok(()),
+                Err(e) if e.raw_os_error() == Some(libc::ESRCH) => {
+                    if unknown {
+                        self.tell_unknown(event.uid);
+                    }
+                    return Ok(());
+                }
                 Err(e) => {
                     self.failures.log(event.uid, &e.into());
-                    self.closing.shared.open.store(false, Ordering::Relaxed);
-                    // Keep the original event. The kernel closes subsequent starts
-                    // while the reader is unable to acquire a process descriptor.
+                    // The kernel closes subsequent starts while the reader is
+                    // unable to acquire a process descriptor.
+                    self.shared.open.store(false, Ordering::Relaxed);
                     std::thread::sleep(Duration::from_millis(100));
                 }
             }
@@ -509,32 +553,45 @@ impl Thread {
                 Err(e) if e.raw_os_error() == Some(libc::ESRCH) => return Ok(()),
                 Err(e) => self.failures.log(event.uid, &e.into()),
             }
-            self.closing.shared.open.store(false, Ordering::Relaxed);
+            self.shared.open.store(false, Ordering::Relaxed);
             std::thread::sleep(Duration::from_millis(100));
         }
         let mut lost = false;
         let held = wait_stopped(pid)
-            .and_then(|()| self.set_up(&process, pid, event.uid, home, cpuinfo, &mut lost))
+            .and_then(|()| self.set_up(&process, event, home, cpuinfo, &mut lost))
             .and_then(|held| {
-                process
-                    .signal(libc::SIGCONT)
-                    .context("continuing held process")?;
+                if matches!(held, Held::Sandboxed | Held::NotOurs) {
+                    process
+                        .signal(libc::SIGCONT)
+                        .context("continuing held process")?;
+                }
                 Ok(held)
             });
-        let shared = &self.closing.shared;
+        self.finish(event, &process, held);
+        if lost { Err(Lost) } else { Ok(()) }
+    }
+
+    fn finish(&mut self, event: &GateEvent, process: &Process, held: anyhow::Result<Held>) {
+        let shared = &self.shared;
         match held {
-            Ok(held) => {
-                if matches!(held, Held::Sandboxed) {
-                    let held_us = monotonic_ns().saturating_sub(event.at_ns()) / 1000;
-                    lock(&shared.stats).admit(held_us);
-                    if let Some(told) = lock(&shared.admitted).as_ref() {
-                        told(event.uid);
-                    }
+            Ok(Held::Sandboxed) => {
+                let held_us = monotonic_ns().saturating_sub(event.at_ns()) / 1000;
+                lock(&shared.stats).admit(held_us);
+                if let Some(told) = lock(&shared.admitted).as_ref() {
+                    told(event.uid);
                 }
             }
-            Err(e) => {
-                lock(&shared.stats).failed += 1;
-                self.failures.log(event.uid, &e);
+            Ok(Held::NotOurs) => {}
+            ended => {
+                let rescan = event.unknown != 0 || matches!(ended, Ok(Held::Stale));
+                match ended {
+                    Ok(Held::New) => lock(&shared.stats).unknown += 1,
+                    Ok(_) => lock(&shared.stats).failed += 1,
+                    Err(e) => {
+                        lock(&shared.stats).failed += 1;
+                        self.failures.log(event.uid, &e);
+                    }
+                }
                 // Keep the descriptor until termination is confirmed or the
                 // task is gone. A numeric PID cannot safely recover this case.
                 while let Err(e) = process.signal(libc::SIGKILL) {
@@ -545,20 +602,29 @@ impl Thread {
                     self.failures.log(event.uid, &e.into());
                     std::thread::sleep(Duration::from_millis(100));
                 }
+                if rescan {
+                    self.tell_unknown(event.uid);
+                }
             }
         }
-        if lost { Err(Lost) } else { Ok(()) }
+    }
+
+    fn tell_unknown(&self, uid: u32) {
+        if let Some(told) = lock(&self.shared.unknown).as_ref() {
+            told(uid);
+        }
     }
 
     fn set_up(
         &mut self,
         process: &Process,
-        pid: i32,
-        uid: u32,
+        event: &GateEvent,
         home: &File,
         cpuinfo: &str,
         lost: &mut bool,
     ) -> anyhow::Result<Held> {
+        let pid = event.pid as i32;
+        let uid = event.uid;
         let stat = fs::read_to_string(format!("/proc/{pid}/stat")).context("reading its state")?;
         let (_, parent) = parse_stat(&stat).context("reading its state")?;
         // Only zygote starts apps. Something else that took the uid with
@@ -570,8 +636,8 @@ impl Thread {
         if !is_zygote(&started_by) || real_uid(&parent_status) != Some(0) {
             return Ok(Held::NotOurs);
         }
+        // A new app put in the sandbox since it was stopped is given it now.
         let Some(gated) = self
-            .closing
             .shared
             .apps
             .read()
@@ -579,7 +645,11 @@ impl Thread {
             .get(&uid)
             .cloned()
         else {
-            return Ok(Held::NotOurs);
+            return Ok(if event.unknown != 0 {
+                Held::New
+            } else {
+                Held::NotOurs
+            });
         };
         // Mounting in a namespace the process shares with zygote would
         // change what every app sees.
@@ -605,13 +675,16 @@ impl Thread {
             "unexpected process credentials"
         );
         process.signal(0)?;
-        if !dirs::matches_install(
+        match dirs::matches_install(
             Path::new("/data/user_de"),
             &gated.package,
             uid,
             &gated.install_id,
-        )? {
-            return Ok(Held::NotOurs);
+        ) {
+            Ok(true) => {}
+            Ok(false) => return Ok(Held::Stale),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Held::Stale),
+            Err(e) => return Err(e.into()),
         }
         self.kernel.generation = format!("{}-{}", uid, gated.install_id);
         let files: &[(&str, &str)] = if gated.mounts.cpu_info {
@@ -790,6 +863,116 @@ mod tests {
         }
         assert_eq!(stats.hold_p95_us(), 7);
         assert_eq!(stats.admitted, 100 + HOLDS_KEPT as u64);
+    }
+
+    /// A keeper whose `on_unknown` collects the uids it is told.
+    fn keeper(scratch: &Path) -> (Keeper, Arc<Shared>, Arc<Mutex<Vec<u32>>>) {
+        let shared = Arc::new(Shared {
+            apps: RwLock::default(),
+            stats: Mutex::default(),
+            open: AtomicBool::new(true),
+            admitted: Mutex::new(None),
+            unknown: Mutex::new(None),
+        });
+        let told = Arc::new(Mutex::new(Vec::new()));
+        let collected = told.clone();
+        *lock(&shared.unknown) = Some(Box::new(move |uid| lock(&collected).push(uid)));
+        (Keeper::new(shared.clone(), scratch), shared, told)
+    }
+
+    fn new_app_start(pid: u32) -> GateEvent {
+        let ticks = crate::sensors::process_start(pid).unwrap_or(0);
+        let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) } as u64;
+        let start = (ticks * 1_000_000_000).div_ceil(hz);
+        GateEvent {
+            start_low: start as u32,
+            start_high: (start >> 32) as u32,
+            pid,
+            uid: 1_010_230,
+            at_ns_low: 0,
+            at_ns_high: 0,
+            unknown: 1,
+        }
+    }
+
+    #[test]
+    fn a_new_app_starting_is_ended_and_the_daemon_told() {
+        let dir = std::env::temp_dir().join(format!("bbd-test-gate-new-{}", std::process::id()));
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let process = Process::open(child.id() as i32).unwrap();
+        process.signal(libc::SIGSTOP).unwrap();
+        let (mut keeper, shared, told) = keeper(&dir);
+        let home = File::open("/dev/null").unwrap();
+
+        keeper.finish(&new_app_start(child.id()), &process, Ok(Held::New));
+        assert!(process.exited(5000).unwrap());
+        assert!(!child.wait().unwrap().success());
+        assert_eq!(*lock(&told), [1_010_230]);
+        let stats = lock(&shared.stats);
+        assert_eq!((stats.unknown, stats.failed, stats.admitted), (1, 0, 0));
+        drop(stats);
+
+        // Killed already, by the kernel side: the daemon is told all the
+        // same.
+        keeper
+            .admit(&new_app_start(i32::MAX as u32), &home, "")
+            .unwrap();
+        assert_eq!(lock(&told).len(), 2);
+    }
+
+    #[test]
+    fn a_stale_gate_entry_ends_the_start_and_requests_a_scan() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let process = Process::open(child.id() as i32).unwrap();
+        process.signal(libc::SIGSTOP).unwrap();
+        let (mut keeper, shared, told) = keeper(Path::new("/unused"));
+        let mut event = new_app_start(child.id());
+        // The kernel already held this UID for the previous installation.
+        event.unknown = 0;
+
+        keeper.finish(&event, &process, Ok(Held::Stale));
+
+        assert!(process.exited(5000).unwrap());
+        assert!(!child.wait().unwrap().success());
+        assert_eq!(*lock(&told), [event.uid]);
+        assert_eq!(lock(&shared.stats).failed, 1);
+    }
+
+    #[test]
+    fn a_new_uid_taken_by_something_other_than_an_app_is_let_go() {
+        let dir = std::env::temp_dir().join(format!("bbd-test-gate-other-{}", std::process::id()));
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let held = Process::open(child.id() as i32).unwrap();
+        held.signal(libc::SIGSTOP).unwrap();
+        let (mut keeper, shared, told) = keeper(&dir);
+        let home = File::open("/dev/null").unwrap();
+
+        keeper.admit(&new_app_start(child.id()), &home, "").unwrap();
+        // Let go, not ended: it was not started by zygote.
+        assert!(lock(&told).is_empty());
+        assert_eq!(lock(&shared.stats).unknown, 0);
+        let state = |pid: u32| {
+            fs::read_to_string(format!("/proc/{pid}/stat"))
+                .ok()
+                .and_then(|stat| parse_stat(&stat))
+                .map(|(state, _)| state)
+        };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while state(child.id()) == Some('T') && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_ne!(state(child.id()), Some('T'));
+        held.signal(libc::SIGKILL).unwrap();
+        child.wait().unwrap();
     }
 
     #[test]

@@ -19,7 +19,7 @@
 //! reads the same photo 500 times in an hour costs one row.
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     path::{Path, PathBuf},
     time::{Duration, SystemTime},
 };
@@ -106,7 +106,7 @@ impl Category {
 /// Schema version stored in SQLite's `user_version`. Bump it whenever
 /// `SCHEMA` changes, and add the step from the previous version to
 /// `MIGRATIONS`.
-const SCHEMA_VERSION: i32 = 9;
+const SCHEMA_VERSION: i32 = 10;
 
 /// How a database written by a released build is brought to
 /// `SCHEMA_VERSION`: (from, to, statements), applied one after another.
@@ -120,6 +120,7 @@ const MIGRATIONS: &[(i32, i32, &str)] = &[
         "ALTER TABLE sandbox ADD COLUMN install_id TEXT NOT NULL DEFAULT '';",
     ),
     (8, 9, RETIRED_SANDBOX),
+    (9, 10, SANDBOX_AUTO_SCHEMA),
 ];
 
 // The old install's settings and saved grants remain available to the owner
@@ -212,6 +213,18 @@ const FILE_OPEN: Mode = MODE_READ | MODE_WRITE;
 /// the app has a mode of its own for; `sandbox_global` holds the settings
 /// every other item follows (see `sandbox::items`). An item named in neither
 /// is on.
+///
+/// `sandbox_packages` holds the packages that ran under an entry's uid when
+/// it was last looked at: the entry stays that app's while any of them is
+/// installed, and is not another app's that is given the uid later.
+///
+/// `sandbox_known` is what the isolation of newly installed apps knows of
+/// the installed ones (see `sandbox::auto`); it is empty while that is off,
+/// which the `sandbox_auto` key of `meta` says. Rows with user -1 are an app
+/// id left alone for every Android user; rows with a user are a uid of an
+/// app installed since, already dealt with. There is a row for each package
+/// of the app id or uid. A library row is one package of an app id that the
+/// package manager has as a library, left alone while it is installed.
 const SCHEMA: &str = "
 CREATE TABLE access (
     hour     INTEGER NOT NULL,   -- unix time / 3600
@@ -278,6 +291,22 @@ CREATE TABLE sandbox (
 CREATE TABLE sandbox_global (
     item TEXT PRIMARY KEY,
     mode TEXT NOT NULL
+) WITHOUT ROWID;
+";
+
+const SANDBOX_AUTO_SCHEMA: &str = "
+CREATE TABLE sandbox_packages (
+    uid     INTEGER NOT NULL,
+    package TEXT    NOT NULL,
+    PRIMARY KEY (uid, package)
+) WITHOUT ROWID;
+CREATE TABLE sandbox_known (
+    app_id  INTEGER NOT NULL,
+    user    INTEGER NOT NULL,   -- the Android user; -1 for every user
+    package TEXT    NOT NULL,   -- known while one of its packages is installed: tells it
+                                -- apart from an app given the app id after this one
+    library INTEGER NOT NULL,   -- 1: this package alone, a library
+    PRIMARY KEY (app_id, user, package)
 ) WITHOUT ROWID;
 ";
 
@@ -782,8 +811,34 @@ impl Writer {
     /// Forget the entry for `uid`. Only for undoing the first enable of an
     /// app when it failed: a disabled entry is otherwise kept.
     pub fn delete_sandbox(&self, uid: u32) -> anyhow::Result<()> {
-        self.conn
-            .execute("DELETE FROM sandbox WHERE uid = ?1", params![uid])?;
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM sandbox WHERE uid = ?1", params![uid])?;
+        tx.execute("DELETE FROM sandbox_packages WHERE uid = ?1", params![uid])?;
+        tx.commit()?;
+        self.sync()
+    }
+
+    /// The packages that ran under `uid` when its entry was last looked at.
+    pub fn sandbox_packages(&self, uid: u32) -> anyhow::Result<BTreeSet<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT package FROM sandbox_packages WHERE uid = ?1")?;
+        let rows = stmt.query_map(params![uid], |r| r.get(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Replace the packages that run under `uid`, written through to the
+    /// disk with the entries.
+    pub fn put_sandbox_packages(&self, uid: u32, packages: &[String]) -> anyhow::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM sandbox_packages WHERE uid = ?1", params![uid])?;
+        for package in packages {
+            tx.execute(
+                "INSERT OR IGNORE INTO sandbox_packages (uid, package) VALUES (?1, ?2)",
+                params![uid, package],
+            )?;
+        }
+        tx.commit()?;
         self.sync()
     }
 
@@ -877,6 +932,71 @@ fn sandbox_global(conn: &Connection) -> anyhow::Result<String> {
         })?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(pairs.join(","))
+}
+
+/// What the isolation of newly installed apps knows of one installed app
+/// (see `sandbox::auto`): a `sandbox_known` row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KnownApp {
+    pub app_id: u32,
+    /// The Android user it was dealt with for; `None` for every user.
+    pub user: Option<u32>,
+    pub package: String,
+    /// The package is a library, left alone itself.
+    pub library: bool,
+}
+
+/// The `meta` key that says whether newly installed apps are isolated.
+const SANDBOX_AUTO: &str = "sandbox_auto";
+
+impl Writer {
+    /// Whether newly installed apps are isolated, and what is known of the
+    /// installed ones.
+    pub fn sandbox_auto(&self) -> anyhow::Result<(bool, Vec<KnownApp>)> {
+        let on = self.meta(SANDBOX_AUTO)?.is_some_and(|on| on != 0);
+        let mut stmt = self.conn.prepare(
+            "SELECT app_id, user, package, library FROM sandbox_known
+             ORDER BY app_id, user, package",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(KnownApp {
+                app_id: r.get(0)?,
+                user: u32::try_from(r.get::<_, i64>(1)?).ok(),
+                package: r.get(2)?,
+                library: r.get(3)?,
+            })
+        })?;
+        Ok((on, rows.collect::<Result<_, _>>()?))
+    }
+
+    /// Replace both at once, written through to the disk as the sandbox's
+    /// entries are: what is known decides which apps are put in the
+    /// sandbox.
+    pub fn put_sandbox_auto(&self, on: bool, known: &[KnownApp]) -> anyhow::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "INSERT INTO meta (key, value) VALUES (?1, ?2)
+             ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            params![SANDBOX_AUTO, on],
+        )?;
+        tx.execute("DELETE FROM sandbox_known", [])?;
+        {
+            let mut insert = tx.prepare(
+                "INSERT INTO sandbox_known (app_id, user, package, library)
+                 VALUES (?1, ?2, ?3, ?4)",
+            )?;
+            for app in known {
+                insert.execute(params![
+                    app.app_id,
+                    app.user.map_or(-1, i64::from),
+                    app.package,
+                    app.library
+                ])?;
+            }
+        }
+        tx.commit()?;
+        self.sync()
+    }
 }
 
 fn has_tables(conn: &Connection) -> rusqlite::Result<bool> {
@@ -996,6 +1116,7 @@ fn create_schema(conn: &mut Connection) -> anyhow::Result<()> {
     }
     conn.execute_batch(SCHEMA)?;
     conn.execute_batch(RETIRED_SANDBOX)?;
+    conn.execute_batch(SANDBOX_AUTO_SCHEMA)?;
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     conn.commit()?;
     Ok(())
@@ -2178,6 +2299,38 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    #[test]
+    fn what_auto_isolation_knows_is_written_over_and_survives_reopening() {
+        let dir = std::env::temp_dir().join(format!("bbd-test-known-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let db = dir.join("bb.db");
+        let w = Writer::open(&db).unwrap();
+        assert_eq!(w.sandbox_auto().unwrap(), (false, vec![]));
+        let known = |app_id, user, package: &str| KnownApp {
+            app_id,
+            user,
+            package: package.into(),
+            library: false,
+        };
+        let rows = [
+            known(10100, None, "com.a"),
+            known(10100, None, "com.b"),
+            known(10230, Some(0), "com.new"),
+            known(10230, Some(10), "com.new"),
+            KnownApp {
+                library: true,
+                ..known(10240, None, "com.library_2")
+            },
+        ];
+        w.put_sandbox_auto(true, &rows).unwrap();
+        drop(w);
+        let w = Writer::open(&db).unwrap();
+        assert_eq!(w.sandbox_auto().unwrap(), (true, rows.to_vec()));
+        // Turned off, nothing is known.
+        w.put_sandbox_auto(false, &[]).unwrap();
+        assert_eq!(w.sandbox_auto().unwrap(), (false, vec![]));
+    }
+
     /// Every column of every table, and every index, of the database at
     /// `path`, in an order that does not depend on how they were created.
     fn layout(path: &Path) -> Vec<String> {
@@ -2570,8 +2723,18 @@ mod tests {
             w.sandbox_entries().unwrap(),
             [sandbox_entry_for(10100), sandbox_entry_for(1_010_100)]
         );
+        // The packages of a uid are written over, and go with its entry.
+        let pair = ["com.a".to_string(), "com.b".to_string()];
+        w.put_sandbox_packages(1_010_100, &pair).unwrap();
+        assert_eq!(
+            w.sandbox_packages(1_010_100).unwrap(),
+            pair.iter().cloned().collect()
+        );
+        w.put_sandbox_packages(1_010_100, &pair[1..]).unwrap();
+        assert_eq!(w.sandbox_packages(1_010_100).unwrap().len(), 1);
         w.delete_sandbox(1_010_100).unwrap();
         assert_eq!(w.sandbox_entries().unwrap(), [sandbox_entry_for(10100)]);
+        assert!(w.sandbox_packages(1_010_100).unwrap().is_empty());
         drop(w);
         // It survives the daemon starting again.
         assert_eq!(

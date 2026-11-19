@@ -38,6 +38,7 @@ class AppOpsGuardProtocolTest {
         keys = setOf(
             "set", "verify", "release", "restore", "apply", "saved", "restored", "applied", "failed", "verified", "reverted", "unheld",
             "uid", "hold", "revoke", "op", "permission", "name", "not_held",
+            "kind", "library", "app", "unknown", "request", "package",
         ),
     )
 
@@ -92,6 +93,7 @@ class AppOpsGuardProtocolTest {
                 "release" -> Command.Release(uid)
                 "restore" -> Command.Restore(uid, case.values())
                 "apply" -> Command.Apply(uid, case.targets(), case.values())
+                "kind" -> Command.Kind(uid, case.get("request")!!.toLong(), case.get("package")!!)
                 else -> error("no command ${case.first}")
             }
             assertEquals(expected, AppOpsGuardProtocol.parseCommand(case.line), case.line)
@@ -134,10 +136,61 @@ class AppOpsGuardProtocolTest {
 
                 "unheld" -> AppOpsGuardProtocol.unheldLine(uid, case.all("not_held"))
 
+                "library", "app", "unknown" -> AppOpsGuardProtocol.kindLine(
+                    uid,
+                    case.get("request")!!.toLong(),
+                    when (case.first) {
+                        "library" -> true
+                        "app" -> false
+                        else -> null
+                    },
+                )
+
                 else -> error("no answer ${case.first}")
             }
             assertEquals(case.line, line)
         }
+    }
+
+    @Test
+    fun givenPermissionSyncOverwritesRestoredMode_whenReadBack_thenTheLatestGrantIsApplied() {
+        var grant = AppOpsGuardProtocol.MODE_ALLOWED
+        var actual = AppOpsGuardProtocol.MODE_IGNORED
+        val writes = mutableListOf<Int>()
+        assertTrue(
+            AppOpsGuardProtocol.restoreUidMode(
+                desiredMode = { grant },
+                writeMode = { mode ->
+                    writes += mode
+                    if (writes.size == 1) {
+                        // Android reapplied the previous mode and the user
+                        // changed the current grant before it was read back.
+                        grant = AppOpsGuardProtocol.MODE_FOREGROUND
+                    } else {
+                        actual = mode
+                    }
+                    true
+                },
+                readMode = { actual },
+            ),
+        )
+        assertEquals(listOf(AppOpsGuardProtocol.MODE_ALLOWED, AppOpsGuardProtocol.MODE_FOREGROUND), writes)
+    }
+
+    @Test
+    fun givenPermissionSyncKeepsOverwritingMode_whenRestored_thenFailure() {
+        var writes = 0
+        assertFalse(
+            AppOpsGuardProtocol.restoreUidMode(
+                desiredMode = { AppOpsGuardProtocol.MODE_ALLOWED },
+                writeMode = {
+                    writes++
+                    true
+                },
+                readMode = { AppOpsGuardProtocol.MODE_IGNORED },
+            ),
+        )
+        assertEquals(2, writes)
     }
 
     @Test

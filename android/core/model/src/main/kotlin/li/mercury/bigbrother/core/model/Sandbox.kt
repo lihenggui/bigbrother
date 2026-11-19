@@ -203,6 +203,10 @@ data class SandboxStatus(
     val appListHook: Boolean,
     /** The hook holds apps to the file grants of the moment. */
     val uriGrantsHook: Boolean,
+    /** Newly installed apps not isolated yet, with isolating new apps on. */
+    val newAppsPending: Int = 0,
+    /** Whether those are kept from starting until they are isolated. */
+    val newAppsHeld: Boolean = false,
 ) {
     /** The parts of [item] not in place on this device, for every app. */
     fun unmet(item: SandboxItem): Set<SandboxPart> = item.parts.filterTo(mutableSetOf()) { part ->

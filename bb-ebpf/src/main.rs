@@ -52,7 +52,8 @@
 //!
 //! * `gate_setresuid` — not a recorder: kprobe on `setresuid`, which stops a
 //!   starting app the user put in the sandbox until the daemon has replaced
-//!   the storage it will see.
+//!   the storage it will see, and a newly installed app until the daemon has
+//!   put it in the sandbox.
 //! * `network_refused` — not a recorder either: a socket filter the kernel's
 //!   packet filter asks, for each packet leaving the device, whether the
 //!   socket it comes from is one of an app the sandbox keeps from the
@@ -91,11 +92,11 @@ use bb_common::{
     BINDER_WAKE, BinderEvent, BinderKey, BinderValue, ConnectEvent, DATA_START_LIMIT, EV_BINDER,
     EV_CONNECT, EV_EXEC, EV_FILE, EV_NETLINK, EV_PATH, EV_PROCESS, EV_RESULT, EXEC_ARG_CAP,
     EXEC_ARGS, EventHeader, ExecEvent, FUSE_SUPER_MAGIC, FileEvent, GATE_STALE_NS, GateEvent,
-    NAME_CAP, NetlinkEvent, OFF_COUNT, OFF_DENTRY_INODE, OFF_DENTRY_NAME, OFF_DENTRY_PARENT,
-    OFF_DENTRY_SB, OFF_FILE_DENTRY, OFF_FILE_FLAGS, OFF_INODE_MODE, OFF_SB_DEV, OFF_SB_MAGIC,
-    OFF_SKB_DATA, OFF_SOCK_PROTOCOL, OP_OPEN, OP_PAIRED, OP_PROBE, OP_WATCH, PROC_SUPER_MAGIC,
-    PROCESS_READ, PROCESS_TRACE, PROCESS_WRITE, PathEvent, ProcessEvent, ResultEvent,
-    SELINUX_MAGIC, SYSFS_MAGIC,
+    KNOWN_APP_WORDS, NAME_CAP, NetlinkEvent, OFF_COUNT, OFF_DENTRY_INODE, OFF_DENTRY_NAME,
+    OFF_DENTRY_PARENT, OFF_DENTRY_SB, OFF_FILE_DENTRY, OFF_FILE_FLAGS, OFF_INODE_MODE, OFF_SB_DEV,
+    OFF_SB_MAGIC, OFF_SKB_DATA, OFF_SOCK_PROTOCOL, OP_OPEN, OP_PAIRED, OP_PROBE, OP_WATCH,
+    PROC_SUPER_MAGIC, PROCESS_READ, PROCESS_TRACE, PROCESS_WRITE, PathEvent, ProcessEvent,
+    ResultEvent, SELINUX_MAGIC, SYSFS_MAGIC, known_app_bit,
 };
 
 const AT_FDCWD: i32 = -100;
@@ -1211,6 +1212,24 @@ static GATE: RingBuf = RingBuf::with_byte_size(64 * 1024, 0);
 #[map]
 static GATE_WAITING_SINCE: Array<u64> = Array::with_max_entries(1, 0);
 
+/// Slot 0: 1 while newly installed apps are put in the sandbox (`bbd sandbox
+/// auto`). A start of an app the daemon has not dealt with yet is then held
+/// too, so that none of its code runs before it is in the sandbox.
+#[map]
+static AUTO_ISOLATE: Array<u32> = Array::with_max_entries(1, 0);
+
+/// App ids whose starts are not held as new, in every Android user: those
+/// installed when that was turned on, and the system's. One bit per app id
+/// (`known_app_bit`).
+#[map]
+static KNOWN_APP_IDS: Array<u64> = Array::with_max_entries(KNOWN_APP_WORDS, 0);
+
+/// Uids of apps installed since that the daemon has dealt with: put in the
+/// sandbox, where they are in `SANDBOX_UIDS` if anything is mounted for
+/// them, or taken out again by the user.
+#[map]
+static KNOWN_UIDS: HashMap<u32, u32> = HashMap::with_max_entries(1024, 0);
+
 const SIGKILL: u32 = 9;
 const SIGSTOP: u32 = 19;
 
@@ -1224,6 +1243,12 @@ const SIGSTOP: u32 = 19;
 /// An app that cannot be given its sandbox must not run without it: when the
 /// daemon cannot be told, or is not letting anything through, the process is
 /// killed, and the system starts the app again when it is next wanted.
+///
+/// While newly installed apps are put in the sandbox, a child taking the uid
+/// of an app the daemon has not dealt with yet is stopped and reported the
+/// same way. Such an app was installed and started before the daemon got to
+/// it; the daemon ends this start and puts the app in the sandbox for the
+/// next.
 #[kprobe]
 pub fn gate_setresuid(ctx: ProbeContext) -> u32 {
     let _ = try_gate(&ctx);
@@ -1238,9 +1263,13 @@ fn try_gate(ctx: &ProbeContext) -> Result<(), i32> {
     }
     let regs: *const u8 = ctx.arg(0).ok_or(-1)?;
     let uid = unsafe { read_at::<u64>(regs, arch::ARG_OFFSETS[0])? } as u32;
-    if unsafe { SANDBOX_UIDS.get(&uid) }.is_none() {
+    let unknown = if unsafe { SANDBOX_UIDS.get(&uid) }.is_some() {
+        false
+    } else if unknown_app(uid) {
+        true
+    } else {
         return Ok(());
-    }
+    };
     // A child of zygote still has zygote's thread name here ("main"), or
     // that of the pool of spare processes it was taken from ("usap32",
     // "usap64"). Anything else taking the uid (`su`, `run-as`) is not an app
@@ -1275,6 +1304,7 @@ fn try_gate(ctx: &ProbeContext) -> Result<(), i32> {
         uid,
         at_ns_low: now as u32,
         at_ns_high: (now >> 32) as u32,
+        unknown: u32::from(unknown),
     };
     if since != 0 && now.wrapping_sub(since) > GATE_STALE_NS {
         // Reported all the same: a daemon that is there after all clears
@@ -1290,7 +1320,7 @@ fn try_gate(ctx: &ProbeContext) -> Result<(), i32> {
     }
     // The one event that wakes its reader every time: a process is stopped
     // until the daemon has seen it. It happens once per start of a sandboxed
-    // app and for nothing else.
+    // app, or of a new app not dealt with yet, and for nothing else.
     if GATE.output(&event, BPF_RB_FORCE_WAKEUP).is_err() {
         kill();
         return Ok(());
@@ -1300,6 +1330,27 @@ fn try_gate(ctx: &ProbeContext) -> Result<(), i32> {
         kill();
     }
     Ok(())
+}
+
+/// Whether `uid` belongs to an app installed since newly installed apps are
+/// put in the sandbox, which the daemon has not dealt with yet. Most uids
+/// are answered by the range of app ids or the switch; one known since it
+/// was turned on costs an array read, one installed since a lookup more.
+#[inline(always)]
+fn unknown_app(uid: u32) -> bool {
+    let Some((word, bit)) = known_app_bit(uid % PER_USER_RANGE) else {
+        return false;
+    };
+    if AUTO_ISOLATE.get(0).is_none_or(|on| *on == 0) {
+        return false;
+    }
+    if KNOWN_APP_IDS
+        .get(word)
+        .is_some_and(|known| known & bit != 0)
+    {
+        return false;
+    }
+    unsafe { KNOWN_UIDS.get(&uid) }.is_none()
 }
 
 #[inline(always)]

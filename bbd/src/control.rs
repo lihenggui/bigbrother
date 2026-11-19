@@ -201,6 +201,12 @@ pub enum Request {
     /// Change the global settings, and the apps that follow them.
     #[serde(rename = "sandbox.set_global")]
     SandboxSetGlobal { settings: BTreeMap<Item, Mode> },
+    /// Whether apps installed from now on are put in the sandbox.
+    #[serde(rename = "sandbox.auto")]
+    SandboxAuto,
+    /// Turn that on or off.
+    #[serde(rename = "sandbox.set_auto")]
+    SandboxSetAuto { on: bool },
 }
 
 impl Request {
@@ -232,6 +238,8 @@ fn is_known(cmd: &serde_json::Value) -> bool {
                 | "sandbox.set"
                 | "sandbox.global"
                 | "sandbox.set_global"
+                | "sandbox.auto"
+                | "sandbox.set_auto"
         )
     )
 }
@@ -633,6 +641,19 @@ mod tests {
         assert_eq!(
             Request::parse(r#"{"cmd":"sandbox.status"}"#),
             Ok(Request::SandboxStatus)
+        );
+        assert_eq!(
+            Request::parse(r#"{"cmd":"sandbox.auto"}"#),
+            Ok(Request::SandboxAuto)
+        );
+        assert_eq!(
+            Request::parse(r#"{"cmd":"sandbox.set_auto","on":true}"#),
+            Ok(Request::SandboxSetAuto { on: true })
+        );
+        assert!(
+            Request::parse(r#"{"cmd":"sandbox.set_auto"}"#)
+                .unwrap_err()
+                .starts_with("malformed request")
         );
         assert_eq!(
             Request::parse(r#"{"cmd":"later.thing"}"#),

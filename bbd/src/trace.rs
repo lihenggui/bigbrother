@@ -99,6 +99,14 @@ const ACCEPT_RETRY: Duration = Duration::from_secs(1);
 /// Most command connections waiting to send their request at once. Only
 /// root can connect; this only keeps a stuck client from piling them up.
 const MAX_PENDING_COMMANDS: usize = 8;
+/// Uids of new apps whose start the gate ended, waiting for the main loop.
+/// One look at the package list deals with all of them; a uid that finds no
+/// room is reported again by its next start.
+const NEW_STARTS_QUEUE: usize = 16;
+/// Where every user's apps keep the data they can reach before the user
+/// unlocks the device, a directory per user and package: there for every
+/// installed app from the start.
+const USER_DATA: &str = "/data/user_de";
 
 pub struct Options<'a> {
     pub db: &'a Path,
@@ -274,8 +282,17 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     }
     // The sandbox (see `sandbox`). Like the optional probes, it costs only
     // itself where it cannot work: the daemon records regardless.
+    let (new_starts_sender, mut new_starts) = tokio::sync::mpsc::channel(NEW_STARTS_QUEUE);
     let mut sandbox = if opts.sandbox {
-        start_sandbox(&mut ebpf, &symbols, selinux, &offsets, &mut tracer, opts.db)
+        start_sandbox(
+            &mut ebpf,
+            &symbols,
+            selinux,
+            &offsets,
+            &mut tracer,
+            opts.db,
+            new_starts_sender,
+        )
     } else {
         None
     };
@@ -307,9 +324,24 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     let mut sigterm = signal(SignalKind::terminate())?;
     let mut write_errors = RecurringLog::default();
     let mut sensor_check = SensorCheck::default();
+    // The package list, watched while newly installed apps are sandboxed.
+    let mut package_watch = sandbox::auto::Watch::default();
 
     loop {
         sensor_check.arm(tracer.sensors.any_on());
+        if let Some(sandbox) = sandbox.as_mut()
+            && package_watch.arm(
+                sandbox.auto_on(),
+                Path::new(sandbox::auto::PACKAGE_DIR),
+                Path::new(USER_DATA),
+            )
+        {
+            // What was installed before the watch began.
+            sandbox.isolate_new(&tracer.writer, &mut tracer.packages);
+        }
+        // A new app left out of the sandbox is tried again then; no timer
+        // while none is.
+        let next_look = sandbox.as_ref().and_then(Sandbox::auto_next_look);
         // Every branch that does not end in a flush continues the loop.
         let request = tokio::select! {
             _ = sigint.recv() => break,
@@ -357,6 +389,36 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
                 if let (Ok(Some((stream, line))), Some(sandbox)) = (read, sandbox.as_mut()) {
                     let answer = sandbox.answer(&line, &tracer.writer, &mut tracer.packages);
                     control::send_answer(stream, answer);
+                }
+                continue;
+            }
+            // An app was installed, updated or removed.
+            changed = package_watch.changed(), if package_watch.armed() => {
+                match changed {
+                    Ok(()) => {
+                        if let Some(sandbox) = sandbox.as_mut() {
+                            sandbox.isolate_new(&tracer.writer, &mut tracer.packages);
+                        }
+                    }
+                    Err(e) => package_watch.give_up(&e),
+                }
+                continue;
+            }
+            _ = sleep_until(next_look), if next_look.is_some() => {
+                if let Some(sandbox) = sandbox.as_mut() {
+                    sandbox.isolate_new(&tracer.writer, &mut tracer.packages);
+                }
+                continue;
+            }
+            // The gate ended a start for a new app or a stale entry.
+            Some(_) = new_starts.recv() => {
+                while new_starts.try_recv().is_ok() {}
+                if let Some(sandbox) = sandbox.as_mut() {
+                    if sandbox.auto_on() {
+                        sandbox.isolate_new(&tracer.writer, &mut tracer.packages);
+                    } else {
+                        sandbox.release_reassigned(&tracer.writer, &mut tracer.packages);
+                    }
                 }
                 continue;
             }
@@ -473,6 +535,14 @@ impl SensorCheck {
     }
 }
 
+/// Until `at`; never, without one.
+async fn sleep_until(at: Option<std::time::Instant>) {
+    match at {
+        Some(at) => tokio::time::sleep_until(at.into()).await,
+        None => std::future::pending().await,
+    }
+}
+
 /// The next connection to `listener`: a query asking for the records to be
 /// written, or a command. `None` if accepting it failed. Never ready without
 /// a listener.
@@ -494,7 +564,8 @@ async fn next_request(listener: Option<&UnixListener>) -> Option<UnixStream> {
 /// Load the sandbox, attach its gate and put the apps that were sandboxed
 /// back in. `None`, with a warning, if the sandbox's entries cannot be
 /// read; a gate that cannot be attached leaves a sandbox that refuses to
-/// take apps in.
+/// take apps in. The gate sends `new_starts` the uid of each new app whose
+/// start it ended (see `sandbox::auto`).
 fn start_sandbox(
     ebpf: &mut aya::Ebpf,
     symbols: &HashSet<&'static str>,
@@ -502,9 +573,9 @@ fn start_sandbox(
     offsets: &[u32],
     tracer: &mut Tracer,
     db: &Path,
+    new_starts: tokio::sync::mpsc::Sender<u32>,
 ) -> Option<Sandbox> {
-    // Where every user's apps keep their data.
-    let user_data = Path::new("/data/user_de");
+    let user_data = Path::new(USER_DATA);
     let mut sandbox = match Sandbox::load(&tracer.writer, Vec::new(), Some(user_data)) {
         Ok(sandbox) => sandbox,
         Err(e) => {
@@ -522,9 +593,17 @@ fn start_sandbox(
         i64::from(storage.is_ok()),
     );
     let appops = sandbox::appops::AppOps::start();
+    let mut new_apps = None;
     let storage: Box<dyn sandbox::Effect> = match storage {
         Ok(storage) => {
             storage.on_admitted(appops.verifier());
+            // Not waited for: the gate thread waits for nothing.
+            storage.on_unknown(move |uid| {
+                let _ = new_starts.try_send(uid);
+            });
+            new_apps = sandbox::auto::Kernel::take(ebpf)
+                .inspect_err(|e| eprintln!("bbd: warning: starts of new apps are not held: {e:#}"))
+                .ok();
             Box::new(storage)
         }
         Err(e) => {
@@ -532,12 +611,14 @@ fn start_sandbox(
             Box::new(sandbox::gate::Unavailable)
         }
     };
+    // Libraries are told from apps by the package manager, through the
+    // helper, which is started for that only when a new app is found.
+    sandbox.tell_libraries_with(Box::new(appops.librarian()));
     sandbox.add_effect(Box::new(appops));
     sandbox.add_effect(Box::new(sandbox::identity::Identity::new(
         &sandbox.snapshot(),
         &sandbox.global(),
     )));
-    sandbox.add_effect(storage);
     let network: Box<dyn sandbox::Effect> = match sandbox::network::Network::start(ebpf) {
         Ok(network) => Box::new(network),
         Err(e) => {
@@ -546,8 +627,12 @@ fn start_sandbox(
         }
     };
     sandbox.add_effect(network);
+    // Adding the UID to the storage gate lets a held start proceed. Its
+    // other policies must already be in place at that point.
+    sandbox.add_effect(storage);
     sandbox.add_effect(Box::new(sandbox::sweep::Restart));
     sandbox.resume(&tracer.writer, &mut tracer.packages);
+    sandbox.resume_auto(new_apps, &tracer.writer, &mut tracer.packages);
     Some(sandbox)
 }
 

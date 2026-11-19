@@ -368,6 +368,10 @@ impl Effect for Network {
     fn enable(&mut self, entry: &mut Entry, _: &[String], items: &Settings) -> anyhow::Result<()> {
         if items.network_refused() {
             self.refuse(entry.uid)?;
+        } else if self.refused.contains(&entry.uid) {
+            // Retry a removal that failed while retiring the previous
+            // installation before admitting its successor.
+            self.allow(entry.uid)?;
         }
         Ok(())
     }
@@ -407,6 +411,14 @@ impl Effect for Network {
                 "bbd: warning: {} sandboxed apps may have the network: {e:#}",
                 self.refused.len()
             );
+        }
+    }
+
+    fn forget(&mut self, uid: u32) {
+        if self.refused.contains(&uid)
+            && let Err(e) = self.allow(uid)
+        {
+            eprintln!("bbd: sandbox: cannot clear the retired uid {uid}'s network rule: {e:#}");
         }
     }
 
@@ -697,6 +709,24 @@ mod tests {
         assert!(!fake.has_rules());
         assert!(fake.0.borrow().listed.is_empty());
         assert!(in_place(&network));
+    }
+
+    #[test]
+    fn a_retired_installation_leaves_no_network_policy_for_its_successor() {
+        let fake = Fake::default();
+        let mut network = fake.started();
+        let on = items(Mode::On);
+        network.enable(&mut entry(10001), &[], &on).unwrap();
+        network.enable(&mut entry(10002), &[], &on).unwrap();
+
+        network.forget(10001);
+        let off = items(Mode::Off);
+        network.enable(&mut entry(10001), &[], &off).unwrap();
+        assert_eq!(fake.refused(), [10002]);
+
+        network.forget(10002);
+        assert!(fake.refused().is_empty());
+        assert!(!fake.has_rules());
     }
 
     #[test]

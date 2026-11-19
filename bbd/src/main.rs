@@ -212,6 +212,19 @@ enum SandboxCommand {
         #[arg(value_parser = parse_global_setting)]
         settings: Vec<(Item, Mode)>,
     },
+    /// Whether apps installed from now on are sandboxed, with the global
+    /// settings, before they first start; with on or off, change it.
+    /// Turning it on leaves every app installed now as it is.
+    Auto {
+        #[arg(value_enum)]
+        state: Option<Switch>,
+    },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum Switch {
+    On,
+    Off,
 }
 
 /// `ITEM=MODE`, where `global` stands for no mode of the app's own.
@@ -259,6 +272,10 @@ impl From<SandboxCommand> for control::Request {
             SandboxCommand::Global { settings } if settings.is_empty() => Self::SandboxGlobal,
             SandboxCommand::Global { settings } => Self::SandboxSetGlobal {
                 settings: settings.into_iter().collect(),
+            },
+            SandboxCommand::Auto { state: None } => Self::SandboxAuto,
+            SandboxCommand::Auto { state: Some(state) } => Self::SandboxSetAuto {
+                on: state == Switch::On,
             },
         }
     }

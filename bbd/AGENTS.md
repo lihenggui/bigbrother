@@ -48,7 +48,8 @@ JSON.
 - Commands run on the main loop and hold up recording while they do: keep
   what an effect waits for bounded (`appops::ANSWER_WAIT`).
 - Helper programs cost a Java runtime each. The app ops helper runs only
-  while an app is sandboxed.
+  while an app is sandboxed, or for a moment to say whether a newly
+  installed package is a library (`sandbox/auto.rs`).
 - The packet filter (`sandbox/network.rs`) has rules only while an app is
   kept from the network; with none, the chains and the jump to them are
   removed. A packet costs one rule and one map lookup whatever the number
@@ -76,6 +77,11 @@ The daemon runs on every device all the time; its cost is the product's cost.
 - While a sensor session is open, the processes of open sessions are checked
   every 5 seconds (`SENSOR_PROCESS_CHECK`), so that a killed app's session ends
   close to when it did. With no session open that timer does not exist.
+- While newly installed apps are put in the sandbox (`sandbox/auto.rs`),
+  `/data/system` is watched with inotify for the package list being
+  replaced, and `/data/user_de` and each user's directory in it for new
+  directories; while a new app waits to be tried again, a timer runs until
+  then. With that off nothing is watched and there is no timer.
 - Rate-limit anything that can repeat (log lines, helper restarts) and back off
   on failure.
 - Filter as early as possible: in the kernel if the decision can be made there

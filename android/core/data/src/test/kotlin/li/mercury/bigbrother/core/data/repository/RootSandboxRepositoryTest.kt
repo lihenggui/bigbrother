@@ -27,6 +27,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class RootSandboxRepositoryTest {
     private val shell = TestRootShell(failing = setOf("list"))
@@ -62,16 +63,46 @@ class RootSandboxRepositoryTest {
         assertEquals(listOf("enable"), shell.commands)
     }
 
-    /** Answers `bbd sandbox` as the daemon would, failing the subcommands in [failing]. */
-    private class TestRootShell(private val failing: Set<String>) : RootShell(Dispatchers.Unconfined) {
+    @Test
+    fun givenListUnreadable_whenAutoIsolateChanged_thenSwitchReflectsSuccessfulCommand() = runTest {
+        repository.setAutoIsolate(on = true)
+        assertEquals(true, repository.autoIsolate.value)
+        repository.setAutoIsolate(on = false)
+        assertEquals(false, repository.autoIsolate.value)
+
+        assertEquals(listOf("auto", "list", "auto", "list"), shell.commands)
+        assertTrue("sandbox auto on --json" in shell.lines[0])
+        assertTrue("sandbox auto off --json" in shell.lines[2])
+    }
+
+    @Test
+    fun givenModuleWithoutTheSwitch_whenAutoIsolateTurnedOn_thenModuleOutdated() = runTest {
+        val shell = TestRootShell(failing = setOf("auto"), error = "error: unrecognized subcommand 'auto'")
+
+        assertFailsWith<RecordsException.ModuleOutdated> { RootSandboxRepository(shell).setAutoIsolate(on = true) }
+        assertEquals(listOf("auto"), shell.commands)
+    }
+
+    /**
+     * Answers `bbd sandbox` as the daemon would, failing the subcommands in
+     * [failing] with [error].
+     */
+    private class TestRootShell(
+        private val failing: Set<String>,
+        private val error: String = "Error: cannot read the sandbox",
+    ) : RootShell(Dispatchers.Unconfined) {
         /** The subcommands run, in order. */
         val commands = mutableListOf<String>()
+
+        /** The command lines run, in order. */
+        val lines = mutableListOf<String>()
 
         override suspend fun run(command: String, label: String): CommandResult {
             val subcommand = label.removePrefix("bbd sandbox ")
             commands += subcommand
+            lines += command
             return if (subcommand in failing) {
-                CommandResult(isSuccess = false, code = 1, output = "", error = "Error: cannot read the sandbox")
+                CommandResult(isSuccess = false, code = 1, output = "", error = error)
             } else {
                 CommandResult(isSuccess = true, code = 0, output = "{}", error = "")
             }

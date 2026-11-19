@@ -408,7 +408,9 @@ assert_no_padding!(BinderEvent {
 // what it sees (see `gate_setresuid` in bb-ebpf). It has a ring buffer of its
 // own, read by a thread that does nothing else.
 
-/// A process stopped as it was about to take a sandboxed uid.
+/// A process stopped as it was about to take a sandboxed uid, or that of an
+/// app installed since newly installed apps are put in the sandbox, which
+/// the daemon has not dealt with yet.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct GateEvent {
@@ -421,6 +423,9 @@ pub struct GateEvent {
     /// low half first.
     pub at_ns_low: u32,
     pub at_ns_high: u32,
+    /// 1 if the uid is not sandboxed but new to the daemon (see
+    /// `KNOWN_APP_IDS` in bb-ebpf), 0 if it is sandboxed.
+    pub unknown: u32,
 }
 
 assert_no_padding!(GateEvent {
@@ -429,7 +434,8 @@ assert_no_padding!(GateEvent {
     pid,
     uid,
     at_ns_low,
-    at_ns_high
+    at_ns_high,
+    unknown
 });
 
 impl GateEvent {
@@ -445,3 +451,24 @@ pub const GATE_STALE_NS: u64 = 3_000_000_000;
 /// Stored in place of a time once the daemon's gate thread has ended: every
 /// start of a sandboxed app is killed from then on.
 pub const GATE_CLOSED: u64 = 1;
+
+/// App ids of installed apps: from Android's `FIRST_APPLICATION_UID` to
+/// below this (`LAST_APPLICATION_UID` is 19999). Above are the SDK sandboxes
+/// of apps and isolated processes, which are not packages.
+pub const FIRST_APP_ID: u32 = 10_000;
+pub const APP_ID_END: u32 = 20_000;
+
+/// Words in the bitmap of known app ids, one bit per app id from
+/// `FIRST_APP_ID` (see `known_app_bit`).
+pub const KNOWN_APP_WORDS: u32 = (APP_ID_END - FIRST_APP_ID).div_ceil(64);
+
+/// Where `app_id` is in the bitmap of known app ids: the word, and the bit
+/// in it. `None` for an app id that is not an installed app's.
+#[inline(always)]
+pub const fn known_app_bit(app_id: u32) -> Option<(u32, u64)> {
+    if app_id < FIRST_APP_ID || app_id >= APP_ID_END {
+        return None;
+    }
+    let index = app_id - FIRST_APP_ID;
+    Some((index / 64, 1 << (index % 64)))
+}

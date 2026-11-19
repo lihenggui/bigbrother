@@ -66,7 +66,10 @@ use std::{
     io::{BufRead as _, BufReader, Write as _},
     os::fd::AsRawFd as _,
     process::ChildStdin,
-    sync::{Arc, Condvar, Mutex, MutexGuard},
+    sync::{
+        Arc, Condvar, Mutex, MutexGuard,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -107,6 +110,9 @@ enum Answer {
     Restored,
     /// To `apply`: the states of the permissions it took anew.
     Applied(String),
+    /// To `kind`: whether the package is a library rather than an app, if
+    /// the helper could tell, with the request number it was given.
+    Kind(u64, Option<bool>),
     Failed,
 }
 
@@ -122,6 +128,18 @@ fn parse_line(line: &str) -> Option<(u32, Option<Answer>)> {
         "restored" => Some(Answer::Restored),
         "applied" => Some(Answer::Applied(words.next().unwrap_or("").to_string())),
         "failed" => Some(Answer::Failed),
+        "library" | "app" | "unknown" => {
+            let request = words.next()?.parse().ok()?;
+            if words.next().is_some() {
+                return None;
+            }
+            let library = match kind {
+                "library" => Some(true),
+                "app" => Some(false),
+                _ => None,
+            };
+            Some(Answer::Kind(request, library))
+        }
         "reverted" | "verified" | "unheld" => None,
         _ => return None,
     };
@@ -185,6 +203,9 @@ struct State {
     untold: bool,
     /// Answers not yet taken by who asked.
     answers: HashMap<u32, Answer>,
+    /// Kept apart from the mutating commands, with its request number so
+    /// a late answer cannot classify another package of the same uid.
+    kind: Option<(u32, u64, Option<bool>)>,
     /// The ops of guarded uids that the running helper last found it could
     /// not hold. A uid it has not reported on yet is not known to be held.
     unheld: BTreeMap<u32, BTreeSet<String>>,
@@ -210,6 +231,10 @@ impl State {
             #[cfg(not(test))]
             _ => anyhow::bail!("missing installation identity"),
         };
+        self.write_line(&line)
+    }
+
+    fn write_line(&mut self, line: &str) -> anyhow::Result<()> {
         let input = self
             .input
             .as_mut()
@@ -270,6 +295,25 @@ impl Shared {
         settle: impl FnOnce(&mut State, Answer) -> T,
     ) -> anyhow::Result<T> {
         let deadline = Instant::now() + ANSWER_WAIT;
+        self.ask_until(
+            uid,
+            deadline,
+            |state| state.send(line),
+            |state| state.answers.remove(&uid),
+            settle,
+        )
+    }
+
+    /// As [`Shared::ask`], waiting until `deadline`, for the answer `take`
+    /// takes from the state.
+    fn ask_until<A, T>(
+        &self,
+        uid: u32,
+        deadline: Instant,
+        send: impl FnOnce(&mut State) -> anyhow::Result<()>,
+        mut take: impl FnMut(&mut State) -> Option<A>,
+        settle: impl FnOnce(&mut State, A) -> T,
+    ) -> anyhow::Result<T> {
         let mut state = self.state();
         let wait = |state, left| {
             self.changed
@@ -290,11 +334,16 @@ impl Shared {
             }
             state = wait(state, left);
         }
-        state.answers.remove(&uid);
-        state.send(line)?;
+        // One left from an earlier command that was not waited for.
+        take(&mut state);
+        anyhow::ensure!(
+            Instant::now() < deadline,
+            "the app ops helper did not answer in time"
+        );
+        send(&mut state)?;
         state.asking = Some(uid);
         let settled = loop {
-            if let Some(answer) = state.answers.remove(&uid) {
+            if let Some(answer) = take(&mut state) {
                 break Ok(settle(&mut state, answer));
             }
             if state.input.is_none() {
@@ -338,6 +387,14 @@ impl AppOps {
         Self { shared }
     }
 
+    /// What tells, through the helper, libraries from apps (see `auto`).
+    pub fn librarian(&self) -> Librarian {
+        Librarian {
+            shared: self.shared.clone(),
+            next_request: AtomicU64::new(1),
+        }
+    }
+
     /// Called with the uid of an app that just started, to have its ops
     /// looked at then: the system may set them back as an app starts. Never
     /// waits, and does nothing if the helper is busy or away, which looks
@@ -351,6 +408,52 @@ impl AppOps {
                 state.verify(uid);
             }
         }
+    }
+}
+
+/// Asks the helper, which asks the package manager, whether a package is a
+/// library rather than an app: by the flags the package manager keeps for
+/// it, which the package cannot set.
+pub struct Librarian {
+    shared: Arc<Shared>,
+    next_request: AtomicU64,
+}
+
+impl super::auto::Libraries for Librarian {
+    fn is_library(&self, uid: u32, package: &str, until: Instant) -> Option<bool> {
+        // A name the line could not carry is not one Android gives.
+        let valid = !package.is_empty()
+            && package
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_');
+        if !valid {
+            return None;
+        }
+        let deadline = until.min(Instant::now() + ANSWER_WAIT);
+        let request = self.next_request.fetch_add(1, Ordering::Relaxed);
+        let line = Command::Kind(uid, request, package).to_string();
+        self.shared
+            .ask_until(
+                uid,
+                deadline,
+                |state| state.write_line(&line),
+                |state| {
+                    state
+                        .kind
+                        .take()
+                        .filter(|(id, number, _)| (*id, *number) == (uid, request))
+                        .map(|(_, _, kind)| kind)
+                },
+                |_, kind| kind,
+            )
+            .ok()
+            .flatten()
+    }
+
+    fn done(&self) {
+        // Started for the questions, the helper is let go again unless an
+        // app is sandboxed.
+        self.shared.rest_if_unused();
     }
 }
 
@@ -401,6 +504,7 @@ enum Command<'a> {
     Verify(u32, &'a str),
     Release(u32),
     Restore(u32, &'a str),
+    Kind(u32, u64, &'a str),
     /// The targets, then what to set back; nothing to set back is `-`.
     Apply(u32, &'a str, &'a str),
 }
@@ -412,6 +516,7 @@ impl std::fmt::Display for Command<'_> {
             Self::Verify(uid, targets) => write!(f, "verify {uid} {targets}"),
             Self::Release(uid) => write!(f, "release {uid}"),
             Self::Restore(uid, values) => write!(f, "restore {uid} {values}"),
+            Self::Kind(uid, request, package) => write!(f, "kind {uid} {request} {package}"),
             Self::Apply(uid, targets, resets) => {
                 let resets = if resets.is_empty() { "-" } else { resets };
                 write!(f, "apply {uid} {targets} {resets}")
@@ -857,7 +962,13 @@ fn run_helper(shared: &Shared) -> anyhow::Error {
         if let Some((uid, ops)) = parse_unheld(&line) {
             shared.state().unheld.insert(uid, ops);
         } else if let Some((uid, Some(answer))) = parse_line(&line) {
-            shared.state().answers.insert(uid, answer);
+            let mut state = shared.state();
+            if let Answer::Kind(request, kind) = answer {
+                state.kind = Some((uid, request, kind));
+            } else {
+                state.answers.insert(uid, answer);
+            }
+            drop(state);
             shared.changed.notify_all();
         } else if let Some(found) = found_in(&line) {
             shared.state().found.push(found);
@@ -961,6 +1072,11 @@ mod tests {
                 "release" => Command::Release(uid),
                 "restore" => Command::Restore(uid, &saved),
                 "apply" => Command::Apply(uid, &targets, &saved),
+                "kind" => Command::Kind(
+                    uid,
+                    case.get("request").unwrap().parse().unwrap(),
+                    case.get("package").unwrap(),
+                ),
                 other => panic!("no command {other}"),
             }
             .to_string();
@@ -985,6 +1101,15 @@ mod tests {
                 "restored" => Some(Answer::Restored),
                 "applied" => Some(Answer::Applied(text.clone())),
                 "failed" => Some(Answer::Failed),
+                "library" | "app" | "unknown" => {
+                    let request = case.get("request").unwrap().parse().unwrap();
+                    let library = match case.first() {
+                        "library" => Some(true),
+                        "app" => Some(false),
+                        _ => None,
+                    };
+                    Some(Answer::Kind(request, library))
+                }
                 "verified" | "reverted" | "unheld" => None,
                 other => panic!("no answer {other}"),
             };
@@ -1282,6 +1407,36 @@ mod tests {
         own.set(Item::Camera, Some(on(camera))).unwrap();
         own.set(Item::Microphone, Some(Mode::On)).unwrap();
         own.over(&Settings::default())
+    }
+
+    #[test]
+    fn an_answer_to_a_question_is_never_taken_for_a_commands() {
+        use super::super::auto::Libraries as _;
+        let mut appops = AppOps {
+            shared: Arc::new(Shared::default()),
+        };
+        // The stand-in answers no question: it is given up on in time.
+        let (input, sent) = stand_in(&appops.shared, |_, _| {});
+        appops.shared.state().input = Some(input);
+        let librarian = appops.librarian();
+        let until = Instant::now() + Duration::from_millis(100);
+        assert_eq!(librarian.is_library(10230, "com.example.new", until), None);
+        // Its answer comes late, as the app is put in: the command gets
+        // its own.
+        let (uid, Some(Answer::Kind(request, kind))) = parse_line("app 10230 1").unwrap() else {
+            panic!("expected a kind answer");
+        };
+        appops.shared.state().kind = Some((uid, request, kind));
+        let mut entry = sandboxed(10230);
+        appops
+            .enable(&mut entry, &[], &camera_and_microphone(true))
+            .unwrap();
+        appops.shared.state().input = None;
+        let sent = sent.join().unwrap();
+        assert_eq!(sent[0], "kind 10230 1 com.example.new");
+        assert!(sent[1].starts_with("set 10230 "));
+        // A name no package can have is not asked about.
+        assert_eq!(librarian.is_library(10230, "com.example app", until), None);
     }
 
     #[test]

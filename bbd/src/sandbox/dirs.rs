@@ -226,6 +226,34 @@ pub fn pin_install(
     uid: u32,
     create: bool,
 ) -> io::Result<(Dir, String)> {
+    let create = || {
+        if create {
+            super::random_bytes().map(Some)
+        } else {
+            Ok(None)
+        }
+    };
+    pin_install_with(root, package, uid, create)
+}
+
+/// Record the same installation cookie on another member of a verified
+/// shared UID, so it can own the existing sandbox if the primary package is
+/// removed. An existing cookie is never replaced.
+pub(super) fn share_install(root: &Path, package: &str, uid: u32, id: &str) -> io::Result<bool> {
+    let create = || {
+        u128::from_str_radix(id, 16)
+            .map(|id| Some(id.to_be_bytes()))
+            .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))
+    };
+    pin_install_with(root, package, uid, create).map(|(_, cookie)| cookie == id)
+}
+
+fn pin_install_with(
+    root: &Path,
+    package: &str,
+    uid: u32,
+    create: impl FnOnce() -> io::Result<Option<[u8; 16]>>,
+) -> io::Result<(Dir, String)> {
     let dir = Dir::open(root)?
         .open_child(&(uid / crate::packages::PER_USER_RANGE).to_string())?
         .open_child(package)?;
@@ -239,8 +267,10 @@ pub fn pin_install(
         libc::fgetxattr(fd, key.as_ptr(), buf.as_mut_ptr().cast(), buf.len())
     };
     let mut n = read(&mut bytes);
-    if n < 0 && create && io::Error::last_os_error().raw_os_error() == Some(libc::ENODATA) {
-        let new = super::random_bytes::<16>()?;
+    if n < 0
+        && io::Error::last_os_error().raw_os_error() == Some(libc::ENODATA)
+        && let Some(new) = create()?
+    {
         if unsafe {
             libc::fsetxattr(
                 fd,

@@ -16,6 +16,7 @@ $bbd sandbox list
 $bbd sandbox status
 $bbd sandbox set com.example.app camera=off   # see Items
 $bbd sandbox global                           # the global settings
+$bbd sandbox auto on                          # see Newly installed apps
 ```
 
 Every subcommand takes `--json`. The commands are sent to the running
@@ -45,7 +46,8 @@ identifiers, for one, need both the ANDROID_ID hook and the phone-state app
 ops.
 
 The sandbox applies to a uid. Packages that share a uid are sandboxed
-together, and `enable` names them.
+together, and `enable` names them. The sandbox stays with a verified
+installation of any package sharing its installation identifier.
 
 An app's sandbox directory is `/data/media/<user>/<name>/<uid>-<installation>`. It is
 kept when the app leaves the sandbox and when the module is removed, as it
@@ -115,6 +117,77 @@ settings is made to every sandboxed app that follows them, or to none. An
 app in the sandbox with every item off has nothing done to it: no mount,
 no app op, no permission and no answer of the hook.
 
+## Newly installed apps
+
+A switch in the global settings, off by default, puts every app installed
+after it is turned on in the sandbox, with the global settings, before the
+app first starts:
+
+```sh
+$bbd sandbox auto on    # or off; without an argument, says which it is
+```
+
+`bbd sandbox global --json` reports it as `auto`.
+
+- Turning it on leaves every app installed then as it is, for every Android
+  user, then and later. Apps that came with the system, and those a system
+  update adds, are never put in.
+- An app installed afterwards is put in for each user it is installed for,
+  and for a user it is installed for later. Each is put in once: an app taken
+  out of the sandbox stays out.
+- An update is not a new app. An app uninstalled and installed again is.
+  Packages that share an app id count as one app, for as long as any of
+  them is installed. A replacement installation gets its own entry even
+  if Android gives it the same uid. Re-enabling the same verified
+  installation keeps its settings and ANDROID_ID.
+- Static shared libraries and SDK libraries are left alone, including the
+  static libraries Play installs with Chrome or WebView updates. The app
+  ops helper reads the package manager's library flags once per new
+  package with a data directory. A lookup that cannot classify the
+  package is retried before changing its sandbox.
+- An app given the uid of one uninstalled while it was in the sandbox is
+  put in once that one is taken out, with an entry of its own.
+
+Android writes its package list (`/data/system/packages.list`) when it
+installs, updates or removes an app, and then makes the app's data
+directory for each user (`/data/user_de/<user>/<package>`). While the
+switch is on, the daemon watches for both (inotify) and puts the new app in
+the sandbox. What wakes it is a file renamed or written into
+`/data/system` and a directory made in `/data/user_de` or in a user's
+directory there; what an app does inside its own data directory does not.
+
+The installer can request a launch immediately. While the gate is in
+place, it holds an ordinary zygote start of a UID the daemon has not
+dealt with yet; the daemon ends that start, as it ends any start it cannot
+give its sandbox, and puts the app in, and the next start is held as a
+sandboxed app's. Android can still be waiting for the ended launch to
+attach, so a new tap may need to wait for its startup timeout.
+`bbd sandbox status` reports the hold as `new_apps_held`.
+The kernel uses the UIDs and app IDs from the last scan, and the gate also
+checks installation ownership when it applies mounts. The daemon logs
+when it stops holding starts because the kernel cannot store what the
+daemon knows (more than 1024 uids of apps
+installed since the switch was turned on, counted per Android user); new
+apps are then still put in the sandbox as the daemon finds them. Apps
+installed while no daemon runs are held from when it starts, put in by its
+first look, and any of their processes then running are ended.
+
+A look gives library queries up to 4 seconds total, and starts no more
+isolations after that budget. An isolation already in progress finishes or
+rolls back, and the rest are left for a look 2 seconds later. An app that
+cannot be put in, as when the app ops helper
+does not answer, is tried again after 10 seconds, then twice as long each
+time up to 5 minutes, and its starts are held meanwhile. A timer for the
+next try exists only while such an app waits. `bbd sandbox status` reports
+how many new apps are not in the sandbox yet (`new_apps_pending`), and the
+global settings' status row says so.
+
+What the daemon knows of the installed apps is kept in the database, and
+forgotten when the switch is turned off. While it is off, nothing is
+watched, and a start of an app that is not sandboxed reads one value more.
+While it is on, such a start of an app installed before costs a bit test,
+and one of an app installed since a hash lookup more.
+
 ## How it works
 
 ### The gate
@@ -129,7 +202,8 @@ that is about to take a sandboxed uid with `storage` or `cpu_info` on, and
 reports it to the daemon. A
 thread of the daemon that does nothing else enters the child's mount
 namespace, makes the sandbox's mounts and lets the process continue. Apps
-that are not sandboxed pay for one hash lookup when they start.
+that are not sandboxed pay for one hash lookup when they start, and the
+read of the switch for [newly installed apps](#newly-installed-apps).
 
 A start is held for a few milliseconds.
 

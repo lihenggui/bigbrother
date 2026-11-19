@@ -35,13 +35,13 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * The jail: the apps put in the sandbox, what it keeps from each, and the
- * global settings. The daemon keeps all of it; every change goes through it,
- * and what it then reports is what [apps] and [global] hold.
+ * The jail: the apps put in the sandbox, what it keeps from each, the global
+ * settings, and whether newly installed apps are put in. The daemon keeps all
+ * of it; every change goes through it, and what it then reports is what
+ * [apps], [global] and [autoIsolate] hold.
  *
  * A change throws only if the daemon did not make it. If the lists cannot be
- * read again afterwards, [apps] and [global] stay as they were until the
- * next [refresh].
+ * read again afterwards, they stay as they were until the next [refresh].
  */
 interface SandboxRepository {
     /** The apps in the sandbox, and those that were and kept their settings; null until read. */
@@ -50,7 +50,10 @@ interface SandboxRepository {
     /** Every item's mode for an app without its own; null until read. */
     val global: StateFlow<Map<SandboxItem, SandboxMode>?>
 
-    /** Reads [apps] and [global] again. */
+    /** Whether apps installed from now on are isolated, with the global settings; null until read. */
+    val autoIsolate: StateFlow<Boolean?>
+
+    /** Reads [apps], [global] and [autoIsolate] again. */
     suspend fun refresh()
 
     suspend fun getStatus(): SandboxStatus
@@ -68,6 +71,9 @@ interface SandboxRepository {
     suspend fun setItems(packageName: String, userId: Int, changes: Map<SandboxItem, SandboxMode?>)
 
     suspend fun setGlobal(changes: Map<SandboxItem, SandboxMode>)
+
+    /** Turns the isolation of newly installed apps on or off; turning it on leaves installed apps as they are. */
+    suspend fun setAutoIsolate(on: Boolean)
 }
 
 /** Runs `bbd sandbox ... --json` as root. */
@@ -81,12 +87,18 @@ internal class RootSandboxRepository @Inject constructor(
     private val _global = MutableStateFlow<Map<SandboxItem, SandboxMode>?>(null)
     override val global: StateFlow<Map<SandboxItem, SandboxMode>?> = _global.asStateFlow()
 
+    private val _autoIsolate = MutableStateFlow<Boolean?>(null)
+    override val autoIsolate: StateFlow<Boolean?> = _autoIsolate.asStateFlow()
+
     override suspend fun refresh() {
         _apps.value = parsing {
             val rows = JSONObject(sandbox("list")).getJSONArray("apps")
             List(rows.length()) { rows.getJSONObject(it).toSandboxedApp() }
         }
-        _global.value = parsing { JSONObject(sandbox("global")).getJSONObject("items").toModes() }
+        val global = parsing { JSONObject(sandbox("global")) }
+        _global.value = parsing { global.getJSONObject("items").toModes() }
+        // A daemon older than the switch does not report it, and has it off.
+        _autoIsolate.value = global.optBoolean("auto")
     }
 
     override suspend fun getStatus(): SandboxStatus = parsing {
@@ -98,6 +110,9 @@ internal class RootSandboxRepository @Inject constructor(
             androidIdHook = hook.optBoolean("android_id"),
             appListHook = hook.optBoolean("app_list"),
             uriGrantsHook = hook.optBoolean("uri_grants"),
+            // Not reported by a daemon older than isolating new apps.
+            newAppsPending = status.optInt("new_apps_pending"),
+            newAppsHeld = status.optBoolean("new_apps_held"),
         )
     }
 
@@ -136,6 +151,12 @@ internal class RootSandboxRepository @Inject constructor(
         if (changes.isEmpty()) return
         sandbox("global " + changes.entries.joinToString(" ") { (item, mode) -> "${item.id}=${mode.id}" })
         refreshAfter("global")
+    }
+
+    override suspend fun setAutoIsolate(on: Boolean) {
+        sandbox("auto " + if (on) "on" else "off")
+        _autoIsolate.value = on
+        refreshAfter("auto")
     }
 
     /**

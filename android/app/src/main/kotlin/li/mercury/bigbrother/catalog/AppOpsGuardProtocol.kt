@@ -190,6 +190,9 @@ internal object AppOpsGuardProtocol {
          * [resets] names back to the values given, which is not held.
          */
         data class Apply(override val uid: Int, val targets: Targets, val resets: Values) : Command
+
+        /** Whether [packageName], a package of [uid], is a library rather than an app. */
+        data class Kind(override val uid: Int, val request: Long, val packageName: String) : Command
     }
 
     /**
@@ -216,6 +219,12 @@ internal object AppOpsGuardProtocol {
 
             "release" -> if (words.size == 2) Command.Release(uid) else null
 
+            "kind" -> {
+                if (words.size != 4 || !isPackageName(words[3])) return null
+                val request = words[2].toLongOrNull()?.takeIf { it >= 0 } ?: return null
+                Command.Kind(uid, request, words[3])
+            }
+
             "restore" -> when (words.size) {
                 // A device that knows none of the ops saved none.
                 2 -> Command.Restore(uid, Values.NONE)
@@ -228,6 +237,9 @@ internal object AppOpsGuardProtocol {
             else -> null
         }
     }
+
+    /** Whether [name] has only what Android allows in a package name. */
+    fun isPackageName(name: String): Boolean = name.isNotEmpty() && name.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '.' || it == '_' }
 
     /**
      * `<name>=<value>,...`, the form `saved` prints and `restore` takes: the
@@ -287,6 +299,19 @@ internal object AppOpsGuardProtocol {
      * for it is the one to have. Without both grants known, what was saved.
      */
     fun modeToRestore(saved: Int?, grantThen: Int?, grantNow: Int?): Int? = if (grantThen != null && grantNow != null && grantNow != grantThen) grantNow else saved
+
+    fun restoreUidMode(desiredMode: () -> Int, writeMode: (Int) -> Boolean, readMode: () -> Int): Boolean {
+        val expected = desiredMode()
+        if (!writeMode(expected)) return false
+        if (readMode() == expected) return true
+
+        // Android 13 and 14 can still be applying an earlier snapshot of
+        // the permission flags when setUidMode returns. The first write
+        // updated those flags. Recheck the grant and correct a stale mode
+        // once, keeping the readback check on the corrected value.
+        val current = desiredMode()
+        return readMode() == current || (writeMode(current) && readMode() == current)
+    }
 
     /**
      * Whether the grant of [permission] now says what the user chose: not
@@ -446,4 +471,11 @@ internal object AppOpsGuardProtocol {
     fun unheldLine(uid: Int, ops: List<String>): String = "unheld $uid ${ops.joinToString(",").ifEmpty { NONE }}"
 
     fun failedLine(uid: Int): String = "failed $uid"
+
+    /** The answer to `kind`: `null` where it cannot be told. */
+    fun kindLine(uid: Int, request: Long, library: Boolean?): String = when (library) {
+        true -> "library $uid $request"
+        false -> "app $uid $request"
+        null -> "unknown $uid $request"
+    }
 }

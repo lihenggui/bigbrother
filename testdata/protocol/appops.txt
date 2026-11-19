@@ -14,6 +14,8 @@
 # The meaning is the kind of line, then:
 #
 # uid=<uid>
+# request=<number>             a read-only kind request and its answer
+# package=<package>            the package to classify
 # hold=<op>/<mode>             an op held at a mode: 1 ignored, 4 foreground
 # revoke=<permission>          a permission held revoked
 # op=<op>/<mode>[/<grant>]     an op's uid mode, or none; and the mode the
@@ -62,7 +64,14 @@ command	apply 10100 android:fine_location=1 android.permission.ACCESS_FINE_LOCAT
 command	apply 10100 android:camera=1,android.permission.ACCESS_FINE_LOCATION=revoked android:read_contacts=1/1	apply	uid=10100	hold=android:camera/1	revoke=android.permission.ACCESS_FINE_LOCATION	op=android:read_contacts/1/1
 command-read	apply 10100 - android:camera=0	apply	uid=10100	op=android:camera/0
 
+# kind: ask about a package without changing its permissions.
+command	kind 10240 7 com.example.app_2	kind	uid=10240	request=7	package=com.example.app_2
+
 command-bad
+command-bad	kind 10240
+command-bad	kind 10240 -1 com.example.app
+command-bad	kind 10240 7 com.example.app extra
+command-bad	kind 10240 7 com/example
 command-bad	set
 command-bad	set abc
 command-bad	set -1
@@ -135,7 +144,15 @@ answer	reverted 10100 android.permission.BIND_ACCESSIBILITY_SERVICE=granted+serv
 answer	unheld 10100 android:camera,android:read_sms	unheld	uid=10100	not_held=android:camera	not_held=android:read_sms
 answer	unheld 10100 -	unheld	uid=10100
 
+# Read-only answers echo the request so a late answer can be ignored.
+answer	library 10240 7	library	uid=10240	request=7
+answer	app 10240 8	app	uid=10240	request=8
+answer	unknown 10240 9	unknown	uid=10240	request=9
+
 answer-bad
+answer-bad	library 10240
+answer-bad	app 10240 -1
+answer-bad	unknown 10240 7 extra
 answer-bad	saved
 answer-bad	saved x
 answer-bad	saved -1

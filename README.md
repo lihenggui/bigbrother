@@ -148,7 +148,8 @@ Installation.
 Not by default: it records access and does not prevent it. An app can be
 isolated in Jail: it is given storage of its own, empty at first, no
 personal data and an identity of its own. Each item can be set for all
-isolated apps or for one app. Hiding device identifiers and installed apps
+isolated apps or for one app, and apps installed later can be isolated
+before their first start. Hiding device identifiers and installed apps
 needs the LSPosed hook with the System Framework scope. See
 [docs/sandbox.md](docs/sandbox.md).
 
