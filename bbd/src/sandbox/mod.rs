@@ -386,6 +386,7 @@ pub struct HookStatus {
 
 pub struct Sandbox {
     awaiting_storage: BTreeSet<u32>,
+    unsaved_permissions: BTreeSet<u32>,
     snapshot: Snapshot,
     global: Global,
     effects: Vec<Box<dyn Effect>>,
@@ -437,6 +438,7 @@ impl Sandbox {
             auto: auto::Auto::load(writer)?,
             release_logged: None,
             awaiting_storage: BTreeSet::new(),
+            unsaved_permissions: BTreeSet::new(),
         })
     }
 
@@ -713,18 +715,19 @@ impl Sandbox {
     pub fn keep_found(&mut self, writer: &Writer) {
         let snapshot = self.snapshot.clone();
         let mut entries = snapshot.write().unwrap_or_else(|e| e.into_inner());
-        let mut changed: Vec<u32> = Vec::new();
+        let mut changed = BTreeSet::new();
         for effect in &mut self.effects {
             changed.extend(effect.found(&mut entries));
         }
-        changed.sort_unstable();
-        changed.dedup();
-        for uid in changed {
-            if let Some(entry) = entries.get(&uid)
+        let pending = std::mem::take(&mut self.unsaved_permissions);
+        for uid in pending.union(&changed) {
+            if let Some(entry) = entries.get(uid)
                 && let Err(e) = writer.put_sandbox(entry)
             {
-                // Kept here all the same, and written with the next change.
-                eprintln!("bbd: sandbox: cannot write what was found for uid {uid}: {e:#}");
+                self.unsaved_permissions.insert(*uid);
+                if !pending.contains(uid) {
+                    eprintln!("bbd: sandbox: cannot write what was found for uid {uid}: {e:#}");
+                }
             }
         }
     }
@@ -1779,9 +1782,12 @@ mod tests {
         /// Finds every entry's permission granted.
         fn found(&mut self, entries: &mut HashMap<u32, Entry>) -> Vec<u32> {
             let mut changed = Vec::new();
+            let granted = format!("{}=granted", self.name);
             for entry in entries.values_mut() {
-                entry.saved_permissions = format!("{}=granted", self.name);
-                changed.push(entry.uid);
+                if entry.saved_permissions != granted {
+                    entry.saved_permissions.clone_from(&granted);
+                    changed.push(entry.uid);
+                }
             }
             changed
         }
@@ -2054,6 +2060,50 @@ mod tests {
         );
         assert_eq!(
             f.writer
+                .sandbox_entry(10100)
+                .unwrap()
+                .unwrap()
+                .saved_permissions,
+            "appops=granted"
+        );
+    }
+
+    #[test]
+    fn a_permission_change_is_written_again_after_a_failed_write() {
+        let mut f = Fixture::new("sandbox-found-retry");
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let mut sandbox = f.sandbox_with(vec![Recorder::new("appops", &log)]);
+        sandbox
+            .enable(&f.writer, &mut f.packages, "com.app", 0, 1000)
+            .unwrap();
+        let db = f.dir.join("bb.db");
+        let connection = rusqlite::Connection::open(&db).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TRIGGER fail_saved_permission BEFORE UPDATE OF saved_permissions ON sandbox
+                 BEGIN SELECT RAISE(FAIL, 'injected write failure'); END;",
+            )
+            .unwrap();
+        sandbox.keep_found(&f.writer);
+        assert_eq!(
+            sandbox.snapshot_read()[&10100].saved_permissions,
+            "appops=granted"
+        );
+        assert_eq!(
+            f.writer
+                .sandbox_entry(10100)
+                .unwrap()
+                .unwrap()
+                .saved_permissions,
+            ""
+        );
+        connection
+            .execute_batch("DROP TRIGGER fail_saved_permission")
+            .unwrap();
+        sandbox.keep_found(&f.writer);
+        let reopened = Writer::open(&db).unwrap();
+        assert_eq!(
+            reopened
                 .sandbox_entry(10100)
                 .unwrap()
                 .unwrap()
