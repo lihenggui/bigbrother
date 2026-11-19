@@ -56,9 +56,14 @@ for item in $ITEMS; do
 done
 # The network is left to the app but where it is checked: an app keeps it
 # when it is put in the sandbox.
-ALL_GLOBAL+=" network=global"
-ALL_ON+=" network=off"
-ONLY_IDS+=" network=off"
+ALL_GLOBAL+=" network=global network_record=global"
+ALL_ON+=" network=off network_record=off"
+ONLY_IDS+=" network=off network_record=off"
+# An address on the internet nothing answers at, and a name nothing has: a
+# connection to the one is tried, and the other looked up, whether the
+# device has a network or not.
+NET_PUBLIC=203.0.113.5
+NET_NAME=canary.sandbox-check.example
 # Where the canary tries the network: the adb server of the machine this
 # runs on, which an emulator reaches at this address. A device that cannot
 # connect to it outside the sandbox has the check of the network skipped.
@@ -180,7 +185,7 @@ run_canary() {
         as_shell cmd location providers set-test-provider-location gps --location 52.52,13.405 --accuracy 5
     fi
     clear_screen
-    adb shell am start -W -n "$PACKAGE/.MainActivity" --es ops "$ALL_OPS" --es net "$NET_TARGET" >/dev/null
+    adb shell am start -W -n "$PACKAGE/.MainActivity" --es ops "$ALL_OPS" --es net "${net:-$NET_TARGET}" >/dev/null
     local i log=""
     for ((i = 0; i < 90; i++)); do
         log="$(adb logcat -d -s BigBrotherCanary:I | tr -d '\r')"
@@ -640,6 +645,49 @@ check "and has the resolver back in the processes it has" [ "$(covered $pids)" =
 as_root "$BBD sandbox set $PACKAGE network=on" >/dev/null
 check "taking the network again takes the resolver from them" [ "$(covered $pids)" = "$(wc -w <<<"$pids")" ]
 check "the app keeps running" [ "$(adb shell pidof "$PACKAGE" | tr -d '\r')" = "$pids" ]
+as_root "$BBD sandbox set $PACKAGE network=off" >/dev/null
+
+echo "with its connections recorded:"
+since="$(($(adb shell date +%s | tr -d '\r') - 3600))"
+activity() { as_root "$BBD net activity $PACKAGE --since $since"; }
+# How often the app was refused the destination that follows `"$1":"$2"` in
+# the activity.
+refused_of() { grep -o "\"$1\":\"$2\"[^}]*" <<<"$3" | grep -o '"refused":[0-9]*' | head -n 1 | cut -d: -f2; }
+check "connections can be recorded" [ "$(status_field net_record)" = true ]
+check "none is recorded of an app it is not turned on for" grep -q '"destinations":\[\]' <<<"$(activity)"
+as_root "$BBD sandbox set $PACKAGE network_record=on" >/dev/null
+net="$NET_PUBLIC:80" run_canary
+recorded="$(activity)"
+check "a connection to the internet is recorded" grep -q "\"addr\":\"$NET_PUBLIC\"" <<<"$recorded"
+check "and not counted as refused" [ "$(refused_of addr "$NET_PUBLIC" "$recorded")" = 0 ]
+as_root "$BBD net block $PACKAGE ip:$NET_PUBLIC" >/dev/null
+net="$NET_PUBLIC:80" run_canary
+check "kept from the address, the app is refused it ($(seen "$view" network))" [ "$(seen "$view" network)" = refused ]
+check "which is counted" [ "$(refused_of addr "$NET_PUBLIC" "$(activity)")" -gt 0 ]
+check "the app is listed with the rule" grep -q '"network_rules":1' <<<"$(as_root "$BBD sandbox list --json")"
+as_root "$BBD net unblock $PACKAGE ip:$NET_PUBLIC" >/dev/null
+check "no rule of the packet filter is left without one" \
+    [ "$(as_root "iptables -S OUTPUT" | grep -c bb_sandbox)" = 0 ]
+names=no
+[[ "$(status_field dns_names)" == true ]] && names=yes
+NO_NAMES="the daemon cannot stand in for the resolver here"
+check_if "$names" "$NO_NAMES" "the app's lookups go through the daemon" \
+    [ "$(covered $(adb shell pidof "$PACKAGE" | tr -d '\r'))" -gt 0 ]
+check_if "$names" "$NO_NAMES" "and reach the resolver ($(seen "$view" resolver))" [ "$(seen "$view" resolver)" = connected ]
+if [[ "$names" == yes ]]; then
+    as_root "$BBD net block $PACKAGE domain:${NET_NAME#*.}" >/dev/null
+    net="$NET_NAME:80" run_canary
+    check "a name the app is kept from is not looked up" \
+        [ "$(refused_of name "$NET_NAME" "$(activity)")" -gt 0 ]
+    as_root "$BBD net unblock $PACKAGE domain:${NET_NAME#*.}" >/dev/null
+fi
+check "no process but the app's has another resolver" [ "$(others_covered)" = "$others_before" ]
+check "what was recorded can be deleted" grep -q '"deleted":[1-9]' <<<"$(as_root "$BBD net clear $PACKAGE --json")"
+pids="$(adb shell pidof "$PACKAGE" | tr -d '\r')"
+as_root "$BBD sandbox set $PACKAGE network_record=off" >/dev/null
+check "recording turned off, the app has the resolver itself" [ "$(covered $pids)" = 0 ]
+check "the app keeps running" [ "$(adb shell pidof "$PACKAGE" | tr -d '\r')" = "$pids" ]
+as_root "$BBD sandbox set $PACKAGE network=on" >/dev/null
 
 echo "disabling the sandbox:"
 as_root "$BBD sandbox disable $PACKAGE" >/dev/null
