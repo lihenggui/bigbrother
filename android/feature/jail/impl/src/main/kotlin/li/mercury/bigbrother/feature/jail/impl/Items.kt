@@ -24,6 +24,7 @@ import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.Contacts
 import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.DevicesOther
+import androidx.compose.material.icons.outlined.FiberManualRecord
 import androidx.compose.material.icons.outlined.Fingerprint
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.LocationOn
@@ -31,6 +32,7 @@ import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.PhotoCamera
+import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.ScreenshotMonitor
 import androidx.compose.material.icons.outlined.Sms
 import androidx.compose.runtime.Composable
@@ -64,7 +66,10 @@ internal enum class ItemGroup(@StringRes val title: Int, val items: List<Sandbox
     ),
 }
 
-/** Every item in the order the groups list them: files first, then personal data. */
+/**
+ * Every isolation item in the order the groups list them: files first, then
+ * personal data. The network is not one of them: it has a section of its own.
+ */
 internal val ITEM_ORDER: List<SandboxItem> = ItemGroup.entries.flatMap { it.items }
 
 @get:StringRes
@@ -85,6 +90,8 @@ internal val SandboxItem.title: Int
         SandboxItem.NEARBY_DEVICES -> R.string.jail_item_nearby_devices
         SandboxItem.NOTIFICATION_CONTENT -> R.string.jail_item_notification_content
         SandboxItem.SCREEN_CONTENT -> R.string.jail_item_screen_content
+        SandboxItem.NETWORK -> R.string.jail_network_access
+        SandboxItem.NETWORK_RECORD -> R.string.jail_network_record
     }
 
 internal val SandboxItem.icon: ImageVector
@@ -104,6 +111,8 @@ internal val SandboxItem.icon: ImageVector
         SandboxItem.NEARBY_DEVICES -> Icons.Outlined.DevicesOther
         SandboxItem.NOTIFICATION_CONTENT -> Icons.Outlined.Notifications
         SandboxItem.SCREEN_CONTENT -> Icons.Outlined.ScreenshotMonitor
+        SandboxItem.NETWORK -> Icons.Outlined.Public
+        SandboxItem.NETWORK_RECORD -> Icons.Outlined.FiberManualRecord
     }
 
 /** What the app gets with the item on, in a few words. */
@@ -125,6 +134,8 @@ private val SandboxItem.onLabel: Int
         SandboxItem.NEARBY_DEVICES -> R.string.jail_item_nearby_devices_on
         SandboxItem.NOTIFICATION_CONTENT -> R.string.jail_item_notification_content_on
         SandboxItem.SCREEN_CONTENT -> R.string.jail_item_screen_content_on
+        SandboxItem.NETWORK -> R.string.jail_network_blocked
+        SandboxItem.NETWORK_RECORD -> R.string.jail_summary_recording
     }
 
 @get:StringRes
@@ -145,6 +156,8 @@ private val SandboxItem.onDetail: Int
         SandboxItem.NEARBY_DEVICES -> R.string.jail_item_nearby_devices_on_detail
         SandboxItem.NOTIFICATION_CONTENT -> R.string.jail_item_notification_content_on_detail
         SandboxItem.SCREEN_CONTENT -> R.string.jail_item_screen_content_on_detail
+        SandboxItem.NETWORK -> R.string.jail_network_blocked_detail
+        SandboxItem.NETWORK_RECORD -> R.string.jail_network_record_summary
     }
 
 /** What the app gets from [item] in [mode], in a few words. */
@@ -154,7 +167,7 @@ internal fun modeLabel(item: SandboxItem, mode: SandboxMode): String = stringRes
         SandboxMode.ON -> item.onLabel
         SandboxMode.COARSE -> R.string.jail_mode_coarse
         SandboxMode.FOREGROUND -> R.string.jail_mode_foreground
-        SandboxMode.OFF -> R.string.jail_mode_off
+        SandboxMode.OFF -> if (item == SandboxItem.NETWORK) R.string.jail_network_allowed else R.string.jail_mode_off
     },
 )
 
@@ -162,10 +175,14 @@ internal fun modeLabel(item: SandboxItem, mode: SandboxMode): String = stringRes
  * Why an item is not in effect, from the parts of it not in place. Storage
  * isolation not running comes first: without it, the hook would not put
  * storage in effect either. Then what the user can do about it, then what
- * nobody can.
+ * nobody can. The network without the packet filter is not kept from
+ * anything; without the mount over the resolver, only its name lookups
+ * still go through.
  */
 @StringRes
-internal fun notInEffect(unmet: Set<SandboxPart>): Int = when {
+internal fun notInEffect(item: SandboxItem, unmet: Set<SandboxPart>): Int = when {
+    SandboxPart.PACKET_FILTER in unmet -> R.string.jail_not_in_effect_packet_filter
+    item == SandboxItem.NETWORK -> R.string.jail_not_in_effect_resolver
     SandboxPart.MOUNTS in unmet -> R.string.jail_not_in_effect_mounts
     unmet.any { it in HOOK_PARTS } -> R.string.jail_not_in_effect_hook
     else -> R.string.jail_not_in_effect_app_ops
@@ -180,6 +197,6 @@ internal fun modeDetail(item: SandboxItem, mode: SandboxMode): String = stringRe
         SandboxMode.ON -> item.onDetail
         SandboxMode.COARSE -> R.string.jail_mode_coarse_detail
         SandboxMode.FOREGROUND -> R.string.jail_mode_foreground_detail
-        SandboxMode.OFF -> R.string.jail_mode_off_detail
+        SandboxMode.OFF -> if (item == SandboxItem.NETWORK) R.string.jail_network_allowed_detail else R.string.jail_mode_off_detail
     },
 )

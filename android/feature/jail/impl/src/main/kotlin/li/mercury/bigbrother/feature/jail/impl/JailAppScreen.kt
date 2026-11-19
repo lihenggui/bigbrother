@@ -75,6 +75,8 @@ import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.relativeTime
+import li.mercury.bigbrother.feature.jail.impl.network.NetworkSectionActions
+import li.mercury.bigbrother.feature.jail.impl.network.networkSection
 import li.mercury.bigbrother.core.ui.R as UiR
 
 /** What the sandbox keeps from one app in the jail, item by item. */
@@ -82,6 +84,7 @@ import li.mercury.bigbrother.core.ui.R as UiR
 fun JailAppScreen(
     onBack: () -> Unit,
     onOpenRecords: (uid: Int, packageName: String) -> Unit,
+    onOpenNetwork: (uid: Int, packageName: String) -> Unit,
     onLeave: () -> Unit,
     viewModel: JailAppViewModel,
     modifier: Modifier = Modifier,
@@ -103,6 +106,9 @@ fun JailAppScreen(
         onChoose = viewModel::choose,
         onReset = viewModel::reset,
         onErrorDismiss = viewModel::dismissError,
+        onAllowNetwork = viewModel::setNetworkAllowed,
+        onSetRecording = viewModel::setRecording,
+        onOpenNetwork = onOpenNetwork,
         modifier = modifier,
     )
 }
@@ -120,6 +126,9 @@ internal fun JailAppScreen(
     onChoose: (SandboxItem, SandboxMode?) -> Unit,
     onReset: () -> Unit,
     onErrorDismiss: () -> Unit,
+    onAllowNetwork: (Boolean) -> Unit,
+    onSetRecording: (Boolean) -> Unit,
+    onOpenNetwork: (uid: Int, packageName: String) -> Unit,
     modifier: Modifier = Modifier,
     initiallyExpanded: SandboxItem? = null,
 ) {
@@ -210,7 +219,7 @@ internal fun JailAppScreen(
                                     .weight(1f)
                                     .alignByBaseline(),
                             )
-                            if (app.settings.isNotEmpty()) {
+                            if (app.settings.keys.any { it in ITEM_ORDER }) {
                                 TextButton(onClick = onReset, modifier = Modifier.alignByBaseline()) {
                                     Text(stringResource(R.string.jail_reset))
                                 }
@@ -235,6 +244,20 @@ internal fun JailAppScreen(
                         }
                         if (showAll) row(others)
                     }
+                    networkSection(
+                        app = app,
+                        globalMode = state.global[SandboxItem.NETWORK] ?: SandboxItem.NETWORK.default,
+                        requested = state.requested,
+                        destinations = state.destinations,
+                        expanded = expanded == SandboxItem.NETWORK,
+                        actions = NetworkSectionActions(
+                            onExpandedChange = { open -> expanded = if (open) SandboxItem.NETWORK else null },
+                            onSetAllowed = onAllowNetwork,
+                            onChoose = { mode -> onChoose(SandboxItem.NETWORK, mode) },
+                            onSetRecording = onSetRecording,
+                            onOpenActivity = { onOpenNetwork(app.uid, app.packageName) },
+                        ),
+                    )
                     item(key = "restart") { Note(stringResource(R.string.jail_restart_note), Modifier.padding(top = 8.dp)) }
                 }
             }

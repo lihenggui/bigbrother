@@ -61,12 +61,16 @@ val TimeRange.shortLabel: Int
 /**
  * The time ranges as a connected button group, one always selected. For a
  * screen whose content is the summary of the range, where the choice
- * should stay in view.
+ * should stay in view. [options] are the ranges offered.
  */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-fun TimeRangeButtonGroup(range: TimeRange, onRange: (TimeRange) -> Unit, modifier: Modifier = Modifier) {
-    val options = TimeRange.entries
+fun TimeRangeButtonGroup(
+    range: TimeRange,
+    onRange: (TimeRange) -> Unit,
+    modifier: Modifier = Modifier,
+    options: List<TimeRange> = TimeRange.entries,
+) {
     Row(
         // Material caps a connected group's width on large windows.
         modifier = modifier

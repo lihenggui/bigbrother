@@ -21,6 +21,7 @@
     <string name="retry">Try again</string>
     <string name="search">Search</string>
     <string name="close_search">Close search</string>
+    <string name="clear_search">Clear search</string>
     <string name="no_matches">No matches</string>
 
     <!-- Empty and error states. -->

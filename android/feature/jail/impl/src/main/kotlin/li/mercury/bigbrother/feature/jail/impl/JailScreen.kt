@@ -78,7 +78,6 @@ import li.mercury.bigbrother.core.designsystem.icon.CageIcons
 import li.mercury.bigbrother.core.model.InstalledApp
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.SandboxItem
-import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxStatus
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
@@ -240,7 +239,7 @@ private fun JailList(
         item(key = "global") {
             LinkRow(
                 title = stringResource(R.string.jail_global_settings),
-                supporting = itemsSummary(SandboxItem.entries.associateWith { state.global[it] ?: SandboxMode.ON }),
+                supporting = itemsSummary(SandboxItem.entries.associateWith { state.global[it] ?: it.default }),
                 onClick = onOpenSettings,
                 index = 0,
                 count = 1,

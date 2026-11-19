@@ -88,7 +88,8 @@
     <string name="jail_group_device">设备与应用</string>
     <string name="jail_section_status">状态</string>
     <string name="jail_status_title">组件状态</string>
-    <string name="jail_status_ok">存储隔离与系统框架钩子已生效</string>
+    <string name="jail_status_ok">存储隔离、系统框架钩子与网络过滤已生效</string>
+    <string name="jail_status_network_missing">此内核不支持网络过滤</string>
     <string name="jail_status_checking">正在检查…</string>
     <string name="jail_status_hook_missing">系统框架钩子未加载</string>
     <string name="jail_status_gate_missing">此内核不支持存储隔离</string>
@@ -167,4 +168,111 @@
     <string name="jail_mode_global_detail">当前：%1$s</string>
     <string name="jail_list_separator">、</string>
     <string name="jail_select">选择已隔离的应用或全局设置</string>
+
+    <string name="jail_summary_no_network">禁止联网</string>
+    <string name="jail_summary_recording">正在记录连接</string>
+    <string name="jail_summary_separator">" · "</string>
+
+    <string name="jail_section_network">网络</string>
+    <string name="jail_network_access">允许联网</string>
+    <string name="jail_network_allowed">允许</string>
+    <string name="jail_network_allowed_detail">按系统设置联网。</string>
+    <string name="jail_network_blocked">禁止联网</string>
+    <string name="jail_network_blocked_detail">连接和域名查询立即失败，设备内部的连接不受影响，应用不会重新启动。</string>
+    <string name="jail_network_record">记录网络连接</string>
+    <string name="jail_network_record_summary">记录连接的域名、地址和端口，保留 30 天</string>
+    <string name="jail_network_recording_since">自 %1$s 起记录</string>
+    <string name="jail_network_activity">网络活动</string>
+    <plurals name="jail_network_activity_summary">
+        <item quantity="other">24 小时内 %1$d 个目标</item>
+    </plurals>
+    <plurals name="jail_network_blocked_count">
+        <item quantity="other">已阻止 %1$d 个</item>
+    </plurals>
+    <string name="jail_network_no_permission">此应用未申请网络权限</string>
+    <string name="jail_not_in_effect_packet_filter">未生效：此内核不支持网络过滤</string>
+    <string name="jail_not_in_effect_resolver">部分生效：域名查询未被阻止</string>
+    <string name="jail_network_global_note">作用于未单独设置的已隔离应用。禁止联网时连接立即失败，应用不会重新启动。</string>
+
+    <string name="jail_net_subtitle_recording">%1$s · 记录中</string>
+    <string name="jail_net_subtitle_stopped">%1$s · 未记录</string>
+    <plurals name="jail_net_destinations">
+        <item quantity="other">个目标</item>
+    </plurals>
+    <plurals name="jail_net_facts">
+        <item quantity="other">连接 %1$s 次 · 接收 %2$s · 发送 %3$s</item>
+    </plurals>
+    <plurals name="jail_net_facts_counts">
+        <item quantity="other">连接 %1$s 次 · 拒绝 %2$s 次</item>
+    </plurals>
+    <string name="jail_net_legend_connected">已连接</string>
+    <string name="jail_net_legend_refused">已拒绝</string>
+    <string name="jail_net_now">现在</string>
+    <string name="jail_net_filter_blocked_count">已阻止 %1$d</string>
+    <string name="jail_net_sort_data">流量最多</string>
+    <string name="jail_net_sort_connections">连接最多</string>
+    <string name="jail_net_sort_recent">最近连接</string>
+    <string name="jail_net_sort_name">名称</string>
+    <string name="jail_net_section_domains">域名</string>
+    <string name="jail_net_section_addresses">IP 地址</string>
+    <string name="jail_net_addresses_note">应用直接连接以下地址，未经系统查询域名。</string>
+    <string name="jail_net_port">端口 %1$d</string>
+    <plurals name="jail_net_connections">
+        <item quantity="other">连接 %1$d 次</item>
+    </plurals>
+    <plurals name="jail_net_refused">
+        <item quantity="other">拒绝 %1$d 次</item>
+    </plurals>
+    <string name="jail_net_blocked">已阻止</string>
+    <string name="jail_net_show_all">显示全部 %1$d 个</string>
+    <string name="jail_net_footer">记录保留 30 天。阻止立即生效。</string>
+    <string name="jail_net_search">搜索域名和地址</string>
+    <string name="jail_net_no_results">无匹配的目标</string>
+    <string name="jail_net_empty_title">尚无连接记录</string>
+    <string name="jail_net_empty_body">自 %1$s 起记录。应用联网后在此显示。</string>
+    <string name="jail_net_stopped">未在记录。显示截至 %1$s 的记录。</string>
+    <string name="jail_net_start">开始记录</string>
+    <string name="jail_net_no_network_title">已禁止联网</string>
+    <string name="jail_net_no_network_body">所有连接均被拒绝。域名查询失败，因此目标多显示为地址。</string>
+    <string name="jail_net_names_missing_title">无法获取域名</string>
+    <string name="jail_net_names_missing_body">此设备上无法读取域名查询，目标仅显示为地址。</string>
+    <string name="jail_net_traffic_missing">此设备不支持流量统计，仅显示连接次数。</string>
+    <string name="jail_net_more_options">更多选项</string>
+    <string name="jail_net_menu_block">阻止域名或地址…</string>
+    <string name="jail_net_menu_stop">停止记录</string>
+    <string name="jail_net_menu_clear">清除记录</string>
+    <string name="jail_net_clear_title">清除网络记录？</string>
+    <string name="jail_net_clear_body">%1$s 的网络记录将被删除，已阻止的目标保持阻止。</string>
+    <string name="jail_net_clear">清除</string>
+
+    <string name="jail_net_block">阻止</string>
+    <string name="jail_net_unblock">取消阻止</string>
+    <string name="jail_net_block_cd">阻止 %1$s</string>
+    <string name="jail_net_blocked_message">已阻止 %1$s</string>
+    <string name="jail_net_unblocked_message">已取消阻止 %1$s</string>
+    <string name="jail_net_manual">手动添加</string>
+    <string name="jail_net_no_attempts">此时段内无连接尝试</string>
+
+    <plurals name="jail_net_subdomains">
+        <item quantity="other">%1$d 个子域名</item>
+    </plurals>
+    <string name="jail_net_first_last">首次 %1$s · 最近 %2$s</string>
+    <string name="jail_net_block_site">阻止 %1$s 及其子域名</string>
+    <string name="jail_net_block_address">阻止 %1$s 的所有端口</string>
+    <string name="jail_net_sent">发送</string>
+    <string name="jail_net_received">接收</string>
+    <string name="jail_net_connections_label">连接次数</string>
+    <string name="jail_net_hosts_header">子域名</string>
+    <string name="jail_net_ports_header">端口</string>
+    <string name="jail_net_addresses_header">地址</string>
+    <plurals name="jail_net_more">
+        <item quantity="other">另有 %1$d 个</item>
+    </plurals>
+    <string name="jail_net_shared">此域名的地址也用于 %1$s，阻止后同样无法连接。</string>
+    <string name="jail_net_own_resolver">应用自行解析域名的连接不受影响，这类连接列在「IP 地址」下，可单独阻止。</string>
+
+    <string name="jail_net_add_title">阻止域名或地址</string>
+    <string name="jail_net_add_label">域名、IP 地址或地址:端口</string>
+    <string name="jail_net_add_supporting">域名包含其子域名。</string>
+    <string name="jail_net_add_invalid">不是有效的域名或 IP 地址</string>
 </resources>

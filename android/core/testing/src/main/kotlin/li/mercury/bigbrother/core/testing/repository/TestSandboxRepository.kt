@@ -134,7 +134,7 @@ class TestSandboxRepository(
         refreshAfterChange()
     }
 
-    private fun applies(own: Map<SandboxItem, SandboxMode>): Map<SandboxItem, SandboxMode> = SandboxItem.entries.associateWith { own[it] ?: globalModes[it] ?: SandboxMode.ON }
+    private fun applies(own: Map<SandboxItem, SandboxMode>): Map<SandboxItem, SandboxMode> = SandboxItem.entries.associateWith { own[it] ?: globalModes[it] ?: it.default }
 
     private suspend fun refreshAfterChange() {
         try {

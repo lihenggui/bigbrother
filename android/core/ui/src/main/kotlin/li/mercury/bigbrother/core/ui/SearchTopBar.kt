@@ -89,7 +89,7 @@ fun SearchTopBar(
         actions = {
             if (query.isNotEmpty()) {
                 IconButton(onClick = { onQueryChange("") }) {
-                    Icon(Icons.Filled.Close, contentDescription = null)
+                    Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.clear_search))
                 }
             }
         },

@@ -57,7 +57,7 @@ class JailSettingsViewModelTest {
     fun givenNothingSet_whenLoaded_thenEveryItemOnAndIsolatedAppsCounted() = runTest {
         val viewModel = viewModel()
 
-        assertEquals(SandboxItem.entries.associateWith { SandboxMode.ON }, viewModel.uiState.value.global)
+        assertEquals(SandboxItem.entries.associateWith { it.default }, viewModel.uiState.value.global)
         assertEquals(2, viewModel.uiState.value.isolated)
     }
 

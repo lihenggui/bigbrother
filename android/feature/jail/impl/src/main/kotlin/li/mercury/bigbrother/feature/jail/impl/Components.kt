@@ -27,7 +27,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -62,6 +61,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -153,7 +153,8 @@ internal fun IsolatedAppIcon(info: AppInfo?, name: String, modifier: Modifier = 
  *
  * [choice] is the mode chosen here, null for following the global settings
  * ([globalMode] non-null only where that can be chosen); [mode] is what
- * applies.
+ * applies. [checked] is what the switch shows: whether the item is on,
+ * except for the network, whose switch says whether it is allowed.
  */
 @Composable
 internal fun ItemRow(
@@ -169,6 +170,7 @@ internal fun ItemRow(
     index: Int,
     count: Int,
     modifier: Modifier = Modifier,
+    checked: Boolean = mode.isOn,
 ) {
     val spatial = MaterialTheme.motionScheme.fastSpatialSpec<androidx.compose.ui.unit.Dp>()
     val top by animateDpAsState(if (expanded || index == 0) OUTER_CORNER else INNER_CORNER, spatial, label = "top")
@@ -196,17 +198,10 @@ internal fun ItemRow(
                 ) {
                     ShapedIcon(item.icon)
                     Column(Modifier.weight(1f)) {
-                        // On a narrow screen the tag goes under the title rather than squeeze it.
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            itemVerticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(title, style = MaterialTheme.typography.bodyLarge)
-                            if (globalMode != null && choice != null) CustomTag()
-                        }
+                        TitleWithTag(title, tagged = globalMode != null && choice != null)
                         val inEffect = unmet.isEmpty() || !mode.isOn
                         Text(
-                            text = if (inEffect) modeLabel(item, mode) else stringResource(notInEffect(unmet)),
+                            text = if (inEffect) modeLabel(item, mode) else stringResource(notInEffect(item, unmet)),
                             style = MaterialTheme.typography.bodyMedium,
                             color = if (inEffect) {
                                 MaterialTheme.colorScheme.onSurfaceVariant
@@ -224,14 +219,14 @@ internal fun ItemRow(
                 }
                 VerticalDivider(Modifier.fillMaxHeight().padding(vertical = 20.dp))
                 Switch(
-                    checked = mode.isOn,
+                    checked = checked,
                     onCheckedChange = onCheckedChange,
                     modifier = Modifier
                         .padding(horizontal = 16.dp)
                         .semantics { contentDescription = title },
                     thumbContent = {
                         Icon(
-                            if (mode.isOn) Icons.Filled.Check else Icons.Filled.Close,
+                            if (checked) Icons.Filled.Check else Icons.Filled.Close,
                             contentDescription = null,
                             modifier = Modifier.size(SwitchDefaults.IconSize),
                         )
@@ -301,6 +296,53 @@ private fun ModeChoice(title: String, detail: String, selected: Boolean, onClick
     }
 }
 
+/**
+ * An item's title, with the tag that marks a mode of its own after it, or,
+ * on a narrow screen, under it rather than squeezing it. A layout of its
+ * own: its height for a width, which the row's divider is sized by, is
+ * that of the lines it lays out.
+ */
+@Composable
+private fun TitleWithTag(title: String, tagged: Boolean) {
+    val gap = 8.dp
+    Layout(
+        content = {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            if (tagged) CustomTag()
+        },
+    ) { measurables, constraints ->
+        val loose = constraints.copy(minWidth = 0, minHeight = 0)
+        val text = measurables[0].measure(loose)
+        val tag = measurables.getOrNull(1)?.measure(loose)
+        val space = gap.roundToPx()
+        val sameLine = tag == null || text.width + space + tag.width <= constraints.maxWidth
+        val width = when {
+            tag == null -> text.width
+            sameLine -> text.width + space + tag.width
+            else -> maxOf(text.width, tag.width)
+        }.coerceIn(constraints.minWidth, constraints.maxWidth)
+        val height = if (tag == null) {
+            text.height
+        } else if (sameLine) {
+            maxOf(text.height, tag.height)
+        } else {
+            text.height + tag.height
+        }
+        layout(width, height) {
+            if (tag == null) {
+                text.placeRelative(0, 0)
+            } else if (sameLine) {
+                val line = maxOf(text.height, tag.height)
+                text.placeRelative(0, (line - text.height) / 2)
+                tag.placeRelative(text.width + space, (line - tag.height) / 2)
+            } else {
+                text.placeRelative(0, 0)
+                tag.placeRelative(0, text.height)
+            }
+        }
+    }
+}
+
 /** Marks an item an app has a mode of its own for. */
 @Composable
 private fun CustomTag() {
@@ -333,13 +375,22 @@ internal fun StatusCard(title: String, body: String, modifier: Modifier = Modifi
     }
 }
 
-/** What applies to an app, in one line: which items are off, if any. */
+/**
+ * What applies to an app, in one line: which items are off, if any, then
+ * whether it is kept from the network and whether its connections are
+ * recorded. What is so by default is not said.
+ */
 @Composable
 internal fun itemsSummary(items: Map<SandboxItem, SandboxMode>): String {
     val off = ITEM_ORDER.filter { items[it] == SandboxMode.OFF }
-    return when {
+    val isolation = when {
         off.isEmpty() -> stringResource(R.string.jail_all_items_on)
         off.size == ITEM_ORDER.size -> stringResource(R.string.jail_no_items_on)
         else -> stringResource(R.string.jail_items_off, off.map { stringResource(it.title) }.joinToString(stringResource(R.string.jail_list_separator)))
     }
+    val network = listOfNotNull(
+        stringResource(R.string.jail_summary_no_network).takeIf { items[SandboxItem.NETWORK]?.isOn == true },
+        stringResource(R.string.jail_summary_recording).takeIf { items[SandboxItem.NETWORK_RECORD]?.isOn == true },
+    )
+    return (listOf(isolation) + network).joinToString(stringResource(R.string.jail_summary_separator))
 }

@@ -36,13 +36,27 @@ enum class SandboxItem(val id: String) {
     NEARBY_DEVICES("nearby_devices"),
     NOTIFICATION_CONTENT("notification_content"),
     SCREEN_CONTENT("screen_content"),
+
+    /** On, the app is kept from the network: from anything but the device itself. */
+    NETWORK("network"),
+
+    /** On, the destinations the app connects to are recorded. Set per app only. */
+    NETWORK_RECORD("network_record"),
     ;
+
+    /** The mode it has unless set otherwise: the network is left to the app, and not recorded. */
+    val default: SandboxMode
+        get() = when (this) {
+            NETWORK, NETWORK_RECORD -> SandboxMode.OFF
+            else -> SandboxMode.ON
+        }
 
     /** The modes it can be set to, the one it starts with first. */
     val modes: List<SandboxMode>
         get() = when (this) {
             LOCATION -> listOf(SandboxMode.ON, SandboxMode.COARSE, SandboxMode.FOREGROUND, SandboxMode.OFF)
             CAMERA, MICROPHONE -> listOf(SandboxMode.ON, SandboxMode.FOREGROUND, SandboxMode.OFF)
+            NETWORK, NETWORK_RECORD -> listOf(SandboxMode.OFF, SandboxMode.ON)
             else -> listOf(SandboxMode.ON, SandboxMode.OFF)
         }
 
@@ -53,9 +67,19 @@ enum class SandboxItem(val id: String) {
     val parts: Set<SandboxPart>
         get() = when (this) {
             STORAGE -> setOf(SandboxPart.MOUNTS, SandboxPart.APP_OPS, SandboxPart.URI_GRANTS_HOOK)
+
             CPU_INFO -> setOf(SandboxPart.MOUNTS)
+
             DEVICE_IDS -> setOf(SandboxPart.APP_OPS, SandboxPart.ANDROID_ID_HOOK, SandboxPart.AD_ID_HOOK)
+
             INSTALLED_APPS -> setOf(SandboxPart.APP_OPS, SandboxPart.APP_LIST_HOOK)
+
+            // The mount is the one over the resolver's socket: without it,
+            // connections fail but name lookups still go through.
+            NETWORK -> setOf(SandboxPart.PACKET_FILTER, SandboxPart.MOUNTS)
+
+            NETWORK_RECORD -> emptySet()
+
             else -> setOf(SandboxPart.APP_OPS)
         }
 
@@ -98,6 +122,8 @@ enum class SandboxItem(val id: String) {
 
             SCREEN_CONTENT -> listOf("android.permission.BIND_ACCESSIBILITY_SERVICE")
 
+            NETWORK, NETWORK_RECORD -> listOf("android.permission.INTERNET")
+
             STORAGE, CPU_INFO, CLIPBOARD_ACCOUNTS, DEVICE_IDS, INSTALLED_APPS -> emptyList()
         }
 
@@ -131,6 +157,9 @@ enum class SandboxPart(val id: String) {
 
     /** The LSPosed hook in system_server, withholding the advertising ID. */
     AD_ID_HOOK("ad_id_hook"),
+
+    /** The kernel's packet filter, refusing the app's connections. */
+    PACKET_FILTER("packet_filter"),
     ;
 
     companion object {
@@ -177,11 +206,15 @@ data class SandboxedApp(
      * each with the parts not in place, as the daemon found them.
      */
     val unmet: Map<SandboxItem, Set<SandboxPart>> = emptyMap(),
+    /** How many destinations are blocked for it. */
+    val networkRules: Int = 0,
+    /** Since when its connections are recorded, in seconds since the epoch; null if they are not. */
+    val recordingSince: Long? = null,
 ) {
     val userId: Int get() = uid / PER_USER_RANGE
 
     /** The mode of [item] that applies. */
-    fun modeOf(item: SandboxItem): SandboxMode = items[item] ?: SandboxMode.ON
+    fun modeOf(item: SandboxItem): SandboxMode = items[item] ?: item.default
 
     /** In the sandbox with an item on that takes app ops. */
     val needsAppOps: Boolean get() = enabled && SandboxItem.entries.any { SandboxPart.APP_OPS in it.parts && modeOf(it).isOn }
@@ -212,6 +245,14 @@ data class SandboxStatus(
     val newAppsPending: Int = 0,
     /** Whether those are kept from starting until they are isolated. */
     val newAppsHeld: Boolean = false,
+    /** The packet filter can keep apps from the network. */
+    val network: Boolean = false,
+    /** The destinations apps connect to can be recorded. */
+    val netRecord: Boolean = false,
+    /** The names apps look up can be read: destinations have their domain names. */
+    val dnsNames: Boolean = false,
+    /** How much data goes to each destination can be counted. */
+    val traffic: Boolean = false,
 ) {
     /** The parts of [item] not in place on this device, for every app. */
     fun unmet(item: SandboxItem): Set<SandboxPart> = item.parts.filterTo(mutableSetOf()) { part ->
@@ -222,6 +263,7 @@ data class SandboxStatus(
             SandboxPart.APP_LIST_HOOK -> !appListHook
             SandboxPart.URI_GRANTS_HOOK -> !uriGrantsHook
             SandboxPart.AD_ID_HOOK -> !adIdHook
+            SandboxPart.PACKET_FILTER -> !network
         }
     }
 

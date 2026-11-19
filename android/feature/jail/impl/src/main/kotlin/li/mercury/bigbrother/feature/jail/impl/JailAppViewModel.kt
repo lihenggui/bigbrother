@@ -34,6 +34,7 @@ import li.mercury.bigbrother.core.common.di.CurrentUserId
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.AppInfoRepository
 import li.mercury.bigbrother.core.data.repository.InstalledAppRepository
+import li.mercury.bigbrother.core.data.repository.NetworkRepository
 import li.mercury.bigbrother.core.data.repository.SandboxRepository
 import li.mercury.bigbrother.core.data.toLoadFailure
 import li.mercury.bigbrother.core.model.AppInfo
@@ -41,6 +42,7 @@ import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxedApp
+import li.mercury.bigbrother.feature.jail.impl.network.networkMode
 
 data class JailAppUiState(
     val packageName: String = "",
@@ -58,6 +60,8 @@ data class JailAppUiState(
      * known, for an app not installed for this app's user.
      */
     val requested: Set<String>? = null,
+    /** How many destinations it reached in the last 24 hours; null if not read. */
+    val destinations: Int? = null,
     val loading: Boolean = true,
     val failure: LoadFailure? = null,
     /** Why the last change was not made, to be told once. */
@@ -79,6 +83,7 @@ class JailAppViewModel @AssistedInject constructor(
     private val sandboxRepository: SandboxRepository,
     private val appInfoRepository: AppInfoRepository,
     private val installedAppRepository: InstalledAppRepository,
+    private val networkRepository: NetworkRepository,
     @CurrentUserId currentUserId: Int,
 ) : ViewModel() {
     @AssistedFactory
@@ -113,6 +118,7 @@ class JailAppViewModel @AssistedInject constructor(
                 val info = appInfoRepository.getAppInfo(packageName)
                 val requested = installedAppRepository.getRequestedPermissions(packageName)
                 load.update { it.copy(info = info, requested = requested, loading = false, failure = null) }
+                readDestinations()
             } catch (e: RecordsException) {
                 load.update { it.copy(loading = false, failure = e.toLoadFailure()) }
             }
@@ -134,9 +140,40 @@ class JailAppViewModel @AssistedInject constructor(
         change(mapOf(item to mode))
     }
 
-    /** Has every item follow the global settings again. */
+    /** Has every isolation item follow the global settings again; the network has a section of its own. */
     fun reset() {
-        change(SandboxItem.entries.associateWith { null })
+        change(ITEM_ORDER.associateWith { null })
+    }
+
+    /**
+     * Allows the app to connect, or keeps it from the network: like any
+     * item, following the global settings again where they say the same.
+     */
+    fun setNetworkAllowed(allowed: Boolean) {
+        val global = uiState.value.global[SandboxItem.NETWORK] ?: SandboxItem.NETWORK.default
+        choose(SandboxItem.NETWORK, networkMode(allowed).takeIf { it != global })
+    }
+
+    /** Records the app's connections, or stops; there is no global setting to follow. */
+    fun setRecording(on: Boolean) {
+        change(mapOf(SandboxItem.NETWORK_RECORD to if (on) SandboxMode.ON else SandboxMode.OFF))
+    }
+
+    /**
+     * Counts the destinations of the last 24 hours, for an app whose
+     * connections are recorded or that has something blocked. Not read,
+     * the count is left out rather than failing the page.
+     */
+    private suspend fun readDestinations() {
+        val app = sandboxRepository.apps.value?.firstOrNull { it.uid == uid && it.enabled } ?: return
+        if (!app.modeOf(SandboxItem.NETWORK_RECORD).isOn && app.networkRules == 0 && app.recordingSince == null) return
+        try {
+            val now = System.currentTimeMillis() / 1000
+            val activity = networkRepository.getActivity(packageName, app.userId, now - DAY)
+            load.update { it.copy(destinations = activity.domains.size + activity.addresses.size) }
+        } catch (_: RecordsException) {
+            load.update { it.copy(destinations = null) }
+        }
     }
 
     fun release() {
@@ -171,5 +208,6 @@ class JailAppViewModel @AssistedInject constructor(
 
     private companion object {
         const val PER_USER_RANGE = 100_000
+        const val DAY = 86_400L
     }
 }

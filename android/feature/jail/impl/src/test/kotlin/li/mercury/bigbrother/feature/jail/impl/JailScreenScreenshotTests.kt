@@ -140,7 +140,7 @@ class JailScreenScreenshotTests {
         composeTestRule.captureForDevice("phone", DefaultTestDevices.PHONE.spec, "JailSettings") {
             JailSettingsScreen(
                 state = JailSettingsUiState(
-                    global = SandboxItem.entries.associateWith { SandboxMode.ON } + (SandboxItem.CLIPBOARD_ACCOUNTS to SandboxMode.OFF),
+                    global = SandboxItem.entries.associateWith { it.default } + (SandboxItem.CLIPBOARD_ACCOUNTS to SandboxMode.OFF),
                     status = FULL_STATUS,
                     isolated = 3,
                 ),
@@ -152,6 +152,7 @@ class JailScreenScreenshotTests {
                 onSetAutoIsolate = {},
                 onReleaseAll = {},
                 onErrorDismiss = {},
+                onAllowNetwork = {},
             )
         }
     }
@@ -348,7 +349,7 @@ class JailScreenScreenshotTests {
     }
 
     private fun globalSettings() = JailSettingsUiState(
-        global = SandboxItem.entries.associateWith { SandboxMode.ON } + (SandboxItem.CLIPBOARD_ACCOUNTS to SandboxMode.OFF),
+        global = SandboxItem.entries.associateWith { it.default } + (SandboxItem.CLIPBOARD_ACCOUNTS to SandboxMode.OFF),
         status = FULL_STATUS,
         isolated = 3,
     )
@@ -365,6 +366,7 @@ class JailScreenScreenshotTests {
             onSetAutoIsolate = {},
             onReleaseAll = {},
             onErrorDismiss = {},
+            onAllowNetwork = {},
         )
     }
 
@@ -379,8 +381,12 @@ class JailScreenScreenshotTests {
         val day = 24 * 60 * 60L
         return listOf(
             Triple(DemoApp.WEATHER, clock.todayAt(9, 12) - 2 * day, mapOf(SandboxItem.LOCATION to SandboxMode.COARSE)),
-            Triple(DemoApp.SHOPPING, clock.todayAt(20, 5) - 6 * day, mapOf(SandboxItem.CAMERA to SandboxMode.OFF)),
-            Triple(DemoApp.FLASHLIGHT, clock.todayAt(11, 40), emptyMap()),
+            Triple(
+                DemoApp.SHOPPING,
+                clock.todayAt(20, 5) - 6 * day,
+                mapOf(SandboxItem.CAMERA to SandboxMode.OFF, SandboxItem.NETWORK_RECORD to SandboxMode.ON),
+            ),
+            Triple(DemoApp.FLASHLIGHT, clock.todayAt(11, 40), mapOf(SandboxItem.NETWORK to SandboxMode.ON)),
         ).map { (app, created, settings) ->
             IsolatedApp(sandboxedApp(app, created, settings), app.appInfo(locale))
         }.sortedByName { it.name }
@@ -435,6 +441,9 @@ class JailScreenScreenshotTests {
             onChoose = { _, _ -> },
             onReset = {},
             onErrorDismiss = {},
+            onAllowNetwork = {},
+            onSetRecording = {},
+            onOpenNetwork = { _, _ -> },
             initiallyExpanded = expanded,
         )
     }
@@ -445,14 +454,25 @@ class JailScreenScreenshotTests {
         enabled = true,
         created = created,
         settings = settings,
-        items = SandboxItem.entries.associateWith { settings[it] ?: SandboxMode.ON },
+        items = SandboxItem.entries.associateWith { settings[it] ?: it.default },
     )
 
     /** The language the screenshot is taken in, as the test's qualifiers set it. */
     private fun demoLocale(): Locale = RuntimeEnvironment.getApplication().resources.configuration.locales[0]
 
     private companion object {
-        val FULL_STATUS = SandboxStatus(gate = true, appOps = true, androidIdHook = true, appListHook = true, uriGrantsHook = true, adIdHook = true)
+        val FULL_STATUS = SandboxStatus(
+            gate = true,
+            appOps = true,
+            androidIdHook = true,
+            appListHook = true,
+            uriGrantsHook = true,
+            adIdHook = true,
+            network = true,
+            netRecord = true,
+            dnsNames = true,
+            traffic = true,
+        )
         val NOTHING_IN_PLACE = SandboxStatus(gate = false, appOps = false, androidIdHook = false, appListHook = false, uriGrantsHook = false, adIdHook = false)
 
         /** An Android user other than the one the app runs as: a work profile. */
