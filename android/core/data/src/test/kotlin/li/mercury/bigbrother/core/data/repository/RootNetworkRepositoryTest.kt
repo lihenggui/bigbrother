@@ -16,7 +16,10 @@
 
 package li.mercury.bigbrother.core.data.repository
 
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.root.CommandResult
@@ -42,8 +45,13 @@ class RootNetworkRepositoryTest {
     @Test
     fun givenActivity_whenRead_thenDomainsAddressesAndRulesParsed() = runTest {
         val shell = TestRootShell(ACTIVITY)
+        val repository = RootNetworkRepository(shell, StandardTestDispatcher(testScheduler))
+        val read = async(start = CoroutineStart.UNDISPATCHED) {
+            repository.getActivity("com.example.shopping", userId = 0, since = 1_763_393_520)
+        }
 
-        val activity = RootNetworkRepository(shell).getActivity("com.example.shopping", userId = 0, since = 1_763_393_520)
+        assertFalse(read.isCompleted)
+        val activity = read.await()
 
         assertTrue(activity.recording.on)
         assertTrue(activity.networkAllowed)
@@ -74,13 +82,13 @@ class RootNetworkRepositoryTest {
     fun givenBlockedApp_whenRead_thenNetworkNotAllowed() = runTest {
         val shell = TestRootShell(ACTIVITY.replace("\"allowed\"", "\"blocked\""))
 
-        assertFalse(RootNetworkRepository(shell).getActivity("com.example.shopping", 0, 0).networkAllowed)
+        assertFalse(RootNetworkRepository(shell, Dispatchers.Unconfined).getActivity("com.example.shopping", 0, 0).networkAllowed)
     }
 
     @Test
     fun givenPackageAndTarget_whenBlocked_thenBothQuotedAndChangeCounted() = runTest {
         val shell = TestRootShell("""{"ok":true}""")
-        val repository = RootNetworkRepository(shell)
+        val repository = RootNetworkRepository(shell, Dispatchers.Unconfined)
 
         repository.block("com.example.it's", userId = 10, NetworkTarget.Address("2001:db8::5", 443), manual = true)
 
@@ -94,13 +102,14 @@ class RootNetworkRepositoryTest {
     fun givenDaemonWithoutNetCommands_whenRead_thenModuleOutdated() = runTest {
         val shell = TestRootShell("", error = "error: unrecognized subcommand 'net'")
 
-        assertFailsWith<RecordsException.ModuleOutdated> { RootNetworkRepository(shell).getActivity("com.example.shopping", 0, 0) }
+        val repository = RootNetworkRepository(shell, Dispatchers.Unconfined)
+        assertFailsWith<RecordsException.ModuleOutdated> { repository.getActivity("com.example.shopping", 0, 0) }
     }
 
     @Test
     fun givenDaemonRefusing_whenUnblocked_thenFailsWithItsReasonAndNothingCounted() = runTest {
         val shell = TestRootShell("""{"ok":false,"error":"no such rule"}""")
-        val repository = RootNetworkRepository(shell)
+        val repository = RootNetworkRepository(shell, Dispatchers.Unconfined)
 
         val failure = assertFailsWith<RecordsException.CommandFailed> {
             repository.unblock("com.example.shopping", 0, NetworkTarget.Domain("adnet.example"))
@@ -113,7 +122,7 @@ class RootNetworkRepositoryTest {
     fun givenRecords_whenCleared_thenCountOfDeleted() = runTest {
         val shell = TestRootShell("""{"ok":true,"deleted":5120}""")
 
-        assertEquals(5_120, RootNetworkRepository(shell).clear("com.example.shopping", 0))
+        assertEquals(5_120, RootNetworkRepository(shell, Dispatchers.Unconfined).clear("com.example.shopping", 0))
     }
 
     @Test
@@ -124,7 +133,8 @@ class RootNetworkRepositoryTest {
             """.trimMargin(),
         )
 
-        val detail = RootNetworkRepository(shell).getDestination("com.example.shopping", 0, NetworkTarget.Address("198.51.100.53"), since = 0)
+        val repository = RootNetworkRepository(shell, Dispatchers.Unconfined)
+        val detail = repository.getDestination("com.example.shopping", 0, NetworkTarget.Address("198.51.100.53"), since = 0)
 
         assertEquals(NetworkTarget.Address("198.51.100.53"), detail.destination.target)
         assertEquals(3_600L, detail.buckets.single().start)
@@ -138,7 +148,7 @@ class RootNetworkRepositoryTest {
         val zone = TimeZone.getDefault()
         TimeZone.setDefault(TimeZone.getTimeZone("GMT-05:30"))
         try {
-            RootNetworkRepository(shell).getActivity("com.example.shopping", 0, 0, bucket = BucketSize.DAY)
+            RootNetworkRepository(shell, Dispatchers.Unconfined).getActivity("com.example.shopping", 0, 0, bucket = BucketSize.DAY)
         } finally {
             TimeZone.setDefault(zone)
         }
@@ -154,7 +164,7 @@ class RootNetworkRepositoryTest {
             """.trimMargin(),
         )
 
-        val site = RootNetworkRepository(shell).getActivity("com.example.shopping", 0, 0).domains.single()
+        val site = RootNetworkRepository(shell, Dispatchers.Unconfined).getActivity("com.example.shopping", 0, 0).domains.single()
 
         assertEquals(40, site.addressCount)
         assertEquals(listOf("203.0.113.1"), site.addresses)
@@ -166,9 +176,17 @@ class RootNetworkRepositoryTest {
             """{"ok":true,"since":0,"until":1,"rules":[{"target":"host:a_b.example.com","created":1,"manual":false}]}""",
         )
 
-        val rule = RootNetworkRepository(shell).getActivity("com.example.shopping", 0, 0).rules.single()
+        val rule = RootNetworkRepository(shell, Dispatchers.Unconfined).getActivity("com.example.shopping", 0, 0).rules.single()
 
         assertEquals("host:a_b.example.com", rule.target.id)
+    }
+
+    @Test
+    fun givenActivityWithMalformedDestination_whenRead_thenReportsCommandFailure() = runTest {
+        val shell = TestRootShell("""{"ok":true,"since":0,"until":1,"destinations":[{"conn":1}]}""")
+        val repository = RootNetworkRepository(shell, StandardTestDispatcher(testScheduler))
+
+        assertFailsWith<RecordsException.CommandFailed> { repository.getActivity("com.example.shopping", 0, 0) }
     }
 
     /** Answers every command with [output], or fails it with [error] if set. */

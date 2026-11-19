@@ -16,8 +16,11 @@
 
 package li.mercury.bigbrother.core.data.root
 
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.withContext
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.root.ModulePaths.BBD
+import org.json.JSONException
 
 private const val MISSING_MARKER = "bbd-not-installed"
 private const val ERROR_PREFIX = "Error: "
@@ -53,4 +56,13 @@ internal suspend fun RootShell.bbd(command: String, args: String): String {
         )
     }
     return result.output
+}
+
+/** Decode and map the daemon's response on the CPU dispatcher, even when called from the UI. */
+internal suspend fun <T> CoroutineDispatcher.parseBbdOutput(block: suspend () -> T): T = withContext(this) {
+    try {
+        block()
+    } catch (e: JSONException) {
+        throw RecordsException.CommandFailed("unexpected output from bbd: ${e.message}")
+    }
 }
