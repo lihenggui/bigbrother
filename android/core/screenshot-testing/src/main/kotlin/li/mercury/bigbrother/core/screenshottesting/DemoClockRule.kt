@@ -60,8 +60,12 @@ class DemoClockRule : ExternalResource() {
     /** [hour]:[minute] today, as Unix time. */
     fun todayAt(hour: Int, minute: Int): Long = LocalDate.now().atTime(hour, minute).atZone(ZoneId.systemDefault()).toEpochSecond()
 
-    /** A fixed date and time, as Unix time: shown the same in any time zone the rule picks. */
-    internal fun at(dateTime: LocalDateTime): Long = dateTime.atZone(ZoneId.systemDefault()).toEpochSecond()
+    /**
+     * A fixed date and time, as Unix time: shown the same in any time zone
+     * the rule picks. For what a screen shows with its date: a time of
+     * [todayAt] shows the day the test runs.
+     */
+    fun at(dateTime: LocalDateTime): Long = dateTime.atZone(ZoneId.systemDefault()).toEpochSecond()
 
     private companion object {
         /** The time of day the screenshots show as now. */

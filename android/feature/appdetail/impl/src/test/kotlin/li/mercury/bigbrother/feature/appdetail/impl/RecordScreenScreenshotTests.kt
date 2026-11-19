@@ -40,6 +40,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.annotation.LooperMode
 import java.time.LocalDate
+import java.time.LocalDateTime
 
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -129,7 +130,8 @@ class RecordScreenScreenshotTests {
                     items = 0,
                     allowed = 1,
                     denied = 0,
-                    lastSeen = clock.todayAt(12, 20 + index),
+                    // The list shows the dates: fixed ones, not the day of the test.
+                    lastSeen = clock.at(LocalDateTime.of(2026, 10, 5, 12, 20 + index)),
                     topic = "system_properties",
                 )
             }

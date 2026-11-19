@@ -39,6 +39,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.annotation.LooperMode
+import java.time.LocalDateTime
 
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -120,9 +121,10 @@ class AppFilesScreenScreenshotTests {
     @Test
     fun givenFileDetails_whenShown_thenSheetListsEachAccess() {
         capturePhone("AppFilesDetails") {
+            // The sheet shows the dates: fixed ones, not the day of the test.
             val periods = listOf(
-                AccessPeriod(Action.READ, viaProvider = false, allowed = 1, denied = 0, time = clock.todayAt(14, 41)),
-                AccessPeriod(Action.READ, viaProvider = false, allowed = 1, denied = 0, time = clock.todayAt(8, 30)),
+                AccessPeriod(Action.READ, viaProvider = false, allowed = 1, denied = 0, time = clock.at(LocalDateTime.of(2026, 10, 5, 14, 41))),
+                AccessPeriod(Action.READ, viaProvider = false, allowed = 1, denied = 0, time = clock.at(LocalDateTime.of(2026, 10, 5, 8, 30))),
             )
             Files { it.copy(fileDetails = FileDetails(PHOTO, periods = periods)) }
         }
