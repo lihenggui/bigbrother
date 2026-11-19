@@ -52,7 +52,7 @@
 //! Names are other apps' data: none is ever logged.
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     ffi::CString,
     io::{self, Read as _, Write as _},
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
@@ -107,9 +107,10 @@ const ANSWER_CAP: usize = 64 * 1024;
 const REQUEST_WAIT: Duration = Duration::from_secs(5);
 const ANSWER_WAIT: Duration = Duration::from_secs(60);
 
-/// The addresses remembered, for all apps together. Past it, the half
-/// remembered longest ago goes.
-const REMEMBERED: usize = 8192;
+/// The addresses remembered of one app. Past it, the half remembered
+/// longest ago goes: an app that looks up name after name loses its own,
+/// not those of the others.
+const REMEMBERED: usize = 2048;
 
 /// Which name each app was last given an address for.
 #[derive(Default)]
@@ -119,26 +120,59 @@ pub struct Names {
 
 #[derive(Default)]
 struct Known {
-    by_address: HashMap<(u32, IpAddr), (String, u64)>,
+    by_address: HashMap<u32, HashMap<IpAddr, (String, u64)>>,
     /// Counts what is remembered, for the order it was in.
     count: u64,
+    /// The addresses each app is refused with the names it is kept from
+    /// (see `Destinations`): refused whatever name they were last given
+    /// for.
+    refused: HashMap<u32, BTreeSet<IpAddr>>,
 }
 
 impl Names {
     /// Remember that `uid` was given `addresses` for `host`.
     pub fn learn(&self, uid: u32, host: &str, addresses: &[IpAddr]) {
         let mut known = self.known.lock().unwrap_or_else(|e| e.into_inner());
+        let Known {
+            by_address, count, ..
+        } = &mut *known;
+        let of_app = by_address.entry(uid).or_default();
         for address in addresses {
-            known.count += 1;
-            let count = known.count;
-            known
-                .by_address
-                .insert((uid, address.to_canonical()), (host.to_string(), count));
+            *count += 1;
+            of_app.insert(address.to_canonical(), (host.to_string(), *count));
         }
-        if known.by_address.len() > REMEMBERED {
-            let oldest_kept = known.count - (REMEMBERED / 2) as u64;
-            known.by_address.retain(|_, (_, at)| *at > oldest_kept);
+        if of_app.len() > REMEMBERED {
+            let mut order: Vec<u64> = of_app.values().map(|(_, at)| *at).collect();
+            order.sort_unstable();
+            let oldest_kept = order[order.len() - REMEMBERED / 2];
+            of_app.retain(|_, (_, at)| *at >= oldest_kept);
         }
+    }
+
+    /// Forget what is remembered of `uid`: it belongs to another app.
+    pub fn forget(&self, uid: u32) {
+        let mut known = self.known.lock().unwrap_or_else(|e| e.into_inner());
+        known.by_address.remove(&uid);
+        known.refused.remove(&uid);
+    }
+
+    /// Note the addresses `uid` is refused with the names it is kept from.
+    pub fn keep_refused(&self, uid: u32, addresses: BTreeSet<IpAddr>) {
+        let mut known = self.known.lock().unwrap_or_else(|e| e.into_inner());
+        if addresses.is_empty() {
+            known.refused.remove(&uid);
+        } else {
+            known.refused.insert(uid, addresses);
+        }
+    }
+
+    /// Whether `address` is one `uid` is refused with a name.
+    pub fn refused(&self, uid: u32, address: IpAddr) -> bool {
+        let known = self.known.lock().unwrap_or_else(|e| e.into_inner());
+        known
+            .refused
+            .get(&uid)
+            .is_some_and(|addresses| addresses.contains(&address.to_canonical()))
     }
 
     /// The name `uid` was last given `address` for.
@@ -146,7 +180,8 @@ impl Names {
         let known = self.known.lock().unwrap_or_else(|e| e.into_inner());
         known
             .by_address
-            .get(&(uid, address.to_canonical()))
+            .get(&uid)?
+            .get(&address.to_canonical())
             .map(|(host, _)| host.clone())
     }
 
@@ -155,9 +190,11 @@ impl Names {
         let known = self.known.lock().unwrap_or_else(|e| e.into_inner());
         known
             .by_address
-            .iter()
-            .filter(|((of, _), (host, _))| *of == uid && covered(host))
-            .map(|((_, address), _)| *address)
+            .get(&uid)
+            .into_iter()
+            .flatten()
+            .filter(|(_, (host, _))| covered(host))
+            .map(|(address, _)| *address)
             .collect()
     }
 }
@@ -886,5 +923,31 @@ mod tests {
                 .host_of(10001, IpAddr::V4(Ipv4Addr::from(REMEMBERED as u32)))
                 .is_some()
         );
+    }
+
+    #[test]
+    fn an_app_that_looks_up_many_names_keeps_those_of_the_others() {
+        let names = Names::default();
+        let other = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 9));
+        names.learn(10002, "other.example.com", &[other]);
+        for i in 0..=2 * REMEMBERED as u32 {
+            names.learn(10001, "h.example.com", &[IpAddr::V4(Ipv4Addr::from(i))]);
+        }
+        assert_eq!(
+            names.host_of(10002, other).as_deref(),
+            Some("other.example.com")
+        );
+    }
+
+    #[test]
+    fn nothing_is_remembered_of_a_uid_that_went_to_another_app() {
+        let names = Names::default();
+        let address = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 9));
+        names.learn(10001, "h.example.com", &[address]);
+        names.keep_refused(10001, BTreeSet::from([address]));
+        assert!(names.refused(10001, address));
+        names.forget(10001);
+        assert_eq!(names.host_of(10001, address), None);
+        assert!(!names.refused(10001, address));
     }
 }

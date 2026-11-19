@@ -65,6 +65,15 @@ impl View {
         if super::items_of(entry, &global).network_refused() {
             return true;
         }
+        // An address refused with a name the app is kept from, whatever
+        // name it was given for since.
+        if self
+            .names
+            .as_ref()
+            .is_some_and(|names| names.refused(uid, to.ip()))
+        {
+            return true;
+        }
         // The name the app was given the address for, if it is kept from
         // that name: the addresses of such a name are refused with it.
         let host = self
@@ -220,6 +229,7 @@ impl Destinations {
         self.with_names
             .retain(|(of, target), _| *of != uid || targets.contains(target));
         let mut wanted = BTreeSet::new();
+        let mut with_names = BTreeSet::new();
         for target in targets {
             match (&target, &self.names) {
                 (Target::Ip(ip, port), _) => {
@@ -229,10 +239,14 @@ impl Destinations {
                     let given = names.addresses_of(uid, |host| name.covers_name(host));
                     let refused = self.with_names.entry((uid, target)).or_default();
                     refused.extend(given);
-                    wanted.extend(refused.iter().map(|ip| (*ip, None)));
+                    with_names.extend(refused.iter().copied());
                 }
                 (_, None) => {}
             }
+        }
+        wanted.extend(with_names.iter().map(|ip| (*ip, None)));
+        if let Some(names) = &self.names {
+            names.keep_refused(uid, with_names);
         }
         wanted
     }
@@ -273,6 +287,9 @@ impl Destinations {
             self.wanted(uid)
         } else {
             self.with_names.retain(|(of, _), _| *of != uid);
+            if let Some(names) = &self.names {
+                names.keep_refused(uid, BTreeSet::new());
+            }
             BTreeSet::new()
         };
         // What the kernel side has of them, kept as each step is done: a
@@ -337,6 +354,9 @@ impl Effect for Destinations {
     fn forget(&mut self, uid: u32) {
         if let Err(e) = self.carry_out(uid, false, false) {
             eprintln!("bbd: warning: uid {uid} is still kept from destinations: {e:#}");
+        }
+        if let Some(names) = &self.names {
+            names.forget(uid);
         }
     }
 
@@ -611,6 +631,8 @@ mod tests {
         );
         f.effect.refresh(&entry(10001), &items(Mode::Off)).unwrap();
         assert!(f.has(10001, "ip:203.0.113.50") && f.has(10001, "ip:203.0.113.52"));
+        // And a connection to one is told as refused, under the other name.
+        assert!(view.refuses(10001, "203.0.113.50:443".parse().unwrap()));
 
         // With the rule gone the addresses are let through again.
         f.unrule(10001, "domain:adnet.example");
