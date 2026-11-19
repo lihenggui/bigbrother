@@ -254,6 +254,26 @@ names_nothing() {
     ((looked > 0))
 }
 
+# How many of the processes given have the resolver's socket covered
+# (something mounted over it), and how many processes that are not the
+# canary's do.
+covered() {
+    local pid n=0
+    for pid in "$@"; do
+        as_root "grep -q /dev/socket/dnsproxyd /proc/$pid/mountinfo" 2>/dev/null && n=$((n + 1))
+    done
+    echo "$n"
+}
+others_covered() {
+    local file pid n=0 own
+    own=" $(adb shell pidof "$PACKAGE" | tr -d '\r') "
+    for file in $(as_root "grep -l /dev/socket/dnsproxyd /proc/[0-9]*/mountinfo 2>/dev/null" | tr -d '\r'); do
+        pid="${file#/proc/}"
+        [[ "$own" == *" ${pid%%/*} "* ]] || n=$((n + 1))
+    done
+    echo "$n"
+}
+
 # The value the canary reported for a key, in a report.
 # (sed stops at the first; a reader that stops early in a pipeline would
 # end the writer with SIGPIPE, which pipefail makes a failure.)
@@ -584,16 +604,24 @@ network=no
 [[ "$(seen "$outside" network)" == connected ]] && network=yes
 check "the network is left to an app in the sandbox ($(seen "$inside" network))" \
     [ "$(seen "$inside" network)" = "$(seen "$outside" network)" ]
+check "and so is the system's resolver ($(seen "$inside" resolver))" [ "$(seen "$inside" resolver)" = connected ]
+# Other apps of the device may be kept from the network too.
+others_before="$(others_covered)"
 as_root "$BBD sandbox set $PACKAGE network=on" >/dev/null
 status="$(as_root "$BBD sandbox status --json")"
 check "the packet filter is in place" [ "$(status_field network)" = true ]
 run_canary
 check_if "$network" "$NO_NETWORK" "connections are refused ($(seen "$view" network))" [ "$(seen "$view" network)" = refused ]
 check "the app reaches itself over loopback ($(seen "$view" loopback))" [ "$(seen "$view" loopback)" = connected ]
+check "the system's resolver is out of reach ($(seen "$view" resolver))" [ "$(seen "$view" resolver)" = refused:IOException ]
+check "no process but the app's lost the resolver" [ "$(others_covered)" = "$others_before" ]
 pids="$(adb shell pidof "$PACKAGE" | tr -d '\r')"
 as_root "$BBD sandbox set $PACKAGE network=off" >/dev/null
 check "the app keeps running when the network is given back" [ "$(adb shell pidof "$PACKAGE" | tr -d '\r')" = "$pids" ]
+check "and has the resolver back in the processes it has" [ "$(covered $pids)" = 0 ]
 as_root "$BBD sandbox set $PACKAGE network=on" >/dev/null
+check "taking the network again takes the resolver from them" [ "$(covered $pids)" = "$(wc -w <<<"$pids")" ]
+check "the app keeps running" [ "$(adb shell pidof "$PACKAGE" | tr -d '\r')" = "$pids" ]
 
 echo "disabling the sandbox:"
 as_root "$BBD sandbox disable $PACKAGE" >/dev/null

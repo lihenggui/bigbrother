@@ -35,7 +35,7 @@ any way.
 | Personal data | Nothing: contacts, calendar, messages, call log, accounts, location, clipboard, camera, microphone, body sensors, media, usage statistics, nearby devices | App ops set to "ignored" for the app's uid; for an approximate location, the precise location permission revoked | root |
 | Other apps' notifications, the screen | Nothing: its notification listeners and accessibility services lose the access the user gave them, which comes back when it leaves | The access taken as a permission is, and given back | root |
 | Identity | An ANDROID_ID of its own, fixed per app; no installed app other than itself and what came with the system | Hooks in system_server | LSPosed |
-| Network | No connection: what the app sends is refused at once, but for what it sends to the device itself. Off unless turned on | A rule in the kernel's packet filter, which looks the socket's uid up in a list | root |
+| Network | No connection: what the app sends is refused at once, but for what it sends to the device itself, and the names it looks up are not asked for. Off unless turned on | A rule in the kernel's packet filter, which looks the socket's uid up in a list; a mount over the socket of the system's resolver in the app's processes | root |
 
 The mounts, the app ops and the packet filter work without LSPosed. `bbd sandbox status` says which parts
 are in place on the device. `bbd sandbox list` names, for each app, the
@@ -90,7 +90,7 @@ Android's "only while using the app" does:
 | `nearby_devices` | No Bluetooth or Wi-Fi devices nearby | off, on |
 | `notification_content` | No notification access: other apps' notifications cannot be read; its own still show | off, on |
 | `screen_content` | Its accessibility services off: what is on screen cannot be read or acted on | off, on |
-| `network` | No network: connections fail at once | off, on |
+| `network` | No network: connections fail at once, and no name is looked up | off, on |
 
 The global settings give every item a mode; an app has these, except for
 the items it has a mode of its own for. Every item is on unless set
@@ -110,7 +110,8 @@ A change takes effect at once. It ends the app's processes if what is
 mounted for it changes (`storage`, `cpu_info`), or an item that was off is
 turned on, to any mode but off: what the app read before, and may keep,
 goes with them. `network` ends none: the connections the app has are
-refused from then on. Making
+refused from then on, and the resolver is taken from the processes it has.
+Making
 location coarse ends them too when the app had precise location: Android
 ends an app whenever it revokes a permission the app had. A change of the global
 settings is made to every sandboxed app that follows them, or to none. An
@@ -307,11 +308,40 @@ app kept from the network, the packets of the device pass no rule of the
 sandbox. netd, which owns the other chains of `OUTPUT`, leaves the jump
 alone, also when it starts again.
 
-The rules are about the app's own sockets. A name the app looks up through
-the system's resolver is looked up by netd, under netd's uid, and the
-query for it leaves the device; the connection to the address that comes
-back is refused. Other apps and the system can still fetch something on
-the app's behalf (the download manager, a browser it opens).
+The rules are about the app's own sockets. Other apps and the system can
+still fetch something on the app's behalf (the download manager, a browser
+it opens).
+
+### The resolver
+
+An app does not look names up itself: it asks netd, over the socket
+`/dev/socket/dnsproxyd`, and netd sends the query on a socket of its own,
+which the rule for the app's uid does not match. A name of the app's
+choosing would leave the device, and with it whatever the app wrote into
+the name.
+
+So `/dev/null` is mounted over that socket in the app's mount namespaces:
+the app cannot connect, and its lookups fail without a packet being sent.
+A starting process is given the mount at the gate, with the other mounts
+of the sandbox. An app connects anew for each lookup, so the processes it
+already has are given the mount as the network is taken from the app, and
+have it removed as the network is given back; none is ended. The gate is
+told first either way, so that a process starting meanwhile is as the
+others are about to be. A connection
+to the resolver that the app opened before and kept open stays usable
+until the process ends. netd makes the socket anew when it starts again,
+and a mount on the one before goes with it; Android 15 ends every app when
+netd is ended, and the processes that start then get the mount at the
+gate.
+
+The mount is made only in a namespace whose mounts do not pass to others,
+which an app's are: in one that shares them, it would take the resolver
+from every process. It shows among the app's own mounts as `/null` of
+`/dev`.
+
+On a kernel where starting apps cannot be held, the resolver is left to
+the app; `bbd sandbox list` then names the mounts as missing for
+`network`.
 
 ### The hook
 
@@ -362,7 +392,9 @@ minutes.
 - The packet filter's rules stay when the daemon stops or dies, with the
   uids listed then, and are written again by the one that starts next. They
   do not outlast a restart of the device: until the daemon has started, an
-  app has the network.
+  app has the network. The resolver stays covered in the processes that
+  have it so; one that started while there was no daemon is given the
+  mount by the daemon that starts next.
 - Isolated processes of a sandboxed app (a service declared
   `isolatedProcess`, a WebView renderer) run under uids of their own and
   are not given the mounts. Android gives them no shared storage, no

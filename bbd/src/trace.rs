@@ -594,9 +594,14 @@ fn start_sandbox(
     );
     let appops = sandbox::appops::AppOps::start();
     let mut new_apps = None;
+    let network = sandbox::network::Network::start(ebpf);
     let storage: Box<dyn sandbox::Effect> = match storage {
-        Ok(storage) => {
+        Ok(mut storage) => {
             storage.on_admitted(appops.verifier());
+            // The resolver goes with the network, and stays without it.
+            if network.is_ok() {
+                storage.with_network();
+            }
             // Not waited for: the gate thread waits for nothing.
             storage.on_unknown(move |uid| {
                 let _ = new_starts.try_send(uid);
@@ -619,7 +624,7 @@ fn start_sandbox(
         &sandbox.snapshot(),
         &sandbox.global(),
     )));
-    let network: Box<dyn sandbox::Effect> = match sandbox::network::Network::start(ebpf) {
+    let network: Box<dyn sandbox::Effect> = match network {
         Ok(network) => Box::new(network),
         Err(e) => {
             eprintln!("bbd: warning: apps cannot be kept from the network: {e:#}");

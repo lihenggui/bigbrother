@@ -48,8 +48,8 @@
 //!
 //! The rules are about the app's own sockets. A name it looks up through
 //! the system's resolver is looked up by netd, on a socket of netd's own
-//! uid: the query leaves the device, and the connection to the address
-//! that comes back is refused.
+//! uid, which they do not match: the resolver is taken from the app with
+//! the network, and given back with it ([`super::resolver`]).
 
 use std::{
     collections::BTreeSet,

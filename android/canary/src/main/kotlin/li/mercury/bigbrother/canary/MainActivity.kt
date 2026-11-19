@@ -31,6 +31,8 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.location.LocationManager
+import android.net.LocalSocket
+import android.net.LocalSocketAddress
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Bundle
@@ -266,6 +268,12 @@ class MainActivity : Activity() {
         view("loopback") {
             ServerSocket(0, 1, InetAddress.getLoopbackAddress()).use { reach(it.localSocketAddress as InetSocketAddress) }
         }
+        // The system's resolver, which looks names up for every app: whether
+        // its socket can be connected to.
+        view("resolver") {
+            LocalSocket().use { it.connect(LocalSocketAddress(RESOLVER, LocalSocketAddress.Namespace.FILESYSTEM)) }
+            "connected"
+        }
         // Identity: the Android ID both ways to it, and the installed apps
         // that did not come with the system.
         view("android_id") { Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) }
@@ -376,6 +384,9 @@ class MainActivity : Activity() {
 
         /** The address `scripts/check-sandbox.sh` has the network tried at, `host:port`. */
         const val EXTRA_NET = "net"
+
+        /** Where netd listens for the lookups of apps. */
+        const val RESOLVER = "/dev/socket/dnsproxyd"
 
         /** Set by `scripts/check-sandbox.sh` to have a file picked rather than the probes run. */
         const val EXTRA_PICK = "pick"

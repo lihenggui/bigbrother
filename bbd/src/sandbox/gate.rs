@@ -63,6 +63,7 @@ use super::{
     dirs::{self, MEDIA_RW},
     items::{Mounts, Settings},
     mounts::{self, Kernel},
+    resolver,
 };
 
 /// How long a process is waited for to come to a stop. It stops as it leaves
@@ -122,6 +123,19 @@ impl Process {
     }
 }
 
+/// What the starts of an app are held for: its mounts, and whether the
+/// socket of the system's resolver is covered.
+type Hold = (Mounts, bool);
+
+/// Starts that are not held.
+const NOT_HELD: Hold = (
+    Mounts {
+        storage: false,
+        cpu_info: false,
+    },
+    false,
+);
+
 /// Called with the uid of an app that was let through.
 type Told = Box<dyn Fn(u32) + Send>;
 
@@ -134,6 +148,9 @@ struct Gated {
     /// The packages that run under it.
     packages: Vec<String>,
     mounts: Mounts,
+    /// Whether the socket of the system's resolver is covered for it
+    /// (`resolver`).
+    resolver: bool,
 }
 
 /// What the gate thread and the daemon's main loop share.
@@ -184,6 +201,9 @@ impl Stats {
 pub struct Storage {
     uids: BpfHashMap<MapData, u32, u32>,
     shared: Arc<Shared>,
+    /// Whether apps can be kept from the network on this device. Where
+    /// they cannot, the resolver is left to them too.
+    network: bool,
 }
 
 impl Storage {
@@ -225,7 +245,22 @@ impl Storage {
         started
             .recv()
             .context("the gate thread ended as it started")??;
-        Ok(Self { uids, shared })
+        Ok(Self {
+            uids,
+            shared,
+            network: false,
+        })
+    }
+
+    /// Cover the resolver's socket from now on in the starting processes
+    /// of the apps kept from the network: the packet filter is in place.
+    pub fn with_network(&mut self) {
+        self.network = true;
+    }
+
+    /// What a start of an app with `items` is held for.
+    fn held_for(&self, items: &Settings) -> Hold {
+        (items.mounts(), self.network && items.network_refused())
     }
 
     /// Stop holding starts of `uid`, if they were held.
@@ -246,9 +281,16 @@ impl Storage {
         *lock(&self.shared.unknown) = Some(Box::new(told));
     }
 
-    /// From now on, hold starts of `uid` and give them `mounts`. The gate
-    /// thread is told first: a start it knows nothing of is let through.
-    fn hold(&mut self, entry: &Entry, packages: &[String], mounts: Mounts) -> anyhow::Result<()> {
+    /// From now on, hold starts of `uid` and give them `mounts`, and with
+    /// `resolver` no resolver to ask. The gate thread is told first: a
+    /// start it knows nothing of is let through.
+    fn hold(
+        &mut self,
+        entry: &Entry,
+        packages: &[String],
+        mounts: Mounts,
+        resolver: bool,
+    ) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.shared.open.load(Ordering::Relaxed),
             "the gate has stopped; restart the daemon"
@@ -259,6 +301,7 @@ impl Storage {
             install_id: entry.install_id.clone(),
             packages: packages.to_vec(),
             mounts,
+            resolver,
         };
         let mut apps = write(&self.shared.apps);
         self.uids
@@ -266,6 +309,69 @@ impl Storage {
             .context("adding the uid to the gate")?;
         apps.insert(uid, gated);
         Ok(())
+    }
+}
+
+impl Storage {
+    /// Hold the starts of the app of `entry` as `held` says, or none.
+    fn gate(&mut self, entry: &Entry, packages: &[String], held: Hold) -> anyhow::Result<()> {
+        let (mounts, resolver) = held;
+        if !mounts.any() && !resolver {
+            self.release(entry.uid);
+            return Ok(());
+        }
+        if mounts.storage {
+            dirs::prepare(
+                Path::new(&mounts::media_of(entry.uid)),
+                entry.uid,
+                MEDIA_RW,
+                &format!("{}-{}", entry.uid, entry.install_id),
+            )
+            .context("making the sandbox directory")?;
+        }
+        self.hold(entry, packages, mounts, resolver)
+    }
+
+    /// Bring the app of `entry` from what its starts were held for to
+    /// what they are to be held for, and the processes it has to the
+    /// same as far as they can be without being ended: the resolver's
+    /// socket is covered in them, or uncovered (`resolver`).
+    ///
+    /// The gate first, either way: a process that starts in between is
+    /// then as the others are about to be. Both, or neither.
+    fn change(
+        &mut self,
+        entry: &Entry,
+        packages: &[String],
+        was: Hold,
+        wanted: Hold,
+    ) -> anyhow::Result<()> {
+        self.gate(entry, packages, wanted)?;
+        let running = match (was.1, wanted.1) {
+            (false, true) => {
+                resolver::cover(entry).context("taking the resolver from the app's processes")
+            }
+            (true, false) => {
+                resolver::uncover(entry).context("giving the resolver back to the app's processes")
+            }
+            _ => Ok(()),
+        };
+        let Err(e) = running else {
+            return Ok(());
+        };
+        if let Err(undo) = self.gate(entry, packages, was) {
+            eprintln!(
+                "bbd: sandbox: uid {} is not held at the gate as it was: {undo:#}",
+                entry.uid
+            );
+        }
+        // The processes gone through before it failed, back as they were.
+        let _ = if was.1 {
+            resolver::cover(entry)
+        } else {
+            resolver::uncover(entry)
+        };
+        Err(e)
     }
 }
 
@@ -280,25 +386,16 @@ impl Effect for Storage {
         packages: &[String],
         items: &Settings,
     ) -> anyhow::Result<()> {
-        let mounts = items.mounts();
-        if !mounts.any() {
-            return Ok(());
-        }
-        if mounts.storage {
-            dirs::prepare(
-                Path::new(&mounts::media_of(entry.uid)),
-                entry.uid,
-                MEDIA_RW,
-                &format!("{}-{}", entry.uid, entry.install_id),
-            )
-            .context("making the sandbox directory")?;
-        }
-        self.hold(entry, packages, mounts)
+        self.change(entry, packages, NOT_HELD, self.held_for(items))
     }
 
-    fn disable(&mut self, entry: &mut Entry, _: &[String], _: &Settings) -> anyhow::Result<()> {
-        self.release(entry.uid);
-        Ok(())
+    fn disable(
+        &mut self,
+        entry: &mut Entry,
+        packages: &[String],
+        items: &Settings,
+    ) -> anyhow::Result<()> {
+        self.change(entry, packages, self.held_for(items), NOT_HELD)
     }
 
     fn update(
@@ -308,25 +405,34 @@ impl Effect for Storage {
         before: &Settings,
         after: &Settings,
     ) -> anyhow::Result<()> {
-        if before.mounts() == after.mounts() {
+        let (was, wanted) = (self.held_for(before), self.held_for(after));
+        if was == wanted {
             return Ok(());
         }
-        if after.mounts().any() {
-            self.enable(entry, packages, after)
-        } else {
-            self.release(entry.uid);
-            Ok(())
-        }
+        self.change(entry, packages, was, wanted)
     }
 
     fn resume(&mut self, apps: &[Resumed]) {
         // The directories are left alone: they were made when the app was
         // enabled, and cannot be reached before the user unlocks the device,
         // which is when the daemon usually starts.
-        for app in apps.iter().filter(|app| app.items.mounts().any()) {
-            if let Err(e) = self.hold(&app.entry, &app.packages, app.items.mounts()) {
+        for app in apps {
+            let (mounts, resolver) = self.held_for(&app.items);
+            if !mounts.any() && !resolver {
+                continue;
+            }
+            if let Err(e) = self.hold(&app.entry, &app.packages, mounts, resolver) {
                 eprintln!(
                     "bbd: sandbox: uid {} is not held at the gate: {e:#}",
+                    app.entry.uid
+                );
+                continue;
+            }
+            // In the processes that started while there was no daemon to
+            // hold them.
+            if resolver && let Err(e) = resolver::cover(&app.entry) {
+                eprintln!(
+                    "bbd: sandbox: uid {} has the system's resolver: {e:#}",
                     app.entry.uid
                 );
             }
@@ -693,6 +799,17 @@ impl Keeper {
             &[]
         };
 
+        if gated.resolver {
+            // A mount on the resolver's socket must stay in this
+            // namespace: in one that passes its mounts on, it would take
+            // the resolver from every app.
+            let mountinfo = fs::read_to_string(format!("/proc/{pid}/mountinfo"))
+                .context("reading its mounts")?;
+            anyhow::ensure!(
+                resolver::spreads(&mountinfo) == Some(false),
+                "its mounts are shared with others"
+            );
+        }
         enter(&theirs).context("entering its namespace")?;
         let mounted = mounts::apply(
             &mut self.kernel,
@@ -700,6 +817,7 @@ impl Keeper {
             &gated.packages,
             files,
             gated.mounts.storage,
+            gated.resolver,
         );
         if let Err(e) = enter(home) {
             *lost = true;
