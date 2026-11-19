@@ -221,6 +221,7 @@ class SandboxRulesTest {
     fun givenAProviderName_whenAsked_thenTheIdProvidersAreKnownWithOrWithoutTheUser() {
         assertTrue(isIdProvider("com.vivo.vms.IdProvider"))
         assertTrue(isIdProvider("0@com.meizu.flyme.openidsdk"))
+        assertTrue(isIdProvider("com.miui.idprovider"))
         assertFalse(isIdProvider("settings"))
         assertFalse(isIdProvider("com.example.provider"))
     }
