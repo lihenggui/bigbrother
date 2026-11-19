@@ -74,7 +74,7 @@ use anyhow::Context as _;
 
 use super::{
     Effect, Entry, Resumed, Status,
-    items::{OpMode, Settings},
+    items::{self, OpMode, Settings},
 };
 use crate::helper;
 
@@ -493,13 +493,34 @@ fn keep_regranted(entry: &mut Entry, found: &[String]) -> bool {
     let mut changed = false;
     let kept: Vec<String> = pairs(&entry.saved_permissions)
         .map(|(name, saved)| {
-            let state = found.get(name).copied().unwrap_or(saved);
+            let state = found.get(name).map_or_else(
+                || saved.to_string(),
+                |found| regranted_state(name, saved, found),
+            );
             changed |= state != saved;
             format!("{name}={state}")
         })
         .collect();
     entry.saved_permissions = kept.join(",");
     changed
+}
+
+/// The state to keep for `name`, saved as `saved`, found granted again as
+/// `found`. A special access is given service by service: the user giving
+/// one service the access again takes it from none of the others that had
+/// it, so the services found join those saved. A helper that started
+/// again since it took the access knows only what it found.
+fn regranted_state(name: &str, saved: &str, found: &str) -> String {
+    if !items::SPECIAL_ACCESS.contains(&name) || !saved.starts_with("granted") {
+        return found.to_string();
+    }
+    let mut words: Vec<&str> = saved.split('+').collect();
+    for word in found.split('+').skip(1) {
+        if !words.contains(&word) {
+            words.push(word);
+        }
+    }
+    words.join("+")
 }
 
 /// Forget what `entry` saved for the permissions among `names`: they were
@@ -1499,6 +1520,41 @@ mod tests {
         ] {
             assert_eq!(found_in(&line), None, "{line}");
         }
+    }
+
+    #[test]
+    fn a_service_given_the_access_again_keeps_the_others_that_had_it() {
+        let access = items::NOTIFICATION_ACCESS;
+        let both = format!("{access}=granted+service:a:a.A+service:a:a.B");
+        let mut entry = Entry {
+            saved_permissions: both.clone(),
+            ..sandboxed(10100)
+        };
+        // One of the two given it again: both keep it.
+        assert!(!keep_regranted(
+            &mut entry,
+            &[format!("{access}=granted+service:a:a.A")]
+        ));
+        assert_eq!(entry.saved_permissions, both);
+        // One that did not have it, given it by the user: it joins them.
+        assert!(keep_regranted(
+            &mut entry,
+            &[format!("{access}=granted+service:a:a.C")]
+        ));
+        assert_eq!(entry.saved_permissions, format!("{both}+service:a:a.C"));
+        // Nothing known before: what was found.
+        let mut unknown = Entry {
+            saved_permissions: format!("{access}=default"),
+            ..sandboxed(10100)
+        };
+        assert!(keep_regranted(
+            &mut unknown,
+            &[format!("{access}=granted+service:a:a.A")]
+        ));
+        assert_eq!(
+            unknown.saved_permissions,
+            format!("{access}=granted+service:a:a.A")
+        );
     }
 
     #[test]

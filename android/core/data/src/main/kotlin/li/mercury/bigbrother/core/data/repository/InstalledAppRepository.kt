@@ -33,9 +33,11 @@ interface InstalledAppRepository {
     suspend fun getInstalledApps(): List<InstalledApp>
 
     /**
-     * The permissions the app's manifest asks for; null if it is not
-     * installed for the calling user. The manifest is the same for every
-     * user the app is installed for.
+     * The permissions the app's manifest names: those it asks for, and
+     * those its services are bound with (a notification listener's, an
+     * accessibility service's); null if it is not installed for the calling
+     * user. The manifest is the same for every user the app is installed
+     * for.
      */
     suspend fun getRequestedPermissions(packageName: String): Set<String>?
 }
@@ -63,8 +65,8 @@ internal class PackageManagerInstalledAppRepository @Inject constructor(
 
     override suspend fun getRequestedPermissions(packageName: String): Set<String>? = withContext(ioDispatcher) {
         try {
-            packageManager.getPackageInfo(packageName, PackageManager.GET_PERMISSIONS)
-                .requestedPermissions.orEmpty().toSet()
+            val info = packageManager.getPackageInfo(packageName, PackageManager.GET_PERMISSIONS or PackageManager.GET_SERVICES)
+            info.requestedPermissions.orEmpty().toSet() + info.services.orEmpty().mapNotNull { it.permission }
         } catch (_: PackageManager.NameNotFoundException) {
             null
         }

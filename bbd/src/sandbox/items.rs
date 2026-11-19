@@ -51,6 +51,12 @@ pub enum Item {
     InstalledApps,
     /// Bluetooth and Wi-Fi devices nearby.
     NearbyDevices,
+    /// What the notifications of every app say, read by a notification
+    /// listener the user let the app have.
+    NotificationContent,
+    /// What is on the screen in every app, read, and acted on, by an
+    /// accessibility service the user let the app have.
+    ScreenContent,
 }
 
 /// What an item does to the app.
@@ -82,7 +88,7 @@ pub enum OpMode {
 }
 
 impl Item {
-    pub const ALL: [Item; 13] = [
+    pub const ALL: [Item; 15] = [
         Item::Storage,
         Item::CpuInfo,
         Item::Contacts,
@@ -96,6 +102,8 @@ impl Item {
         Item::DeviceIds,
         Item::InstalledApps,
         Item::NearbyDevices,
+        Item::NotificationContent,
+        Item::ScreenContent,
     ];
 
     /// The name the item goes by in the database, in commands and in JSON.
@@ -114,6 +122,8 @@ impl Item {
             Item::DeviceIds => "device_ids",
             Item::InstalledApps => "installed_apps",
             Item::NearbyDevices => "nearby_devices",
+            Item::NotificationContent => "notification_content",
+            Item::ScreenContent => "screen_content",
         }
     }
 
@@ -135,8 +145,11 @@ impl Item {
 
     /// The app ops through which the item's data is handed out. The app ops
     /// helper (`AppOpsGuardProtocol.GUARDED_OPS`) knows every one of them.
+    /// The notifications and the screen content go through no app op: the
+    /// system hands them to the app's services itself.
     pub fn ops(self) -> &'static [&'static str] {
         match self {
+            Item::NotificationContent | Item::ScreenContent => &[],
             Item::Storage => &[
                 "android:read_external_storage",
                 "android:write_external_storage",
@@ -188,6 +201,21 @@ impl Item {
 /// precise location op ignored, the location service still takes the app
 /// for one with precise location, and gives it none at all.
 pub const PRECISE_LOCATION: &str = "android.permission.ACCESS_FINE_LOCATION";
+
+/// The access to the notifications the notification content item takes from the
+/// app while on: the notification listeners of its packages, which the
+/// system binds with this permission, are let go. Named as a permission,
+/// though it is not one an app asks for, so that the app ops helper keeps
+/// it as it keeps the precise location: what was granted is saved, held
+/// taken, and given back as it was.
+pub const NOTIFICATION_ACCESS: &str = "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE";
+
+/// The access to the screen the screen content item takes from the app
+/// while on, as [`NOTIFICATION_ACCESS`] does: its accessibility services.
+pub const SCREEN_ACCESS: &str = "android.permission.BIND_ACCESSIBILITY_SERVICE";
+
+/// The accesses the user gives service by service, held as permissions.
+pub const SPECIAL_ACCESS: [&str; 2] = [NOTIFICATION_ACCESS, SCREEN_ACCESS];
 
 /// The ops whose uid mode the system keeps under another op of the same
 /// item (their switch op), which holds them in the foreground: the Wi-Fi
@@ -377,17 +405,23 @@ impl Settings {
     }
 
     /// What the app ops helper holds for `item` in its mode here, by name:
-    /// its app ops, and the permissions it takes.
+    /// its app ops, and the permission it takes.
     fn held_for(&self, item: Item) -> Vec<&'static str> {
-        let mut names: Vec<&'static str> = self
-            .op_targets_of(item)
+        self.op_targets_of(item)
             .into_iter()
             .map(|(op, _)| op)
-            .collect();
-        if item == Item::Location && self.mode(item) == Mode::Coarse {
-            names.push(PRECISE_LOCATION);
+            .chain(self.taken_of(item))
+            .collect()
+    }
+
+    /// The permission `item` takes from the app in its mode here, if any.
+    fn taken_of(&self, item: Item) -> Option<&'static str> {
+        match (item, self.mode(item)) {
+            (Item::Location, Mode::Coarse) => Some(PRECISE_LOCATION),
+            (Item::NotificationContent, Mode::On) => Some(NOTIFICATION_ACCESS),
+            (Item::ScreenContent, Mode::On) => Some(SCREEN_ACCESS),
+            _ => None,
         }
-        names
     }
 
     /// The parts of each item that is on that are not in place for an app
@@ -422,14 +456,14 @@ impl Settings {
         unmet
     }
 
-    /// The runtime permissions to keep revoked: the precise location while
-    /// location is coarse.
+    /// The permissions to keep taken: the precise location while location
+    /// is coarse, and the access to the notifications and to the screen
+    /// while their items are on.
     pub fn taken_permissions(&self) -> Vec<&'static str> {
-        if self.mode(Item::Location) == Mode::Coarse {
-            vec![PRECISE_LOCATION]
-        } else {
-            Vec::new()
-        }
+        Item::ALL
+            .into_iter()
+            .filter_map(|item| self.taken_of(item))
+            .collect()
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (Item, Mode)> + '_ {
@@ -574,6 +608,42 @@ mod tests {
     }
 
     #[test]
+    fn the_notifications_and_the_screen_are_taken_as_permissions_are() {
+        let mut own = Settings::default();
+        for item in Item::ALL {
+            own.set(item, Some(Mode::Off)).unwrap();
+        }
+        own.set(Item::NotificationContent, Some(Mode::On)).unwrap();
+        let items = own.over(&Settings::default());
+        assert_eq!(items.taken_permissions(), [NOTIFICATION_ACCESS]);
+        assert!(items.op_targets().is_empty());
+        assert!(items.any_on());
+        assert!(!items.mounts().any());
+
+        own.set(Item::ScreenContent, Some(Mode::On)).unwrap();
+        let items = own.over(&Settings::default());
+        assert_eq!(
+            items.taken_permissions(),
+            [NOTIFICATION_ACCESS, SCREEN_ACCESS]
+        );
+        // In effect only while the helper keeps the access taken.
+        let all = InPlace {
+            mounts: true,
+            android_id_hook: true,
+            app_list_hook: true,
+            uri_grants_hook: true,
+        };
+        assert!(items.unmet(&all, |_| true).is_empty());
+        let unmet = items.unmet(&all, |name| name != SCREEN_ACCESS);
+        assert_eq!(unmet.len(), 1);
+        assert_eq!(unmet[&Item::ScreenContent], [Part::AppOps]);
+        // Neither has another mode.
+        for item in [Item::NotificationContent, Item::ScreenContent] {
+            assert!(!item.allows(Mode::Coarse) && !item.allows(Mode::Foreground));
+        }
+    }
+
+    #[test]
     fn items_that_are_off_coarse_or_foreground_ask_only_for_what_they_do() {
         let mut own = Settings::default();
         for item in Item::ALL {
@@ -667,7 +737,8 @@ mod tests {
         let ops = |items: &Settings| -> std::collections::BTreeSet<&str> {
             items.op_targets().into_iter().map(|(op, _)| op).collect()
         };
-        let global = Settings::parse("camera=off");
+        // Only location takes a permission here.
+        let global = Settings::parse("camera=off,notification_content=off,screen_content=off");
         let before = Settings::parse("location=coarse,microphone=on");
         let after = Settings::parse("camera=on,location=off,microphone=on");
         let covering = before.covering(&after, &global);

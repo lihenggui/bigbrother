@@ -162,6 +162,12 @@
     <string name="jail_item_nearby_devices">Nearby devices</string>
     <string name="jail_item_nearby_devices_on">None found</string>
     <string name="jail_item_nearby_devices_on_detail">Bluetooth and Wi-Fi scans return nothing.</string>
+    <string name="jail_item_notification_content">Notification content</string>
+    <string name="jail_item_notification_content_on">No access</string>
+    <string name="jail_item_notification_content_on_detail">Cannot read the notifications of other apps; its own notifications still show. Restored when isolation ends.</string>
+    <string name="jail_item_screen_content">Screen content</string>
+    <string name="jail_item_screen_content_on">No access</string>
+    <string name="jail_item_screen_content_on_detail">Its accessibility services are off: it cannot read or act on what is on screen. Restored when isolation ends.</string>
 
     <!-- The other modes of an item. -->
     <string name="jail_mode_coarse">Approximate location</string>

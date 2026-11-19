@@ -141,6 +141,12 @@
     <string name="jail_item_nearby_devices">附近设备</string>
     <string name="jail_item_nearby_devices_on">无设备</string>
     <string name="jail_item_nearby_devices_on_detail">蓝牙和 Wi‑Fi 扫描结果为空。</string>
+    <string name="jail_item_notification_content">通知内容</string>
+    <string name="jail_item_notification_content_on">无法读取</string>
+    <string name="jail_item_notification_content_on_detail">无法读取其他应用的通知，自身发送通知不受影响；解除隔离后恢复。</string>
+    <string name="jail_item_screen_content">屏幕内容</string>
+    <string name="jail_item_screen_content_on">无法读取</string>
+    <string name="jail_item_screen_content_on_detail">其无障碍服务停用，无法读取或操作屏幕上的内容；解除隔离后恢复。</string>
 
     <string name="jail_mode_coarse">大致位置</string>
     <string name="jail_mode_coarse_detail">确切位置已关闭，仅能获取大致位置。</string>

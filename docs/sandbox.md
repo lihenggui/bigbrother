@@ -31,6 +31,7 @@ any way.
 | Shared storage | A directory of its own in place of `/storage/emulated/<user>`, empty at first, which it can write to. Its own `Android/data`, `obb` and `media` directories stay. Other volumes (SD cards) are empty. A file chosen for it in the system's file picker is open to it for that use only. | Mounts made in the app's mount namespace as it starts; a hook in system_server for the files picked through the system | root; LSPosed for picked files |
 | Kernel information | `/proc/cpuinfo` without what names the chip | The same mounts | root |
 | Personal data | Nothing: contacts, calendar, messages, call log, accounts, location, clipboard, camera, microphone, body sensors, media, usage statistics, nearby devices | App ops set to "ignored" for the app's uid; for an approximate location, the precise location permission revoked | root |
+| Other apps' notifications, the screen | Nothing: its notification listeners and accessibility services lose the access the user gave them, which comes back when it leaves | The access taken as a permission is, and given back | root |
 | Identity | An ANDROID_ID of its own, fixed per app; no installed app other than itself and what came with the system | Hooks in system_server | LSPosed |
 
 The mounts and the app ops work without LSPosed. `bbd sandbox status` says which parts
@@ -83,6 +84,8 @@ Android's "only while using the app" does:
 | `device_ids` | An ANDROID_ID of its own; no phone number or phone state | off, on |
 | `installed_apps` | No installed app but itself and the system's; no usage statistics | off, on |
 | `nearby_devices` | No Bluetooth or Wi-Fi devices nearby | off, on |
+| `notification_content` | No notification access: other apps' notifications cannot be read; its own still show | off, on |
+| `screen_content` | Its accessibility services off: what is on screen cannot be read or acted on | off, on |
 
 The global settings give every item a mode; an app has these, except for
 the items it has a mode of its own for. Every item is on unless set
@@ -180,6 +183,28 @@ under `/data/adb/big_brother_recovery` retains each pending request and the
 helper. Each restored item is checked and journaled. The boot worker retries
 outstanding requests and removes the batch after acknowledgement. The helper
 rechecks the installation before changing an app op or permission.
+
+### Notifications and the screen
+
+The system hands what other apps' notifications say to the notification
+listeners the user gave the access to, and what is on screen to the
+accessibility services the user turned on, past any app op. With
+`notification_content` or `screen_content` on, the helper takes that
+access from every such service of the app, as the system's settings do,
+and keeps it taken: given again while the app is isolated, it is taken
+back within a minute, by the helper's regular check (neither service
+reports such a change to it), and that is what the app gets once it is
+out. Which
+services had the access is saved with the entry (`saved_permissions`,
+under the permission the system binds such services with), and the access
+goes back to those services and no others: one the user never turned on
+is not turned on by the sandbox. An app needs no such access to show
+notifications of its own: those are not affected.
+
+The access is taken and given back by the helper, through the
+notification service and the `enabled_accessibility_services` setting.
+Android also takes an app's accessibility services when the app is
+force-stopped.
 
 ### The hook
 
