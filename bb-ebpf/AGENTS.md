@@ -60,7 +60,13 @@ These programs run on every file open and many system calls of every process.
 - `network_refused` is not a recorder: the packet filter runs it for every
   packet leaving the device while an app is kept from the network, and not
   at all otherwise (`bbd/src/sandbox/network.rs`). It costs a uid check
-  and, for an app's packet, one map lookup; it must stay that small.
+  and, for an app's packet, two map lookups; only the packets of an app
+  kept from single destinations are read, for two more. It must stay that
+  small.
+- `inet_sock_set_state` reports the bytes of a TCP connection that has
+  ended, for the apps whose connections are recorded. It runs for every
+  state change of every socket and returns after one comparison for all
+  but the last.
 
 ## Testing
 

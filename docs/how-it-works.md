@@ -28,7 +28,9 @@ app      reads the daemon's JSON output as root
   programs, so one binary works across kernel versions.
 - Network destinations are classified in the kernel; only loopback, private,
   link-local and multicast addresses leave it. A connection to a port the
-  app itself listens on is not recorded.
+  app itself listens on is not recorded. Destinations on the internet leave
+  it only of an app in the sandbox whose connections the user has recorded
+  (docs/sandbox.md), and are kept apart from the other records.
 - The kernel side timestamps each event and keeps it in a buffer. The daemon
   takes the events in and writes them to the database every 30 seconds, or
   sooner if the buffer is filling up. Each query from the app has it write
