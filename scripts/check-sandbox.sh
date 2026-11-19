@@ -47,7 +47,7 @@ max_hold_us=20000
 # Every item of the sandbox (`bbd/src/sandbox/items.rs`), each set to on,
 # back to the global settings, or off but for device_ids.
 ITEMS="storage cpu_info contacts messages calendar clipboard_accounts location camera microphone
-body_sensors device_ids installed_apps nearby_devices"
+body_sensors device_ids installed_apps nearby_devices notification_content screen_content"
 ALL_ON="" ALL_GLOBAL="" ONLY_IDS=""
 for item in $ITEMS; do
     ALL_ON+=" $item=on"
@@ -209,6 +209,13 @@ pick_marker() {
     done
 }
 
+# The canary's services that have the notifications, and those that have
+# the screen, as the system's settings list them.
+listening() { as_root "settings get secure enabled_notification_listeners" | tr -d '\r' | tr ':' '\n' | grep "^$PACKAGE/" | sort | tr '\n' ' '; }
+seeing() { as_root "settings get secure enabled_accessibility_services" | tr -d '\r' | tr ':' '\n' | grep "^$PACKAGE/" | sort | tr '\n' ' '; }
+LISTENER="$PACKAGE/$PACKAGE.NotificationProbe "
+SCREEN="$PACKAGE/$PACKAGE.ScreenProbe "
+
 # Whether every process of the canary has its sandbox directory mounted as
 # shared storage (the entry of /proc/<pid>/mountinfo for it). One that ended
 # since it was listed, as the last start's does, is not looked at.
@@ -339,6 +346,7 @@ done <<<"$kept"
     echo "error: the seed reported on $reported of ${#seeded[@]} kinds of test record" >&2
     exit 2
 }
+accessibility="$(as_root "settings get secure enabled_accessibility_services" | tr -d '\r')"
 
 # Leave the device as it was, whatever happens.
 cleanup() {
@@ -352,10 +360,22 @@ content delete --uri content://call_log/calls --where "number='$TEST_NUMBER'"
 content delete --uri "content://com.android.calendar/calendars?caller_is_syncadapter=true&account_name=$TEST_ACCOUNT&account_type=LOCAL" --where "account_name='$TEST_ACCOUNT'"
 EOF
     as_root "sh $SEED; rm -f $SEED" >/dev/null 2>&1 || true
+    adb shell cmd notification disallow_listener "$PACKAGE/$PACKAGE.NotificationProbe" >/dev/null 2>&1 || true
+    if [[ "${accessibility:-null}" == null ]]; then
+        as_root "settings delete secure enabled_accessibility_services" >/dev/null 2>&1 || true
+    else
+        as_root "settings put secure enabled_accessibility_services $accessibility" >/dev/null 2>&1 || true
+    fi
     as_shell cmd location providers remove-test-provider gps >/dev/null 2>&1 || true
     adb shell appops set com.android.shell android:mock_location "${mock_location:-default}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
+
+# The access to the notifications, given to the canary's listener as the
+# user gives it in the system's settings. (The screen is checked at the
+# end: the system takes it from an app's services whenever the app is
+# force-stopped, as each start of the canary here does.)
+adb shell cmd notification allow_listener "$PACKAGE/$PACKAGE.NotificationProbe"
 
 as_root "$BBD sandbox disable $PACKAGE" >/dev/null
 
@@ -369,6 +389,7 @@ done
 check_if "$location" "$NO_LOCATION" "a location is had ($(seen "$outside" location))" grep -q '^accuracy:' <<<"$(seen "$outside" location)"
 check "the real storage is visible" [ "$(seen "$outside" marker)" = real ]
 check "the chip is named in /proc/cpuinfo" [ "$(seen "$outside" cpu_named)" = true ]
+check "the notifications are given to the listener ($(listening))" [ "$(listening)" = "$LISTENER" ]
 pick_marker
 if [[ -n "$picked" ]]; then
     run_canary
@@ -435,6 +456,7 @@ check_if "${seeded[call_log]}" "$NOT_KEPT" "no call log ($(seen "$outside" call_
 check_if "${seeded[calendar]}" "$NOT_KEPT" "no calendar ($(seen "$outside" calendar) outside)" [ "$(seen "$inside" calendar)" = 0 ]
 check "no accounts ($(seen "$outside" accounts) outside)" [ "$(seen "$inside" accounts)" = 0 ]
 check_if "$location" "$NO_LOCATION" "no location ($(seen "$inside" location))" [ "$(seen "$inside" location)" = none ]
+check "no service of the app has the notifications ($(listening))" [ -z "$(listening)" ]
 not_held="$(ops_not_held "$inside" "${!ITEM_OPS[@]}")"
 check "every item's app ops are ignored${not_held:+ (not:$not_held)}" [ -z "$not_held" ]
 
@@ -552,6 +574,7 @@ as_root "$BBD sandbox disable $PACKAGE" >/dev/null
 run_canary
 after="$view"
 check "the real storage is back" [ "$(seen "$after" marker)" = real ]
+check "the notifications are the listener's again ($(listening))" [ "$(listening)" = "$LISTENER" ]
 if [[ -n "$picked" ]]; then
     check "and so is the file picked before" [ "$(seen "$after" granted_file)" = real ]
 fi
@@ -580,6 +603,33 @@ check_if "${seeded[contacts]}" "$NOT_KEPT" "the contacts are back ($(seen "$gran
 
 # What a green run did not cover, in sight.
 echo "$skipped check(s) skipped"
+# The screen, given to one of the canary's two accessibility services as
+# the user gives it, and nothing started in between.
+echo "with the screen given to one accessibility service:"
+give_screen() {
+    if [[ "$accessibility" == null || -z "$accessibility" ]]; then
+        as_root "settings put secure enabled_accessibility_services ${SCREEN% }"
+    else
+        as_root "settings put secure enabled_accessibility_services $accessibility:${SCREEN% }"
+    fi
+}
+give_screen
+check "it has the screen ($(seeing))" [ "$(seeing)" = "$SCREEN" ]
+as_root "$BBD sandbox enable $PACKAGE" >/dev/null
+as_root "$BBD sandbox set $PACKAGE screen_content=on" >/dev/null
+check "in the sandbox, no service of the app has it ($(seeing))" [ -z "$(seeing)" ]
+# Given again while the app is isolated: taken back by the helper's check
+# every minute, and what the user chose is what the app gets once it is
+# out.
+give_screen
+for _ in $(seq 1 75); do
+    [[ -z "$(seeing)" ]] && break
+    sleep 1
+done
+check "given again by the user, it is taken back ($(seeing))" [ -z "$(seeing)" ]
+as_root "$BBD sandbox disable $PACKAGE" >/dev/null
+check "out of the sandbox, the one service has it again, and no other ($(seeing))" [ "$(seeing)" = "$SCREEN" ]
+
 if ((failed > 0)); then
     echo "$failed check(s) failed"
     exit 1
