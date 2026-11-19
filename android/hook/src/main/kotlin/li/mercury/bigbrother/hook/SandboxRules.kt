@@ -314,8 +314,12 @@ private val ID_SERVICES = listOf(
     IdService("com.mdid.msa", "com.bun.msa.action.bindto.service", "com.mdid.msa.service.MsaIdService"),
 )
 
-/** The providers that give vendors' device identifiers (vivo, Meizu, nubia), by authority. */
-private val ID_PROVIDERS = setOf("com.vivo.vms.IdProvider", "com.meizu.flyme.openidsdk", "cn.nubia.identity")
+/**
+ * The providers that give vendors' device identifiers, by authority: vivo,
+ * Meizu, nubia, and Xiaomi's Security Center, which the system's
+ * `com.android.id.impl.IdProviderImpl` queries in the app's own process.
+ */
+private val ID_PROVIDERS = setOf("com.vivo.vms.IdProvider", "com.meizu.flyme.openidsdk", "cn.nubia.identity", "com.miui.idprovider")
 
 /**
  * Which identifier service an app binding a service reaches, or null if

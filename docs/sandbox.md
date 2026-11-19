@@ -441,11 +441,13 @@ throwing in the app. These are Android's own advertising ID
 (AdServices, `AdIdManager`), which looks only at whether the app asks for
 its permission, and the vendors' identifiers (OAID) that are bound: those
 of Huawei, OPPO, Samsung, Lenovo, ASUS, Coolpad, 360, Freeme and the MSA
-service. The OAID providers of vivo, Meizu and nubia are not found either
-(`ContentProviderHelper.getContentProvider`). The vendors' services and
-providers are named as the identifier SDKs reach them; Xiaomi's OAID is
-read through a class of the system in the app's own process, which the
-hook does not reach.
+service. The OAID providers of vivo, Meizu, nubia and Xiaomi are not
+found either (`ContentProviderHelper.getContentProvider`). Xiaomi's OAID,
+VAID and AAID are read in the app's own process by a class of the system
+(`com.android.id.impl.IdProviderImpl`), which queries Security Center's
+provider (`com.miui.idprovider`); finding none, it gives no identifier.
+The vendors' services and providers are named as the identifier SDKs
+reach them.
 
 A file the app was let pick through the system (a document, a folder, a
 photo) is opened by the provider that holds it, outside the sandbox, once
