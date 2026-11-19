@@ -17,8 +17,11 @@
 package li.mercury.bigbrother.feature.jail.impl.network
 
 import android.content.Context
+import android.text.format.DateFormat
 import android.text.format.DateUtils
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import li.mercury.bigbrother.core.model.BucketSize
 import li.mercury.bigbrother.core.model.TimeRange
@@ -26,9 +29,8 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.util.Formatter
+import java.time.format.DecimalStyle
 import java.util.Locale
-import java.util.TimeZone
 import kotlin.math.roundToLong
 
 private const val UNIT = 1024.0
@@ -111,15 +113,13 @@ internal fun dateTime(epochSeconds: Long): String = dateTime(LocalContext.curren
 /** A day, "Nov 16", in the device's locale. */
 @Composable
 internal fun shortDate(epochSeconds: Long, zone: ZoneId): String {
-    val millis = epochSeconds * 1000
-    return DateUtils.formatDateRange(
-        LocalContext.current,
-        Formatter(Locale.getDefault()),
-        millis,
-        millis,
-        DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH or DateUtils.FORMAT_NO_YEAR,
-        TimeZone.getTimeZone(zone).id,
-    ).toString()
+    val locale = LocalConfiguration.current.locales[0]
+    val formatter = remember(locale, zone) {
+        DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(locale, "MMMd"), locale)
+            .withDecimalStyle(DecimalStyle.of(locale))
+            .withZone(zone)
+    }
+    return formatter.format(Instant.ofEpochSecond(epochSeconds))
 }
 
 /** A bar of the chart: its hours, after its day if that is not today; or its day. */

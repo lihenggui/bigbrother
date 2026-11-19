@@ -16,6 +16,7 @@
 
 package li.mercury.bigbrother.feature.jail.impl.network
 
+import android.content.res.Configuration
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -158,7 +160,7 @@ class NetworkScreenshotTests {
 
     @Test
     @Config(qualifiers = "en-rUS")
-    fun givenDailyChart_whenDeviceZoneChanges_thenAxisAndPeriodStillShowTheQueriedDates() {
+    fun givenDailyChart_whenZoneAndLocaleDiffer_thenLabelsUseChartZoneAndComposeLocale() {
         val zone = ZoneId.of("America/Los_Angeles")
         val first = Instant.parse("2026-03-08T08:00:00Z").epochSecond
         val next = Instant.parse("2026-03-09T07:00:00Z").epochSecond
@@ -176,10 +178,15 @@ class NetworkScreenshotTests {
                             onSelect = null,
                         )
                         Text(periodLabel(first, BucketSize.DAY.seconds, zone))
+                        val chinese = Configuration(LocalConfiguration.current).apply { setLocale(Locale.SIMPLIFIED_CHINESE) }
+                        CompositionLocalProvider(LocalConfiguration provides chinese) {
+                            Text(periodLabel(first, BucketSize.DAY.seconds, zone))
+                        }
                     }
                 }
             }
 
+            composeTestRule.onAllNodesWithText("3月8日").assertCountEquals(1)
             composeTestRule.onAllNodesWithText("Mar 8").assertCountEquals(2)
             composeTestRule.onAllNodesWithText("Mar 9").assertCountEquals(1)
         } finally {
