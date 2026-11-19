@@ -491,6 +491,10 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         }
     }
 
+    if let Some(loader) = catalog_loader {
+        loader.abort();
+        let _ = loader.await;
+    }
     control::unlisten(opts.db);
     if commands.is_some() {
         control::unlisten_commands(opts.db);
@@ -1158,23 +1162,23 @@ fn first_line(text: impl std::io::BufRead) -> Option<String> {
 /// before giving up. The first attempts fail while the system is starting.
 const CATALOG_RETRY: Duration = Duration::from_secs(30);
 const CATALOG_ATTEMPTS: u32 = 20;
+const CATALOG_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Look up the device's transaction codes on a thread of its own: starting
-/// the Java runtime that prints them takes about a second, and must not hold
-/// up recording. The task ends with the catalog, or `None` if it could not
-/// be had; the event loop waits for it alongside everything else.
+/// Look up the device's transaction codes without holding up recording.
+/// A retry and its subprocess wait are both cancellable at shutdown.
 fn spawn_catalog_loader() -> tokio::task::JoinHandle<Option<Catalog>> {
-    tokio::task::spawn_blocking(|| {
-        let mut last_error = None;
-        for _ in 0..CATALOG_ATTEMPTS {
-            match binder::load() {
-                Ok(catalog) => return Some(catalog),
-                Err(e) => last_error = Some(e),
+    tokio::spawn(async {
+        for attempt in 1..=CATALOG_ATTEMPTS {
+            let error = match tokio::time::timeout(CATALOG_TIMEOUT, binder::load()).await {
+                Ok(Ok(catalog)) => return Some(catalog),
+                Ok(Err(e)) => e,
+                Err(e) => anyhow::Error::new(e).context("reading the transaction catalog"),
+            };
+            if attempt == CATALOG_ATTEMPTS {
+                eprintln!("bbd: warning: not recording service calls: {error:#}");
+                break;
             }
-            std::thread::sleep(CATALOG_RETRY);
-        }
-        if let Some(e) = last_error {
-            eprintln!("bbd: warning: not recording service calls: {e:#}");
+            tokio::time::sleep(CATALOG_RETRY).await;
         }
         None
     })
