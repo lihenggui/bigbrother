@@ -16,22 +16,48 @@
 
 package li.mercury.bigbrother.core.data.repository
 
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.root.CommandResult
 import li.mercury.bigbrother.core.data.root.RootShell
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
+@RunWith(RobolectricTestRunner::class)
 class RootSandboxRepositoryTest {
     private val shell = TestRootShell(failing = setOf("list"))
-    private val repository = RootSandboxRepository(shell)
+    private val repository = RootSandboxRepository(shell, Dispatchers.Unconfined)
+
+    @Test
+    fun givenSandboxState_whenRefreshed_thenMapsListAndGlobalOnDefaultDispatcher() = runTest {
+        val shell = TestRootShell(
+            failing = emptySet(),
+            outputs = mapOf(
+                "list" to """{"apps":[{"uid":10234,"package":"com.example.notes","enabled":true,"created":1,"settings":{},"items":{}}]}""",
+                "global" to """{"items":{"camera":"off"},"auto":true}""",
+            ),
+        )
+        val repository = RootSandboxRepository(shell, StandardTestDispatcher(testScheduler))
+        val read = async(start = CoroutineStart.UNDISPATCHED) { repository.refresh() }
+
+        assertNull(repository.apps.value)
+        read.await()
+
+        assertEquals("com.example.notes", repository.apps.value?.single()?.packageName)
+        assertEquals(SandboxMode.OFF, repository.global.value?.get(SandboxItem.CAMERA))
+        assertEquals(true, repository.autoIsolate.value)
+    }
 
     @Test
     fun givenListUnreadable_whenIsolated_thenNotFailedAndListKept() = runTest {
@@ -58,8 +84,9 @@ class RootSandboxRepositoryTest {
     @Test
     fun givenCommandFailing_whenIsolated_thenFailsWithoutReadingList() = runTest {
         val shell = TestRootShell(failing = setOf("enable"))
+        val repository = RootSandboxRepository(shell, Dispatchers.Unconfined)
 
-        assertFailsWith<RecordsException.CommandFailed> { RootSandboxRepository(shell).isolate("com.example.notes", userId = 0) }
+        assertFailsWith<RecordsException.CommandFailed> { repository.isolate("com.example.notes", userId = 0) }
         assertEquals(listOf("enable"), shell.commands)
     }
 
@@ -78,8 +105,9 @@ class RootSandboxRepositoryTest {
     @Test
     fun givenModuleWithoutTheSwitch_whenAutoIsolateTurnedOn_thenModuleOutdated() = runTest {
         val shell = TestRootShell(failing = setOf("auto"), error = "error: unrecognized subcommand 'auto'")
+        val repository = RootSandboxRepository(shell, Dispatchers.Unconfined)
 
-        assertFailsWith<RecordsException.ModuleOutdated> { RootSandboxRepository(shell).setAutoIsolate(on = true) }
+        assertFailsWith<RecordsException.ModuleOutdated> { repository.setAutoIsolate(on = true) }
         assertEquals(listOf("auto"), shell.commands)
     }
 
@@ -90,6 +118,7 @@ class RootSandboxRepositoryTest {
     private class TestRootShell(
         private val failing: Set<String>,
         private val error: String = "Error: cannot read the sandbox",
+        private val outputs: Map<String, String> = emptyMap(),
     ) : RootShell(Dispatchers.Unconfined) {
         /** The subcommands run, in order. */
         val commands = mutableListOf<String>()
@@ -104,7 +133,7 @@ class RootSandboxRepositoryTest {
             return if (subcommand in failing) {
                 CommandResult(isSuccess = false, code = 1, output = "", error = error)
             } else {
-                CommandResult(isSuccess = true, code = 0, output = "{}", error = "")
+                CommandResult(isSuccess = true, code = 0, output = outputs[subcommand] ?: "{}", error = "")
             }
         }
     }

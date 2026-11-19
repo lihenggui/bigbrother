@@ -16,12 +16,16 @@
 
 package li.mercury.bigbrother.core.data.repository
 
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.DEFAULT
+import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.root.ModulePaths.BBD
 import li.mercury.bigbrother.core.data.root.RootShell
+import li.mercury.bigbrother.core.data.root.parseBbdOutput
 import li.mercury.bigbrother.core.data.root.shellQuoted
 import li.mercury.bigbrother.core.model.Access
 import li.mercury.bigbrother.core.model.AccessPeriod
@@ -36,7 +40,6 @@ import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.model.TimelineEntry
 import li.mercury.bigbrother.core.model.TimelinePage
 import org.json.JSONArray
-import org.json.JSONException
 import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -49,6 +52,7 @@ import javax.inject.Singleton
 @Singleton
 internal class RootAccessRepository @Inject constructor(
     private val rootShell: RootShell,
+    @Dispatcher(DEFAULT) private val defaultDispatcher: CoroutineDispatcher,
 ) : AccessRepository {
 
     private val _recorderStatus = MutableStateFlow<RecorderStatus?>(null)
@@ -62,7 +66,7 @@ internal class RootAccessRepository @Inject constructor(
 
     override suspend fun getApps(range: TimeRange): List<AppSummary> = recentApps.get(range) { readApps(range) }
 
-    private suspend fun readApps(range: TimeRange): List<AppSummary> = parsing {
+    private suspend fun readApps(range: TimeRange): List<AppSummary> = defaultDispatcher.parseBbdOutput {
         val rows = JSONArray(query("apps" + range.argument()))
         List(rows.length()) { i ->
             val row = rows.getJSONObject(i)
@@ -100,7 +104,7 @@ internal class RootAccessRepository @Inject constructor(
         range: TimeRange,
         limit: Int,
         offset: Int,
-    ): List<Access> = parsing {
+    ): List<Access> = defaultDispatcher.parseBbdOutput {
         // Every interpolated value is a number or an enum constant, so none of
         // them can alter the shell command.
         val args = buildString {
@@ -120,9 +124,9 @@ internal class RootAccessRepository @Inject constructor(
         uids: Collection<Int>,
         range: TimeRange,
         limit: Int,
-    ): List<PathMatch> = parsing {
+    ): List<PathMatch> = defaultDispatcher.parseBbdOutput {
         // No app means nothing to search, not every app.
-        if (uids.isEmpty()) return@parsing emptyList()
+        if (uids.isEmpty()) return@parseBbdOutput emptyList()
         // The text is typed by the user, so it is quoted: it must reach the
         // daemon as one argument, whatever it holds. Attached with "=", it
         // stays the option's value even when it starts with "-". The rest
@@ -138,7 +142,7 @@ internal class RootAccessRepository @Inject constructor(
         }
     }
 
-    override suspend fun getTimeline(range: TimeRange, before: Long?, limit: Int): TimelinePage = parsing {
+    override suspend fun getTimeline(range: TimeRange, before: Long?, limit: Int): TimelinePage = defaultDispatcher.parseBbdOutput {
         val args = buildString {
             append("timeline --limit ").append(limit)
             if (before != null) append(" --before ").append(before)
@@ -208,7 +212,7 @@ internal class RootAccessRepository @Inject constructor(
         uid: Int,
         paths: List<String>,
         range: TimeRange,
-    ): List<AccessPeriod> = parsing {
+    ): List<AccessPeriod> = defaultDispatcher.parseBbdOutput {
         // A path comes from a file name chosen by some app, so each is
         // quoted: it must reach the daemon as one argument, whatever it holds.
         val args = paths.joinToString("") { " --path=${it.shellQuoted()}" }
@@ -229,7 +233,7 @@ internal class RootAccessRepository @Inject constructor(
         }
     }
 
-    override suspend fun getSensorSessions(uid: Int, range: TimeRange): List<SensorSession> = parsing {
+    override suspend fun getSensorSessions(uid: Int, range: TimeRange): List<SensorSession> = defaultDispatcher.parseBbdOutput {
         // Only numbers are interpolated.
         val rows = JSONArray(query("sensors --uid $uid" + range.argument()))
         List(rows.length()) { i -> rows.getJSONObject(i).toSensorSession() }
@@ -251,7 +255,7 @@ internal class RootAccessRepository @Inject constructor(
         throw e
     }
 
-    private suspend fun readRecorderStatus(): RecorderStatus = parsing {
+    private suspend fun readRecorderStatus(): RecorderStatus = defaultDispatcher.parseBbdOutput {
         val stats = JSONObject(query("stats"))
         val meta = stats.optJSONObject("meta") ?: JSONObject()
         RecorderStatus(
@@ -265,17 +269,6 @@ internal class RootAccessRepository @Inject constructor(
                 .sorted()
                 .toList(),
         )
-    }
-
-    /**
-     * Runs [block], reporting output that isn't the JSON we expect as a
-     * failed command rather than letting the parse error escape: callers
-     * only handle [RecordsException].
-     */
-    private inline fun <T> parsing(block: () -> T): T = try {
-        block()
-    } catch (e: JSONException) {
-        throw RecordsException.CommandFailed("unexpected output from bbd: ${e.message}")
     }
 
     private fun TimeRange.argument(): String = if (hours > 0) " --hours $hours" else ""

@@ -16,13 +16,17 @@
 
 package li.mercury.bigbrother.core.data.repository
 
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.DEFAULT
+import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.root.RootShell
 import li.mercury.bigbrother.core.data.root.bbd
+import li.mercury.bigbrother.core.data.root.parseBbdOutput
 import li.mercury.bigbrother.core.data.root.shellQuoted
 import li.mercury.bigbrother.core.model.ActivityBucket
 import li.mercury.bigbrother.core.model.BucketSize
@@ -35,7 +39,6 @@ import li.mercury.bigbrother.core.model.NetworkRule
 import li.mercury.bigbrother.core.model.NetworkTarget
 import li.mercury.bigbrother.core.model.PortActivity
 import org.json.JSONArray
-import org.json.JSONException
 import org.json.JSONObject
 import java.util.TimeZone
 import javax.inject.Inject
@@ -73,6 +76,7 @@ interface NetworkRepository {
 @Singleton
 internal class RootNetworkRepository @Inject constructor(
     private val rootShell: RootShell,
+    @Dispatcher(DEFAULT) private val defaultDispatcher: CoroutineDispatcher,
 ) : NetworkRepository {
     private val _changes = MutableStateFlow(0)
     override val changes: StateFlow<Int> = _changes.asStateFlow()
@@ -82,15 +86,13 @@ internal class RootNetworkRepository @Inject constructor(
     // constant.
     override suspend fun getActivity(packageName: String, userId: Int, since: Long, until: Long?, bucket: BucketSize): NetworkActivity {
         val range = "--since $since" + (until?.let { " --until $it" } ?: "") + bars(bucket)
-        val answer = net("activity ${packageName.shellQuoted()} $range --user $userId")
-        return parsing { JSONObject(answer).toActivity() }
+        return net("activity ${packageName.shellQuoted()} $range --user $userId") { toActivity() }
     }
 
     override suspend fun getDestination(packageName: String, userId: Int, target: NetworkTarget, since: Long, bucket: BucketSize): DestinationDetail {
-        val answer = net("destination ${packageName.shellQuoted()} ${target.id.shellQuoted()} --since $since${bars(bucket)} --user $userId")
-        return parsing {
-            val json = JSONObject(answer)
-            DestinationDetail(json.toDestination(), json.optJSONArray("buckets").toBuckets(), json.optInt("bucket", BucketSize.HOUR.seconds))
+        val args = "destination ${packageName.shellQuoted()} ${target.id.shellQuoted()} --since $since${bars(bucket)} --user $userId"
+        return net(args) {
+            DestinationDetail(toDestination(), optJSONArray("buckets").toBuckets(), optInt("bucket", BucketSize.HOUR.seconds))
         }
     }
 
@@ -102,33 +104,29 @@ internal class RootNetworkRepository @Inject constructor(
         if (bucket == BucketSize.DAY) " --offset ${TimeZone.getDefault().getOffset(System.currentTimeMillis()) / MILLIS_PER_SECOND}" else ""
 
     override suspend fun block(packageName: String, userId: Int, target: NetworkTarget, manual: Boolean) {
-        net("block ${packageName.shellQuoted()} ${target.id.shellQuoted()}" + (if (manual) " --manual" else "") + " --user $userId")
-        _changes.update { it + 1 }
+        net("block ${packageName.shellQuoted()} ${target.id.shellQuoted()}" + (if (manual) " --manual" else "") + " --user $userId") {
+            _changes.update { it + 1 }
+        }
     }
 
     override suspend fun unblock(packageName: String, userId: Int, target: NetworkTarget) {
-        net("unblock ${packageName.shellQuoted()} ${target.id.shellQuoted()} --user $userId")
-        _changes.update { it + 1 }
-    }
-
-    override suspend fun clear(packageName: String, userId: Int): Int {
-        val answer = net("clear ${packageName.shellQuoted()} --user $userId")
-        _changes.update { it + 1 }
-        return parsing { JSONObject(answer).optInt("deleted") }
-    }
-
-    /** Runs a `bbd net` command; an answer that is not ok fails like an exit status that is not. */
-    private suspend fun net(args: String): String {
-        val output = rootShell.bbd("net", args)
-        val answer = try {
-            JSONObject(output)
-        } catch (e: JSONException) {
-            throw RecordsException.CommandFailed("unexpected output from bbd: ${e.message}")
+        net("unblock ${packageName.shellQuoted()} ${target.id.shellQuoted()} --user $userId") {
+            _changes.update { it + 1 }
         }
+    }
+
+    override suspend fun clear(packageName: String, userId: Int): Int = net("clear ${packageName.shellQuoted()} --user $userId") {
+        _changes.update { it + 1 }
+        optInt("deleted")
+    }
+
+    /** Checks and maps one decoded answer; the daemon can refuse a command even when it exits successfully. */
+    private suspend fun <T> net(args: String, map: JSONObject.() -> T): T = defaultDispatcher.parseBbdOutput {
+        val answer = JSONObject(rootShell.bbd("net", args))
         if (!answer.optBoolean("ok", true)) {
             throw RecordsException.CommandFailed(answer.optString("error").ifBlank { "bbd refused the command" })
         }
-        return output
+        answer.map()
     }
 
     private fun JSONObject.toActivity(): NetworkActivity {
@@ -213,11 +211,5 @@ internal class RootNetworkRepository @Inject constructor(
 
     private companion object {
         const val MILLIS_PER_SECOND = 1000
-    }
-
-    private inline fun <T> parsing(block: () -> T): T = try {
-        block()
-    } catch (e: JSONException) {
-        throw RecordsException.CommandFailed("unexpected output from bbd: ${e.message}")
     }
 }
