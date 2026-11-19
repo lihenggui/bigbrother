@@ -200,7 +200,7 @@ internal fun JailSettingsScreen(
                     }
                     item(key = "restart") { Note(stringResource(R.string.jail_restart_note), Modifier.padding(top = 8.dp)) }
                     item(key = "status_header") { SectionHeader(stringResource(R.string.jail_section_status)) }
-                    item(key = "status") { StatusRow(state.status) }
+                    item(key = "status") { StatusRow(state.status, state.autoIsolate) }
                     item(key = "release_all") {
                         LinkRow(
                             title = stringResource(R.string.jail_release_all),
@@ -268,7 +268,7 @@ private fun AutoIsolateRow(checked: Boolean, onCheckedChange: (Boolean) -> Unit,
 /** Which parts of the sandbox work on this device; until known, neither good nor bad. */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun StatusRow(status: SandboxStatus?) {
+private fun StatusRow(status: SandboxStatus?, autoIsolate: Boolean) {
     val problems = buildList {
         if (status != null && !status.gate) add(stringResource(R.string.jail_status_gate_missing))
         if (status != null && (!status.androidIdHook || !status.appListHook)) add(stringResource(R.string.jail_status_hook_missing))
@@ -277,6 +277,9 @@ private fun StatusRow(status: SandboxStatus?) {
         if (pending > 0) {
             val text = if (status?.newAppsHeld == true) R.plurals.jail_status_new_apps_held else R.plurals.jail_status_new_apps_pending
             add(pluralStringResource(text, pending, pending))
+        }
+        if (autoIsolate && status != null && !status.newAppsHeld) {
+            add(stringResource(R.string.jail_status_new_apps_not_held))
         }
     }
     val colors = MaterialTheme.colorScheme

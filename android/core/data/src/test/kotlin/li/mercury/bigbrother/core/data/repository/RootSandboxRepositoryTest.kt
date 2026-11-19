@@ -64,9 +64,11 @@ class RootSandboxRepositoryTest {
     }
 
     @Test
-    fun givenListUnreadable_whenAutoIsolateTurnedOn_thenDaemonToldAndNotFailed() = runTest {
+    fun givenListUnreadable_whenAutoIsolateChanged_thenSwitchReflectsSuccessfulCommand() = runTest {
         repository.setAutoIsolate(on = true)
+        assertEquals(true, repository.autoIsolate.value)
         repository.setAutoIsolate(on = false)
+        assertEquals(false, repository.autoIsolate.value)
 
         assertEquals(listOf("auto", "list", "auto", "list"), shell.commands)
         assertTrue("sandbox auto on --json" in shell.lines[0])

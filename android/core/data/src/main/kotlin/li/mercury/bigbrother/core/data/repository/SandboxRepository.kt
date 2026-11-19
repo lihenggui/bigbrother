@@ -155,6 +155,7 @@ internal class RootSandboxRepository @Inject constructor(
 
     override suspend fun setAutoIsolate(on: Boolean) {
         sandbox("auto " + if (on) "on" else "off")
+        _autoIsolate.value = on
         refreshAfter("auto")
     }
 

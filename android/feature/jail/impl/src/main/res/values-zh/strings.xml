@@ -81,7 +81,7 @@
 
     <string name="jail_settings_subtitle">适用于未单独设置的已隔离应用</string>
     <string name="jail_auto_isolate">自动隔离新安装的应用</string>
-    <string name="jail_auto_isolate_summary">首次启动前按以下设置隔离</string>
+    <string name="jail_auto_isolate_summary">对之后安装的应用使用以下设置</string>
     <string name="jail_group_files">文件</string>
     <string name="jail_group_personal">个人数据</string>
     <string name="jail_group_sensors">位置与传感器</string>
@@ -93,6 +93,7 @@
     <string name="jail_status_hook_missing">系统框架钩子未加载</string>
     <string name="jail_status_gate_missing">此内核不支持存储隔离</string>
     <string name="jail_status_appops_missing">通讯录、位置等未生效</string>
+    <string name="jail_status_new_apps_not_held">新安装的应用可能在隔离前启动</string>
     <plurals name="jail_status_new_apps_held">
         <item quantity="other">%d 个新安装的应用尚未隔离，已阻止其启动</item>
     </plurals>

@@ -99,7 +99,7 @@
     <!-- The global settings. -->
     <string name="jail_settings_subtitle">For isolated apps without their own setting</string>
     <string name="jail_auto_isolate">Isolate newly installed apps</string>
-    <string name="jail_auto_isolate_summary">Before their first start, with the settings below</string>
+    <string name="jail_auto_isolate_summary">Use the settings below for future installs</string>
     <string name="jail_group_files">Files</string>
     <string name="jail_group_personal">Personal data</string>
     <string name="jail_group_sensors">Location and sensors</string>
@@ -111,6 +111,7 @@
     <string name="jail_status_hook_missing">System framework hook not loaded</string>
     <string name="jail_status_gate_missing">Storage isolation not available on this kernel</string>
     <string name="jail_status_appops_missing">Contacts, location and more not in effect</string>
+    <string name="jail_status_new_apps_not_held">New apps may start before isolation</string>
     <!-- Newly installed apps the daemon could not isolate yet. -->
     <plurals name="jail_status_new_apps_held">
         <item quantity="one">%d newly installed app not isolated yet; kept from starting</item>
