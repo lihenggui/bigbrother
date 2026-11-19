@@ -37,7 +37,7 @@ class AppOpsGuardProtocolTest {
         types = setOf("command", "command-read", "command-bad", "answer", "answer-bad"),
         keys = setOf(
             "set", "verify", "release", "restore", "apply", "saved", "restored", "applied", "failed", "verified", "reverted", "unheld",
-            "uid", "hold", "revoke", "op", "permission", "name", "not_held",
+            "uid", "hold", "revoke", "revoke_unheld", "op", "permission", "name", "not_held",
             "kind", "library", "app", "unknown", "request", "package",
         ),
     )
@@ -71,7 +71,8 @@ class AppOpsGuardProtocolTest {
 
     private fun ProtocolCase.targets(): Targets = Targets(
         all("hold").associate { it.substringBefore('/') to it.substringAfter('/').toInt() },
-        all("revoke").toSet(),
+        (all("revoke") + all("revoke_unheld")).toSet(),
+        all("revoke_unheld").toSet(),
     )
 
     private fun ProtocolCase.values(): Values {
@@ -419,11 +420,11 @@ class AppOpsGuardProtocolTest {
     }
 
     @Test
-    fun givenHeldPermissionFoundGrantedAgain_whenReverted_thenItsStateIsReported() {
+    fun givenHeldPermissionFoundGrantedAgain_whenChecked_thenItsStateIsReported() {
         val found = PermissionState(granted = true, flags = FLAG_USER_SET)
-        assertEquals(found, AppOpsGuardProtocol.regranted(found))
-        assertNull(AppOpsGuardProtocol.regranted(PermissionState(granted = false, flags = 0)))
-        assertNull(AppOpsGuardProtocol.regranted(null))
+        assertEquals(found, AppOpsGuardProtocol.chosenWhileHeld(found, wasHeld = false))
+        assertEquals(found, AppOpsGuardProtocol.chosenWhileHeld(found, wasHeld = true))
+        assertNull(AppOpsGuardProtocol.chosenWhileHeld(null, wasHeld = true))
         assertEquals("reverted 10123 $fine=granted+user_set", AppOpsGuardProtocol.revertedLine(10123, fine, found))
         assertEquals("reverted 10123 $fine", AppOpsGuardProtocol.revertedLine(10123, fine))
         assertEquals("reverted 10123 android:camera", AppOpsGuardProtocol.revertedLine(10123, "android:camera"))
@@ -445,20 +446,57 @@ class AppOpsGuardProtocolTest {
     }
 
     @Test
-    fun givenPermissionGrantedAgainWhileHeld_whenGivenBack_thenAsFoundWhateverTheDaemonSent() {
-        val before = PermissionState(granted = false, flags = FLAG_USER_SET)
-        val found = PermissionState(granted = true, flags = FLAG_USER_SET)
-        assertEquals(found, AppOpsGuardProtocol.stateToGiveBack(sent = before, kept = found, regranted = true))
-        assertEquals(found, AppOpsGuardProtocol.stateToGiveBack(sent = null, kept = found, regranted = true))
+    fun givenHeldPermissionNoLongerFixed_whenChecked_thenTheUsersChoiceOnceItWasHeld() {
+        // Revoked by the user in the settings, which may ask again.
+        val revoked = PermissionState(granted = false, flags = FLAG_USER_SET)
+        assertEquals(revoked, AppOpsGuardProtocol.chosenWhileHeld(revoked, wasHeld = true))
+        // Not held yet: the flag is this program's to set.
+        assertNull(AppOpsGuardProtocol.chosenWhileHeld(revoked, wasHeld = false))
+        // As this program holds it.
+        assertNull(AppOpsGuardProtocol.chosenWhileHeld(PermissionState(granted = false, flags = FLAG_USER_FIXED), wasHeld = true))
     }
 
     @Test
-    fun givenPermissionNotGrantedAgain_whenGivenBack_thenAsTheDaemonSentOrAsKept() {
+    fun givenPermissionChangedWhileHeld_whenGivenBack_thenAsFoundWhateverTheDaemonSent() {
+        val before = PermissionState(granted = false, flags = FLAG_USER_SET)
+        val found = PermissionState(granted = true, flags = FLAG_USER_SET)
+        assertEquals(found, AppOpsGuardProtocol.stateToGiveBack(sent = before, kept = found, chosen = true))
+        assertEquals(found, AppOpsGuardProtocol.stateToGiveBack(sent = null, kept = found, chosen = true))
+    }
+
+    @Test
+    fun givenPermissionNotChangedWhileHeld_whenGivenBack_thenAsTheDaemonSentOrAsKept() {
         val before = PermissionState(granted = false, flags = FLAG_USER_SET)
         val kept = PermissionState(granted = true, flags = 0)
-        assertEquals(before, AppOpsGuardProtocol.stateToGiveBack(sent = before, kept = kept, regranted = false))
-        assertEquals(kept, AppOpsGuardProtocol.stateToGiveBack(sent = null, kept = kept, regranted = false))
-        assertEquals(before, AppOpsGuardProtocol.stateToGiveBack(sent = before, kept = null, regranted = true))
-        assertNull(AppOpsGuardProtocol.stateToGiveBack(sent = null, kept = null, regranted = false))
+        assertEquals(before, AppOpsGuardProtocol.stateToGiveBack(sent = before, kept = kept, chosen = false))
+        assertEquals(kept, AppOpsGuardProtocol.stateToGiveBack(sent = null, kept = kept, chosen = false))
+        assertEquals(before, AppOpsGuardProtocol.stateToGiveBack(sent = before, kept = null, chosen = true))
+        assertNull(AppOpsGuardProtocol.stateToGiveBack(sent = null, kept = null, chosen = false))
+    }
+
+    @Test
+    fun givenHeldPermissionGrantedWithPm_whenChecked_thenFoundWithoutTheFixedMarkThisProgramSet() {
+        val found = PermissionState(granted = true, flags = FLAG_USER_FIXED)
+        assertEquals(PermissionState(granted = true, flags = 0), AppOpsGuardProtocol.chosenWhileHeld(found, wasHeld = true))
+    }
+
+    @Test
+    fun givenModeAndGrantSaved_whenItsMarksAreSetBack_thenRevokedCompatOnlyWhereTheUserLeftIt() {
+        val (allowed, ignored, foreground) = Triple(AppOpsGuardProtocol.MODE_ALLOWED, AppOpsGuardProtocol.MODE_IGNORED, AppOpsGuardProtocol.MODE_FOREGROUND)
+        // Granted, and kept from the app by the user.
+        assertTrue(AppOpsGuardProtocol.revokedCompatBefore(saved = ignored, grantThen = allowed, background = false))
+        assertTrue(AppOpsGuardProtocol.revokedCompatBefore(saved = ignored, grantThen = foreground, background = true))
+        assertTrue(AppOpsGuardProtocol.revokedCompatBefore(saved = AppOpsGuardProtocol.MODE_DEFAULT, grantThen = allowed, background = false))
+        assertTrue(AppOpsGuardProtocol.revokedCompatBefore(saved = foreground, grantThen = allowed, background = false))
+        // In the foreground, where a background permission makes that the system's own mode.
+        assertFalse(AppOpsGuardProtocol.revokedCompatBefore(saved = foreground, grantThen = allowed, background = true))
+        // Ignored because it was not granted, or not kept from the app.
+        assertFalse(AppOpsGuardProtocol.revokedCompatBefore(saved = ignored, grantThen = ignored, background = false))
+        assertFalse(AppOpsGuardProtocol.revokedCompatBefore(saved = null, grantThen = allowed, background = false))
+        assertFalse(AppOpsGuardProtocol.revokedCompatBefore(saved = allowed, grantThen = allowed, background = true))
+        // Background location granted, with location in the foreground only by the user.
+        assertTrue(AppOpsGuardProtocol.backgroundRevokedCompatBefore(saved = foreground, grantThen = allowed))
+        assertFalse(AppOpsGuardProtocol.backgroundRevokedCompatBefore(saved = null, grantThen = allowed))
+        assertFalse(AppOpsGuardProtocol.backgroundRevokedCompatBefore(saved = foreground, grantThen = foreground))
     }
 }

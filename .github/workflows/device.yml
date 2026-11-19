@@ -73,7 +73,7 @@ jobs:
     name: API ${{ matrix.api }}
     needs: build
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
@@ -172,6 +172,12 @@ jobs:
       # 10 to 75 ms at the 95th percentile on these runners.
       - name: Check the sandbox
         run: ./scripts/check-sandbox.sh --stress 20 --max-hold-ms 100 2>&1 | tee "$LOGS/check-sandbox.txt"
+
+      # Each case installs the canary afresh and starts it once: about half
+      # a minute, more for those that restart the helper or the daemon.
+      - name: Check the permissions
+        timeout-minutes: 90
+        run: ./scripts/check-permissions.sh 2>&1 | tee "$LOGS/check-permissions.txt"
 
       - name: Collect the logs
         if: always()

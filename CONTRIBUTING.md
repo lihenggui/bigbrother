@@ -63,7 +63,20 @@ and outside again, and checks what it sees each time
 ./scripts/check-sandbox.sh              # --stress 200 adds cold starts
 ```
 
-Both run on an emulator as well. On a `google_apis` image, which allows
+`scripts/check-permissions.sh` plays the permission matrix,
+`testdata/permissions/matrix.tsv`: for each case, a fresh install of the
+canary enters the sandbox with a permission in one state, has it or the
+sandbox's items changed while it is in, and leaves; the permission, its app
+op and what the canary reads must end as the case says. The unit tests play
+the same matrix on a model of Android (`PermissionMatrixTest`). A change to
+how the sandbox holds or gives back permissions comes with the cases it
+changes, in the matrix:
+
+```sh
+./scripts/check-permissions.sh          # or the names of some cases
+```
+
+These checks run on an emulator as well. On a `google_apis` image, which allows
 `adb root`, `scripts/install-on-emulator.sh` installs the module and the app
 from `out/` with the module's own installer and starts the daemon, without
 a root manager:
@@ -75,8 +88,9 @@ a root manager:
 The Device workflow (`.github/workflows/device.yml`) does this on emulators
 of API 33 to 36, nightly and for pull requests that touch the eBPF
 programs, the daemon, the Cargo manifests, the module, the scripts, the
-app, the hook, the canary, the Gradle build or the build setup. Without
-LSPosed there, the sandbox check skips what needs the hook.
+app, the hook, the canary, the Gradle build or the build setup, and plays
+the permission matrix there too. Without LSPosed there, the sandbox check
+skips what needs the hook.
 
 The unit tests include screenshot tests
 ([Roborazzi](https://github.com/takahirom/roborazzi)), which render the

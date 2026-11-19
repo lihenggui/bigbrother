@@ -47,7 +47,9 @@ Assembling `:app` needs the daemons in `../out/` (`../scripts/build.sh`).
   decides whether an app can reach the WebView or the media provider.
 - `app/.../catalog/AppOpsGuard.kt` is run by the daemon, not the app. Its
   line protocol is `AppOpsGuardProtocol.kt`; change it together with
-  `bbd/src/sandbox/appops.rs`.
+  `bbd/src/sandbox/appops.rs`. Its commands are carried out by
+  `AppOpsGuardHandler.kt`, which reaches the framework only through
+  `AppOpsSystem`, so that the JVM tests can run it on a model of Android.
 - The hook and the daemon share two files in `/data/system`; their formats
   are in `SandboxRules.kt` and `bbd/src/sandbox/identity.rs`.
 - The lines of these formats, and of the hook's spool (`EventSpool.kt`,

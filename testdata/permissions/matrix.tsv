@@ -1,0 +1,146 @@
+# The states a runtime permission and its app op end in, for an app that
+# enters the sandbox with the permission in one state, has it or the
+# sandbox's items changed while it is in, and leaves. One case per line,
+# the columns separated by tabs. Played on the JVM by PermissionMatrixTest
+# (android/app/src/test/.../catalog/), against FakeAndroid, a model of how
+# Android 15 and later keep grants, flags and uid modes; and on a device by
+# scripts/check-permissions.sh, which covers Android 13 and 14 too, and on
+# Android 12 and 12L the cases without settings steps (it changes flags as
+# the settings do with pm set-permission-flags, which Android 13 added).
+#
+# subject     what is looked at: contacts (READ_CONTACTS and its op), camera
+#             (CAMERA), location (ACCESS_FINE_LOCATION and the fine location
+#             op; the approximate permission goes with it)
+# before      the permission as the app enters the sandbox, with every item
+#             on: granted, denied, ignored (granted, with the op set to
+#             ignore by the user), and for location: always (with
+#             background location), approximate (the approximate one only)
+# steps       what happens while the app is in the sandbox, or - for
+#             nothing. Steps are separated by "," and each is followed by
+#             the helper's check, as when the system reports a change; "&"
+#             joins steps run back to back, before the helper looks.
+#               settings:grant, settings:revoke
+#                                    the subject's permissions allowed or
+#                                    denied in the settings, as the
+#                                    permission controller does it: a
+#                                    granted permission whose op is ignored
+#                                    counts as not granted there, so
+#                                    allowing it also allows the op, and
+#                                    denying it changes only its flags.
+#                                    Denying location denies background
+#                                    location too.
+#               pm:grant, pm:revoke  the same with pm, as shell and device
+#                                    management tools do: the grant alone
+#               ...:P                one permission: fine, coarse, background
+#               set:MODE             the subject's item to a mode
+#               set:ITEM=MODE        another item
+#               restart:helper       the app ops helper ends, and is started
+#                                    again; restart:daemon, the daemon. The
+#                                    steps joined after it happen before it
+#                                    is back
+#               refuse:flags         the system refuses the next change of
+#                                    a permission's flags (the JVM only)
+#               late:sync            the permission policy's sync of the ops
+#                                    lands after the next change, with the
+#                                    modes from before (the JVM only; a slow
+#                                    Android 13 does so now and then)
+# leave       how the app leaves: disable; off (the subject's item set to
+#             off, the app still in the sandbox); uninstall (uninstalled,
+#             installed again and the subject's permissions granted). "&"
+#             before it: right after the last step, before the helper looks
+# permission  the subject's permission then: granted or denied
+# mode        its op's uid mode then: allow, ignore or foreground
+# reads       what the app gets: yes or no; for location precise,
+#             approximate or none
+# where       both, or jvm for a case a device cannot be made to play
+#
+# Both sides also check the flags: the permission is marked REVOKED_COMPAT
+# only while granted with its op ignored (or, revoked, if the user had
+# ignored its op before), never USER_FIXED, and for location the background
+# permission is marked only while granted with location not allowed.
+#
+# name	subject	before	steps	leave	permission	mode	reads	where
+contacts_granted_throughout	contacts	granted	-	disable	granted	allow	yes	both
+contacts_denied_throughout	contacts	denied	-	disable	denied	ignore	no	both
+contacts_ignored_by_the_user_throughout	contacts	ignored	-	disable	granted	ignore	no	both
+contacts_granted_with_pm_in_the_sandbox	contacts	denied	pm:grant	disable	granted	allow	yes	both
+contacts_allowed_in_settings_in_the_sandbox	contacts	denied	settings:grant	disable	granted	allow	yes	both
+contacts_revoked_with_pm_in_the_sandbox	contacts	granted	pm:revoke	disable	denied	ignore	no	both
+contacts_denied_in_settings_while_held_stays_granted	contacts	granted	settings:revoke	disable	granted	allow	yes	both
+contacts_ignored_by_the_user_then_revoked_with_pm	contacts	ignored	pm:revoke	disable	denied	ignore	no	both
+contacts_granted_with_pm_then_item_off	contacts	denied	pm:grant	off	granted	allow	yes	both
+contacts_allowed_in_settings_then_item_off	contacts	denied	settings:grant	off	granted	allow	yes	both
+contacts_revoked_with_pm_then_item_off	contacts	granted	pm:revoke	off	denied	ignore	no	both
+contacts_ignored_by_the_user_then_item_off	contacts	ignored	-	off	granted	ignore	no	both
+contacts_granted_with_pm_right_before_disable	contacts	denied	pm:grant	&disable	granted	allow	yes	both
+contacts_allowed_in_settings_right_before_disable	contacts	denied	settings:grant	&disable	granted	allow	yes	both
+contacts_granted_after_the_helper_restarts	contacts	denied	restart:helper,pm:grant	disable	granted	allow	yes	both
+contacts_granted_before_the_helper_restarts	contacts	denied	pm:grant,restart:helper	disable	granted	allow	yes	both
+contacts_granted_while_the_helper_is_down	contacts	denied	restart:helper&pm:grant	disable	granted	allow	yes	both
+contacts_revoked_after_the_daemon_restarts	contacts	granted	restart:daemon,pm:revoke	disable	denied	ignore	no	both
+contacts_revoked_while_the_daemon_is_down	contacts	granted	restart:daemon&pm:revoke	disable	denied	ignore	no	both
+contacts_granted_then_uninstalled	contacts	denied	pm:grant	uninstall	granted	allow	yes	both
+contacts_ignored_by_the_user_then_uninstalled	contacts	ignored	-	uninstall	granted	allow	yes	both
+camera_granted_throughout	camera	granted	-	disable	granted	foreground	yes	both
+camera_denied_throughout	camera	denied	-	disable	denied	ignore	no	both
+camera_ignored_by_the_user_throughout	camera	ignored	-	disable	granted	ignore	no	both
+camera_granted_with_pm_in_the_sandbox	camera	denied	pm:grant	disable	granted	foreground	yes	both
+camera_allowed_in_settings_in_the_sandbox	camera	denied	settings:grant	disable	granted	foreground	yes	both
+camera_revoked_with_pm_in_the_sandbox	camera	granted	pm:revoke	disable	denied	ignore	no	both
+camera_denied_in_settings_while_held_stays_granted	camera	granted	settings:revoke	disable	granted	foreground	yes	both
+camera_foreground_item_and_back	camera	granted	set:foreground,set:on	disable	granted	foreground	yes	both
+camera_granted_with_pm_while_the_item_is_foreground	camera	denied	set:foreground,pm:grant	disable	granted	foreground	yes	both
+camera_allowed_in_settings_while_the_item_is_foreground	camera	denied	set:foreground,settings:grant	disable	granted	foreground	yes	both
+camera_revoked_with_pm_while_the_item_is_foreground	camera	granted	set:foreground,pm:revoke	disable	denied	ignore	no	both
+camera_denied_in_settings_while_the_item_is_foreground	camera	granted	set:foreground,settings:revoke	disable	denied	ignore	no	both
+camera_ignored_by_the_user_foreground_item_and_back	camera	ignored	set:foreground,set:on	disable	granted	ignore	no	both
+camera_granted_with_pm_while_foreground_then_item_off	camera	denied	set:foreground,pm:grant	off	granted	foreground	yes	both
+camera_granted_with_pm_then_uninstalled	camera	denied	pm:grant	uninstall	granted	foreground	yes	both
+location_while_in_use_throughout	location	granted	-	disable	granted	foreground	precise	both
+location_always_throughout	location	always	-	disable	granted	allow	precise	both
+location_approximate_throughout	location	approximate	-	disable	denied	ignore	approximate	both
+location_denied_throughout	location	denied	-	disable	denied	ignore	none	both
+location_ignored_by_the_user_throughout	location	ignored	-	disable	granted	ignore	none	both
+location_granted_with_pm_in_the_sandbox	location	denied	pm:grant	disable	granted	foreground	precise	both
+location_allowed_in_settings_in_the_sandbox	location	denied	settings:grant	disable	granted	foreground	precise	both
+location_revoked_with_pm_in_the_sandbox	location	granted	pm:revoke	disable	denied	ignore	none	both
+location_denied_in_settings_while_held_stays_granted	location	granted	settings:revoke	disable	granted	foreground	precise	both
+location_revoked_with_pm_while_the_helper_is_down	location	granted	restart:helper&pm:revoke	disable	denied	ignore	none	both
+location_background_granted_with_pm_in_the_sandbox	location	granted	pm:grant:background	disable	granted	allow	precise	both
+location_always_allowed_in_settings_in_the_sandbox	location	granted	settings:grant:background	disable	granted	allow	precise	both
+location_background_revoked_with_pm_in_the_sandbox	location	always	pm:revoke:background	disable	granted	foreground	precise	both
+location_background_denied_in_settings_while_held_stays_granted	location	always	settings:revoke:background	disable	granted	allow	precise	both
+location_precise_allowed_in_settings_in_the_sandbox	location	approximate	settings:grant:fine	disable	granted	foreground	precise	both
+location_foreground_item_and_back	location	granted	set:foreground,set:on	disable	granted	foreground	precise	both
+location_always_foreground_item_and_back	location	always	set:foreground,set:on	disable	granted	allow	precise	both
+location_granted_with_pm_while_the_item_is_foreground	location	denied	set:foreground,pm:grant	disable	granted	foreground	precise	both
+location_denied_in_settings_while_the_item_is_foreground	location	granted	set:foreground,settings:revoke	disable	denied	ignore	none	both
+location_coarse_and_back	location	granted	set:coarse,set:on	disable	granted	foreground	precise	both
+location_always_coarse_and_back	location	always	set:coarse,set:on	disable	granted	allow	precise	both
+location_approximate_coarse_and_back	location	approximate	set:coarse,set:on	disable	denied	ignore	approximate	both
+location_denied_coarse_and_back	location	denied	set:coarse,set:on	disable	denied	ignore	none	both
+location_coarse_then_item_off	location	granted	set:coarse	off	granted	foreground	precise	both
+location_coarse_then_disable	location	granted	set:coarse	disable	granted	foreground	precise	both
+location_precise_allowed_in_settings_while_coarse	location	approximate	set:coarse,settings:grant:fine,set:on	disable	granted	foreground	precise	both
+location_precise_allowed_in_settings_while_coarse_then_item_off	location	approximate	set:coarse,settings:grant:fine	off	granted	foreground	precise	both
+location_precise_allowed_in_settings_while_coarse_then_disable	location	approximate	set:coarse,settings:grant:fine	disable	granted	foreground	precise	both
+location_precise_allowed_in_settings_while_coarse_then_camera_changes	location	approximate	set:coarse,settings:grant:fine,set:camera=foreground,set:on	disable	granted	foreground	precise	both
+location_granted_with_pm_while_coarse	location	denied	set:coarse,pm:grant,set:on	disable	granted	foreground	precise	both
+location_allowed_in_settings_while_coarse	location	denied	set:coarse,settings:grant,set:on	disable	granted	foreground	precise	both
+location_coarse_through_a_helper_restart	location	granted	set:coarse,restart:helper,set:on	disable	granted	foreground	precise	both
+location_precise_allowed_in_settings_while_coarse_before_the_helper_restarts	location	approximate	set:coarse,settings:grant:fine,restart:helper,set:on	disable	granted	foreground	precise	both
+location_precise_allowed_in_settings_while_coarse_after_the_helper_restarts	location	approximate	set:coarse,restart:helper,settings:grant:fine,set:on	disable	granted	foreground	precise	both
+location_precise_allowed_in_settings_while_coarse_and_the_helper_is_down	location	approximate	set:coarse,restart:helper&settings:grant:fine,set:on	disable	granted	foreground	precise	both
+location_coarse_through_a_daemon_restart	location	granted	set:coarse,restart:daemon,set:on	disable	granted	foreground	precise	both
+location_coarse_then_uninstalled	location	granted	set:coarse	uninstall	granted	foreground	precise	both
+location_precise_allowed_in_settings_right_before_leaving_coarse	location	approximate	set:coarse,settings:grant:fine&set:on	disable	granted	foreground	precise	both
+location_precise_allowed_in_settings_right_before_disable	location	approximate	set:coarse,settings:grant:fine	&disable	granted	foreground	precise	both
+location_precise_allowed_in_settings_right_before_another_item_changes	location	approximate	set:coarse,settings:grant:fine&set:camera=foreground,set:on	disable	granted	foreground	precise	both
+location_precise_allowed_in_settings_while_coarse_flags_refused	location	approximate	set:coarse,refuse:flags,settings:grant:fine,set:on	disable	granted	foreground	precise	jvm
+location_denied_in_settings_while_coarse	location	granted	set:coarse,settings:revoke,set:on	disable	denied	ignore	none	both
+location_precise_allowed_in_settings_while_coarse_before_the_daemon_restarts	location	approximate	set:coarse,settings:grant:fine,restart:daemon,set:on	disable	granted	foreground	precise	both
+location_denied_in_settings_while_coarse_and_the_helper_is_down	location	granted	set:coarse,restart:helper&settings:revoke,set:on	disable	denied	ignore	none	both
+location_denied_in_settings_while_coarse_and_the_daemon_is_down	location	granted	set:coarse,restart:daemon&settings:revoke,set:on	disable	denied	ignore	none	both
+location_precise_allowed_in_settings_while_coarse_flags_refused_then_the_helper_restarts	location	approximate	set:coarse,refuse:flags,settings:grant:fine,restart:helper,set:on	disable	granted	foreground	precise	jvm
+location_granted_with_pm_while_the_policy_syncs_late	location	denied	pm:grant,late:sync	disable	granted	foreground	precise	jvm
+contacts_granted_with_pm_while_the_policy_syncs_late	contacts	denied	pm:grant,late:sync	disable	granted	allow	yes	jvm

@@ -105,8 +105,42 @@ internal object AppOpsGuardProtocol {
     /** The flags of a permission that are the user's choice, saved and put back. */
     const val USER_FLAGS = FLAG_USER_SET or FLAG_USER_FIXED
 
+    /**
+     * `PackageManager.FLAG_PERMISSION_REVOKED_COMPAT`: granted, with its op
+     * kept from the app. The permission policy then keeps the op ignored.
+     */
+    const val FLAG_REVOKED_COMPAT = 8
+
+    /**
+     * Whether Android had a runtime permission marked [FLAG_REVOKED_COMPAT]
+     * before its uid was held, by the uid mode [saved] then and the mode
+     * the system gave the op for its grant ([grantThen], as [grantMode]
+     * has it): granted, with the op set by the user to a mode that keeps
+     * it from the app, as `AppOpsService.updatePermissionRevokedCompat`
+     * marks it: any but allowed, or, for a permission that has a
+     * [background] one, any but allowed and foreground. No uid mode is
+     * the op's default, allowed.
+     */
+    fun revokedCompatBefore(saved: Int?, grantThen: Int, background: Boolean): Boolean = grantThen != MODE_IGNORED &&
+        saved != null &&
+        saved != MODE_ALLOWED &&
+        !(background && saved == MODE_FOREGROUND)
+
+    /**
+     * As [revokedCompatBefore], for the background permission of the op's
+     * permission: granted then ([grantThen] allowed), with the op set to
+     * anything but allowed.
+     */
+    fun backgroundRevokedCompatBefore(saved: Int?, grantThen: Int): Boolean = grantThen == MODE_ALLOWED && saved != null && saved != MODE_ALLOWED
+
     /** What a permission is held to: revoked, and fixed as the user's choice. */
     const val REVOKED = "revoked"
+
+    /**
+     * In a `verify`, in place of [REVOKED]: held to it all the same, but
+     * last reported unheld, so perhaps not as held now.
+     */
+    const val UNHELD = "unheld"
 
     private const val GRANTED = "granted"
     private const val DENIED = "denied"
@@ -134,8 +168,13 @@ internal object AppOpsGuardProtocol {
 
     fun isSpecialAccess(name: String): Boolean = name in SPECIAL_ACCESS
 
-    /** What to hold a uid to: [ops] at their modes, and [permissions] revoked. */
-    data class Targets(val ops: Map<String, Int>, val permissions: Set<String>) {
+    /**
+     * What to hold a uid to: [ops] at their modes, and [permissions] revoked.
+     * In a `verify`, [unheld] are those of the permissions the daemon last
+     * heard were not held: a helper that has not held them itself cannot
+     * take their state for the user's.
+     */
+    data class Targets(val ops: Map<String, Int>, val permissions: Set<String>, val unheld: Set<String> = emptySet()) {
         companion object {
             val NONE = Targets(emptyMap(), emptySet())
         }
@@ -208,7 +247,7 @@ internal object AppOpsGuardProtocol {
         return when (words[0]) {
             "set" -> if (words.size == 3) decodeTargets(words[2])?.let { Command.Set(uid, it) } else null
 
-            "verify" -> if (words.size == 3) decodeTargets(words[2])?.let { Command.Verify(uid, it) } else null
+            "verify" -> if (words.size == 3) decodeTargets(words[2], unheldAllowed = true)?.let { Command.Verify(uid, it) } else null
 
             "apply" -> {
                 if (words.size != 4) return null
@@ -382,21 +421,26 @@ internal object AppOpsGuardProtocol {
 
     /**
      * What to hold a uid to: ops each ignored or in the foreground, in the
-     * form [encodeValues] writes, and permissions each `revoked`; `null` for
-     * anything else.
+     * form [encodeValues] writes, and permissions each `revoked`, or, where
+     * [unheldAllowed], `unheld`; `null` for anything else.
      */
-    fun decodeTargets(text: String): Targets? {
+    fun decodeTargets(text: String, unheldAllowed: Boolean = false): Targets? {
         val ops = mutableMapOf<String, Int>()
         val permissions = mutableSetOf<String>()
+        val unheld = mutableSetOf<String>()
         for ((name, value) in decodePairs(text) ?: return null) {
             if (isPermission(name)) {
-                if (value != REVOKED) return null
+                when {
+                    value == REVOKED -> Unit
+                    value == UNHELD && unheldAllowed -> unheld += name
+                    else -> return null
+                }
                 permissions += name
             } else {
                 ops[name] = value.toIntOrNull()?.takeIf { it in HELD_MODES } ?: return null
             }
         }
-        return Targets(ops, permissions)
+        return Targets(ops, permissions, unheld)
     }
 
     /** What `set` saves: each op's own uid mode, `null` where it has none. */
@@ -431,19 +475,28 @@ internal object AppOpsGuardProtocol {
     fun appliedLine(uid: Int, found: List<Pair<String, PermissionState>>): String = if (found.isEmpty()) "applied $uid" else "applied $uid ${encodeValues(Values(emptyList(), found))}"
 
     /**
-     * [name] is an op's or a permission's. A permission found granted
-     * again ([regranted]) is followed by the state it was found in, in the
+     * [name] is an op's or a permission's. A permission found changed by
+     * the user ([chosen]) is followed by the state it was found in, in the
      * form [encodeValues] writes: the state to give back from now on.
      */
-    fun revertedLine(uid: Int, name: String, regranted: PermissionState? = null): String = if (regranted == null) "reverted $uid $name" else "reverted $uid $name=${encodeState(regranted)}"
+    fun revertedLine(uid: Int, name: String, chosen: PermissionState? = null): String = if (chosen == null) "reverted $uid $name" else "reverted $uid $name=${encodeState(chosen)}"
 
     /**
-     * The state of a permission held revoked, as found ([found]), if it was
-     * granted again: then by the user, who chose so while the app was held,
-     * and that is the state to give back. `null` for one still revoked, or
-     * not requested.
+     * The state of a permission held revoked, as found ([found]), if the
+     * user changed it while the app was held, and that is the state to
+     * give back: granted again; or, for one this program had held
+     * ([wasHeld]), no longer fixed, as the settings leave a permission
+     * the user revokes. `null` for one as this program holds it, or not
+     * requested. A grant keeps the fixed mark this program set unless the
+     * settings made it, which clear it: granted with `pm`, the permission
+     * is not the user's fixed choice, and goes back without it.
      */
-    fun regranted(found: PermissionState?): PermissionState? = found?.takeIf { it.granted }
+    fun chosenWhileHeld(found: PermissionState?, wasHeld: Boolean): PermissionState? = when {
+        found == null -> null
+        found.granted -> found.copy(flags = found.flags and FLAG_USER_FIXED.inv())
+        wasHeld && found.flags and FLAG_USER_FIXED == 0 -> found
+        else -> null
+    }
 
     /**
      * What to keep for a permission taken back after it was found granted
@@ -460,11 +513,11 @@ internal object AppOpsGuardProtocol {
 
     /**
      * What to give a permission back as: what the daemon [sent], or, where
-     * it does not know, the state [kept] here. A permission found granted
-     * again ([regranted]) goes back as found, which the daemon may not have
-     * written down by the time it sends the command.
+     * it does not know, the state [kept] here. A permission found changed
+     * by the user ([chosen]) goes back as found, which the daemon may not
+     * have written down by the time it sends the command.
      */
-    fun stateToGiveBack(sent: PermissionState?, kept: PermissionState?, regranted: Boolean): PermissionState? = if (regranted && kept != null) kept else sent ?: kept
+    fun stateToGiveBack(sent: PermissionState?, kept: PermissionState?, chosen: Boolean): PermissionState? = if (chosen && kept != null) kept else sent ?: kept
 
     fun verifiedLine(uid: Int): String = "verified $uid"
 

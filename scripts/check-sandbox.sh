@@ -318,6 +318,32 @@ check_if() {
 }
 NOT_KEPT="the provider did not keep the test record"
 
+# Leave the device as it was, whatever happens: in place before anything
+# on it changes.
+mock_location="$(adb shell appops get com.android.shell android:mock_location | tr -d '\r' | sed -n 's/.*: \([a-z]*\).*/\1/p')"
+accessibility="$(as_root "settings get secure enabled_accessibility_services" | tr -d '\r')"
+cleanup() {
+    as_root "$BBD sandbox set $PACKAGE$ALL_GLOBAL" >/dev/null 2>&1 || true
+    as_root "$BBD sandbox disable $PACKAGE" >/dev/null 2>&1 || true
+    as_root "rm -f $MARKER" || true
+    adb shell "cat > $SEED" <<EOF || true
+content delete --uri "content://com.android.contacts/raw_contacts?caller_is_syncadapter=true" --where "account_type='$TEST_ACCOUNT'"
+content delete --uri content://sms --where "address='$TEST_NUMBER'"
+content delete --uri content://call_log/calls --where "number='$TEST_NUMBER'"
+content delete --uri "content://com.android.calendar/calendars?caller_is_syncadapter=true&account_name=$TEST_ACCOUNT&account_type=LOCAL" --where "account_name='$TEST_ACCOUNT'"
+EOF
+    as_root "sh $SEED; rm -f $SEED" >/dev/null 2>&1 || true
+    adb shell cmd notification disallow_listener "$PACKAGE/$PACKAGE.NotificationProbe" >/dev/null 2>&1 || true
+    if [[ "${accessibility:-null}" == null ]]; then
+        as_root "settings delete secure enabled_accessibility_services" >/dev/null 2>&1 || true
+    else
+        as_root "settings put secure enabled_accessibility_services $accessibility" >/dev/null 2>&1 || true
+    fi
+    as_shell cmd location providers remove-test-provider gps >/dev/null 2>&1 || true
+    adb shell appops set com.android.shell android:mock_location "${mock_location:-default}" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
 # Installed afresh, so that its permissions are those granted below and
 # nothing a previous run left.
 adb uninstall "$PACKAGE" >/dev/null 2>&1 || true
@@ -330,7 +356,6 @@ done
 adb shell appops set "$PACKAGE" MANAGE_EXTERNAL_STORAGE allow
 as_root "echo real > $MARKER && chown media_rw:media_rw $MARKER"
 # A location to be had, from a test provider the shell may set.
-mock_location="$(adb shell appops get com.android.shell android:mock_location | tr -d '\r' | sed -n 's/.*: \([a-z]*\).*/\1/p')"
 adb shell appops set com.android.shell android:mock_location allow
 as_shell cmd location providers add-test-provider gps >/dev/null 2>&1 || true
 location=no
@@ -376,30 +401,6 @@ done <<<"$kept"
     echo "error: the seed reported on $reported of ${#seeded[@]} kinds of test record" >&2
     exit 2
 }
-accessibility="$(as_root "settings get secure enabled_accessibility_services" | tr -d '\r')"
-
-# Leave the device as it was, whatever happens.
-cleanup() {
-    as_root "$BBD sandbox set $PACKAGE$ALL_GLOBAL" >/dev/null 2>&1 || true
-    as_root "$BBD sandbox disable $PACKAGE" >/dev/null 2>&1 || true
-    as_root "rm -f $MARKER" || true
-    adb shell "cat > $SEED" <<EOF || true
-content delete --uri "content://com.android.contacts/raw_contacts?caller_is_syncadapter=true" --where "account_type='$TEST_ACCOUNT'"
-content delete --uri content://sms --where "address='$TEST_NUMBER'"
-content delete --uri content://call_log/calls --where "number='$TEST_NUMBER'"
-content delete --uri "content://com.android.calendar/calendars?caller_is_syncadapter=true&account_name=$TEST_ACCOUNT&account_type=LOCAL" --where "account_name='$TEST_ACCOUNT'"
-EOF
-    as_root "sh $SEED; rm -f $SEED" >/dev/null 2>&1 || true
-    adb shell cmd notification disallow_listener "$PACKAGE/$PACKAGE.NotificationProbe" >/dev/null 2>&1 || true
-    if [[ "${accessibility:-null}" == null ]]; then
-        as_root "settings delete secure enabled_accessibility_services" >/dev/null 2>&1 || true
-    else
-        as_root "settings put secure enabled_accessibility_services $accessibility" >/dev/null 2>&1 || true
-    fi
-    as_shell cmd location providers remove-test-provider gps >/dev/null 2>&1 || true
-    adb shell appops set com.android.shell android:mock_location "${mock_location:-default}" >/dev/null 2>&1 || true
-}
-trap cleanup EXIT
 
 # The access to the notifications, given to the canary's listener as the
 # user gives it in the system's settings. (The screen is checked at the

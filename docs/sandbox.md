@@ -243,8 +243,9 @@ the app that requests it, keeps the approximate one, and marks it as the
 user's choice not to be asked again, as Android's settings do; it revokes
 it again if the system or the user grants it while location is coarse,
 and then gives it back granted when location is no longer coarse: the
-user's latest choice. The app's settings show precise location as turned
-off.
+user's latest choice. So it does when the user revokes it, which leaves
+it no longer marked so: it goes back revoked. The app's settings show
+precise location as turned off.
 
 What the ops were, and whether the precise location permission was granted
 and with which of the user's choices, is kept in the database and put back
@@ -253,7 +254,9 @@ the mode of an op of a runtime permission, the helper notes the mode the
 system gave the op for whether the permission was granted (allowed, in
 the foreground only, or ignored). If the user granted or revoked the
 permission while the app was in the sandbox, the op is given the
-system's mode for the permission as it is then, not the one saved. The
+system's mode for the permission as it is then, not the one saved. A
+permission revoked meanwhile loses the `REVOKED_COMPAT` mark Android gave
+it while its op was held, unless the user had it so before. The
 permission is written down as perhaps taken before the helper takes it, so
 that a daemon that stopped in between still gives it back. Removing the
 module takes every app out first. Where the
@@ -418,4 +421,15 @@ file goes through the system's file picker, driven with `uiautomator`:
 ```sh
 (cd android && ./gradlew :canary:assembleDebug)
 ./scripts/check-sandbox.sh              # add --stress 200 for cold starts
+```
+
+What an app's permissions and their app ops end as is set out case by case
+in `testdata/permissions/matrix.tsv`: the permission's state as the app
+enters the sandbox, what the user or the sandbox's items change while it is
+in, and how it leaves. `scripts/check-permissions.sh` plays every case on a
+device with a fresh install of the canary, and `PermissionMatrixTest` plays
+them on the JVM, with the helper's own code on a model of Android:
+
+```sh
+./scripts/check-permissions.sh          # or the names of some cases
 ```

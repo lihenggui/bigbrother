@@ -52,8 +52,9 @@
 //! as it holds the ops (`items::Settings::taken_permissions`). What the
 //! permission was before, granted or not and with the user's flags, is
 //! kept in the entry (`saved_permissions`) and put back when the app leaves
-//! coarse. If the user grants it again in the meantime, the helper takes it
-//! back and reports the state it found (`reverted <uid>
+//! coarse. If the user grants it again in the meantime, or revokes it as
+//! the settings do, unfixed, the helper takes it back and reports the
+//! state it found (`reverted <uid>
 //! <permission>=<state>`): the user's latest choice, kept in the entry in
 //! place of the one before (`Effect::found`) and given back instead. No mode of the items covers both the ops of one mode and the
 //! permission of another (`items::Settings::covering`), so a permission is
@@ -67,7 +68,7 @@ use std::{
     os::fd::AsRawFd as _,
     process::ChildStdin,
     sync::{
-        Arc, Condvar, Mutex, MutexGuard,
+        Arc, Condvar, Mutex, MutexGuard, OnceLock,
         atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant},
@@ -162,8 +163,8 @@ fn parse_unheld(line: &str) -> Option<(u32, BTreeSet<String>)> {
     Some((uid, ops))
 }
 
-/// What a `reverted` line reports of a permission the helper found granted
-/// again while it held it revoked, and took back: the uid, and
+/// What a `reverted` line reports of a permission the helper found changed
+/// by the user while it held it revoked, and took back: the uid, and
 /// `<permission>=<state>`, the state it was found in.
 fn found_in(line: &str) -> Option<(u32, String)> {
     let mut words = line.split_ascii_whitespace();
@@ -209,7 +210,12 @@ struct State {
     /// The ops of guarded uids that the running helper last found it could
     /// not hold. A uid it has not reported on yet is not known to be held.
     unheld: BTreeMap<u32, BTreeSet<String>>,
-    /// The permissions the helper found granted again, by uid, as
+    /// The permissions of guarded uids that a helper, this one or one before
+    /// it, last reported it could not hold. A helper that starts is told so
+    /// in its `verify`: it may find them half taken, which it must not take
+    /// for the user's doing.
+    unsure: BTreeMap<u32, BTreeSet<String>>,
+    /// The permissions the helper found changed by the user, by uid, as
     /// [`found_in`] reads them, not yet kept in the entries.
     found: Vec<(u32, String)>,
 }
@@ -252,7 +258,8 @@ impl State {
             return;
         }
         if let Some(targets) = self.guarded.get(&uid) {
-            let line = Command::Verify(uid, targets).to_string();
+            let targets = marking_unheld(targets, self.unsure.get(&uid));
+            let line = Command::Verify(uid, &targets).to_string();
             let _ = self.send(&line);
         }
     }
@@ -275,6 +282,8 @@ struct Shared {
     state: Mutex<State>,
     /// An answer arrived, the helper started or ended, or it is wanted.
     changed: Condvar,
+    /// Called when the helper reports a permission changed by the user.
+    on_found: OnceLock<Box<dyn Fn() + Send + Sync>>,
 }
 
 impl Shared {
@@ -387,6 +396,16 @@ impl AppOps {
         Self { shared }
     }
 
+    /// Have `wake` called whenever the helper reports a permission changed
+    /// by the user, which [`Effect::found`] then hands over: to be kept in
+    /// the entry at once rather than with the next write of the records.
+    /// The helper, which knows it too, ends with the daemon, so a daemon
+    /// killed before that write would give back the state from before the
+    /// user's choice.
+    pub fn on_found(&self, wake: impl Fn() + Send + Sync + 'static) {
+        let _ = self.shared.on_found.set(Box::new(wake));
+    }
+
     /// What tells, through the helper, libraries from apps (see `auto`).
     pub fn librarian(&self) -> Librarian {
         Librarian {
@@ -471,6 +490,25 @@ fn mode_number(mode: OpMode) -> u8 {
 /// What the helper holds a permission to: revoked, and not to be asked for
 /// again.
 const REVOKED: &str = "revoked";
+
+/// In a `verify`, in place of [`REVOKED`]: held revoked all the same, but
+/// last reported unheld (`State::unsure`).
+const UNHELD: &str = "unheld";
+
+/// `targets`, as [`targets_of`] writes them, for a `verify`: the
+/// permissions among `unsure` written as [`UNHELD`].
+fn marking_unheld(targets: &str, unsure: Option<&BTreeSet<String>>) -> String {
+    let Some(unsure) = unsure.filter(|unsure| !unsure.is_empty()) else {
+        return targets.to_string();
+    };
+    pairs(targets)
+        .map(|(name, value)| {
+            let value = if unsure.contains(name) { UNHELD } else { value };
+            format!("{name}={value}")
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
 
 /// What `restore` and `apply` are given for an op or a permission whose
 /// state before is not known: an op loses its uid mode, a permission the
@@ -589,8 +627,8 @@ fn keep_found(entry: &mut Entry, found: &str) {
 }
 
 /// Give the permissions `entry` names the states in `found`
-/// (`<permission>=<state>`) in place of the ones saved: each was granted
-/// again while the app was held to it revoked, the user's choice since it
+/// (`<permission>=<state>`) in place of the ones saved: each was changed
+/// by the user while the app was held to it revoked, their choice since it
 /// was taken, and what to give back now. One `entry` does not name was not
 /// taken from it. Whether anything changed.
 fn keep_regranted(entry: &mut Entry, found: &[String]) -> bool {
@@ -741,6 +779,7 @@ impl Effect for AppOps {
             if restored {
                 state.guarded.remove(&uid);
                 state.unheld.remove(&uid);
+                state.unsure.remove(&uid);
             }
             restored
         })?;
@@ -834,6 +873,7 @@ impl Effect for AppOps {
         state.owners.remove(&uid);
         state.guarded.remove(&uid);
         state.unheld.remove(&uid);
+        state.unsure.remove(&uid);
         state.found.retain(|(id, _)| *id != uid);
         drop(state);
         self.shared.rest_if_unused();
@@ -960,7 +1000,14 @@ fn run_helper(shared: &Shared) -> anyhow::Error {
     }
     for line in BufReader::new(output).lines().map_while(Result::ok) {
         if let Some((uid, ops)) = parse_unheld(&line) {
-            shared.state().unheld.insert(uid, ops);
+            let mut state = shared.state();
+            let permissions = ops
+                .iter()
+                .filter(|name| is_permission(name))
+                .cloned()
+                .collect();
+            state.unsure.insert(uid, permissions);
+            state.unheld.insert(uid, ops);
         } else if let Some((uid, Some(answer))) = parse_line(&line) {
             let mut state = shared.state();
             if let Answer::Kind(request, kind) = answer {
@@ -972,6 +1019,9 @@ fn run_helper(shared: &Shared) -> anyhow::Error {
             shared.changed.notify_all();
         } else if let Some(found) = found_in(&line) {
             shared.state().found.push(found);
+            if let Some(wake) = shared.on_found.get() {
+                wake();
+            }
         }
     }
     // Closes its input, if it is still there to notice. The next helper
@@ -1049,8 +1099,12 @@ mod tests {
                     (op, mode)
                 })
                 .collect();
-            let permissions: Vec<&str> = case.all("revoke").collect();
-            let targets = targets_text(&ops, &permissions);
+            let permissions: Vec<&str> = case
+                .all("revoke")
+                .chain(case.all("revoke_unheld"))
+                .collect();
+            let unsure: BTreeSet<String> = case.all("revoke_unheld").map(str::to_string).collect();
+            let targets = marking_unheld(&targets_text(&ops, &permissions), Some(&unsure));
             // What the entry saved; a value not known is not in it, and
             // is sent as not known all the same.
             let values = values_of(case);
@@ -1751,5 +1805,17 @@ mod tests {
         assert_eq!(retry_delay(1), RETRY);
         assert_eq!(retry_delay(2), RETRY * 2);
         assert_eq!(retry_delay(40), RETRY_MAX);
+    }
+
+    #[test]
+    fn a_verify_names_the_permissions_last_reported_unheld() {
+        let targets = targets_text(&[("android:camera", OpMode::Ignored)], &[FINE]);
+        assert_eq!(marking_unheld(&targets, None), targets);
+        assert_eq!(marking_unheld(&targets, Some(&BTreeSet::new())), targets);
+        let unsure = BTreeSet::from([FINE.to_string()]);
+        assert_eq!(
+            marking_unheld(&targets, Some(&unsure)),
+            format!("android:camera=1,{FINE}=unheld")
+        );
     }
 }

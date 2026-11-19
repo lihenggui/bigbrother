@@ -19,6 +19,7 @@ use std::{
     fs,
     path::Path,
     ptr,
+    sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -39,6 +40,7 @@ use tokio::{
     io::{Interest, unix::AsyncFd},
     net::{UnixListener, UnixStream},
     signal::unix::{SignalKind, signal},
+    sync::Notify,
     time::{MissedTickBehavior, interval},
 };
 
@@ -283,6 +285,9 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     // The sandbox (see `sandbox`). Like the optional probes, it costs only
     // itself where it cannot work: the daemon records regardless.
     let (new_starts_sender, mut new_starts) = tokio::sync::mpsc::channel(NEW_STARTS_QUEUE);
+    // Woken when the app ops helper finds a permission changed by the user,
+    // which is kept in its entry at once (`Sandbox::keep_found`, below).
+    let found = Arc::new(Notify::new());
     let mut sandbox = if opts.sandbox {
         start_sandbox(
             &mut ebpf,
@@ -292,6 +297,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
             &mut tracer,
             opts.db,
             new_starts_sender,
+            &found,
         )
     } else {
         None
@@ -347,6 +353,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
             _ = sigint.recv() => break,
             _ = sigterm.recv() => break,
             _ = flush_tick.tick() => None,
+            _ = found.notified() => None,
             // Sessions whose process has ended end now, and are written
             // with the next write. Sensors turned on since that did not
             // wake the daemon (the kernel side wakes it at most once a
@@ -565,7 +572,9 @@ async fn next_request(listener: Option<&UnixListener>) -> Option<UnixStream> {
 /// back in. `None`, with a warning, if the sandbox's entries cannot be
 /// read; a gate that cannot be attached leaves a sandbox that refuses to
 /// take apps in. The gate sends `new_starts` the uid of each new app whose
-/// start it ended (see `sandbox::auto`).
+/// start it ended (see `sandbox::auto`), and the app ops helper wakes
+/// `found` when it finds a permission changed by the user.
+#[allow(clippy::too_many_arguments)]
 fn start_sandbox(
     ebpf: &mut aya::Ebpf,
     symbols: &HashSet<&'static str>,
@@ -574,6 +583,7 @@ fn start_sandbox(
     tracer: &mut Tracer,
     db: &Path,
     new_starts: tokio::sync::mpsc::Sender<u32>,
+    found: &Arc<Notify>,
 ) -> Option<Sandbox> {
     let user_data = Path::new(USER_DATA);
     let mut sandbox = match Sandbox::load(&tracer.writer, Vec::new(), Some(user_data)) {
@@ -595,6 +605,8 @@ fn start_sandbox(
     let appops = sandbox::appops::AppOps::start();
     let mut new_apps = None;
     let network = sandbox::network::Network::start(ebpf);
+    let found = found.clone();
+    appops.on_found(move || found.notify_one());
     let storage: Box<dyn sandbox::Effect> = match storage {
         Ok(mut storage) => {
             storage.on_admitted(appops.verifier());
