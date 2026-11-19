@@ -143,7 +143,7 @@
     <string name="jail_item_body_sensors_on_detail">无法获取心率、步数和运动状态。</string>
     <string name="jail_item_device_ids">设备标识符</string>
     <string name="jail_item_device_ids_on">虚拟 ID</string>
-    <string name="jail_item_device_ids_on_detail">每个应用使用固定的虚拟 Android ID；电话号码和设备状态不可读取。</string>
+    <string name="jail_item_device_ids_on_detail">每个应用使用固定的虚拟 Android ID；广告 ID、电话号码和设备状态不可读取。</string>
     <string name="jail_item_installed_apps">已安装的应用</string>
     <string name="jail_item_installed_apps_on">仅系统应用</string>
     <string name="jail_item_installed_apps_on_detail">已安装应用列表仅包含系统应用及其自身；使用情况不可读取。</string>

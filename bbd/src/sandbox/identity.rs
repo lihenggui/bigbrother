@@ -322,7 +322,7 @@ impl Effect for Identity {
 
 /// What the hook wrote about itself (`sandboxStatusText` in
 /// `SandboxRules.kt`): `android_id=1`, `app_list=1`, `uri_grants=1`,
-/// `list=1`, `boot=<id>`,
+/// `ad_id=1`, `list=1`, `boot=<id>`,
 /// one per line. Nothing is in place unless it was written in this boot (a
 /// file left from an earlier one says what was then) and the hook could
 /// read the list.
@@ -339,6 +339,7 @@ fn parse_status(text: &str, boot_id: &str) -> HookStatus {
         android_id: current && on("android_id"),
         app_list: current && on("app_list"),
         uri_grants: current && on("uri_grants"),
+        ad_id: current && on("ad_id"),
     }
 }
 
@@ -587,6 +588,7 @@ mod tests {
                     android_id: in_place.contains(&"android_id"),
                     app_list: in_place.contains(&"app_list"),
                     uri_grants: in_place.contains(&"uri_grants"),
+                    ad_id: in_place.contains(&"ad_id"),
                 },
                 "{:?}",
                 case.line

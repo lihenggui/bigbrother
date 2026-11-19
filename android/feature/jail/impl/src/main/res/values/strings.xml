@@ -167,7 +167,7 @@
     <string name="jail_item_body_sensors_on_detail">Heart rate, steps and physical activity are not available.</string>
     <string name="jail_item_device_ids">Device identifiers</string>
     <string name="jail_item_device_ids_on">Virtual ID</string>
-    <string name="jail_item_device_ids_on_detail">A fixed virtual Android ID of its own; the phone number and phone state cannot be read.</string>
+    <string name="jail_item_device_ids_on_detail">A fixed virtual Android ID of its own; the advertising ID, phone number and phone state cannot be read.</string>
     <string name="jail_item_installed_apps">Installed apps</string>
     <string name="jail_item_installed_apps_on">System apps only</string>
     <string name="jail_item_installed_apps_on_detail">The installed app list holds only system apps and itself; usage statistics cannot be read.</string>

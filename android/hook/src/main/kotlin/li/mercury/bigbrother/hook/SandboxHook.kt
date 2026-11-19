@@ -17,6 +17,7 @@
 package li.mercury.bigbrother.hook
 
 import android.annotation.SuppressLint
+import android.content.pm.PackageManager
 import android.database.Cursor
 import android.database.MatrixCursor
 import android.net.Uri
@@ -49,6 +50,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  *   reach the real ones; an app whose storage is isolated is held to the
  *   grants of the moment, made as the user picks a file, and not to those
  *   it kept from before.
+ * - Whether the app holds the advertising ID permission, which Google Play
+ *   services asks the permission manager before it gives the ID. An app
+ *   with an Android ID of its own is said not to, and gets an ID of zeros.
  *
  * The daemon lists the sandboxed uids in [LIST_PATH] and reads [STATUS_PATH]
  * to learn which hooks attached. Nothing else is shared with it.
@@ -65,15 +69,19 @@ internal class SandboxHook(private val module: XposedInterface) {
     fun install(classLoader: ClassLoader) {
         if (!StartGuard(File(GUARD_DIR)).allowStart()) {
             module.log(Log.WARN, TAG, "start guard tripped in system_server; sandbox hooks not installed")
-            writeStatus(androidId = false, appList = false, uriGrants = false, listReadable = false)
+            writeStatus(androidId = false, appList = false, uriGrants = false, adId = false, listReadable = false)
             return
         }
         val list = SandboxList(File(LIST_PATH), ::onListError, owners = HookInstallations(File(BOOT_ID_PATH)))
         val androidId = attach("ANDROID_ID") { hookAndroidId(list) }
         val appList = attach("app list") { hookAppList(classLoader, list) }
         val uriGrants = attach("file grants") { hookUriGrants(classLoader, list) }
-        val publish = { writeStatus(androidId, appList, uriGrants, list.readable, list.revision) }
-        list.onLoaded = publish
+        val adId = attach("advertising ID") { hookAdId(classLoader, list) }
+        val publish = { writeStatus(androidId, appList, uriGrants, adId, list.readable, list.revision) }
+        list.onLoaded = {
+            publish()
+            if (adId) forgetPermissionAnswers()
+        }
         val file = File(LIST_PATH)
         observer = object : android.os.FileObserver(file.parentFile!!, MOVED_TO or DELETE or MOVED_FROM) {
             override fun onEvent(event: Int, path: String?) {
@@ -171,6 +179,49 @@ internal class SandboxHook(private val module: XposedInterface) {
     }
 
     /**
+     * Google Play services checks the permission by package, and other
+     * releases of it may by uid: both are hooked, or neither counts. Only
+     * a check of [AD_ID_PERMISSION] is looked at further.
+     */
+    @SuppressLint("PrivateApi")
+    private fun hookAdId(classLoader: ClassLoader, list: SandboxList): Boolean {
+        val service = Class.forName(PERMISSION_MANAGER_CLASS, false, classLoader)
+        val byPackage = service.declaredMethods.filter { it.name == "checkPermission" && it.returnType == Int::class.javaPrimitiveType }
+        val byUid = service.declaredMethods.filter { it.name == "checkUidPermission" && it.returnType == Int::class.javaPrimitiveType }
+        if (byPackage.isEmpty() || byUid.isEmpty()) return false
+        val packageUid = packageUidMethod() ?: return false
+        val packageManager = Class.forName("android.app.AppGlobals").getMethod("getPackageManager")
+        for (method in byPackage) module.hook(method).intercept(AdIdPackageHooker(module, list, packageManager, packageUid))
+        for (method in byUid) module.hook(method).intercept(AdIdUidHooker(module, list))
+        return true
+    }
+
+    /**
+     * `IPackageManager.getPackageUid(String, flags, int userId)`, the flags
+     * a `long` from Android 13 and an `int` before.
+     */
+    @SuppressLint("PrivateApi")
+    private fun packageUidMethod(): Method? = Class.forName("android.content.pm.IPackageManager").methods.firstOrNull {
+        it.name == "getPackageUid" && it.parameterTypes.size == 3 && it.parameterTypes[0] == String::class.java
+    }
+
+    /**
+     * Has every process forget the answers to permission checks it keeps
+     * (`PermissionManager`'s caches, keyed by the package information), as
+     * the system does when a permission changes. Google Play services would
+     * otherwise go on with the answer it got before the app was isolated or
+     * released.
+     */
+    @SuppressLint("PrivateApi")
+    private fun forgetPermissionAnswers() {
+        try {
+            HiddenApiBypass.invoke(Class.forName("android.content.pm.PackageManager"), null, "invalidatePackageInfoCache")
+        } catch (e: Throwable) {
+            module.log(Log.ERROR, TAG, "could not have the permission answers forgotten", e)
+        }
+    }
+
+    /**
      * A getter of the declared target type: an interface on Android 13 and
      * later, a class whose getters may be inherited before.
      */
@@ -194,12 +245,12 @@ internal class SandboxHook(private val module: XposedInterface) {
 
     /** Written by rename, so the daemon never reads half a file. */
     @Synchronized
-    private fun writeStatus(androidId: Boolean, appList: Boolean, uriGrants: Boolean, listReadable: Boolean, revision: String = "none") {
+    private fun writeStatus(androidId: Boolean, appList: Boolean, uriGrants: Boolean, adId: Boolean, listReadable: Boolean, revision: String = "none") {
         try {
             val status = File(STATUS_PATH)
             val temporary = File("$STATUS_PATH.tmp")
             val bootId = File(BOOT_ID_PATH).readText().trim()
-            temporary.writeText(sandboxStatusText(androidId, appList, uriGrants, Build.VERSION.SDK_INT, listReadable, bootId) + "revision=$revision\npid=${android.os.Process.myPid()}\n")
+            temporary.writeText(sandboxStatusText(androidId, appList, uriGrants, adId, Build.VERSION.SDK_INT, listReadable, bootId) + "revision=$revision\npid=${android.os.Process.myPid()}\n")
             if (!temporary.renameTo(status)) error("rename failed")
         } catch (e: Throwable) {
             module.log(Log.ERROR, TAG, "could not write the sandbox status", e)
@@ -330,6 +381,43 @@ internal class SandboxHook(private val module: XposedInterface) {
     }
 
     /**
+     * Says that a package whose uid gets no advertising ID does not hold
+     * [AD_ID_PERMISSION]. Named class, not a lambda: see
+     * `ProviderHook.RecordingHooker`.
+     */
+    private class AdIdPackageHooker(
+        module: XposedInterface,
+        private val list: SandboxList,
+        private val packageManager: Method,
+        private val packageUid: Method,
+    ) : FailSafeHooker(module, "advertising ID") {
+        override fun replacement(chain: XposedInterface.Chain): Any? {
+            val check = adIdCheckByPackage(chain.args) ?: return null
+            // As system_server, not as the caller: what the caller may see
+            // is beside the point, and the caller is Play services.
+            val identity = Binder.clearCallingIdentity()
+            val uid = try {
+                val flags: Any = if (packageUid.parameterTypes[1] == Long::class.javaPrimitiveType) 0L else 0
+                packageUid.invoke(packageManager.invoke(null), check.packageName, flags, check.userId) as Int
+            } finally {
+                Binder.restoreCallingIdentity(identity)
+            }
+            return if (uid >= 0 && list.withholdsAdIdFrom(uid)) PackageManager.PERMISSION_DENIED else null
+        }
+    }
+
+    /** As [AdIdPackageHooker], for a check by uid. */
+    private class AdIdUidHooker(
+        module: XposedInterface,
+        private val list: SandboxList,
+    ) : FailSafeHooker(module, "advertising ID") {
+        override fun replacement(chain: XposedInterface.Chain): Any? {
+            val uid = adIdCheckByUid(chain.args) ?: return null
+            return if (list.withholdsAdIdFrom(uid)) PackageManager.PERMISSION_DENIED else null
+        }
+    }
+
+    /**
      * Runs the original method unless [replacement] returns a value to
      * answer with instead. If [replacement] throws, the original runs as if
      * the hook were not there, and the first such failure is logged; the
@@ -368,6 +456,8 @@ internal class SandboxHook(private val module: XposedInterface) {
 
         /** Start records for [StartGuard]; system_server has no app data directory. */
         const val GUARD_DIR = "/data/system/big_brother_hook"
+
+        const val PERMISSION_MANAGER_CLASS = "com.android.server.pm.permission.PermissionManagerService"
 
         /** Android 11 and later. */
         const val URI_PERMISSION_CLASS = "com.android.server.uri.UriPermission"

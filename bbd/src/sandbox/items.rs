@@ -258,6 +258,7 @@ pub enum Part {
     AndroidIdHook,
     AppListHook,
     UriGrantsHook,
+    AdIdHook,
     PacketFilter,
 }
 
@@ -269,6 +270,7 @@ impl Part {
             Part::AndroidIdHook => "android_id_hook",
             Part::AppListHook => "app_list_hook",
             Part::UriGrantsHook => "uri_grants_hook",
+            Part::AdIdHook => "ad_id_hook",
             Part::PacketFilter => "packet_filter",
         }
     }
@@ -282,6 +284,7 @@ pub struct InPlace {
     pub android_id_hook: bool,
     pub app_list_hook: bool,
     pub uri_grants_hook: bool,
+    pub ad_id_hook: bool,
     pub packet_filter: bool,
 }
 
@@ -487,6 +490,9 @@ impl Settings {
             if item == Item::DeviceIds && !parts.android_id_hook {
                 missing.push(Part::AndroidIdHook);
             }
+            if item == Item::DeviceIds && !parts.ad_id_hook {
+                missing.push(Part::AdIdHook);
+            }
             if item == Item::InstalledApps && !parts.app_list_hook {
                 missing.push(Part::AppListHook);
             }
@@ -638,6 +644,7 @@ mod tests {
             android_id_hook: true,
             app_list_hook: true,
             uri_grants_hook: true,
+            ad_id_hook: true,
             packet_filter: true,
         };
         let items = Settings::all_on();
@@ -656,7 +663,10 @@ mod tests {
             [Part::Mounts, Part::AppOps, Part::UriGrantsHook]
         );
         assert_eq!(unmet[&Item::CpuInfo], [Part::Mounts]);
-        assert_eq!(unmet[&Item::DeviceIds], [Part::AppOps, Part::AndroidIdHook]);
+        assert_eq!(
+            unmet[&Item::DeviceIds],
+            [Part::AppOps, Part::AndroidIdHook, Part::AdIdHook]
+        );
         assert_eq!(
             unmet[&Item::InstalledApps],
             [Part::AppOps, Part::AppListHook]
@@ -704,6 +714,7 @@ mod tests {
             android_id_hook: true,
             app_list_hook: true,
             uri_grants_hook: true,
+            ad_id_hook: true,
             packet_filter: true,
         };
         assert!(items.unmet(&all, |_| true).is_empty());

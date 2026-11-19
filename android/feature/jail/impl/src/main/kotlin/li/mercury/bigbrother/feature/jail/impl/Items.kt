@@ -171,7 +171,7 @@ internal fun notInEffect(unmet: Set<SandboxPart>): Int = when {
     else -> R.string.jail_not_in_effect_app_ops
 }
 
-private val HOOK_PARTS = setOf(SandboxPart.ANDROID_ID_HOOK, SandboxPart.APP_LIST_HOOK, SandboxPart.URI_GRANTS_HOOK)
+private val HOOK_PARTS = setOf(SandboxPart.ANDROID_ID_HOOK, SandboxPart.APP_LIST_HOOK, SandboxPart.URI_GRANTS_HOOK, SandboxPart.AD_ID_HOOK)
 
 /** What [mode] of [item] means for the app. */
 @Composable
