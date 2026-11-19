@@ -56,10 +56,14 @@ sealed interface NetworkTarget {
         private const val HOST = "host:"
         private const val IP = "ip:"
 
-        /** A target as the daemon writes it; null for a form this build does not know. */
+        /**
+         * A target as the daemon writes it; null for a form this build does
+         * not know. A name is taken as written: the daemon decides what one
+         * is, and a rule it has must be shown to be removed.
+         */
         fun fromId(id: String): NetworkTarget? = when {
-            id.startsWith(DOMAIN) -> domain(id.removePrefix(DOMAIN))?.let { Domain(it) }
-            id.startsWith(HOST) -> domain(id.removePrefix(HOST))?.let { Domain(it, exact = true) }
+            id.startsWith(DOMAIN) -> id.removePrefix(DOMAIN).takeIf { it.isNotBlank() }?.let { Domain(it) }
+            id.startsWith(HOST) -> id.removePrefix(HOST).takeIf { it.isNotBlank() }?.let { Domain(it, exact = true) }
             id.startsWith(IP) -> address(id.removePrefix(IP))
             else -> null
         }
@@ -99,31 +103,64 @@ sealed interface NetworkTarget {
             return if (ok) parts.joinToString(".") { it.toInt().toString() } else null
         }
 
+        /**
+         * An IPv6 address as the daemon writes it, whichever way it was
+         * typed: a rule is found again by its text.
+         */
         private fun ipv6(text: String): String? {
             if (':' !in text) return null
-            val lower = text.lowercase()
-            val halves = lower.split("::")
+            val halves = text.lowercase().split("::")
             if (halves.size > 2) return null
-            var groups = 0
-            for ((index, half) in halves.withIndex()) {
-                if (half.isEmpty()) continue
-                val parts = half.split(':')
-                for ((at, part) in parts.withIndex()) {
+            val parsed = halves.mapIndexed { index, half -> groups(half, mayEndInIpv4 = index == halves.lastIndex) ?: return null }
+            val count = parsed.sumOf { it.size }
+            val groups = when {
+                halves.size == 2 && count <= IPV6_GROUPS - 1 -> parsed[0] + List(IPV6_GROUPS - count) { 0 } + parsed[1]
+                halves.size == 1 && count == IPV6_GROUPS -> parsed[0]
+                else -> return null
+            }
+            return written(groups)
+        }
+
+        /** The 16-bit groups of the part of an IPv6 address on one side of `::`. */
+        private fun groups(half: String, mayEndInIpv4: Boolean): List<Int>? {
+            if (half.isEmpty()) return emptyList()
+            val parts = half.split(':')
+            return parts.flatMapIndexed { at, part ->
+                if (mayEndInIpv4 && at == parts.lastIndex && '.' in part) {
                     // An IPv4 address may end it, as two groups.
-                    val last = index == halves.lastIndex && at == parts.lastIndex
-                    if (last && '.' in part) {
-                        ipv4(part) ?: return null
-                        groups += 2
-                    } else if (part.length in 1..4 && part.all { it.isDigit() || it in 'a'..'f' }) {
-                        groups += 1
-                    } else {
-                        return null
-                    }
+                    val bytes = ipv4(part)?.split('.')?.map(String::toInt) ?: return null
+                    listOf(bytes[0] shl 8 or bytes[1], bytes[2] shl 8 or bytes[3])
+                } else if (part.length in 1..4 && part.all { it.isDigit() || it in 'a'..'f' }) {
+                    listOf(part.toInt(16))
+                } else {
+                    return null
                 }
             }
-            val ok = if (halves.size == 2) groups <= 7 else groups == 8
-            return if (ok) lower else null
         }
+
+        /** The groups in the shortest form: the first of the longest runs of zeros left out. */
+        private fun written(groups: List<Int>): String {
+            if (groups.take(5).all { it == 0 } && groups[5] == 0xffff) {
+                return "::ffff:${groups[6] shr 8}.${groups[6] and 0xff}.${groups[7] shr 8}.${groups[7] and 0xff}"
+            }
+            var best = 0
+            var length = 0
+            var at = 0
+            while (at < groups.size) {
+                var end = at
+                while (end < groups.size && groups[end] == 0) end += 1
+                if (end - at > length) {
+                    best = at
+                    length = end - at
+                }
+                at = end + 1
+            }
+            val hex = groups.map { it.toString(16) }
+            if (length < 2) return hex.joinToString(":")
+            return hex.take(best).joinToString(":") + "::" + hex.drop(best + length).joinToString(":")
+        }
+
+        private const val IPV6_GROUPS = 8
 
         /** [text] as a domain name in ASCII, lower case, without a final dot; null if it is not one. */
         private fun domain(text: String): String? {
@@ -135,9 +172,10 @@ sealed interface NetworkTarget {
             if (ascii.length > 253) return null
             val labels = ascii.split('.')
             if (labels.size < 2) return null
+            // Names in use have underscores, and the daemon takes them.
             val ok = labels.all { label ->
                 label.length in 1..63 &&
-                    label.all { it in 'a'..'z' || it.isDigit() || it == '-' } &&
+                    label.all { it in 'a'..'z' || it.isDigit() || it == '-' || it == '_' } &&
                     !label.startsWith('-') &&
                     !label.endsWith('-')
             }
@@ -200,6 +238,8 @@ data class DestinationActivity(
     val first: Long,
     val last: Long,
     val rule: NetworkTarget? = null,
+    /** How many addresses it has; [addresses] lists the first of them. */
+    val addressCount: Int = addresses.size,
 ) : ConnectionCounts
 
 /** Connections in the period from [start] (seconds since the epoch). */
@@ -248,8 +288,8 @@ data class NetworkActivity(
     )
 }
 
-/** One destination of an app, with its connections hour by hour. */
-data class DestinationDetail(val destination: DestinationActivity, val hours: List<ActivityBucket>)
+/** One destination of an app, with its connections in periods of [bucketSeconds]. */
+data class DestinationDetail(val destination: DestinationActivity, val buckets: List<ActivityBucket>, val bucketSeconds: Int = BucketSize.HOUR.seconds)
 
 /** This destination with [target] blocked, or the rule [target] gone if not [blocked]. */
 fun DestinationActivity.withRule(target: NetworkTarget, blocked: Boolean): DestinationActivity {

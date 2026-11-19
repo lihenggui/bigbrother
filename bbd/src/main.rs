@@ -196,17 +196,24 @@ enum NetCommand {
         /// What a bar of the chart spans: hour or day.
         #[arg(long, default_value = "hour")]
         bucket: String,
+        /// Seconds the device's time is ahead of UTC: where its days begin.
+        #[arg(long, default_value_t = 0, allow_negative_numbers = true)]
+        offset: i64,
         /// Android user the app is installed for.
         #[arg(long, default_value_t = 0)]
         user: u32,
     },
-    /// One destination of an app, hour by hour: `domain:<site>` or
-    /// `ip:<address>`.
+    /// One destination of an app with the chart of its connections:
+    /// `domain:<site>` or `ip:<address>`.
     Destination {
         package: String,
         target: String,
         #[arg(long)]
         since: i64,
+        #[arg(long, default_value = "hour")]
+        bucket: String,
+        #[arg(long, default_value_t = 0, allow_negative_numbers = true)]
+        offset: i64,
         #[arg(long, default_value_t = 0)]
         user: u32,
     },
@@ -456,14 +463,17 @@ fn main() -> anyhow::Result<()> {
                 since,
                 until,
                 bucket,
+                offset,
                 user,
-            } => netctl::activity(&cli.db, &package, user, since, until, &bucket),
+            } => netctl::activity(&cli.db, &package, user, since, until, (&bucket, offset)),
             NetCommand::Destination {
                 package,
                 target,
                 since,
+                bucket,
+                offset,
                 user,
-            } => netctl::destination(&cli.db, &package, user, &target, since),
+            } => netctl::destination(&cli.db, &package, user, &target, since, (&bucket, offset)),
             NetCommand::Block {
                 package,
                 target,

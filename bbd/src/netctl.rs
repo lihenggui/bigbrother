@@ -226,6 +226,9 @@ pub struct Query<'a> {
     /// Whether byte counts and names can be had on this device.
     pub traffic: bool,
     pub names: bool,
+    /// How far the device's time is ahead of UTC, in seconds: where its
+    /// days begin.
+    pub offset: i64,
 }
 
 impl Query<'_> {
@@ -259,6 +262,35 @@ impl Query<'_> {
                 .add(row);
         }
         (sites, addrs)
+    }
+
+    /// The start of the bar a time falls in. Days are the device's; the
+    /// records are kept by the hour of UTC, which hours stay with.
+    fn bucket_of(&self, at: i64) -> i64 {
+        let offset = if self.bucket > 3600 { self.offset } else { 0 };
+        at - (at + offset).rem_euclid(self.bucket)
+    }
+
+    /// The bars of a chart of the period, each with the connections made
+    /// and refused of the `hours` in it, those without any included.
+    fn chart(&self, hours: impl Iterator<Item = (i64, u32, u32)>) -> Value {
+        let mut buckets: BTreeMap<i64, (u32, u32)> = BTreeMap::new();
+        let mut start = self.bucket_of(self.since);
+        while start < self.until {
+            buckets.insert(start, (0, 0));
+            start += self.bucket;
+        }
+        for (at, conn, refused) in hours {
+            if let Some(bucket) = buckets.get_mut(&self.bucket_of(at)) {
+                bucket.0 += conn;
+                bucket.1 += refused;
+            }
+        }
+        buckets
+            .iter()
+            .map(|(t, (conn, refused))| json!({"t": t, "conn": conn, "refused": refused}))
+            .collect::<Vec<_>>()
+            .into()
     }
 
     fn parsed_rules(&self) -> Vec<(Target, &NetRule)> {
@@ -340,19 +372,11 @@ impl Query<'_> {
             .collect();
         destinations.sort_by_key(|d| std::cmp::Reverse((d.0, d.1)));
 
-        let mut buckets: BTreeMap<i64, (u32, u32)> = BTreeMap::new();
-        let mut start = self.since - self.since.rem_euclid(self.bucket);
-        while start < self.until {
-            buckets.insert(start, (0, 0));
-            start += self.bucket;
-        }
-        for row in self.rows {
-            let at = row.hour * 3600;
-            if let Some(bucket) = buckets.get_mut(&(at - at.rem_euclid(self.bucket))) {
-                bucket.0 += row.seen.conn;
-                bucket.1 += row.seen.refused;
-            }
-        }
+        let buckets = self.chart(
+            self.rows
+                .iter()
+                .map(|row| (row.hour * 3600, row.seen.conn, row.seen.refused)),
+        );
         json!({
             "uid": self.uid,
             "since": self.since,
@@ -362,10 +386,7 @@ impl Query<'_> {
             "network": if self.blocked { "blocked" } else { "allowed" },
             "traffic": self.traffic,
             "names": self.names,
-            "buckets": buckets
-                .iter()
-                .map(|(t, (conn, refused))| json!({"t": t, "conn": conn, "refused": refused}))
-                .collect::<Vec<_>>(),
+            "buckets": buckets,
             "destinations": destinations.into_iter().map(|d| d.2).collect::<Vec<_>>(),
             "rules": self
                 .rules
@@ -378,7 +399,7 @@ impl Query<'_> {
     }
 
     /// The answer of `bbd net destination`: one destination of the list,
-    /// with what was seen of it hour by hour. `None` if nothing was.
+    /// with the chart of what was seen of it. `None` if nothing was.
     pub fn destination(&self, target: &Target) -> Option<Value> {
         let rules = self.parsed_rules();
         let (sites, addrs) = self.grouped();
@@ -394,12 +415,14 @@ impl Query<'_> {
             }
             _ => return None,
         };
-        let hours: Vec<Value> = destination
-            .hours
-            .iter()
-            .map(|(t, sum)| json!({"t": t, "conn": sum.seen.conn, "refused": sum.seen.refused}))
-            .collect();
-        map.insert("hours".into(), hours.into());
+        let buckets = self.chart(
+            destination
+                .hours
+                .iter()
+                .map(|(t, sum)| (*t, sum.seen.conn, sum.seen.refused)),
+        );
+        map.insert("bucket".into(), self.bucket.into());
+        map.insert("buckets".into(), buckets);
         Some(Value::Object(map))
     }
 }
@@ -441,12 +464,13 @@ fn read(db: &Path, package: &str, user: u32, since: i64, until: i64) -> anyhow::
 }
 
 impl Read {
-    fn query(&self, since: i64, until: i64, bucket: i64) -> Query<'_> {
+    fn query(&self, since: i64, until: i64, (bucket, offset): (i64, i64)) -> Query<'_> {
         Query {
             uid: self.uid,
             since,
             until,
             bucket,
+            offset,
             rows: &self.rows,
             rules: &self.rules,
             recording: self.recording,
@@ -472,22 +496,31 @@ pub fn activity(
     user: u32,
     since: i64,
     until: Option<i64>,
-    bucket: &str,
+    bars: (&str, i64),
 ) -> anyhow::Result<()> {
+    let until = until.unwrap_or_else(crate::now);
+    let bars = chart_of(since, until, bars)?;
+    let read = read(db, package, user, since, until)?;
+    print(read.query(since, until, bars).activity())
+}
+
+/// The bars asked for, `hour` or `day` with the device's offset from UTC,
+/// as the seconds of one and that offset.
+fn chart_of(since: i64, until: i64, (bucket, offset): (&str, i64)) -> anyhow::Result<(i64, i64)> {
     let bucket = match bucket {
         "hour" => 3600,
         "day" => 86_400,
         other => anyhow::bail!("{other}: not hour or day"),
     };
-    let until = until.unwrap_or_else(crate::now);
     anyhow::ensure!(since < until, "the period is empty");
     // What a chart can show: not a bucket for every hour of years.
     anyhow::ensure!(
         (until - since) / bucket <= MOST_BUCKETS,
         "the period has more than {MOST_BUCKETS} buckets"
     );
-    let read = read(db, package, user, since, until)?;
-    print(read.query(since, until, bucket).activity())
+    // No place is a day from UTC.
+    anyhow::ensure!(offset.abs() < 86_400, "{offset}: not an offset from UTC");
+    Ok((bucket, offset))
 }
 
 /// `bbd net destination`.
@@ -497,12 +530,14 @@ pub fn destination(
     user: u32,
     target: &str,
     since: i64,
+    bars: (&str, i64),
 ) -> anyhow::Result<()> {
     let target = Target::parse(target).context("not a domain or an address")?;
     let until = crate::now();
+    let bars = chart_of(since, until, bars)?;
     let read = read(db, package, user, since, until)?;
     let found = read
-        .query(since, until, 3600)
+        .query(since, until, bars)
         .destination(&target)
         .context("nothing is recorded of this destination")?;
     print(found)
@@ -691,6 +726,7 @@ mod tests {
             blocked: false,
             traffic: true,
             names: true,
+            offset: 0,
         };
         let activity = query.activity();
         assert_eq!(activity["recording"], json!({"on": true, "since": 42}));
@@ -746,7 +782,7 @@ mod tests {
             .unwrap();
         assert_eq!(one["site"], "example.com");
         assert_eq!(
-            one["hours"],
+            one["buckets"],
             json!([
                 {"t": 360_000, "conn": 3, "refused": 0},
                 {"t": 363_600, "conn": 3, "refused": 0},
@@ -755,12 +791,47 @@ mod tests {
         let address = query
             .destination(&Target::parse("ip:198.51.100.53").unwrap())
             .unwrap();
-        assert_eq!(address["hours"][0]["refused"], 2);
+        assert_eq!(address["buckets"][1]["refused"], 2);
         assert!(
             query
                 .destination(&Target::parse("domain:absent.example").unwrap())
                 .is_none()
         );
+    }
+
+    #[test]
+    fn days_begin_where_the_device_has_them() {
+        // Hours 40 and 41 of UTC: either side of midnight eight hours ahead.
+        let rows = [
+            row(39, "", "203.0.113.1", 80, seen(1, 0, None)),
+            row(40, "", "203.0.113.1", 80, seen(2, 0, None)),
+        ];
+        let query = Query {
+            uid: 1,
+            since: 16 * 3600,
+            until: 64 * 3600,
+            bucket: 86_400,
+            rows: &rows,
+            rules: &[],
+            recording: None,
+            blocked: false,
+            traffic: false,
+            names: false,
+            offset: 8 * 3600,
+        };
+        assert_eq!(
+            query.activity()["buckets"],
+            json!([
+                {"t": 16 * 3600, "conn": 1, "refused": 0},
+                {"t": 40 * 3600, "conn": 2, "refused": 0},
+            ])
+        );
+        // The chart of one destination has the same bars.
+        let one = query
+            .destination(&Target::parse("ip:203.0.113.1").unwrap())
+            .unwrap();
+        assert_eq!(one["buckets"], query.activity()["buckets"]);
+        assert_eq!(one["bucket"], 86_400);
     }
 
     #[test]
@@ -777,6 +848,7 @@ mod tests {
             blocked: true,
             traffic: false,
             names: false,
+            offset: 0,
         };
         let activity = query.activity();
         assert_eq!(

@@ -39,6 +39,26 @@ class NetworkTargetTest {
     }
 
     @Test
+    fun givenIpv6TypedTheLongWay_whenParsed_thenAsTheDaemonWritesIt() {
+        assertEquals(Address("2001:db8::5"), NetworkTarget.parse("2001:db8:0:0:0:0:0:5"))
+        assertEquals(Address("2001:db8::5"), NetworkTarget.parse("2001:0DB8::0005"))
+        assertEquals(Address("::1"), NetworkTarget.parse("0:0:0:0:0:0:0:1"))
+        assertEquals(Address("1::"), NetworkTarget.parse("1:0:0:0:0:0:0:0"))
+        assertEquals(Address("2001:db8:0:1:1:1:1:1"), NetworkTarget.parse("2001:db8:0:1:1:1:1:1"))
+        assertEquals(Address("2001:0:0:1::1"), NetworkTarget.parse("2001:0:0:1:0:0:0:1"))
+        assertEquals(Address("::ffff:1.2.3.4"), NetworkTarget.parse("::ffff:01.2.3.4"))
+        assertEquals(Address("64:ff9b::c000:221"), NetworkTarget.parse("64:ff9b::192.0.2.33"))
+    }
+
+    @Test
+    fun givenNamesTheDaemonHas_whenRead_thenTakenAsWritten() {
+        assertEquals(Domain("a_b.example.com", exact = true), NetworkTarget.fromId("host:a_b.example.com"))
+        assertEquals(Domain("-x.example.com", exact = true), NetworkTarget.fromId("host:-x.example.com"))
+        assertEquals(Domain("_dmarc.example.com"), NetworkTarget.parse("_dmarc.example.com"))
+        assertNull(NetworkTarget.fromId("host:"))
+    }
+
+    @Test
     fun givenAddressWithPort_whenWrittenForTheDaemon_thenBracketsAroundIpv6() {
         assertEquals("ip:[2001:db8::5]:443", Address("2001:db8::5", 443).id)
         assertEquals("ip:203.0.113.7:8080", Address("203.0.113.7", 8080).id)

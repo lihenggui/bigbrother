@@ -21,12 +21,14 @@ import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.root.CommandResult
 import li.mercury.bigbrother.core.data.root.RootShell
+import li.mercury.bigbrother.core.model.BucketSize
 import li.mercury.bigbrother.core.model.HostActivity
 import li.mercury.bigbrother.core.model.NetworkRule
 import li.mercury.bigbrother.core.model.NetworkTarget
 import li.mercury.bigbrother.core.model.PortActivity
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import java.util.TimeZone
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -118,15 +120,55 @@ class RootNetworkRepositoryTest {
     fun givenDestination_whenRead_thenWithItsHours() = runTest {
         val shell = TestRootShell(
             """{"ok":true,"addr":"198.51.100.53","ports":[{"port":8443,"conn":41,"refused":0}],"conn":41,"refused":0,
-              |"first":1,"last":2,"rule":null,"hours":[{"t":3600,"conn":4,"refused":1}]}
+              |"first":1,"last":2,"rule":null,"bucket":3600,"buckets":[{"t":3600,"conn":4,"refused":1}]}
             """.trimMargin(),
         )
 
         val detail = RootNetworkRepository(shell).getDestination("com.example.shopping", 0, NetworkTarget.Address("198.51.100.53"), since = 0)
 
         assertEquals(NetworkTarget.Address("198.51.100.53"), detail.destination.target)
-        assertEquals(3_600L, detail.hours.single().start)
-        assertTrue("'ip:198.51.100.53' --since 0" in shell.lines.single())
+        assertEquals(3_600L, detail.buckets.single().start)
+        assertEquals(3_600, detail.bucketSeconds)
+        assertTrue("'ip:198.51.100.53' --since 0 --bucket hour --user 0" in shell.lines.single())
+    }
+
+    @Test
+    fun givenDays_whenRead_thenAsksForTheDevicesDays() = runTest {
+        val shell = TestRootShell("""{"ok":true,"since":0,"until":1,"bucket":86400}""")
+        val zone = TimeZone.getDefault()
+        TimeZone.setDefault(TimeZone.getTimeZone("GMT-05:30"))
+        try {
+            RootNetworkRepository(shell).getActivity("com.example.shopping", 0, 0, bucket = BucketSize.DAY)
+        } finally {
+            TimeZone.setDefault(zone)
+        }
+
+        assertTrue("--bucket day --offset -19800 --user 0" in shell.lines.single())
+    }
+
+    @Test
+    fun givenSiteWithManyAddresses_whenRead_thenCountsThoseNotListed() = runTest {
+        val shell = TestRootShell(
+            """{"ok":true,"since":0,"until":1,"destinations":[{"site":"cdn.example","addrs":["203.0.113.1"],"addr_count":40,
+              |"conn":1,"refused":0,"first":1,"last":2,"rule":null}]}
+            """.trimMargin(),
+        )
+
+        val site = RootNetworkRepository(shell).getActivity("com.example.shopping", 0, 0).domains.single()
+
+        assertEquals(40, site.addressCount)
+        assertEquals(listOf("203.0.113.1"), site.addresses)
+    }
+
+    @Test
+    fun givenRuleOnNameWithUnderscore_whenRead_thenListed() = runTest {
+        val shell = TestRootShell(
+            """{"ok":true,"since":0,"until":1,"rules":[{"target":"host:a_b.example.com","created":1,"manual":false}]}""",
+        )
+
+        val rule = RootNetworkRepository(shell).getActivity("com.example.shopping", 0, 0).rules.single()
+
+        assertEquals("host:a_b.example.com", rule.target.id)
     }
 
     /** Answers every command with [output], or fails it with [error] if set. */

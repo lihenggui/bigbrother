@@ -37,6 +37,7 @@ import li.mercury.bigbrother.core.model.PortActivity
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
+import java.util.TimeZone
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -55,8 +56,8 @@ interface NetworkRepository {
     /** An app's connections from [since] to [until] (now if null), in periods of [bucket]. */
     suspend fun getActivity(packageName: String, userId: Int, since: Long, until: Long? = null, bucket: BucketSize = BucketSize.HOUR): NetworkActivity
 
-    /** One destination of an app, a domain or an address, from [since]. */
-    suspend fun getDestination(packageName: String, userId: Int, target: NetworkTarget, since: Long): DestinationDetail
+    /** One destination of an app, a domain or an address, from [since], in periods of [bucket]. */
+    suspend fun getDestination(packageName: String, userId: Int, target: NetworkTarget, since: Long, bucket: BucketSize = BucketSize.HOUR): DestinationDetail
 
     /** Blocks [target] for an app at once; [manual] if it was typed in rather than chosen from the records. */
     suspend fun block(packageName: String, userId: Int, target: NetworkTarget, manual: Boolean = false)
@@ -80,18 +81,25 @@ internal class RootNetworkRepository @Inject constructor(
     // daemon or the user: all are quoted. Everything else is a number or a
     // constant.
     override suspend fun getActivity(packageName: String, userId: Int, since: Long, until: Long?, bucket: BucketSize): NetworkActivity {
-        val range = "--since $since" + (until?.let { " --until $it" } ?: "") + " --bucket ${bucket.id}"
+        val range = "--since $since" + (until?.let { " --until $it" } ?: "") + bars(bucket)
         val answer = net("activity ${packageName.shellQuoted()} $range --user $userId")
         return parsing { JSONObject(answer).toActivity() }
     }
 
-    override suspend fun getDestination(packageName: String, userId: Int, target: NetworkTarget, since: Long): DestinationDetail {
-        val answer = net("destination ${packageName.shellQuoted()} ${target.id.shellQuoted()} --since $since --user $userId")
+    override suspend fun getDestination(packageName: String, userId: Int, target: NetworkTarget, since: Long, bucket: BucketSize): DestinationDetail {
+        val answer = net("destination ${packageName.shellQuoted()} ${target.id.shellQuoted()} --since $since${bars(bucket)} --user $userId")
         return parsing {
             val json = JSONObject(answer)
-            DestinationDetail(json.toDestination(), json.optJSONArray("hours").toBuckets())
+            DestinationDetail(json.toDestination(), json.optJSONArray("buckets").toBuckets(), json.optInt("bucket", BucketSize.HOUR.seconds))
         }
     }
+
+    /**
+     * The bars of a chart. The daemon counts by the hour of UTC; days begin
+     * where the device has them, which only this side knows.
+     */
+    private fun bars(bucket: BucketSize): String = " --bucket ${bucket.id}" +
+        if (bucket == BucketSize.DAY) " --offset ${TimeZone.getDefault().getOffset(System.currentTimeMillis()) / MILLIS_PER_SECOND}" else ""
 
     override suspend fun block(packageName: String, userId: Int, target: NetworkTarget, manual: Boolean) {
         net("block ${packageName.shellQuoted()} ${target.id.shellQuoted()}" + (if (manual) " --manual" else "") + " --user $userId")
@@ -172,6 +180,7 @@ internal class RootNetworkRepository @Inject constructor(
                 )
             },
             addresses = optJSONArray("addrs").strings(),
+            addressCount = optInt("addr_count", optJSONArray("addrs")?.length() ?: 0),
             ports = optJSONArray("ports").objects().map { port ->
                 PortActivity(
                     port = port.getInt("port"),
@@ -201,6 +210,10 @@ internal class RootNetworkRepository @Inject constructor(
     private fun JSONArray?.objects(): List<JSONObject> = if (this == null) emptyList() else List(length()) { getJSONObject(it) }
 
     private fun JSONArray?.strings(): List<String> = if (this == null) emptyList() else List(length()) { getString(it) }
+
+    private companion object {
+        const val MILLIS_PER_SECOND = 1000
+    }
 
     private inline fun <T> parsing(block: () -> T): T = try {
         block()

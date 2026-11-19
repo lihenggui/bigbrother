@@ -87,11 +87,16 @@ class DestinationViewModel @AssistedInject constructor(
     }
 
     fun refresh() {
-        val target = _uiState.value.target ?: return
+        val target = _uiState.value.target
+        if (target == null) {
+            // Not a destination this build knows: said, not waited for.
+            _uiState.update { it.copy(failure = RecordsException.CommandFailed("unknown destination").toLoadFailure()) }
+            return
+        }
         viewModelScope.launch {
             try {
                 val since = range.since(System.currentTimeMillis() / 1000)
-                val detail = networkRepository.getDestination(packageName, userId, target, since)
+                val detail = networkRepository.getDestination(packageName, userId, target, since, range.bucketSize)
                 // What blocking a domain does besides is found among the app's other destinations.
                 val activity = if (target is NetworkTarget.Domain) {
                     networkRepository.getActivity(packageName, userId, since, bucket = range.bucketSize)

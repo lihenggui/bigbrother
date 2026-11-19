@@ -168,9 +168,14 @@ private fun LazyListScope.details(
             }
         }
     }
-    item(key = "stats") { Stats(destination, state.detail?.hours.orEmpty()) }
+    item(key = "stats") { Stats(destination, state.detail?.buckets.orEmpty(), state.detail?.bucketSeconds ?: BucketSize.HOUR.seconds) }
     val site = (target as? NetworkTarget.Domain)?.name
-    val hosts = destination.hosts.takeIf { it.size > 1 || it.singleOrNull()?.name != site }.orEmpty()
+    // A site seen under its own name alone has no names to list, unless that
+    // name is blocked by itself: the rule is shown where it can be removed.
+    val hosts = destination.hosts.takeIf { hosts ->
+        val only = hosts.singleOrNull()
+        hosts.size > 1 || only?.name != site || (only?.rule != null && destination.rule == null)
+    }.orEmpty()
     if (target is NetworkTarget.Domain && hosts.isNotEmpty()) {
         item(key = "hosts") { SectionHeader(stringResource(R.string.jail_net_hosts_header), trailing = hosts.size.toString()) }
         itemsIndexed(hosts, key = { _, host -> "host:${host.name}" }) { index, host ->
@@ -203,8 +208,8 @@ private fun LazyListScope.details(
         }
     }
     if (destination.addresses.isNotEmpty()) {
-        item(key = "addresses") { SectionHeader(stringResource(R.string.jail_net_addresses_header), trailing = destination.addresses.size.toString()) }
-        item(key = "address_list") { Addresses(destination.addresses) }
+        item(key = "addresses") { SectionHeader(stringResource(R.string.jail_net_addresses_header), trailing = destination.addressCount.toString()) }
+        item(key = "address_list") { Addresses(destination.addresses, destination.addressCount) }
     }
 }
 
@@ -281,7 +286,7 @@ private fun Limit(text: String) {
 
 /** Data both ways and connections, then the hours it was reached in. */
 @Composable
-private fun Stats(destination: DestinationActivity, hours: List<ActivityBucket>) {
+private fun Stats(destination: DestinationActivity, buckets: List<ActivityBucket>, bucketSeconds: Int) {
     val numbers = NumberFormat.getIntegerInstance()
     Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
@@ -289,11 +294,11 @@ private fun Stats(destination: DestinationActivity, hours: List<ActivityBucket>)
             destination.received?.let { Stat(formatBytes(it), stringResource(R.string.jail_net_received), Modifier.weight(1f)) }
             Stat(numbers.format(destination.connections), stringResource(R.string.jail_net_connections_label), Modifier.weight(1f))
         }
-        if (hours.isNotEmpty()) {
+        if (buckets.isNotEmpty()) {
             Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceBright, modifier = Modifier.fillMaxWidth()) {
                 ActivityChart(
-                    buckets = hours,
-                    bucketSeconds = BucketSize.HOUR.seconds,
+                    buckets = buckets,
+                    bucketSeconds = bucketSeconds,
                     selected = null,
                     onSelect = null,
                     height = 36.dp,
@@ -345,14 +350,14 @@ private fun PortRow(port: PortActivity, onToggle: ((Boolean) -> Unit)?, index: I
 
 /** The first few addresses, and how many more. */
 @Composable
-private fun Addresses(addresses: List<String>) {
+private fun Addresses(addresses: List<String>, count: Int) {
     FlowRow(
         Modifier.padding(horizontal = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         addresses.take(ADDRESSES_SHOWN).forEach { Text(it, style = MaterialTheme.typography.bodyMedium) }
-        val more = addresses.size - ADDRESSES_SHOWN
+        val more = count - minOf(addresses.size, ADDRESSES_SHOWN)
         if (more > 0) {
             Text(pluralStringResource(R.plurals.jail_net_more, more, more), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }

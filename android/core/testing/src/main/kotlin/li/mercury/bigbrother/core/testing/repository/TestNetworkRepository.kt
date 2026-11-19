@@ -59,7 +59,7 @@ class TestNetworkRepository(var activity: NetworkActivity) : NetworkRepository {
         return if (until != null) period ?: activity else activity
     }
 
-    override suspend fun getDestination(packageName: String, userId: Int, target: NetworkTarget, since: Long): DestinationDetail {
+    override suspend fun getDestination(packageName: String, userId: Int, target: NetworkTarget, since: Long, bucket: BucketSize): DestinationDetail {
         check()
         val destination = (activity.domains + activity.addresses).firstOrNull { it.target == target }
             ?: throw RecordsException.CommandFailed("no such destination")
