@@ -375,6 +375,10 @@ content insert --uri content://com.android.contacts/raw_contacts --bind account_
 raw=\$(content query --uri content://com.android.contacts/raw_contacts --projection _id --where "account_type='$TEST_ACCOUNT'" | grep -o '_id=[0-9]*' | tail -n 1 | cut -d= -f2)
 content insert --uri content://com.android.contacts/data --bind raw_contact_id:i:\$raw --bind mimetype:s:vnd.android.cursor.item/name --bind data1:s:Canary
 content insert --uri content://sms/inbox --bind address:s:$TEST_NUMBER --bind body:s:canary --bind read:i:1
+# Android 17 marks messages written this way restricted, hidden from apps
+# other than the default SMS app; earlier versions have no such column, and
+# there the update fails without changing anything.
+content update --uri content://sms --bind restricted:i:0 --where "address='$TEST_NUMBER'" 2>/dev/null
 content insert --uri content://call_log/calls --bind number:s:$TEST_NUMBER --bind type:i:1 --bind duration:i:1 --bind date:l:\$(date +%s)000
 cal="content://com.android.calendar/calendars?caller_is_syncadapter=true&account_name=$TEST_ACCOUNT&account_type=LOCAL"
 content insert --uri "\$cal" --bind account_name:s:$TEST_ACCOUNT --bind account_type:s:LOCAL --bind name:s:$TEST_ACCOUNT --bind calendar_displayName:s:$TEST_ACCOUNT --bind calendar_access_level:i:700 --bind ownerAccount:s:$TEST_ACCOUNT --bind visible:i:1 --bind sync_events:i:1
