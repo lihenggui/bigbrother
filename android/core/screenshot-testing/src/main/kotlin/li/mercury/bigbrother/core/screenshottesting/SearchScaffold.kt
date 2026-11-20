@@ -14,7 +14,7 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-package li.mercury.bigbrother.feature.search.impl
+package li.mercury.bigbrother.core.screenshottesting
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
