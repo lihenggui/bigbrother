@@ -55,12 +55,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.ToggleButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -107,6 +103,7 @@ internal class FileTree(
     val volumes: List<FileNode>,
     /** Collections reached through the media library and other providers. */
     val collections: List<Access>,
+    checkActive: () -> Unit,
 ) {
     /** Folder path -> the folder, and -> the path of the folder containing it. */
     private val nodes = HashMap<String, FileNode>()
@@ -114,6 +111,7 @@ internal class FileTree(
 
     init {
         fun index(node: FileNode, parent: String) {
+            checkActive()
             nodes[node.path] = node
             parents[node.path] = parent
             node.children.forEach { index(it, node.path) }
@@ -151,19 +149,36 @@ internal class FileTree(
     }
 }
 
-/** Arranges the file records; with [readOnly], only files that were opened. */
-internal fun fileTreeOf(accesses: List<Access>, readOnly: Boolean): FileTree = FileTree(
-    volumes = buildVolumeTrees(
-        accesses.filter { it.category == Category.STORAGE && (!readOnly || it.isSuccessfulOpen()) },
-    ),
-    collections = accesses.filter { it.category == Category.PROVIDER },
-)
+internal class FileBrowser(val tree: FileTree, val readOnly: Boolean, val filtering: Boolean)
+
+/** Filters and arranges the file records before the page renders them. */
+internal fun fileBrowserOf(
+    files: List<Access>,
+    query: String = "",
+    readOnly: Boolean? = null,
+    checkActive: () -> Unit = {},
+): FileBrowser {
+    val shown = if (query.isEmpty()) {
+        files
+    } else {
+        files.filter {
+            checkActive()
+            it.path.contains(query, ignoreCase = true)
+        }
+    }
+    // Show what was read first, unless the app never opened a shared-storage file.
+    val onlyReads = readOnly ?: shown.any { it.category == Category.STORAGE && it.isSuccessfulOpen() }
+    val (storage, collections) = shown.partition { it.category == Category.STORAGE }
+    val tree = FileTree(
+        volumes = buildVolumeTrees(if (onlyReads) storage.filter { it.isSuccessfulOpen() } else storage, checkActive),
+        collections = collections,
+        checkActive = checkActive,
+    )
+    return FileBrowser(tree, onlyReads, query.isNotEmpty())
+}
 
 /** Whether a record is one of the user's files, on shared storage or through a provider. */
 internal fun Access.isFile(): Boolean = category == Category.STORAGE || category == Category.PROVIDER
-
-/** Whether the app opened any file on shared storage. */
-private fun readAnyFile(accesses: List<Access>): Boolean = accesses.any { it.category == Category.STORAGE && it.isSuccessfulOpen() }
 
 /**
  * The number for the files tab, matching what the tab opens on: the files
@@ -183,8 +198,11 @@ internal fun Access.isSuccessfulOpen(): Boolean = allowed > 0 && (action == Acti
  * ("Internal storage") instead of at `/storage`. Paths are arranged relative
  * to their volume.
  */
-private fun buildVolumeTrees(storage: List<Access>): List<FileNode> = storage
-    .groupBy { VOLUME_ROOT.find(it.path)?.value.orEmpty() }
+private fun buildVolumeTrees(storage: List<Access>, checkActive: () -> Unit): List<FileNode> = storage
+    .groupBy {
+        checkActive()
+        VOLUME_ROOT.find(it.path)?.value.orEmpty()
+    }
     .toList()
     // Internal storage first, by user number; then removable volumes.
     .sortedWith(
@@ -198,7 +216,7 @@ private fun buildVolumeTrees(storage: List<Access>): List<FileNode> = storage
         val (atRoot, below) = accesses.partition { it.path == volume }
         // Trim the volume prefix so the tree starts below it, then put
         // the full paths back: they identify the nodes.
-        val children = buildFileTree(below.map { it.copy(path = it.path.removePrefix(volume)) })
+        val children = buildFileTree(below.map { it.copy(path = it.path.removePrefix(volume)) }, checkActive)
             .map { it.rebase(volume) }
         FileNode(
             name = volume,
@@ -226,23 +244,19 @@ private fun FileNode.rebaseBelow(volume: String): FileNode = copy(path = volume 
  */
 @Composable
 internal fun FilesPage(
-    accesses: List<Access>,
-    filtering: Boolean,
+    browser: FileBrowser,
     truncated: Boolean,
     location: String,
     handleBack: Boolean,
     onNavigate: (String) -> Unit,
+    onReadOnly: (Boolean) -> Unit,
     onFileDetails: (path: String) -> Unit,
 ) {
-    // What the user came for is which files were read, so that is the
-    // default; checks and denied attempts are one tap away. An app that read
-    // none opens on everything it did, rather than on an empty list.
-    var readOnly by rememberSaveable { mutableStateOf(readAnyFile(accesses)) }
-    val tree = remember(accesses, readOnly) { fileTreeOf(accesses, readOnly) }
+    val tree = browser.tree
     val here = tree.resolve(location)
     BackHandler(enabled = handleBack && here != Location.ROOT) { onNavigate(tree.parentOf(here)) }
     Column(Modifier.fillMaxSize()) {
-        ActivityFilter(readOnly, onReadOnly = { readOnly = it })
+        ActivityFilter(browser.readOnly, onReadOnly)
         // At the top the path says nothing; it appears once inside a folder.
         if (here != Location.ROOT) Breadcrumb(tree, here, onNavigate)
         // Entering a folder slides the new list in from the end, leaving it
@@ -263,11 +277,11 @@ internal fun FilesPage(
             Listing(
                 content = tree,
                 location = shown,
-                readOnly = readOnly,
-                filtering = filtering,
+                readOnly = browser.readOnly,
+                filtering = browser.filtering,
                 truncated = truncated,
                 onNavigate = onNavigate,
-                onShowAll = { readOnly = false },
+                onShowAll = { onReadOnly(false) },
                 onFileDetails = onFileDetails,
             )
         }

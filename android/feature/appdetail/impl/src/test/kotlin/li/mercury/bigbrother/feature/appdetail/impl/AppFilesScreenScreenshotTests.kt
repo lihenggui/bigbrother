@@ -82,18 +82,18 @@ class AppFilesScreenScreenshotTests {
 
     @Test
     fun givenFilesOpened_whenLoading_thenShowsLoadingIndicator() {
-        capturePhone("AppFilesLoading") { Files { it.copy(accesses = null) } }
+        capturePhone("AppFilesLoading") { Files { it.copy(browser = null) } }
     }
 
     @Test
     fun givenLoadFailure_whenShown_thenSaysWhy() {
         val failure = DemoLoadFailure
-        capturePhone("AppFilesFailure${failure.screenshotName}") { Files { it.copy(accesses = null, failure = failure) } }
+        capturePhone("AppFilesFailure${failure.screenshotName}") { Files { it.copy(browser = null, failure = failure) } }
     }
 
     @Test
     fun givenNoFileRecords_whenShown_thenSaysNothingIsRecorded() {
-        capturePhone("AppFilesEmpty") { Files(location = null) { it.copy(accesses = emptyList()) } }
+        capturePhone("AppFilesEmpty") { Files(location = null) { it.copy(browser = fileBrowserOf(emptyList())) } }
     }
 
     @Test
@@ -156,13 +156,17 @@ class AppFilesScreenScreenshotTests {
                 AppFilesUiState(
                     packageName = app.packageName,
                     appInfo = records.appInfo.getValue(app.packageName),
-                    accesses = records.accesses(app).filter { it.isFile() },
+                    browser = fileBrowserOf(records.accesses(app).filter { it.isFile() }),
                 ),
             ),
             uid = app.uid,
             initialLocation = location,
             onBack = {},
             onRetry = {},
+            onOpenSearch = {},
+            onCloseSearch = {},
+            onQueryChange = {},
+            onReadOnly = {},
             onFileDetails = {},
             onDismissFileDetails = {},
             onOpenFile = {},

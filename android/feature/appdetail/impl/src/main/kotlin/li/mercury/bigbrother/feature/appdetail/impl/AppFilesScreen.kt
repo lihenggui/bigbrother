@@ -37,7 +37,6 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -74,6 +73,10 @@ fun AppFilesScreen(
         initialLocation = initialLocation,
         onBack = onBack,
         onRetry = viewModel::retry,
+        onOpenSearch = viewModel::openSearch,
+        onCloseSearch = viewModel::closeSearch,
+        onQueryChange = viewModel::search,
+        onReadOnly = viewModel::showReadOnly,
         onFileDetails = viewModel::showFileDetails,
         onDismissFileDetails = viewModel::dismissFileDetails,
         onOpenFile = { path ->
@@ -99,6 +102,10 @@ internal fun AppFilesScreen(
     initialLocation: String?,
     onBack: () -> Unit,
     onRetry: () -> Unit,
+    onOpenSearch: () -> Unit,
+    onCloseSearch: () -> Unit,
+    onQueryChange: (String) -> Unit,
+    onReadOnly: (Boolean) -> Unit,
     onFileDetails: (path: String) -> Unit,
     onDismissFileDetails: () -> Unit,
     onOpenFile: (path: String) -> Unit,
@@ -106,31 +113,21 @@ internal fun AppFilesScreen(
     state.fileDetails?.let { details ->
         FileDetailsSheet(details, onOpen = { onOpenFile(details.path) }, onDismiss = onDismissFileDetails)
     }
-    var searching by rememberSaveable { mutableStateOf(false) }
-    var query by rememberSaveable { mutableStateOf("") }
     var location by rememberSaveable { mutableStateOf(initialLocation ?: Location.ROOT) }
-    val closeSearch = {
-        searching = false
-        query = ""
-    }
-    BackHandler(enabled = searching, onBack = closeSearch)
-    val filtering = searching && query.isNotBlank()
-    val shown = remember(state.accesses, query, filtering) {
-        val needle = query.trim()
-        state.accesses?.filter { !filtering || it.path.contains(needle, ignoreCase = true) }
-    }
+    BackHandler(enabled = state.searching, onBack = onCloseSearch)
+    val browser = state.browser
     val background = MaterialTheme.colorScheme.surfaceContainer
     // Beside the app's page this is a pane of its own, closed rather than left.
     val beside = LocalShowsDetailBesideList.current
     Scaffold(
         containerColor = background,
         topBar = {
-            if (searching) {
+            if (state.searching) {
                 SearchTopBar(
-                    query = query,
-                    onQueryChange = { query = it },
+                    query = state.query,
+                    onQueryChange = onQueryChange,
                     placeholder = stringResource(R.string.search_paths),
-                    onClose = closeSearch,
+                    onClose = onCloseSearch,
                 )
             } else {
                 TopAppBar(
@@ -148,7 +145,7 @@ internal fun AppFilesScreen(
                         }
                     },
                     actions = {
-                        IconButton(onClick = { searching = true }) {
+                        IconButton(onClick = onOpenSearch) {
                             Icon(Icons.Filled.Search, contentDescription = stringResource(UiR.string.search))
                         }
                     },
@@ -164,16 +161,16 @@ internal fun AppFilesScreen(
             when {
                 state.failure != null -> LoadFailureMessage(state.failure, onRetry)
 
-                shown == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
+                browser == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
 
                 else -> FilesPage(
-                    accesses = shown,
-                    filtering = filtering,
+                    browser = browser,
                     truncated = state.truncated,
                     location = location,
                     // Back goes up a folder, once search is closed.
-                    handleBack = !searching,
+                    handleBack = !state.searching,
                     onNavigate = { location = it },
+                    onReadOnly = onReadOnly,
                     onFileDetails = onFileDetails,
                 )
             }

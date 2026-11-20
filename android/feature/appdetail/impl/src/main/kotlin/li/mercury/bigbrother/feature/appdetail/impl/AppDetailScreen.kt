@@ -26,7 +26,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -109,7 +108,7 @@ fun AppDetailScreen(
 }
 
 /** One row of the page, in order. */
-private sealed interface Item {
+internal sealed interface Item {
     val key: String
 
     data class Header(val title: Int, val lastSeen: Long?, val category: DataCategory? = null) : Item {
@@ -144,15 +143,21 @@ private sealed interface Item {
 /** Folders named before the rest of the files are left to the browser. */
 private const val FOLDERS_SHOWN = 3
 
-@Composable
-private fun buildItems(state: AppDetailUiState, accesses: List<Access>): List<Item> {
-    val files = remember(accesses) { accesses.filter { it.isFile() } }
-    val folders = remember(files) { topFolders(files, FOLDERS_SHOWN) }
-    val totals = remember(files) { fileTotals(files) }
-    val collections = remember(files) { files.filter { it.category == Category.PROVIDER } }
-    val categories = remember(accesses) { groupByCategory(accesses) }
-    val info = infoRows(state.app, state.packageDetails)
-    return buildList {
+internal class AppDetailRecords(val items: List<Item>, val empty: Boolean) {
+    private val sectionIndices = items.mapIndexedNotNull { index, item ->
+        (item as? Item.Header)?.category?.let { it.name to index }
+    }.toMap()
+
+    fun indexOf(category: String): Int? = sectionIndices[category]
+}
+
+internal fun summarizeAccesses(accesses: List<Access>): AppDetailRecords {
+    val files = accesses.filter { it.isFile() }
+    val folders = topFolders(files, FOLDERS_SHOWN)
+    val totals = fileTotals(files)
+    val collections = files.filter { it.category == Category.PROVIDER }
+    val categories = groupByCategory(accesses)
+    val items = buildList {
         if (files.isNotEmpty()) {
             add(Item.Header(DataCategory.FILES.title, files.maxOf { it.lastSeen }, DataCategory.FILES))
             val count = folders.size + collections.size + 1
@@ -164,6 +169,14 @@ private fun buildItems(state: AppDetailUiState, accesses: List<Access>): List<It
             add(Item.Header(category.title, groups.maxOf { it.lastSeen }, category))
             groups.forEachIndexed { i, group -> add(Item.Topic(group, i, groups.size)) }
         }
+    }
+    return AppDetailRecords(items, accesses.isEmpty())
+}
+
+@Composable
+private fun buildInfoItems(state: AppDetailUiState): List<Item> {
+    val info = infoRows(state.app, state.packageDetails)
+    return buildList {
         if (info.isNotEmpty()) {
             add(Item.Header(R.string.tab_info, null))
             info.forEachIndexed { i, (label, value) -> add(Item.Info(label, value, i, info.size)) }
@@ -247,15 +260,15 @@ internal fun AppDetailScreen(
             )
         },
     ) { padding ->
-        val accesses = state.accesses
+        val records = state.records
         when {
             state.failure != null -> LoadFailureMessage(state.failure, onRetry, Modifier.padding(padding))
 
-            accesses == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize().padding(padding))
+            records == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize().padding(padding))
 
             else -> Summary(
-                items = buildItems(state, accesses),
-                empty = accesses.isEmpty(),
+                records = records,
+                info = buildInfoItems(state),
                 truncated = state.truncated,
                 padding = padding,
                 focusCategory = focusCategory,
@@ -271,8 +284,8 @@ internal fun AppDetailScreen(
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun Summary(
-    items: List<Item>,
-    empty: Boolean,
+    records: AppDetailRecords,
+    info: List<Item>,
     truncated: Boolean,
     padding: PaddingValues,
     focusCategory: String?,
@@ -284,10 +297,9 @@ private fun Summary(
     val listState = rememberLazyListState()
     // Opened for one kind of data, the page starts at it, once.
     var focused by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(items, focusCategory) {
+    LaunchedEffect(records, focusCategory) {
         if (focused || focusCategory == null) return@LaunchedEffect
-        val index = items.indexOfFirst { it is Item.Header && it.category?.name == focusCategory }
-        if (index >= 0) listState.scrollToItem(index)
+        records.indexOf(focusCategory)?.let { listState.scrollToItem(it) }
         focused = true
     }
     val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
@@ -303,12 +315,14 @@ private fun Summary(
         ),
         verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
     ) {
-        if (empty) {
+        if (records.empty) {
             item(key = "empty") {
                 Message(stringResource(UiR.string.empty_title), "", Modifier.fillParentMaxHeight(0.7f))
             }
         }
-        items(items, key = { it.key }) { item ->
+        fun itemAt(index: Int) = records.items.getOrNull(index) ?: info[index - records.items.size]
+        items(records.items.size + info.size, key = { itemAt(it).key }) { index ->
+            val item = itemAt(index)
             val modifier = Modifier.animatedRow(this, motion)
             when (item) {
                 is Item.Header -> SectionHeader(
