@@ -192,13 +192,9 @@ internal class RootNetworkRepository @Inject constructor(
             val addr = getString("addr")
             NetworkTarget.Address(if (addr.contains(':')) addr.lowercase() else addr)
         }
-        val hosts = optJSONArray("hosts")
         return DestinationActivity(
             target = target,
-            hosts = List(hosts?.length() ?: 0) { index ->
-                // A name without counts of its own is still a name seen.
-                val host = hosts!!.optJSONObject(index)
-                    ?: return@List HostActivity(hosts.getString(index), connections = 0, refused = 0, sent = null, received = null)
+            hosts = optJSONArray("hosts").objects().map { host ->
                 HostActivity(
                     name = host.getString("name"),
                     connections = host.optInt("conn"),

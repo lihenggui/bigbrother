@@ -1575,17 +1575,8 @@ impl Reader {
     }
 
     /// The periods one app had sensors on that overlap the time from
-    /// `since`, most recent start first. Empty for a database the daemon has
-    /// not brought to this version yet.
+    /// `since`, most recent start first.
     pub fn sensor_sessions(&self, uid: u32, since: i64) -> anyhow::Result<Vec<SensorSessionRow>> {
-        let exists: bool = self.conn.query_row(
-            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE name = 'sensor_session')",
-            [],
-            |r| r.get(0),
-        )?;
-        if !exists {
-            return Ok(Vec::new());
-        }
         let mut stmt = self.conn.prepare(
             "SELECT sensor, continuous, period_ns, start_ts, end_ts FROM sensor_session
              WHERE uid = ?1 AND (end_ts IS NULL OR end_ts >= ?2)
