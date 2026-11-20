@@ -300,6 +300,7 @@ leave_by_uninstalling() {
 # Start the canary and wait for its report. Sets `view`: the lines
 # `<key>=<value>` it reported about what it sees.
 run_canary() {
+    local key="$subject"
     adb shell am force-stop "$PACKAGE"
     adb logcat -c
     # Each start finds a fresh location from the test provider.
@@ -308,6 +309,11 @@ run_canary() {
     fi
     launch_and_wait_for_canary 90 --es ops "android:camera" || return 1
     view="$(sed -n 's/.*BigBrotherCanary: sandbox //p' <<<"$canary_log")"
+    [[ "$subject" != camera ]] || key=ops
+    if [[ -z "$(seen "$key")" ]]; then
+        canary_error="the canary did not report $key"
+        return 1
+    fi
 }
 
 # The value the canary reported for key $1.

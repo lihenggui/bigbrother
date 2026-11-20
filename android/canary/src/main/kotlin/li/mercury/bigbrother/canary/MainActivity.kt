@@ -46,6 +46,7 @@ import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.provider.Settings
 import android.provider.Telephony
+import android.system.Os
 import android.util.Log
 import android.widget.ScrollView
 import android.widget.TextView
@@ -318,15 +319,17 @@ class MainActivity : Activity() {
         }
         val bound = bindService(Intent(this, IsolatedProbe::class.java), connection, BIND_AUTO_CREATE)
         try {
-            when {
-                !bound -> report("probe failed: could not bind the isolated probe")
-
-                !reported.await(ISOLATED_WAIT_S, TimeUnit.SECONDS) -> report("probe failed: the isolated probe did not connect")
-
-                // The service publishes its binder after logging the results.
-                // Report completion before the synchronous service teardown.
-                else -> report("done")
+            val status = when {
+                !bound -> "probe failed: could not bind the isolated probe"
+                !reported.await(ISOLATED_WAIT_S, TimeUnit.SECONDS) -> "probe failed: the isolated probe did not connect"
+                else -> "done"
             }
+            // Logcat can lose the last line. Publish only the outcome, atomically,
+            // after the observations and before synchronous service teardown.
+            val temp = File(filesDir, "probe-status.tmp")
+            temp.writeText(status)
+            Os.rename(temp.path, File(filesDir, "probe-status").path)
+            report(status)
         } finally {
             unbindService(connection)
         }
