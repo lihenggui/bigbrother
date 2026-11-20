@@ -18,40 +18,52 @@ package li.mercury.bigbrother.canary
 
 import android.app.Service
 import android.content.Intent
-import android.os.Binder
+import android.os.Bundle
+import android.os.Handler
 import android.os.IBinder
+import android.os.Message
+import android.os.Messenger
+import android.os.RemoteException
 import android.provider.Settings
-import android.util.Log
 import java.io.File
 
 /**
  * Runs in an isolated process: a uid of its own, outside the app's, as a
- * sandboxed renderer does. Reports, as `sandbox isolated_<key>=<value>`
- * lines, what such a process of the app can see, for
- * `scripts/check-sandbox.sh`.
+ * sandboxed renderer does. Its observations reach the activity over Binder,
+ * so the activity can publish them with the rest of the test result.
  */
 class IsolatedProbe : Service() {
     override fun onBind(intent: Intent): IBinder {
-        view("cpu_named") {
-            File("/proc/cpuinfo").readLines().any { line -> CPU_NAMING_KEYS.any { line.startsWith(it) } }
+        val observations = Bundle().apply {
+            view("cpu_named") {
+                File("/proc/cpuinfo").readLines().any { line -> CPU_NAMING_KEYS.any { line.startsWith(it) } }
+            }
+            view("storage") { File(SHARED).list()?.sorted()?.joinToString(",") }
+            view("marker") { File(SHARED, "Download/$MARKER").readText().trim() }
+            view("android_id") { Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) }
         }
-        view("storage") { File(SHARED).list()?.sorted()?.joinToString(",") }
-        view("marker") { File(SHARED, "Download/$MARKER").readText().trim() }
-        view("android_id") { Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) }
-        return Binder()
+        return Messenger(
+            Handler(mainLooper) { request ->
+                try {
+                    request.replyTo?.send(Message.obtain().apply { data = observations })
+                } catch (_: RemoteException) {
+                    // The requesting activity has already gone away.
+                }
+                true
+            },
+        ).binder
     }
 
-    private fun view(key: String, value: () -> Any?) {
+    private fun Bundle.view(key: String, value: () -> Any?) {
         val seen = try {
             value().toString()
         } catch (e: Throwable) {
             "refused:${e.javaClass.simpleName}"
         }
-        Log.i(TAG, "sandbox isolated_$key=$seen")
+        putString("isolated_$key", seen)
     }
 
     private companion object {
-        const val TAG = "BigBrotherCanary"
         const val SHARED = "/storage/emulated/0"
         const val MARKER = "bb_sandbox_marker.txt"
         val CPU_NAMING_KEYS = listOf("model name", "Hardware", "CPU part", "vendor_id")

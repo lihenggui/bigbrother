@@ -308,7 +308,7 @@ run_canary() {
         as_shell cmd location providers set-test-provider-location gps --location 52.52,13.405 --accuracy 5
     fi
     launch_and_wait_for_canary 90 --es ops "android:camera" || return 1
-    view="$(sed -n 's/.*BigBrotherCanary: sandbox //p' <<<"$canary_log")"
+    view="$canary_view"
     [[ "$subject" != camera ]] || key=ops
     if [[ -z "$(seen "$key")" ]]; then
         canary_error="the canary did not report $key"
