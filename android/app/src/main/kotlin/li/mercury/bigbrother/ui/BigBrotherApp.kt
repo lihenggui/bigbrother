@@ -27,9 +27,12 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.History
@@ -38,10 +41,13 @@ import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.SpaceDashboard
 import androidx.compose.material3.Badge
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SearchBarDefaults
+import androidx.compose.material3.ShortNavigationBarDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
 import androidx.compose.material3.adaptive.WindowAdaptiveInfo
@@ -50,6 +56,7 @@ import androidx.compose.material3.adaptive.layout.PaneScaffoldDirective
 import androidx.compose.material3.adaptive.layout.calculatePaneScaffoldDirective
 import androidx.compose.material3.adaptive.navigation3.rememberListDetailSceneStrategy
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuite
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteDefaults
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteItem
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffoldDefaults
@@ -171,7 +178,7 @@ fun BigBrotherApp(recordingStopped: Boolean, modifier: Modifier = Modifier) {
     )
 }
 
-@OptIn(ExperimentalMaterial3AdaptiveApi::class)
+@OptIn(ExperimentalMaterial3AdaptiveApi::class, ExperimentalMaterial3Api::class)
 @Composable
 internal fun BigBrotherNavigation(
     recordingStopped: Boolean,
@@ -281,7 +288,12 @@ internal fun BigBrotherNavigation(
                 directive = directive,
                 showSearch = showSearch || previousShowsSearch == true || searchVisibility.value > 0f,
                 topBar = {
-                    Box(Modifier.revealBar(searchVisibility, top = true)) {
+                    // Reserve system space outside the clipped reveal.
+                    Box(
+                        Modifier
+                            .windowInsetsPadding(SearchBarDefaults.windowInsets.only(WindowInsetsSides.Top))
+                            .revealBar(searchVisibility, top = true),
+                    ) {
                         searchBar(navigator)
                     }
                 },
@@ -306,6 +318,8 @@ internal fun BigBrotherNavigation(
     }
 
     if (isBar) {
+        val navigationColors = NavigationSuiteDefaults.colors()
+        val bottomInsets = ShortNavigationBarDefaults.windowInsets.only(WindowInsetsSides.Bottom)
         val showBar = navigationState.currentKey in topLevelKeys
         val previousShowsBar = previousScene?.let { previousEntries.lastOrNull()?.contentKey in rootKeys }
         val barVisibility = rememberBarVisibility(showBar, previousShowsBar, progress)
@@ -317,7 +331,11 @@ internal fun BigBrotherNavigation(
                 if (showBar || previousShowsBar == true || barVisibility.value > 0f) {
                     NavigationSuite(
                         navigationSuiteType = suiteType,
-                        modifier = Modifier.revealBar(barVisibility, top = false),
+                        colors = navigationColors,
+                        modifier = Modifier
+                            .background(navigationColors.shortNavigationBarContainerColor)
+                            .windowInsetsPadding(bottomInsets)
+                            .revealBar(barVisibility, top = false),
                         content = navigationItems,
                     )
                 }
