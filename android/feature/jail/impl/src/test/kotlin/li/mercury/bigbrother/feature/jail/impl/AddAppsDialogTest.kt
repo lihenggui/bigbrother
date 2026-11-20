@@ -25,6 +25,8 @@ import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.text.AnnotatedString
+import androidx.lifecycle.SavedStateHandle
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import li.mercury.bigbrother.core.testing.repository.TestInstalledAppRepository
 import li.mercury.bigbrother.core.testing.repository.TestSandboxRepository
@@ -45,12 +47,15 @@ class AddAppsDialogTest {
     fun givenListNotWorkedOutYet_whenTyped_thenFieldKeepsTextAndListFollowsIt() {
         // Runs only when told to: the list is not worked out while typing.
         val filtering = StandardTestDispatcher()
+        val sandboxRepository = TestSandboxRepository()
+        runBlocking { sandboxRepository.refresh() }
         val viewModel = AddAppsViewModel(
             installedAppRepository = TestInstalledAppRepository(
                 apps = listOf(installed(10187, "com.example.weather", "Weather"), installed(10156, "com.example.notes", "Notes")),
             ),
-            sandboxRepository = TestSandboxRepository(),
+            sandboxRepository = sandboxRepository,
             userDataRepository = TestUserDataRepository(),
+            savedStateHandle = SavedStateHandle(),
             ownPackage = "li.mercury.bigbrother",
             defaultDispatcher = filtering,
         )
