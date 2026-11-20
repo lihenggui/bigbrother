@@ -40,6 +40,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.test.core.app.ApplicationProvider
+import kotlinx.coroutines.Dispatchers
 import li.mercury.bigbrother.core.data.repository.AppInfoRepository
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.PackageDetails
@@ -136,6 +137,7 @@ class ListDetailScreenshotTests {
             AppDetailViewModel(
                 accessRepository = TestAccessRepository(apps = records.apps, accesses = records.accesses(DemoApp.WEATHER)),
                 appInfoRepository = appInfoRepository,
+                defaultDispatcher = Dispatchers.Unconfined,
                 uid = DemoApp.WEATHER.uid,
                 packageName = DemoApp.WEATHER.packageName,
                 range = TimeRange.DAY,
