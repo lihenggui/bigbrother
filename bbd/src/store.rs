@@ -792,23 +792,40 @@ impl Writer {
     /// before, which is nowhere else once they are changed. It must survive
     /// the daemon stopping, and the power going, right after.
     pub fn put_sandbox(&self, entry: &SandboxEntry) -> anyhow::Result<()> {
+        self.write_sandbox(|tx| Self::write_sandbox_entry(tx, entry))
+    }
+
+    /// Take an old installation out and discard the network state tied to
+    /// its UID together, so that either both are done or retirement can be
+    /// tried again on the next check for a changed installation.
+    pub fn retire_sandbox(&self, entry: &SandboxEntry) -> anyhow::Result<()> {
+        let mut retired = entry.clone();
+        retired.enabled = false;
         self.write_sandbox(|tx| {
-            tx.execute(
-                "INSERT INTO sandbox (uid, package, enabled, android_id, saved_ops, saved_permissions,
-                                      created, settings, install_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-                 ON CONFLICT (uid) DO UPDATE SET
-                     package = excluded.package, enabled = excluded.enabled,
-                     android_id = excluded.android_id, saved_ops = excluded.saved_ops,
-                     saved_permissions = excluded.saved_permissions,
-                     created = excluded.created, settings = excluded.settings, install_id = excluded.install_id",
-                params![
-                    entry.uid, entry.package, entry.enabled, entry.android_id, entry.saved_ops,
-                    entry.saved_permissions, entry.created, entry.settings, entry.install_id,
-                ],
-            )?;
+            Self::write_sandbox_entry(tx, &retired)?;
+            Self::delete_net_for_uid(tx, entry.uid)?;
             Ok(())
-        })
+        })?;
+        self.forget_pending_net(entry.uid);
+        Ok(())
+    }
+
+    fn write_sandbox_entry(tx: &Transaction<'_>, entry: &SandboxEntry) -> anyhow::Result<()> {
+        tx.execute(
+            "INSERT INTO sandbox (uid, package, enabled, android_id, saved_ops, saved_permissions,
+                                  created, settings, install_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ON CONFLICT (uid) DO UPDATE SET
+                 package = excluded.package, enabled = excluded.enabled,
+                 android_id = excluded.android_id, saved_ops = excluded.saved_ops,
+                 saved_permissions = excluded.saved_permissions,
+                 created = excluded.created, settings = excluded.settings, install_id = excluded.install_id",
+            params![
+                entry.uid, entry.package, entry.enabled, entry.android_id, entry.saved_ops,
+                entry.saved_permissions, entry.created, entry.settings, entry.install_id,
+            ],
+        )?;
+        Ok(())
     }
 
     /// Sync the WAL at commit, even when readers prevent a checkpoint.

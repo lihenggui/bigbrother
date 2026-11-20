@@ -388,7 +388,10 @@ mod tests {
             items::{Item, Mode},
             tests::Fixture as SandboxFixture,
         },
-        store::Writer,
+        store::{
+            Counters, Reader, Writer,
+            net::{NetKey, NetSeen},
+        },
     };
 
     #[derive(Default)]
@@ -540,6 +543,133 @@ mod tests {
             .enable(&f.writer, &mut f.packages, "com.app", 0, 1000)
             .unwrap();
         (sandbox, kernel)
+    }
+
+    #[test]
+    fn a_failed_network_cleanup_keeps_uid_retirement_retryable() {
+        let mut f = SandboxFixture::new("sandbox-retire-net");
+        let names = Arc::new(Names::default());
+        let ip = "203.0.113.7".parse().unwrap();
+        names.learn(10100, "blocked.example", &[ip]);
+        let (mut sandbox, kernel) = sandbox_with_filter(&mut f, names.clone());
+        let target = "domain:blocked.example";
+        let key = bytes(&key(10100, (ip, None)));
+        sandbox
+            .net_block(&f.writer, &mut f.packages, "com.app", 0, target, true)
+            .unwrap();
+        let rule = f.writer.net_rules().unwrap();
+        let original = f.writer.sandbox_entry(10100).unwrap().unwrap();
+        let record = |writer: &mut Writer, uid, host: &str| {
+            writer.net_record(
+                NetKey {
+                    uid,
+                    hour: 0,
+                    host: host.into(),
+                    addr: ip.to_string(),
+                    port: 443,
+                },
+                NetSeen {
+                    conn: 1,
+                    ..NetSeen::default()
+                },
+                1000,
+            );
+        };
+        record(&mut f.writer, 10100, "saved.example");
+        record(&mut f.writer, 10200, "other.example");
+        f.writer.flush(&Counters::default(), 1000).unwrap();
+        f.writer.set_net_recording(&[10100, 10200], 1000).unwrap();
+        record(&mut f.writer, 10100, "buffered.example");
+
+        let db = f.dir.join("bb.db");
+        let connection = rusqlite::Connection::open(&db).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TRIGGER fail_retired_rule_delete BEFORE DELETE ON net_rule
+             BEGIN SELECT RAISE(FAIL, 'injected rule delete failure'); END;",
+            )
+            .unwrap();
+        std::fs::write(
+            f.dir.join("packages.list"),
+            "com.successor 10100 0 /d x\ncom.shared.one 10200 0 /d x\n",
+        )
+        .unwrap();
+        sandbox.release_reassigned(&f.writer, &mut f.packages);
+        let reloaded = Writer::open(&db).unwrap();
+        assert_eq!(
+            reloaded.sandbox_entry(10100).unwrap(),
+            Some(original.clone())
+        );
+        assert!(sandbox.snapshot().read().unwrap().contains_key(&10100));
+        assert!(kernel.borrow().rules.contains(&key));
+        assert_eq!(reloaded.net_rules().unwrap(), rule);
+        assert_eq!(reloaded.net_recording().unwrap().get(&10100), Some(&1000));
+        let reader = Reader::open(&db).unwrap();
+        assert_eq!(reader.net_rows(10100, 0, 3600).unwrap().len(), 1);
+        f.writer.flush(&Counters::default(), 1001).unwrap();
+        assert_eq!(reader.net_rows(10100, 0, 3600).unwrap().len(), 2);
+        record(&mut f.writer, 10100, "pending.example");
+
+        connection
+            .execute_batch("DROP TRIGGER fail_retired_rule_delete")
+            .unwrap();
+        sandbox.release_reassigned(&f.writer, &mut f.packages);
+        let retired = Entry {
+            enabled: false,
+            ..original
+        };
+        assert_eq!(reloaded.sandbox_entry(10100).unwrap(), Some(retired));
+        assert!(reloaded.net_rules().unwrap().is_empty());
+        assert!(!reloaded.net_recording().unwrap().contains_key(&10100));
+        assert_eq!(reloaded.net_recording().unwrap().get(&10200), Some(&1000));
+        assert!(!kernel.borrow().rules.contains(&key));
+        assert!(!names.refused(10100, ip));
+        f.writer.flush(&Counters::default(), 1002).unwrap();
+        assert!(reader.net_rows(10100, 0, 3600).unwrap().is_empty());
+        assert_eq!(reader.net_rows(10200, 0, 3600).unwrap().len(), 1);
+
+        let mut restarted = f.sandbox();
+        let Fixture {
+            mut effect, kernel, ..
+        } = fixture_with(restarted.book());
+        effect.with_names(names.clone());
+        restarted.add_effect(Box::new(effect));
+        names.learn(10100, "blocked.example", &[ip]);
+        restarted
+            .enable(&f.writer, &mut f.packages, "com.successor", 0, 1003)
+            .unwrap();
+        assert!(!kernel.borrow().rules.contains(&key));
+    }
+
+    #[test]
+    fn disabling_the_same_installation_keeps_its_rules_for_the_next_enable() {
+        let mut f = SandboxFixture::new("sandbox-disable-net");
+        let names = Arc::new(Names::default());
+        let ip = "203.0.113.7".parse().unwrap();
+        names.learn(10100, "blocked.example", &[ip]);
+        let (mut sandbox, kernel) = sandbox_with_filter(&mut f, names);
+        let key = bytes(&key(10100, (ip, None)));
+        sandbox
+            .net_block(
+                &f.writer,
+                &mut f.packages,
+                "com.app",
+                0,
+                "domain:blocked.example",
+                true,
+            )
+            .unwrap();
+        let rules = f.writer.net_rules().unwrap();
+        sandbox
+            .disable(&f.writer, &mut f.packages, "com.app", 0)
+            .unwrap();
+        assert!(!kernel.borrow().rules.contains(&key));
+        assert_eq!(f.writer.net_rules().unwrap(), rules);
+        sandbox
+            .enable(&f.writer, &mut f.packages, "com.app", 0, 1001)
+            .unwrap();
+        assert!(kernel.borrow().rules.contains(&key));
+        assert_eq!(f.writer.net_rules().unwrap(), rules);
     }
 
     #[test]
