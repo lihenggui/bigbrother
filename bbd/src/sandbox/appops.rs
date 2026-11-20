@@ -413,6 +413,11 @@ impl Shared {
                 state.checking_until = Some(Instant::now() + ANSWER_WAIT);
             }
             state.send_pending_verifications();
+        } else if let Some(found) = found_in(line) {
+            self.state().found.push(found);
+            if let Some(wake) = self.on_found.get() {
+                wake();
+            }
         } else if let Some((uid, answer)) = parse_line(line) {
             let mut state = self.state();
             state.send_pending_verifications();
@@ -428,11 +433,6 @@ impl Shared {
             }
             drop(state);
             self.changed.notify_all();
-        } else if let Some(found) = found_in(line) {
-            self.state().found.push(found);
-            if let Some(wake) = self.on_found.get() {
-                wake();
-            }
         }
     }
 
@@ -2048,12 +2048,16 @@ mod tests {
             ..sandboxed(10100)
         };
         let mut entries = HashMap::from([(10100, entry), (10101, sandboxed(10101))]);
-        appops.shared.state().found.extend([
-            (10100, format!("{FINE}=granted+user_set")),
-            // Not taken from this one, nor is there an entry for the last.
-            (10101, format!("{FINE}=granted")),
-            (10102, format!("{FINE}=granted")),
-        ]);
+        appops
+            .shared
+            .receive(&format!("reverted 10100 {FINE}=granted+user_set"));
+        // Not taken from this one, nor is there an entry for the last.
+        appops
+            .shared
+            .receive(&format!("reverted 10101 {FINE}=granted"));
+        appops
+            .shared
+            .receive(&format!("reverted 10102 {FINE}=granted"));
 
         assert_eq!(appops.found(&mut entries), [10100]);
         assert!(appops.shared.state().found.is_empty());
