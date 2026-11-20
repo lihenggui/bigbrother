@@ -121,6 +121,15 @@ uid="$(adb shell cmd package list packages -U "$PACKAGE" | tr -d '\r' | sed -n '
     exit 2
 }
 
+# The daemon watches most service calls only once it has the device's
+# transaction codes, which it looks up after it starts (coverage_binder -1
+# until then, retried every 30 s): a canary run before would miss them.
+for ((i = 0; i < 120; i++)); do
+    [[ "$(as_root "$BBD stats")" == *'"coverage_binder":-1'* ]] || break
+    sleep 1
+done
+((i < 120)) || echo "warning: the daemon has not looked up the service calls yet" >&2
+
 echo "coverage reported by the daemon:"
 as_root "$BBD stats" | tr ',' '\n' | grep -o '"coverage_[a-z]*":[01]' | sed 's/^/  /' || true
 
