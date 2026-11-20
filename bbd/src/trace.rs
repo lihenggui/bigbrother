@@ -1385,7 +1385,7 @@ impl Tracer {
         let ts = clock.unix_secs(hdr.boot_ns());
         match hdr.kind {
             EV_FILE => {
-                let Some(ev) = read_event::<FileEvent>(bytes) else {
+                let Some((ev, components)) = FileEvent::read(bytes) else {
                     return;
                 };
                 self.counters.seen += 1;
@@ -1397,7 +1397,7 @@ impl Tracer {
                     self.explain("file");
                     return;
                 }
-                let Some(path) = self.file_path(&ev) else {
+                let Some(path) = self.file_path(&ev, components) else {
                     self.counters.unresolved += 1;
                     self.explain("file");
                     return;
@@ -1780,8 +1780,8 @@ impl Tracer {
     }
 
     /// Absolute path of the file a `FileEvent` describes.
-    fn file_path(&mut self, ev: &FileEvent) -> Option<String> {
-        let relative = join_components(&ev.data[..(ev.data_len as usize).min(ev.data.len())]);
+    fn file_path(&mut self, ev: &FileEvent, components: &[u8]) -> Option<String> {
+        let relative = join_components(components);
         let base = match ev.magic {
             PROC_SUPER_MAGIC => "/proc",
             SYSFS_MAGIC => "/sys",

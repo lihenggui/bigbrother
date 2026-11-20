@@ -32,16 +32,13 @@ pub const COMPONENT_CHARS: usize = 7;
 /// characters of a path component, NUL padded; `expected` must be given
 /// truncated to the same length.
 #[inline(always)]
-pub fn component_is(name: &[u8; 8], expected: &[u8]) -> bool {
-    let mut i = 0;
-    while i < 8 {
-        let want = if i < expected.len() { expected[i] } else { 0 };
-        if name[i] != want {
-            return false;
-        }
-        i += 1;
-    }
-    true
+pub fn component_is<const N: usize>(name: &[u8; 8], expected: &[u8; N]) -> bool {
+    const { assert!(N <= COMPONENT_CHARS) };
+    // Each literal becomes a single word comparison in BPF. Branching on
+    // each byte multiplies the verifier's work after the bounded path walk.
+    let mut padded = [0; 8];
+    padded[..N].copy_from_slice(expected);
+    u64::from_le_bytes(*name) == u64::from_le_bytes(padded)
 }
 
 /// `top` is the first component below /proc of a system-wide entry.
