@@ -193,9 +193,10 @@ class NetworkActivityViewModel @AssistedInject constructor(
 
     /** Lists the destinations of the bar from [start], or with null of the whole range again. */
     fun selectBucket(start: Long?) {
-        val chosen = start.takeIf { it != load.value.bucket }
+        val shown = load.value
+        val chosen = start.takeIf { it != shown.bucket }
         load.update { it.copy(bucket = chosen, period = null) }
-        if (chosen != null) read()
+        if (chosen != null) read(shown.activity)
     }
 
     fun setBlockedOnly(on: Boolean) {
@@ -267,21 +268,26 @@ class NetworkActivityViewModel @AssistedInject constructor(
         load.update { it.copy(error = null) }
     }
 
-    private fun read() {
+    private fun read(shown: NetworkActivity? = null) {
         reading?.cancel()
         reading = viewModelScope.launch {
             val state = load.value
             try {
-                val now = System.currentTimeMillis() / 1000
-                val activity = networkRepository.getActivity(packageName, userId, state.range.since(now), bucket = state.range.bucketSize)
-                val bucket = state.bucket
-                val period = bucket?.let {
-                    networkRepository.getActivity(packageName, userId, it, it + activity.bucketSeconds, state.range.bucketSize)
+                val activity = shown ?: networkRepository.getActivity(packageName, userId, state.range.since(now()), bucket = state.range.bucketSize)
+                val index = activity.buckets.indexOfFirst { it.start == state.bucket }
+                val period = if (index == -1) {
+                    null
+                } else {
+                    val since = maxOf(activity.since, activity.buckets[index].start)
+                    val until = activity.buckets.getOrNull(index + 1)?.start ?: activity.until
+                    networkRepository.getActivity(packageName, userId, since, until, state.range.bucketSize, activity.zone)
                 }
                 load.update { current ->
+                    val bucket = current.bucket.takeIf { it == state.bucket && period != null }
                     current.copy(
                         activity = activity,
-                        period = period,
+                        bucket = bucket,
+                        period = period.takeIf { bucket != null },
                         failure = null,
                         // Rules added elsewhere join those the filter lists.
                         blockedShown = if (current.blockedOnly) current.blockedShown + activity.rules.map { it.target } else emptySet(),

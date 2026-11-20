@@ -362,6 +362,8 @@ connection ends, the kernel's own counts
 of the bytes sent and received over it are read once and added to the row;
 nothing is counted packet by packet, and other protocols have connection
 counts only. The rows are kept 30 days, apart from the other records.
+The daily charts follow the device's local dates. Each recorded UTC hour
+stays together in the day in which the hour began.
 
 ### The resolver
 

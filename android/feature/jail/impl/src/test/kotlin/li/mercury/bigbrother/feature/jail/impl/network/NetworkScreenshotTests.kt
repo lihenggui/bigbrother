@@ -16,18 +16,26 @@
 
 package li.mercury.bigbrother.feature.jail.impl.network
 
+import android.content.res.Configuration
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.unit.dp
+import li.mercury.bigbrother.core.model.ActivityBucket
+import li.mercury.bigbrother.core.model.BucketSize
 import li.mercury.bigbrother.core.model.DestinationDetail
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.NetworkActivity
@@ -55,7 +63,10 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.annotation.LooperMode
+import java.time.Instant
+import java.time.ZoneId
 import java.util.Locale
+import java.util.TimeZone
 
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -146,6 +157,42 @@ class NetworkScreenshotTests {
     }
 
     // The activity.
+
+    @Test
+    @Config(qualifiers = "en-rUS")
+    fun givenDailyChart_whenZoneAndLocaleDiffer_thenLabelsUseChartZoneAndComposeLocale() {
+        val zone = ZoneId.of("America/Los_Angeles")
+        val first = Instant.parse("2026-03-08T08:00:00Z").epochSecond
+        val next = Instant.parse("2026-03-09T07:00:00Z").epochSecond
+        val previousZone = TimeZone.getDefault()
+        TimeZone.setDefault(TimeZone.getTimeZone("Pacific/Honolulu"))
+        try {
+            composeTestRule.setContent {
+                MaterialTheme {
+                    Column {
+                        ActivityChart(
+                            buckets = listOf(ActivityBucket(first, 1, 0), ActivityBucket(next, 2, 0)),
+                            bucketSeconds = BucketSize.DAY.seconds,
+                            zone = zone,
+                            selected = first,
+                            onSelect = null,
+                        )
+                        Text(periodLabel(first, BucketSize.DAY.seconds, zone))
+                        val chinese = Configuration(LocalConfiguration.current).apply { setLocale(Locale.SIMPLIFIED_CHINESE) }
+                        CompositionLocalProvider(LocalConfiguration provides chinese) {
+                            Text(periodLabel(first, BucketSize.DAY.seconds, zone))
+                        }
+                    }
+                }
+            }
+
+            composeTestRule.onAllNodesWithText("3月8日").assertCountEquals(1)
+            composeTestRule.onAllNodesWithText("Mar 8").assertCountEquals(2)
+            composeTestRule.onAllNodesWithText("Mar 9").assertCountEquals(1)
+        } finally {
+            TimeZone.setDefault(previousZone)
+        }
+    }
 
     @Test
     fun givenDayOfActivity_whenShown_thenSummaryChartAndGroupedLists() {

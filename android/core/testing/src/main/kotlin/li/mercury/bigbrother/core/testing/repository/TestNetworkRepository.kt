@@ -25,6 +25,7 @@ import li.mercury.bigbrother.core.model.BucketSize
 import li.mercury.bigbrother.core.model.DestinationDetail
 import li.mercury.bigbrother.core.model.NetworkActivity
 import li.mercury.bigbrother.core.model.NetworkTarget
+import java.time.ZoneId
 
 /**
  * One app's network activity kept in memory, [activity], whatever range is
@@ -53,17 +54,17 @@ class TestNetworkRepository(var activity: NetworkActivity) : NetworkRepository {
     private val _changes = MutableStateFlow(0)
     override val changes: StateFlow<Int> = _changes
 
-    override suspend fun getActivity(packageName: String, userId: Int, since: Long, until: Long?, bucket: BucketSize): NetworkActivity {
+    override suspend fun getActivity(packageName: String, userId: Int, since: Long, until: Long?, bucket: BucketSize, zone: ZoneId): NetworkActivity {
         check()
         asked += since to until
         return if (until != null) period ?: activity else activity
     }
 
-    override suspend fun getDestination(packageName: String, userId: Int, target: NetworkTarget, since: Long, bucket: BucketSize): DestinationDetail {
+    override suspend fun getDestination(packageName: String, userId: Int, target: NetworkTarget, since: Long, bucket: BucketSize, zone: ZoneId): DestinationDetail {
         check()
         val destination = (activity.domains + activity.addresses).firstOrNull { it.target == target }
             ?: throw RecordsException.CommandFailed("no such destination")
-        return DestinationDetail(destination, activity.buckets)
+        return DestinationDetail(destination, activity.buckets, activity.bucketSeconds, zone)
     }
 
     override suspend fun block(packageName: String, userId: Int, target: NetworkTarget, manual: Boolean) {

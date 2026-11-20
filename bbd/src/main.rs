@@ -188,17 +188,8 @@ enum NetCommand {
     /// address, with what it is kept from.
     Activity {
         package: String,
-        /// Seconds since the epoch.
-        #[arg(long)]
-        since: i64,
-        #[arg(long)]
-        until: Option<i64>,
-        /// What a bar of the chart spans: hour or day.
-        #[arg(long, default_value = "hour")]
-        bucket: String,
-        /// Seconds the device's time is ahead of UTC: where its days begin.
-        #[arg(long, default_value_t = 0, allow_negative_numbers = true)]
-        offset: i64,
+        #[command(flatten)]
+        chart: netctl::ChartOptions,
         /// Android user the app is installed for.
         #[arg(long, default_value_t = 0)]
         user: u32,
@@ -208,12 +199,8 @@ enum NetCommand {
     Destination {
         package: String,
         target: String,
-        #[arg(long)]
-        since: i64,
-        #[arg(long, default_value = "hour")]
-        bucket: String,
-        #[arg(long, default_value_t = 0, allow_negative_numbers = true)]
-        offset: i64,
+        #[command(flatten)]
+        chart: netctl::ChartOptions,
         #[arg(long, default_value_t = 0)]
         user: u32,
     },
@@ -460,20 +447,15 @@ fn main() -> anyhow::Result<()> {
         Command::Net { json, command } => match command {
             NetCommand::Activity {
                 package,
-                since,
-                until,
-                bucket,
-                offset,
+                chart,
                 user,
-            } => netctl::activity(&cli.db, &package, user, since, until, (&bucket, offset)),
+            } => netctl::activity(&cli.db, &package, user, chart),
             NetCommand::Destination {
                 package,
                 target,
-                since,
-                bucket,
-                offset,
+                chart,
                 user,
-            } => netctl::destination(&cli.db, &package, user, &target, since, (&bucket, offset)),
+            } => netctl::destination(&cli.db, &package, user, &target, chart),
             NetCommand::Block {
                 package,
                 target,
