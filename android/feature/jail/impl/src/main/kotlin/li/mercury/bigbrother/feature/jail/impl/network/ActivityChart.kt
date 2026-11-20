@@ -19,6 +19,7 @@ package li.mercury.bigbrother.feature.jail.impl.network
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,10 +29,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,13 +46,21 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalLocale
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import li.mercury.bigbrother.core.model.ActivityBucket
 import li.mercury.bigbrother.core.model.BucketSize
 import li.mercury.bigbrother.feature.jail.impl.R
+import java.text.NumberFormat
 import java.time.ZoneId
 
 /**
@@ -73,6 +87,10 @@ internal fun ActivityChart(
     // Others fade while a bar is chosen, as an effect: no overshoot.
     val faded by animateFloatAsState(if (selected != null) 0.3f else 1f, MaterialTheme.motionScheme.defaultEffectsSpec(), label = "faded")
     val max = buckets.maxOfOrNull { it.connections + it.refused }?.coerceAtLeast(1) ?: 1
+    var choosing by remember { mutableStateOf(false) }
+    val choosePeriod = stringResource(R.string.jail_net_choose_period)
+    val allPeriods = stringResource(R.string.jail_net_all_periods)
+    val currentPeriod = selected?.let { periodLabel(it, bucketSeconds, zone) } ?: allPeriods
     Column(modifier) {
         Canvas(
             Modifier
@@ -80,13 +98,19 @@ internal fun ActivityChart(
                 .height(height)
                 .then(
                     if (onSelect != null && buckets.isNotEmpty()) {
-                        Modifier.pointerInput(buckets, selected) {
-                            detectTapGestures { offset ->
-                                val index = (offset.x / size.width * buckets.size).toInt().coerceIn(0, buckets.lastIndex)
-                                val start = buckets[index].start
-                                onSelect(start.takeIf { it != selected })
+                        Modifier
+                            .clickable(role = Role.Button) { choosing = true }
+                            .semantics {
+                                contentDescription = choosePeriod
+                                stateDescription = currentPeriod
                             }
-                        }
+                            .pointerInput(buckets, selected) {
+                                detectTapGestures { offset ->
+                                    val index = (offset.x / size.width * buckets.size).toInt().coerceIn(0, buckets.lastIndex)
+                                    val start = buckets[index].start
+                                    onSelect(start.takeIf { it != selected })
+                                }
+                            }
                     } else {
                         Modifier
                     },
@@ -112,6 +136,40 @@ internal fun ActivityChart(
                 }
             }
             drawLine(axis, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx())
+        }
+        if (choosing && onSelect != null && buckets.isNotEmpty()) {
+            val locale = LocalLocale.current.platformLocale
+            val numbers = remember(locale) { NumberFormat.getIntegerInstance(locale) }
+            val allSelected = selected == null
+            DropdownMenu(expanded = true, onDismissRequest = { choosing = false }) {
+                DropdownMenuItem(
+                    text = { Text(allPeriods) },
+                    modifier = Modifier.semantics { this.selected = allSelected },
+                    onClick = {
+                        choosing = false
+                        onSelect(null)
+                    },
+                )
+                buckets.forEach { bucket ->
+                    val isSelected = bucket.start == selected
+                    DropdownMenuItem(
+                        modifier = Modifier.semantics { this.selected = isSelected },
+                        text = {
+                            Column {
+                                Text(periodLabel(bucket.start, bucketSeconds, zone))
+                                Text(
+                                    pluralStringResource(R.plurals.jail_net_facts_counts, bucket.connections, numbers.format(bucket.connections), numbers.format(bucket.refused)),
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        },
+                        onClick = {
+                            choosing = false
+                            if (!isSelected) onSelect(bucket.start)
+                        },
+                    )
+                }
+            }
         }
         AxisLabels(buckets, bucketSeconds, zone)
     }

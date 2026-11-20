@@ -242,6 +242,8 @@
         <item quantity="one">%1$s connection · %2$s refused</item>
         <item quantity="other">%1$s connections · %2$s refused</item>
     </plurals>
+    <string name="jail_net_choose_period">Choose a period</string>
+    <string name="jail_net_all_periods">All periods</string>
     <string name="jail_net_legend_connected">Connected</string>
     <string name="jail_net_legend_refused">Refused</string>
     <string name="jail_net_now">Now</string>
