@@ -33,11 +33,14 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import li.mercury.bigbrother.core.common.di.AppPackageName
 import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.DEFAULT
 import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.AccessRepository
 import li.mercury.bigbrother.core.data.repository.AppInfoRepository
+import li.mercury.bigbrother.core.data.repository.InstalledAppRepository
+import li.mercury.bigbrother.core.data.repository.SandboxRepository
 import li.mercury.bigbrother.core.data.toLoadFailure
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
@@ -58,15 +61,28 @@ internal data class AppDetailUiState(
     val range: TimeRange = TimeRange.DAY,
     /** Version and install facts; null until loaded or when not installed. */
     val packageDetails: PackageDetails? = null,
+    val canOpenJail: Boolean = false,
+    val jailAction: JailAction? = null,
 )
+
+internal sealed interface JailAction {
+    data object Checking : JailAction
+    data object Confirm : JailAction
+    data object Isolating : JailAction
+    data class Open(val packageName: String) : JailAction
+    data class Failed(val failure: LoadFailure? = null) : JailAction
+}
 
 @HiltViewModel(assistedFactory = AppDetailViewModel.Factory::class)
 class AppDetailViewModel @AssistedInject constructor(
     private val accessRepository: AccessRepository,
     private val appInfoRepository: AppInfoRepository,
+    private val installedAppRepository: InstalledAppRepository,
+    private val sandboxRepository: SandboxRepository,
+    @AppPackageName private val ownPackage: String,
     @Dispatcher(DEFAULT) private val defaultDispatcher: CoroutineDispatcher,
     @Assisted private val uid: Int,
-    @Assisted packageName: String,
+    @Assisted private val packageName: String,
     @Assisted private val range: TimeRange,
 ) : ViewModel() {
     private val mutableUiState = MutableStateFlow(
@@ -85,6 +101,49 @@ class AppDetailViewModel @AssistedInject constructor(
 
     fun retry() = load()
 
+    fun requestJail() {
+        val state = uiState.value
+        if (!state.canOpenJail || state.jailAction != null) return
+        showJailAction(JailAction.Checking)
+        viewModelScope.launch {
+            try {
+                sandboxRepository.refresh()
+                val isolated = sandboxRepository.apps.value?.firstOrNull { it.uid == uid && it.enabled }
+                showJailAction(if (isolated == null) JailAction.Confirm else JailAction.Open(isolated.packageName))
+            } catch (e: RecordsException) {
+                showJailAction(JailAction.Failed(e.toLoadFailure()))
+            }
+        }
+    }
+
+    fun confirmIsolation() {
+        if (uiState.value.jailAction != JailAction.Confirm) return
+        showJailAction(JailAction.Isolating)
+        viewModelScope.launch {
+            try {
+                // The records can outlive an installation. Check the live package again
+                // before applying restrictions to its Android user.
+                if (installedAppRepository.getInstalledApps().none { it.uid == uid && it.packageName == packageName }) {
+                    mutableUiState.update { it.copy(canOpenJail = false, jailAction = JailAction.Failed()) }
+                    return@launch
+                }
+                sandboxRepository.isolate(packageName, uiState.value.app.userId)
+                val entry = sandboxRepository.apps.value?.firstOrNull { it.uid == uid && it.enabled }
+                showJailAction(JailAction.Open(entry?.packageName ?: packageName))
+            } catch (e: RecordsException) {
+                showJailAction(JailAction.Failed(e.toLoadFailure()))
+            }
+        }
+    }
+
+    fun dismissJailAction() {
+        if (uiState.value.jailAction != JailAction.Isolating) showJailAction(null)
+    }
+
+    private fun showJailAction(action: JailAction?) {
+        mutableUiState.update { it.copy(jailAction = action) }
+    }
+
     private fun load() {
         loadSummary()
         loadAccesses()
@@ -94,8 +153,7 @@ class AppDetailViewModel @AssistedInject constructor(
     private fun loadSummary() {
         // Name and package facts come from the package manager, so they show
         // even if the records fail to load; the two are fetched side by side.
-        val packageName = mutableUiState.value.app.packageName.takeIf { it.isNotEmpty() }
-        if (packageName != null) {
+        if (packageName.isNotEmpty()) {
             viewModelScope.launch {
                 val info = appInfoRepository.getAppInfo(packageName)
                 // The package manager answers for this app's own Android user.
@@ -107,14 +165,19 @@ class AppDetailViewModel @AssistedInject constructor(
                 } else {
                     null
                 }
-                mutableUiState.update { it.copy(appInfo = info, packageDetails = details) }
+                val canOpenJail = packageName != ownPackage &&
+                    uid % PER_USER_RANGE >= FIRST_APPLICATION_UID &&
+                    info?.packageInfo?.applicationInfo?.uid == uid
+                mutableUiState.update {
+                    it.copy(appInfo = info, packageDetails = details, canOpenJail = canOpenJail && it.app.packageName == packageName)
+                }
             }
         }
         viewModelScope.launch {
             try {
                 val apps = accessRepository.getApps(range)
                 val app = withContext(defaultDispatcher) { apps.firstOrNull { it.uid == uid } } ?: return@launch
-                mutableUiState.update { it.copy(app = app) }
+                mutableUiState.update { it.copy(app = app, canOpenJail = it.canOpenJail && app.packageName == packageName) }
             } catch (_: RecordsException) {
                 // The access list reports the failure; the header keeps its placeholder.
             }
@@ -151,6 +214,11 @@ class AppDetailViewModel @AssistedInject constructor(
     @AssistedFactory
     interface Factory {
         fun create(uid: Int, packageName: String, range: TimeRange): AppDetailViewModel
+    }
+
+    private companion object {
+        const val PER_USER_RANGE = 100_000
+        const val FIRST_APPLICATION_UID = 10_000
     }
 }
 

@@ -65,6 +65,8 @@ import li.mercury.bigbrother.core.screenshottesting.StoreScreenshotType
 import li.mercury.bigbrother.core.screenshottesting.captureMultiDevice
 import li.mercury.bigbrother.core.screenshottesting.captureStoreScreenshot
 import li.mercury.bigbrother.core.testing.repository.TestAccessRepository
+import li.mercury.bigbrother.core.testing.repository.TestInstalledAppRepository
+import li.mercury.bigbrother.core.testing.repository.TestSandboxRepository
 import li.mercury.bigbrother.core.testing.repository.TestUserDataRepository
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.feature.appdetail.api.navigation.AppDetailNavKey
@@ -238,6 +240,9 @@ class ListDetailScreenshotTests {
             AppDetailViewModel(
                 accessRepository = TestAccessRepository(apps = records.apps, accesses = records.accesses(DemoApp.WEATHER)),
                 appInfoRepository = appInfoRepository,
+                installedAppRepository = TestInstalledAppRepository(),
+                sandboxRepository = TestSandboxRepository(),
+                ownPackage = ApplicationProvider.getApplicationContext<Application>().packageName,
                 defaultDispatcher = Dispatchers.Unconfined,
                 uid = DemoApp.WEATHER.uid,
                 packageName = DemoApp.WEATHER.packageName,
@@ -299,6 +304,7 @@ class ListDetailScreenshotTests {
                                     onBack = {},
                                     onOpenFiles = {},
                                     onOpenRecord = { _, _ -> },
+                                    onOpenJail = {},
                                     viewModel = detailViewModel,
                                 )
                             }

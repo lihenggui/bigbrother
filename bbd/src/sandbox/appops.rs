@@ -213,9 +213,13 @@ struct State {
     /// it: the helper would take that `verify` after the command, and hold
     /// the uid again to what the command took away.
     asking: Option<u32>,
-    /// A helper started while that command was waiting, and was told of
-    /// every uid but its own: it is told of that one with the answer.
-    untold: bool,
+    /// Recovery commands still to send, including when the pipe filled
+    /// or a change was in progress for a UID.
+    pending_verifications: BTreeSet<u32>,
+    /// Initial checks are in progress while replies arrive. After the
+    /// regular command deadline without progress, an absent answer is
+    /// reported as unavailable.
+    checking_until: Option<Instant>,
     /// Answers not yet taken by who asked.
     answers: HashMap<u32, Answer>,
     /// A capture cannot answer a later command, even for the same uid.
@@ -269,27 +273,37 @@ impl State {
     /// Have the helper look at the ops of `uid` and hold it to what it is
     /// held to here. Nothing for a uid not held, or one a command is
     /// changing.
-    fn verify(&mut self, uid: u32) {
-        if self.asking == Some(uid) {
-            return;
-        }
-        if let Some(targets) = self.guarded.get(&uid) {
+    fn verify(&mut self, uid: u32) -> anyhow::Result<()> {
+        if self.asking != Some(uid)
+            && let Some(targets) = self.guarded.get(&uid)
+        {
             let targets = marking_unheld(targets, self.unsure.get(&uid));
             let line = Command::Verify(uid, &targets).to_string();
-            let _ = self.send(&line);
+            self.send(&line)?;
         }
+        Ok(())
     }
 
-    /// Tell a helper that just started of every uid held, so that it
-    /// carries on where the last one ended.
+    /// Tell a helper that just started of every uid held. If the pipe
+    /// fills, its answers make room for the remaining commands.
     fn tell_guarded(&mut self) {
-        let uids: Vec<u32> = self.guarded.keys().copied().collect();
-        for uid in uids {
-            self.verify(uid);
+        self.pending_verifications.extend(self.guarded.keys());
+        self.checking_until = Some(Instant::now() + ANSWER_WAIT);
+        self.send_pending_verifications();
+    }
+
+    fn send_pending_verifications(&mut self) {
+        while let Some(uid) = self
+            .pending_verifications
+            .iter()
+            .copied()
+            .find(|uid| Some(*uid) != self.asking)
+        {
+            if self.verify(uid).is_err() {
+                break;
+            }
+            self.pending_verifications.remove(&uid);
         }
-        // The command waiting went to the helper before this one; what its
-        // uid is held to is known with the answer.
-        self.untold = self.asking.is_some();
     }
 }
 
@@ -382,10 +396,44 @@ impl Shared {
             state = wait(state, left);
         };
         state.asking = None;
-        if std::mem::take(&mut state.untold) {
-            state.verify(uid);
-        }
+        state.send_pending_verifications();
         settled
+    }
+
+    fn receive(&self, line: &str) {
+        if let Some((uid, ops)) = parse_unheld(line) {
+            let mut state = self.state();
+            let permissions = ops
+                .iter()
+                .filter(|name| is_permission(name))
+                .cloned()
+                .collect();
+            state.unsure.insert(uid, permissions);
+            if state.unheld.insert(uid, ops).is_none() && state.guarded.contains_key(&uid) {
+                state.checking_until = Some(Instant::now() + ANSWER_WAIT);
+            }
+            state.send_pending_verifications();
+        } else if let Some(found) = found_in(line) {
+            self.state().found.push(found);
+            if let Some(wake) = self.on_found.get() {
+                wake();
+            }
+        } else if let Some((uid, answer)) = parse_line(line) {
+            let mut state = self.state();
+            state.send_pending_verifications();
+            let Some(answer) = answer else {
+                return;
+            };
+            match answer {
+                Answer::Kind(request, kind) => state.kind = Some((uid, request, kind)),
+                Answer::Captured(request, values) => state.captured = Some((uid, request, values)),
+                _ => {
+                    state.answers.insert(uid, answer);
+                }
+            }
+            drop(state);
+            self.changed.notify_all();
+        }
     }
 
     /// End the helper if no app is sandboxed any more. Closing its input
@@ -441,7 +489,7 @@ impl AppOps {
             // An app held at the gate for its mounts alone has no ops to
             // look at.
             if let Ok(mut state) = shared.state.try_lock() {
-                state.verify(uid);
+                let _ = state.verify(uid);
             }
         }
     }
@@ -834,6 +882,7 @@ impl Effect for AppOps {
             let restored = answer == Answer::Restored;
             if restored {
                 state.guarded.remove(&uid);
+                state.pending_verifications.remove(&uid);
                 state.unheld.remove(&uid);
                 state.unsure.remove(&uid);
             }
@@ -928,6 +977,7 @@ impl Effect for AppOps {
         let mut state = self.shared.state();
         state.owners.remove(&uid);
         state.guarded.remove(&uid);
+        state.pending_verifications.remove(&uid);
         state.unheld.remove(&uid);
         state.unsure.remove(&uid);
         state.found.retain(|(id, _)| *id != uid);
@@ -942,19 +992,21 @@ impl Effect for AppOps {
         // have set them back. A uid it has not reported on since it
         // started is not known to be held either.
         if status.appops {
-            status.held_ops = state
-                .guarded
-                .iter()
-                .filter_map(|(uid, targets)| {
-                    let unheld = state.unheld.get(uid)?;
+            let checking = state
+                .checking_until
+                .is_some_and(|deadline| Instant::now() < deadline);
+            for (uid, targets) in &state.guarded {
+                if let Some(unheld) = state.unheld.get(uid) {
                     let held = names_in(targets)
                         .into_iter()
                         .filter(|name| !unheld.contains(*name))
                         .map(str::to_string)
                         .collect();
-                    Some((*uid, held))
-                })
-                .collect();
+                    status.held_ops.insert(*uid, held);
+                } else if checking {
+                    status.checking_appops.insert(*uid);
+                }
+            }
         }
     }
 
@@ -1055,32 +1107,7 @@ fn run_helper(shared: &Shared) -> anyhow::Error {
         shared.changed.notify_all();
     }
     for line in BufReader::new(output).lines().map_while(Result::ok) {
-        if let Some((uid, ops)) = parse_unheld(&line) {
-            let mut state = shared.state();
-            let permissions = ops
-                .iter()
-                .filter(|name| is_permission(name))
-                .cloned()
-                .collect();
-            state.unsure.insert(uid, permissions);
-            state.unheld.insert(uid, ops);
-        } else if let Some((uid, Some(answer))) = parse_line(&line) {
-            let mut state = shared.state();
-            match answer {
-                Answer::Kind(request, kind) => state.kind = Some((uid, request, kind)),
-                Answer::Captured(request, values) => state.captured = Some((uid, request, values)),
-                _ => {
-                    state.answers.insert(uid, answer);
-                }
-            }
-            drop(state);
-            shared.changed.notify_all();
-        } else if let Some(found) = found_in(&line) {
-            shared.state().found.push(found);
-            if let Some(wake) = shared.on_found.get() {
-                wake();
-            }
-        }
+        shared.receive(&line);
     }
     // Closes its input, if it is still there to notice. The next helper
     // reports again on every uid it is told of.
@@ -1088,6 +1115,8 @@ fn run_helper(shared: &Shared) -> anyhow::Error {
         let mut state = shared.state();
         state.input = None;
         state.unheld.clear();
+        state.pending_verifications.clear();
+        state.checking_until = None;
     }
     shared.changed.notify_all();
     let status = match helper.wait() {
@@ -1313,6 +1342,86 @@ mod tests {
         appops.shared.state().guarded.clear();
         appops.shared.rest_if_unused();
         assert!(!appops.shared.state().wanted);
+    }
+
+    #[test]
+    fn recovery_checks_every_app_even_when_the_helpers_pipe_fills() {
+        use std::os::fd::OwnedFd;
+
+        let (read, write) = std::io::pipe().unwrap();
+        let input = ChildStdin::from(OwnedFd::from(write));
+        // No reader runs until the initial batch has been offered, so the
+        // result is independent of the scheduling of the helper thread.
+        let capacity = unsafe { libc::fcntl(input.as_raw_fd(), libc::F_SETPIPE_SZ, 4096) };
+        assert!(capacity > 0);
+        for fd in [input.as_raw_fd(), read.as_raw_fd()] {
+            assert_eq!(
+                unsafe { libc::fcntl(fd, libc::F_SETFL, libc::O_NONBLOCK) },
+                0
+            );
+        }
+
+        let items = Settings::all_on();
+        let count = capacity as usize / targets_of(&items).len() + 5;
+        let apps = 10100..10100 + u32::try_from(count).unwrap();
+        let mut appops = AppOps {
+            shared: Arc::new(Shared::default()),
+        };
+        appops.shared.state().input = Some(input);
+        appops.resume(
+            &apps
+                .clone()
+                .map(|uid| Resumed {
+                    entry: Entry {
+                        install_id: "1234567890abcdef1234567890abcdef".into(),
+                        ..sandboxed(uid)
+                    },
+                    packages: vec![],
+                    items: items.clone(),
+                })
+                .collect::<Vec<_>>(),
+        );
+
+        let mut status = Status::default();
+        appops.report(&mut status);
+        assert_eq!(status.checking_appops, apps.clone().collect());
+        assert!(status.held_ops.is_empty());
+        appops.shared.state().checking_until = Some(Instant::now());
+        let mut status = Status::default();
+        appops.report(&mut status);
+        assert!(status.checking_appops.is_empty());
+        assert!(status.held_ops.is_empty());
+
+        let mut reader = BufReader::new(read);
+        let mut reached = BTreeSet::new();
+        let mut line = String::new();
+        loop {
+            match reader.read_line(&mut line) {
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                Ok(bytes) if bytes > 0 => {
+                    let mut fields = line.split_ascii_whitespace();
+                    assert_eq!(fields.nth(3), Some("verify"));
+                    let uid = fields.next().unwrap().parse::<u32>().unwrap();
+                    assert!(reached.insert(uid), "duplicate verification for {uid}");
+                    let unheld = if uid == apps.start {
+                        "android:camera"
+                    } else {
+                        "-"
+                    };
+                    appops.shared.receive(&format!("unheld {uid} {unheld}"));
+                    line.clear();
+                }
+                result => panic!("reading the helper's commands: {result:?}"),
+            }
+        }
+
+        assert_eq!(reached, apps.clone().collect());
+        let mut status = Status::default();
+        appops.report(&mut status);
+        assert!(status.checking_appops.is_empty());
+        assert_eq!(status.held_ops.len(), apps.len());
+        assert!(!status.held_ops[&apps.start].contains("android:camera"));
+        assert!(status.held_ops[&(apps.start + 1)].contains("android:camera"));
     }
 
     #[test]
@@ -1667,7 +1776,9 @@ mod tests {
             .insert(10100, targets_of(&both));
         // The app starts, and the gate has its ops looked at, while each
         // command is on its way.
-        let (input, sent) = stand_in(&appops.shared, |state, uid| state.verify(uid));
+        let (input, sent) = stand_in(&appops.shared, |state, uid| {
+            state.verify(uid).unwrap();
+        });
         appops.shared.state().input = Some(input);
 
         // The camera turned off, then the app taken out: the last one, so
@@ -1937,12 +2048,16 @@ mod tests {
             ..sandboxed(10100)
         };
         let mut entries = HashMap::from([(10100, entry), (10101, sandboxed(10101))]);
-        appops.shared.state().found.extend([
-            (10100, format!("{FINE}=granted+user_set")),
-            // Not taken from this one, nor is there an entry for the last.
-            (10101, format!("{FINE}=granted")),
-            (10102, format!("{FINE}=granted")),
-        ]);
+        appops
+            .shared
+            .receive(&format!("reverted 10100 {FINE}=granted+user_set"));
+        // Not taken from this one, nor is there an entry for the last.
+        appops
+            .shared
+            .receive(&format!("reverted 10101 {FINE}=granted"));
+        appops
+            .shared
+            .receive(&format!("reverted 10102 {FINE}=granted"));
 
         assert_eq!(appops.found(&mut entries), [10100]);
         assert!(appops.shared.state().found.is_empty());

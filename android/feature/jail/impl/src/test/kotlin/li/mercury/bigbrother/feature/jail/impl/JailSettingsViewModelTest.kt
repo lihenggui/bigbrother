@@ -155,6 +155,18 @@ class JailSettingsViewModelTest {
     }
 
     @Test
+    fun givenAppOpsUnavailable_whenAChangeRestartsTheHelper_thenShowsTheCurrentStatus() = runTest {
+        sandboxRepository.status = sandboxRepository.status.copy(appOps = false)
+        val viewModel = viewModel()
+        assertEquals(setOf(SandboxPart.APP_OPS), viewModel.uiState.value.status?.unmet(SandboxItem.CONTACTS))
+
+        sandboxRepository.status = sandboxRepository.status.copy(appOps = true)
+        viewModel.setOn(SandboxItem.CAMERA, on = true)
+
+        assertEquals(emptySet(), viewModel.uiState.value.status?.unmet(SandboxItem.CONTACTS))
+    }
+
+    @Test
     fun givenAppOpsNotHeld_whenAllReleased_thenNoLongerTold() = runTest {
         sandboxRepository.status = sandboxRepository.status.copy(appOps = false)
         val viewModel = viewModel()

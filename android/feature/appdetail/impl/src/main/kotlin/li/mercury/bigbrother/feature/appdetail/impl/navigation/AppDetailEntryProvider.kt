@@ -42,7 +42,7 @@ import li.mercury.bigbrother.feature.appdetail.impl.RecordViewModel
  * record opens in a bottom sheet over the page instead.
  */
 @OptIn(ExperimentalMaterial3AdaptiveApi::class)
-fun EntryProviderScope<NavKey>.appDetailEntries(navigator: Navigator) {
+fun EntryProviderScope<NavKey>.appDetailEntries(navigator: Navigator, onOpenJail: (uid: Int, packageName: String) -> Unit) {
     entry<AppDetailNavKey>(metadata = ListDetailSceneStrategy.detailPane()) { key ->
         val range = TimeRange.fromHours(key.rangeHours)
         // The record open beside the page, whose row is marked as selected.
@@ -55,6 +55,7 @@ fun EntryProviderScope<NavKey>.appDetailEntries(navigator: Navigator) {
             onOpenRecord = { topic, source ->
                 navigator.navigateToRecord(key.uid, key.packageName, range, topic, source)
             },
+            onOpenJail = { packageName -> onOpenJail(key.uid, packageName) },
             viewModel = hiltViewModel<AppDetailViewModel, AppDetailViewModel.Factory>(
                 key = "${key.uid}:${key.rangeHours}",
             ) { factory -> factory.create(key.uid, key.packageName, range) },
