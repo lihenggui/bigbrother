@@ -41,6 +41,7 @@ import li.mercury.bigbrother.core.testing.repository.TestAccessRepository
 import li.mercury.bigbrother.core.testing.repository.TestAppInfoRepository
 import li.mercury.bigbrother.core.testing.repository.TestUserDataRepository
 import li.mercury.bigbrother.feature.search.impl.GlobalSearchBar
+import li.mercury.bigbrother.feature.search.impl.SearchScaffold
 import li.mercury.bigbrother.feature.search.impl.SearchViewModel
 import org.junit.Rule
 import org.junit.Test
@@ -213,19 +214,20 @@ class JailScreenScreenshotTests {
     fun givenEachMessage_whenShown_thenSnackbarSaysWhatHappened() {
         for ((name, message) in messages()) {
             capturePhone("JailMessage$name") {
-                JailScreen(
-                    state = JailUiState(apps = isolatedApps(), status = FULL_STATUS),
-                    message = message,
-                    topBar = { SearchBar() },
-                    selectedUid = null,
-                    settingsSelected = false,
-                    onRefresh = {},
-                    onOpenApp = {},
-                    onOpenSettings = {},
-                    onAdd = {},
-                    onUndo = {},
-                    onMessageDismiss = {},
-                )
+                SearchScaffold(topBar = { SearchBar() }) {
+                    JailScreen(
+                        state = JailUiState(apps = isolatedApps(), status = FULL_STATUS),
+                        message = message,
+                        selectedUid = null,
+                        settingsSelected = false,
+                        onRefresh = {},
+                        onOpenApp = {},
+                        onOpenSettings = {},
+                        onAdd = {},
+                        onUndo = {},
+                        onMessageDismiss = {},
+                    )
+                }
             }
         }
     }
@@ -399,19 +401,20 @@ class JailScreenScreenshotTests {
 
     @Composable
     private fun Jail(state: JailUiState) {
-        JailScreen(
-            state = state,
-            message = null,
-            topBar = { SearchBar() },
-            selectedUid = null,
-            settingsSelected = false,
-            onRefresh = {},
-            onOpenApp = {},
-            onOpenSettings = {},
-            onAdd = {},
-            onUndo = {},
-            onMessageDismiss = {},
-        )
+        SearchScaffold(topBar = { SearchBar() }) {
+            JailScreen(
+                state = state,
+                message = null,
+                selectedUid = null,
+                settingsSelected = false,
+                onRefresh = {},
+                onOpenApp = {},
+                onOpenSettings = {},
+                onAdd = {},
+                onUndo = {},
+                onMessageDismiss = {},
+            )
+        }
     }
 
     @Composable

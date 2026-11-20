@@ -91,7 +91,6 @@ import li.mercury.bigbrother.core.ui.R as UiR
 
 @Composable
 fun OverviewScreen(
-    topBar: @Composable () -> Unit,
     onOpenCategory: (DataCategory) -> Unit,
     viewModel: OverviewViewModel,
 ) {
@@ -107,7 +106,6 @@ fun OverviewScreen(
     }
     OverviewScreen(
         state = uiState,
-        topBar = topBar,
         onRange = viewModel::setRange,
         onRefresh = viewModel::refresh,
         onOpenCategory = onOpenCategory,
@@ -123,7 +121,6 @@ fun OverviewScreen(
 @Composable
 internal fun OverviewScreen(
     state: OverviewUiState,
-    topBar: @Composable () -> Unit,
     onRange: (TimeRange) -> Unit,
     onRefresh: () -> Unit,
     onOpenCategory: (DataCategory) -> Unit,
@@ -136,7 +133,6 @@ internal fun OverviewScreen(
     val snackbar = rememberSettingsWriteSnackbar(settingsWriteFailure, onSettingsWriteResult)
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
-        topBar = topBar,
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         val files = state.files

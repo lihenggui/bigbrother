@@ -90,7 +90,6 @@ import li.mercury.bigbrother.core.ui.R as UiR
  */
 @Composable
 fun JailScreen(
-    topBar: @Composable () -> Unit,
     selectedUid: Int?,
     settingsSelected: Boolean,
     onOpenApp: (IsolatedApp) -> Unit,
@@ -108,7 +107,6 @@ fun JailScreen(
     JailScreen(
         state = state,
         message = message,
-        topBar = topBar,
         selectedUid = selectedUid,
         settingsSelected = settingsSelected,
         onRefresh = viewModel::refresh,
@@ -140,7 +138,6 @@ fun JailScreen(
 internal fun JailScreen(
     state: JailUiState,
     message: JailMessage?,
-    topBar: @Composable () -> Unit,
     selectedUid: Int?,
     settingsSelected: Boolean,
     onRefresh: () -> Unit,
@@ -160,7 +157,6 @@ internal fun JailScreen(
     Scaffold(
         modifier = modifier,
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
-        topBar = topBar,
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
             if (!state.apps.isNullOrEmpty()) {

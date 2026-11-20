@@ -34,6 +34,7 @@ import li.mercury.bigbrother.core.testing.repository.TestAccessRepository
 import li.mercury.bigbrother.core.testing.repository.TestAppInfoRepository
 import li.mercury.bigbrother.core.testing.repository.TestUserDataRepository
 import li.mercury.bigbrother.feature.search.impl.GlobalSearchBar
+import li.mercury.bigbrother.feature.search.impl.SearchScaffold
 import li.mercury.bigbrother.feature.search.impl.SearchViewModel
 import org.junit.Rule
 import org.junit.Test
@@ -132,14 +133,15 @@ class TimelineScreenScreenshotTests {
     @Composable
     private fun Timeline(state: (TimelineUiState) -> TimelineUiState = { it }) {
         val records = remember { DemoRecords(clock) }
-        TimelineScreen(
-            state = state(TimelineUiState(entries = records.timeline, appInfo = records.appInfo)),
-            topBar = { SearchBar() },
-            selectedUid = null,
-            onRefresh = {},
-            onLoadMore = {},
-            onOpenEntry = { _, _ -> },
-        )
+        SearchScaffold(topBar = { SearchBar() }) {
+            TimelineScreen(
+                state = state(TimelineUiState(entries = records.timeline, appInfo = records.appInfo)),
+                selectedUid = null,
+                onRefresh = {},
+                onLoadMore = {},
+                onOpenEntry = { _, _ -> },
+            )
+        }
     }
 
     private companion object {

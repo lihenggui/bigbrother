@@ -18,7 +18,6 @@ package li.mercury.bigbrother.feature.overview.impl.navigation
 
 import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
 import androidx.compose.material3.adaptive.navigation3.ListDetailSceneStrategy
-import androidx.compose.runtime.Composable
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.navigation3.runtime.EntryProviderScope
 import androidx.navigation3.runtime.NavKey
@@ -40,10 +39,9 @@ import li.mercury.bigbrother.feature.overview.impl.OverviewViewModel
  * category, the list pane beside the app it opens.
  */
 @OptIn(ExperimentalMaterial3AdaptiveApi::class)
-fun EntryProviderScope<NavKey>.overviewEntries(navigator: Navigator, topBar: @Composable () -> Unit) {
+fun EntryProviderScope<NavKey>.overviewEntries(navigator: Navigator) {
     entry<OverviewNavKey> {
         OverviewScreen(
-            topBar = topBar,
             onOpenCategory = { navigator.navigateToCategory(it.name) },
             viewModel = hiltViewModel<OverviewViewModel>(),
         )
