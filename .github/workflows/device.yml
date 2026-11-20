@@ -64,7 +64,7 @@ jobs:
         with:
           name: device-build
           path: |
-            out/big_brother-*.zip
+            out/big_brother-*.apk.zip
             android/canary/build/outputs/apk/debug/canary-debug.apk
           if-no-files-found: error
           retention-days: 3

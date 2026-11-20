@@ -16,7 +16,7 @@
 <resources>
     <string name="app_name" translatable="false">Big Brother</string>
     <!-- Shown in the LSPosed manager as the module's description. -->
-    <string name="module_description">Records which apps go through the media library and other system file providers.</string>
+    <string name="module_description">Records app file access and personal data queries through Android content providers. Adds Jail (app isolation) controls for Android ID, advertising IDs, app visibility, and file grants.</string>
     <!-- Navigation: what was accessed, by whom, and when. -->
     <string name="nav_overview">Overview</string>
     <string name="nav_apps">Apps</string>
