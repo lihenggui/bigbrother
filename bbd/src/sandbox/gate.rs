@@ -87,15 +87,18 @@ impl Process {
     /// Hold `pid` as a process leader. A reused ID belonging to a non-leader
     /// is the same as a missing leader for callers holding process IDs.
     pub fn open(pid: i32) -> io::Result<Self> {
-        match Self::open_pidfd(pid) {
-            Err(e)
-                if pid > 0
-                    && e.raw_os_error() == Some(libc::EINVAL)
-                    && Self::no_group_leader(pid) =>
-            {
-                Err(io::Error::from_raw_os_error(libc::ESRCH))
-            }
-            result => result,
+        Self::open_pidfd(pid).map_err(|error| Self::normalize_open_error(pid, error))
+    }
+
+    fn normalize_open_error(pid: i32, error: io::Error) -> io::Error {
+        // Kernels use either errno when a task has no thread-group leader at this ID.
+        if pid > 0
+            && matches!(error.raw_os_error(), Some(libc::EINVAL | libc::ENOENT))
+            && Self::no_group_leader(pid)
+        {
+            io::Error::from_raw_os_error(libc::ESRCH)
+        } else {
+            error
         }
     }
 
@@ -1231,5 +1234,47 @@ mod tests {
             Process::open(0).err().and_then(|e| e.raw_os_error()),
             Some(libc::EINVAL)
         );
+    }
+
+    #[test]
+    fn both_kernel_errors_for_a_nonleader_report_a_missing_process() {
+        std::thread::scope(|scope| {
+            let (send_tid, receive_tid) = std::sync::mpsc::channel();
+            let (keep_alive, finish) = std::sync::mpsc::channel::<()>();
+            scope.spawn(move || {
+                send_tid.send(unsafe { libc::gettid() }).unwrap();
+                let _ = finish.recv();
+            });
+            let tid = receive_tid.recv().unwrap();
+            assert_ne!(tid as u32, std::process::id());
+            for (errno, expected) in [
+                (libc::EINVAL, libc::ESRCH),
+                (libc::ENOENT, libc::ESRCH),
+                (libc::EPERM, libc::EPERM),
+            ] {
+                let error = Process::normalize_open_error(tid, io::Error::from_raw_os_error(errno));
+                assert_eq!(error.raw_os_error(), Some(expected), "input errno {errno}");
+            }
+            drop(keep_alive);
+        });
+    }
+
+    #[test]
+    fn a_leader_and_an_invalid_id_keep_the_original_open_error() {
+        for pid in [std::process::id() as i32, 0, -1] {
+            for errno in [libc::EINVAL, libc::ENOENT] {
+                let error = Process::normalize_open_error(pid, io::Error::from_raw_os_error(errno));
+                assert_eq!(error.raw_os_error(), Some(errno));
+            }
+        }
+    }
+
+    #[test]
+    fn a_vanished_thread_is_confirmed_by_the_kernel() {
+        for errno in [libc::EINVAL, libc::ENOENT] {
+            let error =
+                Process::normalize_open_error(i32::MAX, io::Error::from_raw_os_error(errno));
+            assert_eq!(error.raw_os_error(), Some(libc::ESRCH));
+        }
     }
 }
