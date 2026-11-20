@@ -40,6 +40,7 @@ import li.mercury.bigbrother.core.testing.repository.TestUserDataRepository
 import li.mercury.bigbrother.core.ui.isShown
 import li.mercury.bigbrother.core.ui.readFiles
 import li.mercury.bigbrother.feature.search.impl.GlobalSearchBar
+import li.mercury.bigbrother.feature.search.impl.SearchScaffold
 import li.mercury.bigbrother.feature.search.impl.SearchViewModel
 import org.junit.Rule
 import org.junit.Test
@@ -193,16 +194,17 @@ class OverviewScreenScreenshotTests {
         val shown = remember(records) {
             records.apps.filter { isShown(it, records.appInfo, showSystemApps = false, ownPackage = "") }
         }
-        OverviewScreen(
-            state = remember(records) { state(overviewState(records, shown)) },
-            topBar = { SearchBar() },
-            onRange = {},
-            onRefresh = {},
-            onOpenCategory = {},
-            onInstallModule = {},
-            onUpdateModule = {},
-            onStartDaemon = {},
-        )
+        SearchScaffold(topBar = { SearchBar() }) {
+            OverviewScreen(
+                state = remember(records) { state(overviewState(records, shown)) },
+                onRange = {},
+                onRefresh = {},
+                onOpenCategory = {},
+                onInstallModule = {},
+                onUpdateModule = {},
+                onStartDaemon = {},
+            )
+        }
     }
 
     private fun overviewState(records: DemoRecords, apps: List<AppSummary>): OverviewUiState {

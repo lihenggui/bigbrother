@@ -89,7 +89,6 @@ private enum class SortOrder(val label: Int) {
 
 @Composable
 fun AppListScreen(
-    topBar: @Composable () -> Unit,
     selectedUid: Int?,
     onOpenApp: (app: AppSummary, range: TimeRange, category: DataCategory?) -> Unit,
     viewModel: AppListViewModel,
@@ -103,7 +102,6 @@ fun AppListScreen(
     }
     AppListScreen(
         state = uiState,
-        topBar = topBar,
         selectedUid = selectedUid,
         onRange = viewModel::setRange,
         onRefresh = viewModel::refresh,
@@ -131,7 +129,6 @@ private class Entry(val app: AppSummary, val categories: List<DataCategory>) {
 @Composable
 internal fun AppListScreen(
     state: AppListUiState,
-    topBar: @Composable () -> Unit,
     selectedUid: Int?,
     onRange: (TimeRange) -> Unit,
     onRefresh: () -> Unit,
@@ -154,7 +151,6 @@ internal fun AppListScreen(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
-        topBar = topBar,
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         Column(

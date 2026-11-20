@@ -34,6 +34,7 @@ import li.mercury.bigbrother.core.testing.repository.TestAccessRepository
 import li.mercury.bigbrother.core.testing.repository.TestAppInfoRepository
 import li.mercury.bigbrother.core.testing.repository.TestUserDataRepository
 import li.mercury.bigbrother.feature.search.impl.GlobalSearchBar
+import li.mercury.bigbrother.feature.search.impl.SearchScaffold
 import li.mercury.bigbrother.feature.search.impl.SearchViewModel
 import org.junit.Rule
 import org.junit.Test
@@ -110,15 +111,16 @@ class AppListScreenScreenshotTests {
     @Composable
     private fun AppList(state: (AppListUiState) -> AppListUiState = { it }) {
         val records = remember { DemoRecords(clock) }
-        AppListScreen(
-            state = state(AppListUiState(apps = records.apps, appInfo = records.appInfo)),
-            topBar = { SearchBar() },
-            selectedUid = null,
-            onRange = {},
-            onRefresh = {},
-            onOpen = { _, _, _ -> },
-            onShowSystemApps = {},
-        )
+        SearchScaffold(topBar = { SearchBar() }) {
+            AppListScreen(
+                state = state(AppListUiState(apps = records.apps, appInfo = records.appInfo)),
+                selectedUid = null,
+                onRange = {},
+                onRefresh = {},
+                onOpen = { _, _, _ -> },
+                onShowSystemApps = {},
+            )
+        }
     }
 }
 

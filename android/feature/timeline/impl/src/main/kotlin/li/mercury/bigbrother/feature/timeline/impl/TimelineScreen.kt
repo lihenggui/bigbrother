@@ -79,7 +79,6 @@ import li.mercury.bigbrother.core.ui.R as UiR
 
 @Composable
 fun TimelineScreen(
-    topBar: @Composable () -> Unit,
     selectedUid: Int?,
     onOpenEntry: (TimelineEntry, TimeRange) -> Unit,
     viewModel: TimelineViewModel,
@@ -89,14 +88,13 @@ fun TimelineScreen(
         viewModel.refreshIfStale()
         onPauseOrDispose {}
     }
-    TimelineScreen(uiState, topBar, selectedUid, viewModel::refresh, viewModel::loadMore, onOpenEntry)
+    TimelineScreen(uiState, selectedUid, viewModel::refresh, viewModel::loadMore, onOpenEntry)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun TimelineScreen(
     state: TimelineUiState,
-    topBar: @Composable () -> Unit,
     selectedUid: Int?,
     onRefresh: () -> Unit,
     onLoadMore: () -> Unit,
@@ -106,7 +104,6 @@ internal fun TimelineScreen(
     var includeLookups by rememberSaveable { mutableStateOf(false) }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
-        topBar = topBar,
     ) { padding ->
         Column(
             Modifier
