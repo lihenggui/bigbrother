@@ -225,11 +225,11 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     // as usual. Drained first, so that the buffer has room for the child's
     // events and only drops while it runs count.
     let checking = Instant::now();
-    tracer.drain(ring.get_mut());
+    tracer.drain_pending(ring.get_mut());
     let dropped_before = dropped_events();
     let (made, child) = selftest::exercise();
     tracer.selftest = selftest::Seen::of(child);
-    tracer.drain(ring.get_mut());
+    tracer.drain_pending(ring.get_mut());
     let lost = dropped_events() > dropped_before;
     let seen = std::mem::take(&mut tracer.selftest);
     let states = selftest::judge(&features, made, seen, lost);
@@ -351,7 +351,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
             // wake the daemon (the kernel side wakes it at most once a
             // second for them) are taken in first.
             _ = sensor_check.tick(), if sensor_check.armed() => {
-                tracer.drain(ring.get_mut());
+                tracer.drain_pending(ring.get_mut());
                 tracer.sensors.check_processes(now(), sensors::process_alive);
                 continue;
             }
@@ -430,12 +430,12 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
             // The kernel side's buffer is filling up.
             guard = ring.readable_mut() => {
                 let mut guard = guard?;
-                if tracer.drain(guard.get_inner_mut()) { guard.clear_ready(); }
+                if tracer.drain_batch(guard.get_inner_mut()) { guard.clear_ready(); }
                 continue;
             }
         };
 
-        tracer.drain(ring.get_mut());
+        tracer.drain_pending(ring.get_mut());
         tracer.counters.dropped = dropped_events();
         tracer.expire(now() - RESULT_TIMEOUT_SECS);
         tracer.prune_isolated_owners();
@@ -484,7 +484,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     if opts.profile {
         print_profile(&ebpf);
     }
-    tracer.drain(ring.get_mut());
+    tracer.drain_pending(ring.get_mut());
     tracer.ingest_provider_events();
     tracer.take_refused_lookups();
     tracer.settle_sensors(Duration::from_secs(2));
@@ -1355,13 +1355,28 @@ impl Tracer {
     }
 
     /// Yield to control requests even when the kernel keeps producing.
-    fn drain(&mut self, ring: &mut RingBuf<MapData>) -> bool {
+    fn drain_batch(&mut self, ring: &mut RingBuf<MapData>) -> bool {
         let clock = EventClock::now();
         for _ in 0..1024 {
             let Some(item) = ring.next() else { return true };
             self.on_event(&item, &clock);
         }
         false
+    }
+
+    /// A flush, self-check or stop needs all records already readable when it
+    /// starts. Short records can fill several batches without waking the
+    /// reader. Stop at the first newer event so producers cannot hold a flush
+    /// open indefinitely. Every event is stamped on the kernel's boot clock.
+    fn drain_pending(&mut self, ring: &mut RingBuf<MapData>) {
+        let through = clock_ns(libc::CLOCK_BOOTTIME) as u64;
+        let clock = EventClock::now();
+        while let Some(item) = ring.next() {
+            self.on_event(&item, &clock);
+            if read_event::<EventHeader>(&item).is_some_and(|header| header.boot_ns() > through) {
+                break;
+            }
+        }
     }
 
     fn hold_result(&mut self, tid: u32, event: Held) {
