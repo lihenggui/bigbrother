@@ -17,8 +17,7 @@
 use anyhow::{Context as _, anyhow};
 use aya_build::Toolchain;
 
-/// Compiles `bb-ebpf` for the BPF target and drops the object in `OUT_DIR`,
-/// where `main.rs` embeds it with `include_bytes_aligned!`.
+/// Build both syscall-state backends for the target architecture.
 fn main() -> anyhow::Result<()> {
     let cargo_metadata::Metadata { packages, .. } = cargo_metadata::MetadataCommand::new()
         .no_deps()
@@ -33,13 +32,21 @@ fn main() -> anyhow::Result<()> {
         manifest_path,
         ..
     } = ebpf_package;
-    let ebpf_package = aya_build::Package {
-        name: name.as_str(),
-        root_dir: manifest_path
-            .parent()
-            .ok_or_else(|| anyhow!("no parent for {manifest_path}"))?
-            .as_str(),
-        ..Default::default()
+    let root_dir = manifest_path
+        .parent()
+        .context("missing eBPF crate directory")?
+        .as_str();
+    let build = |features| {
+        let package = aya_build::Package {
+            name: name.as_str(),
+            root_dir,
+            features,
+            ..Default::default()
+        };
+        aya_build::build_ebpf([package], Toolchain::default())
     };
-    aya_build::build_ebpf([ebpf_package], Toolchain::default())
+    build(&[])?;
+    let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").context("missing OUT_DIR")?);
+    std::fs::rename(out.join("bb-ebpf"), out.join("bb-ebpf-legacy"))?;
+    build(&["task-storage"])
 }

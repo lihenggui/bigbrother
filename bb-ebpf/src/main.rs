@@ -70,6 +70,8 @@
 #![no_std]
 #![no_main]
 
+mod pending;
+
 use aya_ebpf::{
     Global,
     helpers::{
@@ -115,11 +117,6 @@ const MAX_DEPTH: usize = 32;
 /// Kernel struct field offsets, filled in by the daemon (see bb-common).
 #[unsafe(no_mangle)]
 static OFFSETS: Global<[u32; OFF_COUNT]> = Global::new([0; OFF_COUNT]);
-
-/// In-flight tracked syscalls, keyed by pid_tgid. LRU so entries orphaned by
-/// a thread dying mid-syscall get evicted instead of leaking.
-#[map]
-static PENDING: LruHashMap<u64, Pending> = LruHashMap::with_max_entries(8192, 0);
 
 #[map]
 static EVENTS: RingBuf = RingBuf::with_byte_size(8 * 1024 * 1024, 0);
@@ -406,13 +403,7 @@ fn try_file_open(ctx: &ProbeContext) -> Result<(), i32> {
         return Ok(());
     }
 
-    let in_syscall = match PENDING.get_ptr_mut(&pid_tgid) {
-        Some(pending) => {
-            unsafe { (*pending).reported = 1 };
-            1
-        }
-        None => 0,
-    };
+    let in_syscall = u32::from(pending::mark_reported(pid_tgid));
     unsafe {
         (*ev).event.hdr = header(EV_FILE, uid, pid_tgid);
         (*ev).event.flags = read_at::<u32>(file, off[OFF_FILE_FLAGS]).unwrap_or(0);
@@ -651,9 +642,7 @@ fn syscall_enter(ctx: &ProbeContext, op: u32, shape: Shape) -> Result<(), i32> {
         reported: 0,
         _pad: 0,
     };
-    PENDING
-        .insert(&bpf_get_current_pid_tgid(), &pending, 0)
-        .map_err(|e| e as i32)
+    pending::remember(bpf_get_current_pid_tgid(), pending)
 }
 
 // One entry program per argument layout; the daemon attaches each to every
@@ -715,7 +704,7 @@ fn expect_result(pid_tgid: u64) -> Result<(), i32> {
         reported: 1,
         _pad: 0,
     };
-    PENDING.insert(&pid_tgid, &pending, 0).map_err(|e| e as i32)
+    pending::remember(pid_tgid, pending)
 }
 
 // ---- execve -----------------------------------------------------------------
@@ -1574,10 +1563,9 @@ fn try_sys_ret(ctx: &RetProbeContext) -> Result<(), i32> {
         return Ok(());
     }
     let pid_tgid = bpf_get_current_pid_tgid();
-    let Some(pending) = (unsafe { PENDING.get(&pid_tgid) }).copied() else {
+    let Some(pending) = pending::take(pid_tgid) else {
         return Ok(());
     };
-    let _ = PENDING.remove(&pid_tgid);
 
     let ret = ctx.ret::<i64>() as i32;
 

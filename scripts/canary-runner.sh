@@ -40,23 +40,34 @@ save_canary_failure() {
     } >>"$LOGS/canary-failures.txt" 2>&1 || true
 }
 
-# Sets canary_log on success and canary_error on failure. Callers prepare the
-# device and clear the previous report before starting a new run.
+# Callers force-stop the previous run before its completion file is cleared.
+# Sets canary_log on success and canary_error on failure.
 launch_and_wait_for_canary() {
-    local limit="$1" launch i
+    local limit="$1" launch i status status_file=files/probe-status
     shift
     canary_log="" canary_error=""
     clear_screen
+    if ! adb shell run-as "$PACKAGE" rm -f "$status_file"; then
+        canary_error="could not clear the previous canary status"
+        return 1
+    fi
     if ! launch="$(adb shell am start -W -n "$PACKAGE/.MainActivity" "$@" 2>&1)" ||
         grep -qE '^(Error(:| type )|Exception occurred while executing)' <<<"$launch"; then
         canary_error="starting the canary failed"
         printf '%s\n' "$launch" >&2
     else
         for ((i = 0; i < limit; i++)); do
-            canary_log="$(adb logcat -d -s BigBrotherCanary:I | tr -d '\r')" || break
-            if grep -q 'BigBrotherCanary: done$' <<<"$canary_log"; then return 0; fi
-            canary_error="$(sed -n 's/.*BigBrotherCanary: probe failed: //p' <<<"$canary_log")"
-            [[ -z "$canary_error" ]] || break
+            if status="$(adb shell run-as "$PACKAGE" cat "$status_file" 2>/dev/null)"; then
+                case "$status" in
+                done)
+                    canary_log="$(adb logcat -d -s BigBrotherCanary:I | tr -d '\r')" && return 0
+                    canary_error="could not read the canary observations"
+                    ;;
+                "probe failed: "*) canary_error="${status#probe failed: }" ;;
+                *) canary_error="invalid canary status" ;;
+                esac
+                break
+            fi
             if ((i % 5 == 4)) && focus_elsewhere; then clear_screen; fi
             sleep 1
         done
