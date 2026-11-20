@@ -76,7 +76,7 @@ identifier in a privileged extended attribute on the package's device-encrypted
 data directory. Enabling the sandbox requires that the identifier can be read
 back. Replacing the installation gives it fresh settings, storage and identity.
 If an Android user's data directory is temporarily unavailable on restart, the daemon retains the entry and retries when it can verify the installation again.
-Superseded installation records are archived in the root-only database. An older development entry without this identifier cannot authorize a restore.
+Superseded installation records are archived in the root-only database.
 
 ## Items
 

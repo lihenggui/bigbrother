@@ -123,9 +123,8 @@ class SettingsScreenScreenshotTests {
     }
 
     private companion object {
-        /** The module as its module.prop names it, and the app as its versionName does. */
-        const val VERSION = "v0.2.0"
-        const val APP_VERSION = "0.2.0"
+        const val APP_VERSION = "1.2.3"
+        const val VERSION = "v$APP_VERSION"
         val RECORDING = RecorderStatus(recording = true)
         val LOG_EXPORTS = listOf(LogExport.Idle, LogExport.Collecting, LogExport.Failed)
     }

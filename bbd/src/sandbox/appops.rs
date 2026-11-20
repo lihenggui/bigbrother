@@ -35,8 +35,8 @@
 //! for the permission's grant then (`android:read_contacts=1/1`); where the
 //! grant has changed by the time the op is given back, the op gets the
 //! system's mode for the grant as it is then instead. The daemon keeps and
-//! hands back what the helper saved as it is; a mode written by earlier
-//! builds, without a grant, is put back as saved.
+//! hands back what the helper saved. Ops without a grant mode are put back
+//! as saved.
 //!
 //! Only the ops of the items that are on for the app are held (see
 //! `items::Settings::op_targets`), ignored, or, for an item left to the

@@ -1,6 +1,6 @@
 id=big_brother
 name=Big Brother
-version=v0.2.0
-versionCode=8
+version=v0.3.0
+versionCode=9
 author=Mercury Li
-description=Records which apps read your files on shared storage and which device/system information they collect. Browse the records in the Big Brother app.
+description=Records app access to private data. Use Big Brother to browse records and isolate selected apps with Jail.

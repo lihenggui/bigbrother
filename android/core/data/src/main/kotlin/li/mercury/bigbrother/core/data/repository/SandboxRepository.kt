@@ -100,29 +100,28 @@ internal class RootSandboxRepository @Inject constructor(
         val rows = JSONObject(sandbox("list")).getJSONArray("apps")
         _apps.value = List(rows.length()) { rows.getJSONObject(it).toSandboxedApp() }
         val global = JSONObject(sandbox("global"))
-        _global.value = global.getJSONObject("items").toModes()
-        // A daemon older than the switch does not report it, and has it off.
-        _autoIsolate.value = global.optBoolean("auto")
+        val modes = global.getJSONObject("items").toModes()
+        val auto = global.getBoolean("auto")
+        _global.value = modes
+        _autoIsolate.value = auto
     }
 
     override suspend fun getStatus(): SandboxStatus = defaultDispatcher.parseBbdOutput {
         val status = JSONObject(sandbox("status"))
-        val hook = status.optJSONObject("hook") ?: JSONObject()
+        val hook = status.getJSONObject("hook")
         SandboxStatus(
-            gate = status.optBoolean("gate"),
-            appOps = status.optBoolean("appops"),
-            androidIdHook = hook.optBoolean("android_id"),
-            appListHook = hook.optBoolean("app_list"),
-            uriGrantsHook = hook.optBoolean("uri_grants"),
-            adIdHook = hook.optBoolean("ad_id"),
-            // Not reported by a daemon older than isolating new apps.
-            newAppsPending = status.optInt("new_apps_pending"),
-            newAppsHeld = status.optBoolean("new_apps_held"),
-            // Not reported by a daemon older than the network's control.
-            network = status.optBoolean("network"),
-            netRecord = status.optBoolean("net_record"),
-            dnsNames = status.optBoolean("dns_names"),
-            traffic = status.optBoolean("traffic"),
+            gate = status.getBoolean("gate"),
+            appOps = status.getBoolean("appops"),
+            androidIdHook = hook.getBoolean("android_id"),
+            appListHook = hook.getBoolean("app_list"),
+            uriGrantsHook = hook.getBoolean("uri_grants"),
+            adIdHook = hook.getBoolean("ad_id"),
+            newAppsPending = status.getInt("new_apps_pending"),
+            newAppsHeld = status.getBoolean("new_apps_held"),
+            network = status.getBoolean("network"),
+            netRecord = status.getBoolean("net_record"),
+            dnsNames = status.getBoolean("dns_names"),
+            traffic = status.getBoolean("traffic"),
         )
     }
 
@@ -145,7 +144,7 @@ internal class RootSandboxRepository @Inject constructor(
         // names it rather than fail the whole command.
         return withContext(defaultDispatcher) {
             try {
-                JSONObject(answer).optJSONArray("failed")?.length() ?: 0
+                JSONObject(answer).getJSONArray("failed").length()
             } catch (e: JSONException) {
                 throw RecordsException.CommandFailed(e.message.orEmpty())
             }
@@ -193,7 +192,7 @@ internal class RootSandboxRepository @Inject constructor(
         settings = getJSONObject("settings").toModes(),
         items = getJSONObject("items").toModes(),
         unmet = optJSONObject("unmet")?.toParts().orEmpty(),
-        networkRules = optInt("network_rules"),
+        networkRules = getInt("network_rules"),
         recordingSince = if (isNull("recording_since")) null else getLong("recording_since"),
     )
 

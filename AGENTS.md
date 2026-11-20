@@ -41,12 +41,11 @@ once before `:app` tasks that assemble the APK.
 
 ## Contracts between components
 
-- What a released version (v0.2.0 on) stored is carried over by every later
-  version: the records, the sandbox entries with their saved app ops and
-  identities, and the files in the sandboxes. A database schema change adds
-  a migration from the previous version (`MIGRATIONS` in `bbd/src/store.rs`);
-  only a database no released build wrote is set aside (`bb.db.old`, removed
-  once its records are 30 days old).
+- Upgrade support starts with v0.3.0. Write compatibility code only for
+  upgrades from supported releases, and only when an upgrade needs it.
+  A schema change that affects a supported release must preserve its records,
+  sandbox settings, saved grants, identities and sandbox files. Development
+  builds can change their schema directly.
 - `bbd` output changes as needed, with the app in the same commit: the app
   and the module ship together. The app updates the module when the
   installed one is older or built differently, and maps a daemon that

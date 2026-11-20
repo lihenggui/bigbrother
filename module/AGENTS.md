@@ -22,7 +22,8 @@ They are packaged into the app's APK, which is also the flashable module, and
   runs under `supervise.sh` in the background, which restarts it with
   increasing delays.
 - `sync.sh` is run by the app to update an installed module in place. Stage and verify
-  the whole module before stopping the daemon and exchanging the directories.
+  the whole module before stopping the daemon and exchanging the directories. Both
+  install paths check the existing database with the staged daemon.
 - `uninstall.sh` takes every app out of the sandbox. Root managers run it
   either at once, with the daemon running, or at the next boot, before
   anything of the module has started: it has to work both ways. It then
@@ -36,6 +37,6 @@ They are packaged into the app's APK, which is also the flashable module, and
 
 ## Version
 
-`version` must match the release tag (`v0.2.0`), and `versionCode` increases
+`version` must match the release tag, and `versionCode` increases
 with every release. The app compares the installed module with its own by
 `versionCode`, then by SHA-256 digests of the installed module files and the helper APK.

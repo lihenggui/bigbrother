@@ -95,10 +95,11 @@ apd module install big_brother-<version>.zip        # APatch
 
 ### Updating
 
-Flash the new `.zip`, or install it over the old app as an `.apk`, then
-open the app. It publishes the complete module in one filesystem operation
-and restarts recording. The previous module files are kept under
-`/data/adb/big_brother/previous-module`.
+When replacing a build older than v0.3.0, take any apps out of Jail first.
+Remove the old module and app as described below, then install v0.3.0.
+
+For subsequent updates, flash the new `.zip`, or install it over the app
+as an `.apk`, then open the app to update the module.
 
 ### Uninstalling
 
@@ -115,8 +116,10 @@ records. Then uninstall the app.
   the time of each access.
 - Timeline: what each app did, hour by hour.
 - Search: apps, file names and kinds of data across all records.
-- Jail: the apps put in isolation, and what each one is kept from. Apps
-  are restarted when they are isolated and when isolation ends.
+- Jail: choose what isolated apps can access, with global settings and
+  per-app overrides. Jail can also isolate newly installed apps, block an
+  app's network access, or record where an app connects and block selected
+  destinations.
 
 System apps are hidden by default, since reading data is part of how they
 work. They can be shown in Settings.

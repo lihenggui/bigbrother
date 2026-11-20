@@ -33,11 +33,12 @@ done
 rm -f "$NEXT/bin/bbd" "$NEXT/helper.apk"
 unzip -p "$APK" "$DAEMON" > "$NEXT/bin/bbd" && [ -s "$NEXT/bin/bbd" ] || exit 1
 chmod 755 "$NEXT/bin/bbd"
+"$NEXT/bin/bbd" module-check-db
 cp "$APK" "$NEXT/helper.apk"
 chmod 644 "$NEXT/helper.apk"
 cmp -s "$APK" "$NEXT/helper.apk"
 # Keep the previous payload even if power is lost just after publication.
-# A downgrade may need a database migration and is never started implicitly.
+# This copy lets the owner recover the previous module files.
 DATA=/data/adb/big_brother
 BACKUP=$DATA/previous-module
 mkdir -p "$DATA"

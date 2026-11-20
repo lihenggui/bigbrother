@@ -9,10 +9,10 @@ JSON.
 
 - The app parses this output. Change it together with the app, in the same
   commit (see the root `AGENTS.md`).
-- Every query first asks the running daemon to write what it holds
-  (`control::request_flush`, over `bbd.sock`), waiting at most one second.
-  `main` does this for every subcommand except `run`; a new subcommand that
-  does not read the records should be exempted the same way.
+- Queries ask the running daemon to write what it holds before reading
+  records (`control::request_flush`, over `bbd.sock`), waiting at most one
+  second. Exempt commands that do not need the records in `main`, like the
+  installer check that only reads the schema version.
 - `bbd.sock` keeps its one-byte flush answer. Commands that change what the
   daemon does (`bbd sandbox ...`) go over `bbd.ctl`, one JSON line each way
   (`control::Request`); they need the running daemon and never write the
@@ -70,15 +70,11 @@ JSON.
 ## Database
 
 - SQLite at `/data/adb/big_brother/bb.db`, records kept 30 days.
-- The schema is `SCHEMA` in `src/store.rs`, at `SCHEMA_VERSION`. A schema
-  change edits `SCHEMA`, bumps the version and adds the step from the
-  previous version to `MIGRATIONS`. The database of every release
-  (`testdata/db/`, `RELEASES` in the tests of `store.rs`) must migrate
-  with all its records and sandbox; a release adds its own
-  (CONTRIBUTING.md). Steps exist from released versions only (v0.2.0 wrote
-  version 3). The daemon migrates a database when it starts; one at a
-  version with no step is set aside (`bb.db.old`) and a new one started.
-  The query commands read the current version only.
+- The schema is in `src/store.rs`, at `SCHEMA_VERSION`. Change both when
+  the layout changes. The daemon creates the current schema in an empty
+  database. The daemon and query commands reject incompatible versions so
+  the database and its saved grants stay on disk. Add a migration when a
+  schema change affects a supported release (see CONTRIBUTING.md).
 
 ## Power and performance
 
