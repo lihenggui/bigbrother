@@ -24,6 +24,9 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.History
@@ -50,14 +53,28 @@ import androidx.compose.material3.adaptive.navigationsuite.rememberNavigationSui
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.navigation3.runtime.EntryProviderScope
 import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
+import androidx.navigation3.scene.NavigationBackHandler
+import androidx.navigation3.scene.rememberNavigationEventState
+import androidx.navigation3.scene.rememberSceneState
 import androidx.navigation3.ui.NavDisplay
 import androidx.window.core.layout.WindowSizeClass
 import li.mercury.bigbrother.R
@@ -78,6 +95,7 @@ import li.mercury.bigbrother.feature.overview.api.navigation.OverviewNavKey
 import li.mercury.bigbrother.feature.overview.api.navigation.navigateToCategory
 import li.mercury.bigbrother.feature.overview.impl.navigation.overviewEntries
 import li.mercury.bigbrother.feature.search.impl.GlobalSearchBar
+import li.mercury.bigbrother.feature.search.impl.SearchScaffold
 import li.mercury.bigbrother.feature.settings.api.navigation.SettingsNavKey
 import li.mercury.bigbrother.feature.settings.impl.navigation.settingsEntry
 import li.mercury.bigbrother.feature.timeline.api.navigation.TimelineNavKey
@@ -124,9 +142,41 @@ private class TransitionHint {
  * breakpoint, a list beside the app it opens; extra-large ones also a third
  * pane for a record or the files.
  */
-@OptIn(ExperimentalMaterial3AdaptiveApi::class)
 @Composable
 fun BigBrotherApp(recordingStopped: Boolean, modifier: Modifier = Modifier) {
+    BigBrotherNavigation(
+        recordingStopped = recordingStopped,
+        modifier = modifier,
+        registerEntries = { navigator ->
+            overviewEntries(navigator)
+            appListEntry(navigator)
+            timelineEntry(navigator)
+            jailEntries(navigator)
+            appDetailEntries(navigator)
+            settingsEntry(navigator)
+        },
+        searchBar = { navigator, barModifier ->
+            GlobalSearchBar(
+                onOpenApp = { app, range, category ->
+                    navigator.navigateToAppDetail(app.uid, app.packageName, range, category?.name)
+                },
+                onOpenCategory = { navigator.navigateToCategory(it.name) },
+                onOpenSettings = { navigator.navigate(SettingsNavKey) },
+                settingsBadge = recordingStopped,
+                modifier = barModifier,
+            )
+        },
+    )
+}
+
+@OptIn(ExperimentalMaterial3AdaptiveApi::class)
+@Composable
+internal fun BigBrotherNavigation(
+    recordingStopped: Boolean,
+    registerEntries: EntryProviderScope<NavKey>.(Navigator) -> Unit,
+    modifier: Modifier = Modifier,
+    searchBar: @Composable (Navigator, Modifier) -> Unit,
+) {
     val topLevelKeys = remember { TOP_LEVEL_DESTINATIONS.map { it.key }.toSet() }
     val navigationState = rememberNavigationState(startKey = OverviewNavKey, topLevelKeys = topLevelKeys)
     val navigator = remember(navigationState) { Navigator(navigationState) }
@@ -139,24 +189,7 @@ fun BigBrotherApp(recordingStopped: Boolean, modifier: Modifier = Modifier) {
     // show a record as a pane instead.
     val bottomSheetStrategy = remember(singlePane) { BottomSheetSceneStrategy<NavKey>(enabled = singlePane) }
 
-    val searchBar: @Composable () -> Unit = {
-        GlobalSearchBar(
-            onOpenApp = { app, range, category ->
-                navigator.navigateToAppDetail(app.uid, app.packageName, range, category?.name)
-            },
-            onOpenCategory = { navigator.navigateToCategory(it.name) },
-            onOpenSettings = { navigator.navigate(SettingsNavKey) },
-            settingsBadge = recordingStopped,
-        )
-    }
-    val entryProvider = entryProvider {
-        overviewEntries(navigator, searchBar)
-        appListEntry(navigator, searchBar)
-        timelineEntry(navigator, searchBar)
-        jailEntries(navigator, searchBar)
-        appDetailEntries(navigator)
-        settingsEntry(navigator)
-    }
+    val entryProvider = remember(navigator, registerEntries) { entryProvider { registerEntries(navigator) } }
 
     val suiteType = navigationSuiteType(adaptiveInfo)
     // A navigation bar makes room on the screens below a destination; a
@@ -220,23 +253,65 @@ fun BigBrotherApp(recordingStopped: Boolean, modifier: Modifier = Modifier) {
             val backward = slideInHorizontally(slide) { -it / PARALLAX } + fadeIn(fade) togetherWith
                 slideOutHorizontally(slide) { it } + fadeOut(fade)
             val switch: ContentTransform = fadeIn(fade) togetherWith fadeOut(motion.fastEffectsSpec())
-            NavDisplay(
+            val sceneState = rememberSceneState(
                 entries = navigationState.toEntries(entryProvider),
-                // Screens slide during transitions; this is what shows between them.
-                modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer),
                 sceneStrategies = listOf(bottomSheetStrategy, listDetailStrategy),
-                onBack = { navigator.goBack() },
-                transitionSpec = {
-                    if (hint.topLevelSwitch) {
-                        hint.topLevelSwitch = false
-                        switch
-                    } else {
-                        forward
+                onBack = navigator::goBack,
+            )
+            val navigationEventState = rememberNavigationEventState(sceneState)
+            NavigationBackHandler(sceneState, navigationEventState, onBackCompleted = navigator::goBack)
+
+            // A top-level list can still be visible beside a detail pane.
+            val rootContentKey = entryProvider(navigationState.currentTopLevelKey).contentKey
+            val showSearch = sceneState.currentScene.entries.any { it.contentKey == rootContentKey }
+            SearchScaffold(
+                topBar = {
+                    if (showSearch) {
+                        SearchBarBeforeHinge(directive.excludedBounds) { barModifier ->
+                            searchBar(navigator, barModifier)
+                        }
                     }
                 },
-                popTransitionSpec = { backward },
-            )
+            ) {
+                NavDisplay(
+                    sceneState = sceneState,
+                    navigationEventState = navigationEventState,
+                    // Screens slide during transitions; this is what shows between them.
+                    modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer),
+                    transitionSpec = {
+                        if (hint.topLevelSwitch) {
+                            hint.topLevelSwitch = false
+                            switch
+                        } else {
+                            forward
+                        }
+                    },
+                    popTransitionSpec = { backward },
+                )
+            }
         }
+    }
+}
+
+/** Keeps the shared bar in the leading panel of a window with a vertical hinge. */
+@Composable
+private fun SearchBarBeforeHinge(excludedBounds: List<Rect>, content: @Composable (Modifier) -> Unit) {
+    val hinge = excludedBounds.firstOrNull { it.height > it.width }
+    val density = LocalDensity.current
+    val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
+    var maxWidth by remember(hinge, isLtr, density) { mutableStateOf<Dp?>(null) }
+    val hingePosition = if (hinge != null) {
+        Modifier.onGloballyPositioned { coordinates ->
+            val left = coordinates.positionInWindow().x
+            val right = left + coordinates.size.width
+            val width = if (isLtr) hinge.left - left else right - hinge.right
+            maxWidth = width.takeIf { it > 0 && it < coordinates.size.width }?.let { with(density) { it.toDp() } }
+        }
+    } else {
+        Modifier
+    }
+    Box(Modifier.fillMaxWidth().then(hingePosition)) {
+        content(Modifier.widthIn(max = maxWidth ?: Dp.Unspecified))
     }
 }
 

@@ -18,7 +18,6 @@ package li.mercury.bigbrother.feature.jail.impl.navigation
 
 import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
 import androidx.compose.material3.adaptive.navigation3.ListDetailSceneStrategy
-import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.stringResource
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.navigation3.runtime.EntryProviderScope
@@ -58,7 +57,7 @@ import li.mercury.bigbrother.feature.jail.impl.network.NetworkActivityViewModel
  * an app's settings or the global settings the detail pane beside it.
  */
 @OptIn(ExperimentalMaterial3AdaptiveApi::class)
-fun EntryProviderScope<NavKey>.jailEntries(navigator: Navigator, topBar: @Composable () -> Unit) {
+fun EntryProviderScope<NavKey>.jailEntries(navigator: Navigator) {
     entry<JailNavKey>(
         metadata = ListDetailSceneStrategy.listPane(
             detailPlaceholder = { DetailPlaceholder(text = stringResource(R.string.jail_select)) },
@@ -66,7 +65,6 @@ fun EntryProviderScope<NavKey>.jailEntries(navigator: Navigator, topBar: @Compos
     ) {
         val shown = shownBesideList(navigator.state.currentSubStack)
         JailScreen(
-            topBar = topBar,
             selectedUid = (shown as? JailAppNavKey)?.uid,
             settingsSelected = shown is JailSettingsNavKey,
             onOpenApp = { navigator.navigateToJailApp(it.app.uid, it.app.packageName) },

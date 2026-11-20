@@ -114,10 +114,10 @@ fun GlobalSearchBar(
     }
     // Opening a result leaves the search, as a fresh start for the next one.
     val close: () -> Unit = {
-        scope.launch {
-            searchBarState.animateToCollapsed()
-            textFieldState.clearText()
-        }
+        // Navigation can remove the bar and cancel its animation.
+        textFieldState.clearText()
+        viewModel.setQuery("")
+        scope.launch { searchBarState.animateToCollapsed() }
     }
     val inputField = @Composable {
         val expanded = searchBarState.targetValue == SearchBarValue.Expanded

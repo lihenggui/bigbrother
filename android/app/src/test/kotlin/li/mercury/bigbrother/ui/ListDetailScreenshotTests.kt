@@ -19,6 +19,7 @@ package li.mercury.bigbrother.ui
 import android.app.Application
 import android.content.ComponentName
 import androidx.activity.ComponentActivity
+import androidx.compose.foundation.clickable
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -32,16 +33,28 @@ import androidx.compose.material3.adaptive.layout.PaneAdaptedValue
 import androidx.compose.material3.adaptive.layout.ThreePaneScaffoldDestinationItem
 import androidx.compose.material3.adaptive.layout.ThreePaneScaffoldValue
 import androidx.compose.material3.adaptive.layout.calculateThreePaneScaffoldValue
+import androidx.compose.material3.adaptive.navigation3.ListDetailSceneStrategy
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteItem
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.Dispatchers
 import li.mercury.bigbrother.core.data.repository.AppInfoRepository
+import li.mercury.bigbrother.core.designsystem.theme.BigBrotherTheme
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.PackageDetails
 import li.mercury.bigbrother.core.model.TimeRange
@@ -54,13 +67,20 @@ import li.mercury.bigbrother.core.screenshottesting.captureStoreScreenshot
 import li.mercury.bigbrother.core.testing.repository.TestAccessRepository
 import li.mercury.bigbrother.core.testing.repository.TestUserDataRepository
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
+import li.mercury.bigbrother.feature.appdetail.api.navigation.AppDetailNavKey
+import li.mercury.bigbrother.feature.appdetail.api.navigation.navigateToAppDetail
 import li.mercury.bigbrother.feature.appdetail.impl.AppDetailScreen
 import li.mercury.bigbrother.feature.appdetail.impl.AppDetailViewModel
 import li.mercury.bigbrother.feature.applist.api.navigation.AppListNavKey
 import li.mercury.bigbrother.feature.applist.impl.AppListScreen
 import li.mercury.bigbrother.feature.applist.impl.AppListViewModel
+import li.mercury.bigbrother.feature.jail.api.navigation.JailNavKey
+import li.mercury.bigbrother.feature.overview.api.navigation.OverviewNavKey
 import li.mercury.bigbrother.feature.search.impl.GlobalSearchBar
+import li.mercury.bigbrother.feature.search.impl.SearchScaffold
 import li.mercury.bigbrother.feature.search.impl.SearchViewModel
+import li.mercury.bigbrother.feature.timeline.api.navigation.TimelineNavKey
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.ExternalResource
@@ -120,6 +140,87 @@ class ListDetailScreenshotTests {
         composeTestRule.captureMultiDevice("ListDetail") { ListDetail(fitWindow = true) }
     }
 
+    @Test
+    @Config(qualifiers = "en-rUS-w412dp-h880dp")
+    fun givenGlobalSearch_whenSwitchingTabs_thenOneSearchBarStaysInPlaceDuringTransitions() {
+        showNavigation()
+        val searchBar = composeTestRule.onNodeWithContentDescription("Search apps and files")
+        val bounds = searchBar.fetchSemanticsNode().boundsInRoot
+        for ((tab, content) in listOf("Apps" to "Open app", "Timeline" to "Timeline content", "Jail" to "Jail content", "Overview" to "Overview content")) {
+            composeTestRule.mainClock.autoAdvance = false
+            composeTestRule.onNodeWithText(tab).performClick()
+            repeat(4) { composeTestRule.mainClock.advanceTimeByFrame() }
+            composeTestRule.onAllNodesWithContentDescription("Search apps and files").assertCountEquals(1)
+            assertEquals(bounds, searchBar.fetchSemanticsNode().boundsInRoot)
+            composeTestRule.mainClock.autoAdvance = true
+            composeTestRule.onNodeWithText(content).assertIsDisplayed()
+        }
+    }
+
+    @Test
+    @Config(qualifiers = "en-rUS-w412dp-h880dp")
+    fun givenPhoneAppList_whenOpeningAndLeavingDetail_thenSearchReturnsWithTheList() {
+        showNavigation()
+        openApp()
+        composeTestRule.onAllNodesWithContentDescription("Search apps and files").assertCountEquals(0)
+        composeTestRule.runOnIdle { composeTestRule.activity.onBackPressedDispatcher.onBackPressed() }
+        composeTestRule.onNodeWithContentDescription("Search apps and files").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Open app").assertIsDisplayed()
+    }
+
+    @Test
+    @Config(qualifiers = "en-rUS-w412dp-h880dp")
+    fun givenTimeline_whenOpeningAndClosingSearch_thenTimelineStaysSelected() {
+        showNavigation()
+        composeTestRule.onNodeWithText("Timeline").performClick()
+        composeTestRule.onNodeWithContentDescription("Search apps and files").performClick()
+        composeTestRule.onNode(hasContentDescription("Close search") and hasAnyAncestor(isDialog())).performClick()
+        composeTestRule.onNodeWithText("Timeline content").assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription("Search apps and files").assertIsDisplayed()
+    }
+
+    @Test
+    @Config(qualifiers = "en-rUS-w1000dp-h800dp")
+    fun givenTabletAppList_whenOpeningDetailBesideIt_thenSearchStaysVisible() {
+        showNavigation()
+        openApp()
+        composeTestRule.onNodeWithContentDescription("Search apps and files").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Open app").assertIsDisplayed()
+    }
+
+    private fun openApp() {
+        composeTestRule.onNodeWithText("Apps").performClick()
+        composeTestRule.onNodeWithText("Open app").performClick()
+        composeTestRule.onNodeWithText("App detail").assertIsDisplayed()
+    }
+
+    @OptIn(ExperimentalMaterial3AdaptiveApi::class)
+    private fun showNavigation() {
+        composeTestRule.setContent {
+            BigBrotherTheme {
+                val appInfoRepository = remember { DemoAppInfoRepository(DemoRecords(clock)) }
+                BigBrotherNavigation(
+                    recordingStopped = false,
+                    registerEntries = { navigator ->
+                        entry<OverviewNavKey> { Text("Overview content") }
+                        entry<AppListNavKey>(metadata = ListDetailSceneStrategy.listPane()) {
+                            Text(
+                                text = "Open app",
+                                modifier = Modifier.clickable {
+                                    navigator.navigateToAppDetail(DemoApp.WEATHER.uid, DemoApp.WEATHER.packageName, TimeRange.ALL)
+                                },
+                            )
+                        }
+                        entry<TimelineNavKey> { Text("Timeline content") }
+                        entry<JailNavKey> { Text("Jail content") }
+                        entry<AppDetailNavKey>(metadata = ListDetailSceneStrategy.detailPane()) { Text("App detail") }
+                    },
+                    searchBar = { _, modifier -> SearchBar(appInfoRepository, modifier) },
+                )
+            }
+        }
+    }
+
     /**
      * The app list and the weather app's page, as panes. With [fitWindow],
      * the window decides which are shown, as in the app with the list on
@@ -165,44 +266,45 @@ class ListDetailScreenshotTests {
             containerColor = MaterialTheme.colorScheme.surfaceContainer,
         ) {
             CompositionLocalProvider(LocalShowsDetailBesideList provides beside) {
-                ListDetailPaneScaffold(
-                    directive = directive,
-                    value = if (fitWindow) {
-                        calculateThreePaneScaffoldValue(
-                            maxHorizontalPartitions = directive.maxHorizontalPartitions,
-                            adaptStrategies = ListDetailPaneScaffoldDefaults.adaptStrategies(),
-                            currentDestination = ThreePaneScaffoldDestinationItem<Nothing>(ListDetailPaneScaffoldRole.List),
-                        )
-                    } else {
-                        ThreePaneScaffoldValue(
-                            primary = PaneAdaptedValue.Expanded,
-                            secondary = PaneAdaptedValue.Expanded,
-                            tertiary = PaneAdaptedValue.Hidden,
-                        )
-                    },
-                    listPane = {
-                        AnimatedPane {
-                            AppListScreen(
-                                topBar = { SearchBar(appInfoRepository) },
-                                selectedUid = DemoApp.WEATHER.uid.takeIf { beside },
-                                onOpenApp = { _, _, _ -> },
-                                viewModel = listViewModel,
+                SearchScaffold(topBar = { SearchBar(appInfoRepository) }) {
+                    ListDetailPaneScaffold(
+                        directive = directive,
+                        value = if (fitWindow) {
+                            calculateThreePaneScaffoldValue(
+                                maxHorizontalPartitions = directive.maxHorizontalPartitions,
+                                adaptStrategies = ListDetailPaneScaffoldDefaults.adaptStrategies(),
+                                currentDestination = ThreePaneScaffoldDestinationItem<Nothing>(ListDetailPaneScaffoldRole.List),
                             )
-                        }
-                    },
-                    detailPane = {
-                        AnimatedPane {
-                            AppDetailScreen(
-                                focusCategory = null,
-                                openRecord = null,
-                                onBack = {},
-                                onOpenFiles = {},
-                                onOpenRecord = { _, _ -> },
-                                viewModel = detailViewModel,
+                        } else {
+                            ThreePaneScaffoldValue(
+                                primary = PaneAdaptedValue.Expanded,
+                                secondary = PaneAdaptedValue.Expanded,
+                                tertiary = PaneAdaptedValue.Hidden,
                             )
-                        }
-                    },
-                )
+                        },
+                        listPane = {
+                            AnimatedPane {
+                                AppListScreen(
+                                    selectedUid = DemoApp.WEATHER.uid.takeIf { beside },
+                                    onOpenApp = { _, _, _ -> },
+                                    viewModel = listViewModel,
+                                )
+                            }
+                        },
+                        detailPane = {
+                            AnimatedPane {
+                                AppDetailScreen(
+                                    focusCategory = null,
+                                    openRecord = null,
+                                    onBack = {},
+                                    onOpenFiles = {},
+                                    onOpenRecord = { _, _ -> },
+                                    viewModel = detailViewModel,
+                                )
+                            }
+                        },
+                    )
+                }
             }
         }
     }
@@ -210,7 +312,7 @@ class ListDetailScreenshotTests {
 
 /** The search bar the top-level screens have as their top bar, idle. */
 @Composable
-private fun SearchBar(appInfoRepository: AppInfoRepository) {
+private fun SearchBar(appInfoRepository: AppInfoRepository, modifier: Modifier = Modifier) {
     val viewModel = remember {
         SearchViewModel(
             context = ApplicationProvider.getApplicationContext(),
@@ -224,6 +326,7 @@ private fun SearchBar(appInfoRepository: AppInfoRepository) {
         onOpenCategory = {},
         onOpenSettings = {},
         settingsBadge = false,
+        modifier = modifier,
         viewModel = viewModel,
     )
 }
