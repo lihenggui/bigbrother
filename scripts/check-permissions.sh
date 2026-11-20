@@ -96,7 +96,7 @@ clear_screen() {
 # Whether a window other than the canary's has the focus.
 focus_elsewhere() {
     local focus
-    focus="$(adb shell dumpsys window windows 2>/dev/null | tr -d '\r' | sed -n 's/.*mCurrentFocus=//p')"
+    focus="$(adb shell dumpsys window displays 2>/dev/null | tr -d '\r' | sed -n 's/.*mCurrentFocus=//p')"
     [[ -n "$focus" && "$focus" != *"$PACKAGE"* ]]
 }
 
