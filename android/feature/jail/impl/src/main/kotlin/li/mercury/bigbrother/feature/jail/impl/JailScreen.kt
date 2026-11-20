@@ -407,8 +407,10 @@ internal fun AddAppsDialog(
         },
         onConfirm = {
             val chosen = viewModel.chosen()
-            viewModel.clear()
-            onIsolate(chosen)
+            if (chosen.isNotEmpty()) {
+                viewModel.clear()
+                onIsolate(chosen)
+            }
         },
     )
 }
