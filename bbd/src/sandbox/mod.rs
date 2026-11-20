@@ -308,7 +308,6 @@ pub struct ListedApp {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub unmet: BTreeMap<Item, Vec<Part>>,
     /// How many destinations it is kept from.
-    #[serde(default)]
     pub network_rules: u32,
     /// Since when its connections are recorded, in seconds since the
     /// epoch, if they are.
@@ -323,7 +322,6 @@ pub struct GlobalItems {
     pub items: Settings,
     /// Whether apps installed from now on are put in the sandbox with them
     /// (see [`auto`]).
-    #[serde(default)]
     pub auto: bool,
 }
 
@@ -347,16 +345,12 @@ pub struct Status {
     /// Personal data is refused through app ops.
     pub appops: bool,
     /// The packet filter refuses the network to the apps kept from it.
-    #[serde(default)]
     pub network: bool,
     /// The connections of the apps the user chose can be recorded.
-    #[serde(default)]
     pub net_record: bool,
     /// The names apps look up are known, and can be refused.
-    #[serde(default)]
     pub dns_names: bool,
     /// The bytes of connections are counted.
-    #[serde(default)]
     pub traffic: bool,
     pub hook: HookStatus,
     /// Starts of sandboxed apps let through, and those that were stopped.
@@ -388,11 +382,9 @@ pub struct HookStatus {
     pub app_list: bool,
     /// Whether file grants an app kept from before its storage was
     /// isolated are withheld from it.
-    #[serde(default)]
     pub uri_grants: bool,
     /// Whether the advertising ID is withheld from the apps whose device
     /// identifiers are.
-    #[serde(default)]
     pub ad_id: bool,
 }
 

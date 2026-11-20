@@ -310,7 +310,7 @@ internal object AppOpsGuardProtocol {
             if (isPermission(name)) {
                 permissions += name to if (value == NO_UID_MODE) null else decodeState(value) ?: return null
             } else {
-                // Written by earlier builds: the mode alone.
+                // Some ops have no runtime permission, or its grant could not be read.
                 val mode = value.substringBefore(GRANT_SEPARATOR)
                 ops += name to if (mode == NO_UID_MODE) null else mode.toIntOrNull()?.takeIf { it >= 0 } ?: return null
                 if (GRANT_SEPARATOR in value) {

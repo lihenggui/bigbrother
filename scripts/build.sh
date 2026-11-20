@@ -78,9 +78,8 @@ done
 cargo build --release --package bbd "${target_args[@]}" "$@"
 
 mkdir -p out
-# Only this build's daemons: Gradle packages every out/bbd-*. (out/bbd is
-# the single binary of builds before there was one per architecture.)
-rm -f out/bbd out/bbd-*
+# Gradle packages every out/bbd-*, so clear stale architecture builds first.
+rm -f out/bbd-*
 for target in "${TARGETS[@]}"; do
     daemon="out/bbd-$(arch_of "$target")"
     cp "target/$target/release/bbd" "$daemon"
@@ -96,7 +95,6 @@ version="$(sed -n 's/^version=//p' module/module.prop)"
 # picker offers only .zip files). Flashing it installs the app as well (see
 # module/customize.sh); renamed to .apk, the same file installs as the app.
 zip="out/big_brother-$version.zip"
-rm -f "out/big_brother-$version.apk"
 cp android/app/build/outputs/apk/release/app-release.apk "$zip"
 echo "built: $zip ($(du -h "$zip" | cut -f1))"
 

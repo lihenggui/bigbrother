@@ -36,7 +36,7 @@ import kotlin.test.assertTrue
 
 @RunWith(RobolectricTestRunner::class)
 class RootSandboxRepositoryTest {
-    private val shell = TestRootShell(failing = setOf("list"))
+    private val shell = TestRootShell(failing = setOf("list"), outputs = mapOf("disable" to """{"disabled":1,"failed":[]}"""))
     private val repository = RootSandboxRepository(shell, Dispatchers.Unconfined)
 
     @Test
@@ -44,7 +44,7 @@ class RootSandboxRepositoryTest {
         val shell = TestRootShell(
             failing = emptySet(),
             outputs = mapOf(
-                "list" to """{"apps":[{"uid":10234,"package":"com.example.notes","enabled":true,"created":1,"settings":{},"items":{}}]}""",
+                "list" to """{"apps":[{"uid":10234,"package":"com.example.notes","enabled":true,"created":1,"settings":{},"items":{},"network_rules":2}]}""",
                 "global" to """{"items":{"camera":"off"},"auto":true}""",
             ),
         )
@@ -55,6 +55,7 @@ class RootSandboxRepositoryTest {
         read.await()
 
         assertEquals("com.example.notes", repository.apps.value?.single()?.packageName)
+        assertEquals(2, repository.apps.value?.single()?.networkRules)
         assertEquals(SandboxMode.OFF, repository.global.value?.get(SandboxItem.CAMERA))
         assertEquals(true, repository.autoIsolate.value)
     }

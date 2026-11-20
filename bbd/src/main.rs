@@ -176,6 +176,9 @@ enum Command {
     /// the daemon.
     #[command(hide = true)]
     SandboxRestoreLines,
+    /// Check the database before replacing the installed module.
+    #[command(hide = true)]
+    ModuleCheckDb,
     /// Stop the module processes before an update or removal.
     #[command(hide = true)]
     ModuleStop { module: PathBuf },
@@ -373,6 +376,7 @@ fn main() -> anyhow::Result<()> {
         cli.command,
         Command::Run { .. }
             | Command::Sandbox { .. }
+            | Command::ModuleCheckDb
             | Command::ModuleStop { .. }
             | Command::ModuleExchange { .. }
             | Command::SandboxRestoreLines
@@ -445,6 +449,7 @@ fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
+        Command::ModuleCheckDb => store::check_module_database(&cli.db),
         Command::Sandbox { json, command } => sandbox::command(&cli.db, command.into(), json),
         Command::Net { json, command } => match command {
             NetCommand::Activity {

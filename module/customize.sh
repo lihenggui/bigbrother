@@ -75,6 +75,7 @@ if unzip -l "$ZIPFILE" classes.dex >/dev/null 2>&1; then
 fi
 set_perm_recursive "$MODPATH" 0 0 0755 0644
 set_perm "$MODPATH/bin/bbd" 0 0 0755
+message=$("$MODPATH/bin/bbd" module-check-db 2>&1) || abort "! $message"
 
 # Install the app the module was flashed from, unless that exact APK is
 # already installed (which is the case when the app flashes itself).
