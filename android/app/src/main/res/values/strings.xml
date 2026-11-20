@@ -22,4 +22,36 @@
     <string name="nav_apps">Apps</string>
     <string name="nav_timeline">Timeline</string>
     <string name="nav_jail">Jail</string>
+
+    <!-- First-launch guide. All access shown in the illustrations is sample data. -->
+    <string name="guide_access_title">Monitor access to personal data</string>
+    <string name="guide_access_body">Big Brother records file reads, location requests and other activity on this device. Adding an app to Jail restricts its access to personal data, gives it separate storage, and blocks access to real device identifiers.</string>
+    <string name="guide_timeline_title">View the timeline</string>
+    <string name="guide_timeline_body">The timeline groups access by hour and app. Open an entry to see what the app accessed.</string>
+    <string name="guide_jail_title">Isolate selected apps</string>
+    <string name="guide_jail_body">When you add an app to Jail, supported isolation settings take effect immediately. You can give it separate storage and return an empty clipboard. Each setting can be adjusted individually.</string>
+    <string name="guide_framework_title">Enable full isolation</string>
+    <string name="guide_framework_body">Enable Big Brother in LSPosed or Vector. Keep the recommended scopes, select System Framework, then restart the device.</string>
+    <string name="guide_skip">Skip</string>
+    <string name="guide_next">Next</string>
+    <string name="guide_back">Previous page</string>
+    <string name="guide_start">Get started</string>
+    <string name="guide_progress">Page %1$d of %2$d</string>
+    <string name="guide_guard_description">The Big Brother bodyguard flexes both arms.</string>
+    <string name="guide_timeline_description">Sample timeline showing access by Weather and Flashlight.</string>
+    <string name="guide_jail_description">Sample Jail settings for Weather with separate storage and an empty clipboard.</string>
+    <string name="guide_android_id">Android ID</string>
+    <string name="guide_android_id_result">Each isolated app receives its own virtual ID.</string>
+    <string name="guide_ad_id">Advertising identifiers</string>
+    <string name="guide_ad_id_result">Apps cannot read the real advertising ID or supported vendor identifiers (OAID).</string>
+    <string name="guide_apps">App list</string>
+    <string name="guide_apps_result">An app can see only itself and system apps.</string>
+    <string name="guide_files">File grants</string>
+    <string name="guide_files_result">Apps can open files picked for the current use. Persisted grants do not apply during isolation.</string>
+    <string name="guide_weather">Weather</string>
+    <string name="guide_flashlight">Flashlight</string>
+    <string name="guide_weather_summary">Media library, Location and 2 more</string>
+    <string name="guide_flashlight_summary">Contacts, Accounts and 2 more</string>
+    <string name="guide_timeline_caption">Timeline excerpt</string>
+    <string name="guide_jail_caption">Jail settings excerpt</string>
 </resources>
