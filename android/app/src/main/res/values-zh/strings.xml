@@ -14,7 +14,7 @@
      along with this program. If not, see <https://www.gnu.org/licenses/>.
 -->
 <resources>
-    <string name="module_description">记录哪些应用通过媒体库和其他系统文件提供程序访问文件。</string>
+    <string name="module_description">记录应用通过 Android 内容提供程序访问文件和查询个人数据的行为。为“监狱”（应用隔离功能）提供 Android ID、广告 ID、应用可见性和文件授权控制。</string>
     <string name="nav_overview">概览</string>
     <string name="nav_apps">应用</string>
     <string name="nav_timeline">时间线</string>

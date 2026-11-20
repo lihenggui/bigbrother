@@ -19,7 +19,7 @@ Prerequisites:
 ```
 
 This builds the eBPF programs, the daemon for each architecture and the
-app, and writes `out/big_brother-<version>.zip` together with the R8
+app, and writes `out/big_brother-<version>.apk.zip` together with the R8
 mapping. The file is both the app's APK and the flashable module. It is
 signed with the debug key unless `android/keystore.properties` exists, with
 the keys `storeFile`, `storePassword`, `keyAlias` and `keyPassword`.

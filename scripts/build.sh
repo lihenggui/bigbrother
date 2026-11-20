@@ -91,10 +91,9 @@ done
 # the daemons in out/ into the root of the archive.
 (cd android && ./gradlew --quiet :app:assembleRelease)
 version="$(sed -n 's/^version=//p' module/module.prop)"
-# Published as a .zip: root managers flash nothing else (KernelSU's file
-# picker offers only .zip files). Flashing it installs the app as well (see
-# module/customize.sh); renamed to .apk, the same file installs as the app.
-zip="out/big_brother-$version.zip"
+# The final .zip lets root managers select this file, and removing it
+# gives the APK its installable name without changing the signed bytes.
+zip="out/big_brother-$version.apk.zip"
 cp android/app/build/outputs/apk/release/app-release.apk "$zip"
 echo "built: $zip ($(du -h "$zip" | cut -f1))"
 

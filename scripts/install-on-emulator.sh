@@ -18,7 +18,7 @@
 # then starts the daemon, so that check-canary.sh and check-sandbox.sh can
 # run there.
 #
-#   scripts/install-on-emulator.sh [out/big_brother-<version>.zip]
+#   scripts/install-on-emulator.sh [out/big_brother-<version>.apk.zip]
 #
 # Needs an image on which `adb root` works (google_apis, not
 # google_apis_playstore). The module's own installer, module/customize.sh,
@@ -33,7 +33,7 @@ cd "$(dirname "$0")/.."
 MODPATH=/data/adb/modules/big_brother
 BBD=$MODPATH/bin/bbd
 version="$(sed -n 's/^version=//p' module/module.prop)"
-zip="${1:-out/big_brother-$version.zip}"
+zip="${1:-out/big_brother-$version.apk.zip}"
 [[ -f "$zip" ]] || {
     echo "error: $zip not found; build it with ./scripts/build.sh" >&2
     exit 2

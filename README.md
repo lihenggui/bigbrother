@@ -62,7 +62,8 @@ Records are kept for 30 days.
   [Magisk](https://github.com/topjohnwu/Magisk) or
   [APatch](https://apatch.dev)
 - Optional: [LSPosed](https://github.com/LSPosed/LSPosed) (Xposed API 101
-  or newer), for access through content providers
+  or newer), for recording access through content providers and for Jail controls
+  that run in System Framework
 
 On x86_64, which covers the Android emulator, only 64-bit apps are
 recorded. Development and testing are done on Android 16 with kernel 6.6
@@ -70,27 +71,29 @@ and KernelSU.
 
 ## Installation
 
-Download `big_brother-<version>.zip` from the
+Download `big_brother-<version>.apk.zip` from the
 [latest release](https://github.com/lihenggui/bigbrother/releases/latest).
 The file is both the module and the app. Then either:
 
 - flash it in your root manager, which installs the app as well, or
-- rename it to `.apk` and install it, open the app, grant it root and tap
-  "Install module".
+- remove the final `.zip` from the filename and install the APK. Open the
+  app, grant it root and tap "Install module".
 
 Restart the device, except on KernelSU, which applies the module
 immediately. Settings shows "Recording" once the module is running.
 
-To record access through content providers, enable Big Brother in LSPosed,
-keep the suggested scope (the media, external storage and download
-providers, and the contacts, telephony and calendar providers) and restart.
+To use these features, enable Big Brother in LSPosed and keep the suggested
+scopes. The media, external storage, download, contacts, telephony and
+calendar providers record accesses. The **System Framework** scope gives
+Jail control over Android ID, advertising IDs, installed app visibility
+and file grants from the system file picker. Restart after enabling the module.
 
 The module can also be installed from a root shell:
 
 ```sh
-ksud module install big_brother-<version>.zip       # KernelSU
-magisk --install-module big_brother-<version>.zip   # Magisk
-apd module install big_brother-<version>.zip        # APatch
+ksud module install big_brother-<version>.apk.zip       # KernelSU
+magisk --install-module big_brother-<version>.apk.zip   # Magisk
+apd module install big_brother-<version>.apk.zip        # APatch
 ```
 
 ### Updating
@@ -152,8 +155,8 @@ Not by default: it records access and does not prevent it. An app can be
 isolated in Jail: it is given storage of its own, empty at first, no
 personal data and an identity of its own. Each item can be set for all
 isolated apps or for one app, and apps installed later can be isolated
-before their first start. Hiding device identifiers and installed apps
-needs the LSPosed hook with the System Framework scope. See
+before their first start. Android ID, advertising IDs, installed app visibility
+and system file picker grants need the LSPosed **System Framework** scope. See
 [docs/sandbox.md](docs/sandbox.md).
 
 ### Does it drain the battery?
@@ -206,7 +209,8 @@ eBPF programs in the kernel observe file opens, related system calls,
 program execution, connections, netlink requests and binder transactions,
 and pass them to a daemon that classifies them and stores them in SQLite.
 The optional LSPosed hook reports who queried or opened what in the
-system's content providers. The app reads the daemon's output as root.
+system's content providers and applies Jail controls in System Framework.
+The app reads the daemon's output as root.
 See [docs/how-it-works.md](docs/how-it-works.md).
 
 ## Contributing

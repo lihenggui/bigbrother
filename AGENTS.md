@@ -32,7 +32,7 @@ cargo fmt --all --check
 cargo clippy --all-targets -- -D warnings
 cargo test
 for s in module/*.sh scripts/*.sh; do bash -n "$s"; done
-./scripts/build.sh            # eBPF, daemons for arm64 and x86_64, and out/big_brother-<version>.zip
+./scripts/build.sh            # eBPF, daemons for arm64 and x86_64, and out/big_brother-<version>.apk.zip
 (cd android && ./gradlew spotlessCheck test)
 ```
 

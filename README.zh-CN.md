@@ -50,7 +50,7 @@ Big Brother 用于在已 root 的 Android 设备上记录应用对隐私数据�
 - 支持模块的 root 方案：[KernelSU](https://kernelsu.org)、
   [Magisk](https://github.com/topjohnwu/Magisk) 或 [APatch](https://apatch.dev)
 - 可选：[LSPosed](https://github.com/LSPosed/LSPosed)（Xposed API 101 及以上），
-  用于记录经 ContentProvider 的访问
+  用于记录经内容提供程序的访问，并为“监狱”提供系统框架中的隔离功能
 
 在 x86_64 设备（包括 Android 模拟器）上仅记录 64 位应用。开发与测试环境为 Android 16、
 内核 6.6 和 KernelSU。
@@ -58,22 +58,23 @@ Big Brother 用于在已 root 的 Android 设备上记录应用对隐私数据�
 ## 安装
 
 从 [Releases](https://github.com/lihenggui/bigbrother/releases/latest) 下载
-`big_brother-<version>.zip`。该文件同时是模块和应用，可选择以下任一方式安装：
+`big_brother-<version>.apk.zip`。该文件同时是模块和应用，可选择以下任一方式安装：
 
 - 在 root 管理器中刷入，应用会随之安装。
-- 将扩展名改为 `.apk` 后作为应用安装，打开应用并授予 root 权限，点击“安装模块”。
+- 去掉文件名末尾的 `.zip`，安装得到的 APK，打开应用并授予 root 权限，点击“安装模块”。
 
 安装后重启设备。KernelSU 无需重启，模块立即生效。模块运行后，设置页面显示“正在记录”。
 
-如需记录经 ContentProvider 的访问，在 LSPosed 中启用 Big Brother，保留默认作用域（媒体、
-外部存储、下载、通讯录、电话和日历提供程序）后重启设备。
+如需使用这些功能，在 LSPosed 中启用 Big Brother 并保留推荐作用域。媒体、外部存储、下载、
+通讯录、电话和日历提供程序用于记录访问。**系统框架**作用域让“监狱”管理 Android ID、广告 ID、
+已安装应用的可见性和系统文件选择器的文件授权。启用模块后重启设备。
 
 也可以在 root shell 中安装模块：
 
 ```sh
-ksud module install big_brother-<version>.zip       # KernelSU
-magisk --install-module big_brother-<version>.zip   # Magisk
-apd module install big_brother-<version>.zip        # APatch
+ksud module install big_brother-<version>.apk.zip       # KernelSU
+magisk --install-module big_brother-<version>.apk.zip   # Magisk
+apd module install big_brother-<version>.apk.zip        # APatch
 ```
 
 ### 更新
@@ -124,8 +125,9 @@ apd module install big_brother-<version>.zip        # APatch
 
 默认不会：Big Brother 只记录访问，不阻止访问。可在“监狱”中隔离应用：被隔离的应用使用
 独立的存储（初始为空），读不到个人数据，并获得独立的设备标识。每一项既可对所有隔离应用
-统一设置，也可单独设置；此后安装的应用也可在首次启动前自动隔离。隐藏设备标识和已安装应用
-需要在 LSPosed 中为模块启用“系统框架”作用域。详见 [docs/sandbox.md](docs/sandbox.md)（英文）。
+统一设置，也可单独设置；此后安装的应用也可在首次启动前自动隔离。Android ID、广告 ID、
+已安装应用可见性和系统文件选择器的文件授权需要 LSPosed 的**系统框架**作用域。
+详见 [docs/sandbox.md](docs/sandbox.md)（英文）。
 
 ### 对续航的影响
 
@@ -162,8 +164,8 @@ apd module install big_brother-<version>.zip        # APatch
 ## 工作原理
 
 内核中的 eBPF 程序观测文件打开、相关系统调用、程序执行、网络连接、netlink 请求和 binder
-事务，由守护进程分类后写入 SQLite。可选的 LSPosed 模块在系统的 ContentProvider 进程中
-记录查询和打开操作的调用方。应用以 root 身份读取守护进程的输出。详见
+事务，由守护进程分类后写入 SQLite。可选的 LSPosed 模块在系统内容提供程序中记录查询和打开操作的
+调用方，并在系统框架中执行“监狱”的隔离设置。应用以 root 身份读取守护进程的输出。详见
 [docs/how-it-works.md](docs/how-it-works.md)（英文）。
 
 ## 参与贡献
