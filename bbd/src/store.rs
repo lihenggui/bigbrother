@@ -392,6 +392,9 @@ pub struct Writer {
     net: std::cell::RefCell<net::Pending>,
     /// The counters last written.
     written: Option<Counters>,
+    /// Told the uids whose network records `net_clear` deletes, when
+    /// another connection holds records not written yet.
+    net_cleared: Option<std::sync::mpsc::Sender<u32>>,
 }
 
 impl Writer {
@@ -443,6 +446,7 @@ impl Writer {
             sessions: Vec::new(),
             net: std::cell::RefCell::new(HashMap::new()),
             written: None,
+            net_cleared: None,
         })
     }
 
@@ -1825,6 +1829,48 @@ mod tests {
         assert_eq!(count(), 1);
         drop(reader);
         drop(writer);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn network_cleared_on_another_connection_is_not_written_from_what_was_held() {
+        let dir = std::env::temp_dir().join(format!("bbd-net-cleared-{}", std::process::id()));
+        let db = dir.join("bb.db");
+        let mut recorder = Writer::open(&db).unwrap();
+        let mut sandbox = Writer::open(&db).unwrap();
+        let (cleared, told) = std::sync::mpsc::channel();
+        sandbox.tell_net_cleared(cleared);
+        let key = |uid| net::NetKey {
+            uid,
+            hour: 1,
+            host: String::new(),
+            addr: "203.0.113.1".into(),
+            port: 443,
+        };
+        let seen = net::NetSeen {
+            conn: 1,
+            ..net::NetSeen::default()
+        };
+        recorder.net_record(key(10234), seen, 3600);
+        recorder.net_record(key(10235), seen, 3600);
+
+        sandbox.net_clear(10234).unwrap();
+        // As the event loop does before it writes.
+        for uid in told.try_iter() {
+            recorder.net_clear(uid).unwrap();
+        }
+        recorder.flush(&Counters::default(), 3600).unwrap();
+
+        let uids: Vec<u32> = recorder
+            .conn
+            .prepare("SELECT uid FROM net_dest")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(uids, [10235]);
+        drop((recorder, sandbox));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
