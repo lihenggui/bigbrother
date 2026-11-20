@@ -171,6 +171,7 @@ internal fun ItemRow(
     count: Int,
     modifier: Modifier = Modifier,
     checked: Boolean = mode.isOn,
+    appOpsChecking: Boolean = false,
 ) {
     val spatial = MaterialTheme.motionScheme.fastSpatialSpec<androidx.compose.ui.unit.Dp>()
     val top by animateDpAsState(if (expanded || index == 0) OUTER_CORNER else INNER_CORNER, spatial, label = "top")
@@ -200,10 +201,15 @@ internal fun ItemRow(
                     Column(Modifier.weight(1f)) {
                         TitleWithTag(title, tagged = globalMode != null && choice != null)
                         val inEffect = unmet.isEmpty() || !mode.isOn
+                        val checking = appOpsChecking && unmet == setOf(SandboxPart.APP_OPS) && mode.isOn
                         Text(
-                            text = if (inEffect) modeLabel(item, mode) else stringResource(notInEffect(item, unmet)),
+                            text = when {
+                                inEffect -> modeLabel(item, mode)
+                                checking -> stringResource(R.string.jail_checking_app_ops)
+                                else -> stringResource(notInEffect(item, unmet))
+                            },
                             style = MaterialTheme.typography.bodyMedium,
-                            color = if (inEffect) {
+                            color = if (inEffect || checking) {
                                 MaterialTheme.colorScheme.onSurfaceVariant
                             } else {
                                 MaterialTheme.colorScheme.error

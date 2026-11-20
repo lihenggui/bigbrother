@@ -16,14 +16,21 @@
 
 package li.mercury.bigbrother.feature.jail.impl
 
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.RecordsException
+import li.mercury.bigbrother.core.data.repository.SandboxRepository
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
+import li.mercury.bigbrother.core.model.SandboxPart
+import li.mercury.bigbrother.core.model.SandboxedApp
 import li.mercury.bigbrother.core.testing.MainDispatcherRule
 import li.mercury.bigbrother.core.testing.repository.TestAppInfoRepository
 import li.mercury.bigbrother.core.testing.repository.TestInstalledAppRepository
@@ -33,6 +40,7 @@ import li.mercury.bigbrother.feature.jail.impl.network.emptyActivity
 import org.junit.Rule
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -51,7 +59,7 @@ class JailAppViewModelTest {
     private fun TestScope.viewModel(
         uid: Int = UID,
         packageName: String = PACKAGE,
-        sandboxRepository: TestSandboxRepository = this@JailAppViewModelTest.sandboxRepository,
+        sandboxRepository: SandboxRepository = this@JailAppViewModelTest.sandboxRepository,
     ): JailAppViewModel {
         val viewModel = JailAppViewModel(uid, packageName, sandboxRepository, TestAppInfoRepository(), installedAppRepository, TestNetworkRepository(emptyActivity()), currentUserId = 0)
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
@@ -194,6 +202,50 @@ class JailAppViewModelTest {
 
         assertTrue(viewModel.uiState.value.left)
         assertEquals(PACKAGE, viewModel.uiState.value.app?.packageName)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun givenAppOpsBeingChecked_whenTheyRecover_thenUpdatesWithoutReopeningThePage() = runTest {
+        val recovered = sandboxed(UID, PACKAGE, enabled = true)
+        val checking = recovered.copy(
+            unmet = mapOf(SandboxItem.CAMERA to setOf(SandboxPart.APP_OPS)),
+            appOpsChecking = true,
+        )
+        val observedApps = MutableStateFlow<List<SandboxedApp>?>(listOf(checking))
+        var refreshes = 0
+        val repository = object : SandboxRepository by sandboxRepository {
+            override val apps = observedApps
+
+            override suspend fun refresh() {
+                refreshes++
+                sandboxRepository.refresh()
+                if (refreshes == 2) apps.value = listOf(recovered)
+            }
+        }
+        val model = viewModel(sandboxRepository = repository)
+        assertTrue(model.app().appOpsChecking)
+        val watch = model.watchAppOps()
+        advanceTimeBy(1_000)
+        runCurrent()
+
+        assertFalse(model.app().appOpsChecking)
+        assertNull(model.app().unmet[SandboxItem.CAMERA])
+        advanceTimeBy(60_000)
+        assertEquals(2, refreshes)
+        watch.cancel()
+    }
+
+    @Test
+    fun givenStaleCachedList_whenSettingsOpenAndRefreshFails_thenShowsFailureWithoutLeaving() = runTest {
+        val repository = TestSandboxRepository()
+        repository.refresh()
+        repository.refreshFailure = RecordsException.NoRoot()
+
+        val model = viewModel(sandboxRepository = repository)
+
+        assertEquals(LoadFailure.NoRoot, model.uiState.value.failure)
+        assertFalse(model.uiState.value.left)
     }
 
     @Test

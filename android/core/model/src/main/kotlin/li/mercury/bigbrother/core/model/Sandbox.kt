@@ -210,6 +210,8 @@ data class SandboxedApp(
     val networkRules: Int = 0,
     /** Since when its connections are recorded, in seconds since the epoch; null if they are not. */
     val recordingSince: Long? = null,
+    /** Whether the daemon is still checking this app's Android restrictions. */
+    val appOpsChecking: Boolean = false,
 ) {
     val userId: Int get() = uid / PER_USER_RANGE
 

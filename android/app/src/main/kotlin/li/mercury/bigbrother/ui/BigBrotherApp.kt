@@ -72,6 +72,7 @@ import li.mercury.bigbrother.feature.appdetail.impl.navigation.appDetailEntries
 import li.mercury.bigbrother.feature.applist.api.navigation.AppListNavKey
 import li.mercury.bigbrother.feature.applist.impl.navigation.appListEntry
 import li.mercury.bigbrother.feature.jail.api.navigation.JailNavKey
+import li.mercury.bigbrother.feature.jail.api.navigation.navigateToJailApp
 import li.mercury.bigbrother.feature.jail.impl.navigation.jailEntries
 import li.mercury.bigbrother.feature.overview.api.navigation.CategoryNavKey
 import li.mercury.bigbrother.feature.overview.api.navigation.OverviewNavKey
@@ -154,7 +155,7 @@ fun BigBrotherApp(recordingStopped: Boolean, modifier: Modifier = Modifier) {
         appListEntry(navigator, searchBar)
         timelineEntry(navigator, searchBar)
         jailEntries(navigator, searchBar)
-        appDetailEntries(navigator)
+        appDetailEntries(navigator, navigator::navigateToJailApp)
         settingsEntry(navigator)
     }
 

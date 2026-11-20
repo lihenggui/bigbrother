@@ -92,7 +92,8 @@ fun JailAppScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     LifecycleResumeEffect(Unit) {
         viewModel.refresh()
-        onPauseOrDispose {}
+        val watch = viewModel.watchAppOps()
+        onPauseOrDispose { watch.cancel() }
     }
     LaunchedEffect(state.left) { if (state.left) onLeave() }
     JailAppScreen(
@@ -184,6 +185,7 @@ internal fun JailAppScreen(
                                 choice = app.settings[item],
                                 globalMode = state.global[item] ?: SandboxMode.ON,
                                 unmet = app.unmet[item].orEmpty(),
+                                appOpsChecking = app.appOpsChecking,
                                 expanded = expanded == item,
                                 onExpandedChange = { open -> expanded = if (open) item else null },
                                 onCheckedChange = { on -> onSetOn(item, on) },

@@ -307,6 +307,9 @@ pub struct ListedApp {
     /// each with the parts that are not in place.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub unmet: BTreeMap<Item, Vec<Part>>,
+    /// The AppOps helper is still reading back the restrictions for this app.
+    #[serde(default)]
+    pub appops_checking: bool,
     /// How many destinations it is kept from.
     pub network_rules: u32,
     /// Since when its connections are recorded, in seconds since the
@@ -373,6 +376,8 @@ pub struct Status {
     pub gated_uids: BTreeSet<u32>,
     #[serde(skip)]
     pub held_ops: BTreeMap<u32, BTreeSet<String>>,
+    #[serde(skip)]
+    pub checking_appops: BTreeSet<u32>,
 }
 
 /// What the system server hook reports it has in place.
@@ -1223,6 +1228,7 @@ impl Sandbox {
                 };
                 ListedApp {
                     unmet,
+                    appops_checking: entry.enabled && status.checking_appops.contains(&entry.uid),
                     items,
                     network_rules: rules.get(&entry.uid).copied().unwrap_or(0),
                     recording_since: recording.get(&entry.uid).copied(),
@@ -1638,8 +1644,18 @@ fn print_list(out: &mut impl std::io::Write, listed: &Listed) -> std::io::Result
             format!(" ({})", not_on.join(", "))
         };
         writeln!(out, "{:<10} {state:<9} {}{not_on}", app.uid, app.package)?;
+        if app.appops_checking {
+            writeln!(out, "{:<20} checking Android restrictions", "")?;
+        }
         for (item, parts) in &app.unmet {
-            let parts: Vec<&str> = parts.iter().map(|part| part.name()).collect();
+            let parts: Vec<&str> = parts
+                .iter()
+                .filter(|part| !app.appops_checking || **part != Part::AppOps)
+                .map(|part| part.name())
+                .collect();
+            if parts.is_empty() {
+                continue;
+            }
             writeln!(
                 out,
                 "{:<20} {} not in effect, missing {}",
@@ -3155,6 +3171,7 @@ mod tests {
                         settings: Settings::default(),
                         items: Settings::default(),
                         unmet: BTreeMap::new(),
+                        appops_checking: false,
                         network_rules: 0,
                         recording_since: None,
                     },
@@ -3170,6 +3187,7 @@ mod tests {
                             Item::DeviceIds,
                             vec![Part::AppOps, Part::AndroidIdHook],
                         )]),
+                        appops_checking: true,
                         network_rules: 0,
                         recording_since: None,
                     },
@@ -3185,7 +3203,8 @@ mod tests {
              UID        STATE     PACKAGE\n\
              10100      disabled  com.app\n\
              10200      enabled   com.shared.one (location coarse, camera off)\n\
-             \x20                    device_ids not in effect, missing app_ops, android_id_hook\n\
+             \x20                    checking Android restrictions\n\
+             \x20                    device_ids not in effect, missing android_id_hook\n\
              No apps in the sandbox.\n"
         );
     }

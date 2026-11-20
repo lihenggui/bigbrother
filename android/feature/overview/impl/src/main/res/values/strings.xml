@@ -27,7 +27,7 @@
     </plurals>
     <!-- Apps beyond those whose icons are shown. -->
     <string name="more_count">+%d</string>
-    <string name="other_categories">Other kinds of data</string>
+    <string name="other_categories">Other sensitive permissions</string>
     <plurals name="category_count">
         <item quantity="one">%d kind</item>
         <item quantity="other">%d kinds</item>

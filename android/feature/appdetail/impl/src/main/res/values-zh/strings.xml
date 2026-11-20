@@ -14,6 +14,15 @@
      along with this program. If not, see <https://www.gnu.org/licenses/>.
 -->
 <resources>
+    <string name="open_jail">隔离或管理应用</string>
+    <string name="isolate_app_title">隔离 %1$s？</string>
+    <string name="isolate_app_summary">应用将关闭并采用隔离设置。接下来可以调整此应用的限制。</string>
+    <string name="isolate_app">隔离</string>
+    <string name="isolating_app">正在隔离应用…</string>
+    <string name="jail_action_failed">无法打开隔离设置</string>
+    <string name="jail_action_retry">请重新打开隔离设置。</string>
+    <string name="jail_app_unavailable">此应用已从当前 Android 用户中移除。</string>
+
     <string name="action_read">读取</string>
     <string name="action_write">修改</string>
     <string name="action_read_write">读取并修改</string>
