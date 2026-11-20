@@ -41,7 +41,7 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     fs::{self, File},
-    io,
+    io::{self, Read as _},
     os::{
         fd::{AsRawFd, FromRawFd, OwnedFd},
         unix::fs::PermissionsExt as _,
@@ -84,13 +84,43 @@ const FAILURE_LOG_INTERVAL: Duration = Duration::from_secs(60);
 pub struct Process(OwnedFd);
 
 impl Process {
+    /// Hold `pid` as a process leader. A reused ID belonging to a non-leader
+    /// is the same as a missing leader for callers holding process IDs.
     pub fn open(pid: i32) -> io::Result<Self> {
+        Self::open_pidfd(pid).map_err(|error| Self::normalize_open_error(pid, error))
+    }
+
+    fn normalize_open_error(pid: i32, error: io::Error) -> io::Error {
+        // Kernels use either errno when a task has no thread-group leader at this ID.
+        if pid > 0
+            && matches!(error.raw_os_error(), Some(libc::EINVAL | libc::ENOENT))
+            && Self::no_group_leader(pid)
+        {
+            io::Error::from_raw_os_error(libc::ESRCH)
+        } else {
+            error
+        }
+    }
+
+    fn open_pidfd(pid: i32) -> io::Result<Self> {
         let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
         if fd < 0 {
             return Err(io::Error::last_os_error());
         }
         // SAFETY: just opened, and owned by nothing else.
         Ok(Self(unsafe { OwnedFd::from_raw_fd(fd as i32) }))
+    }
+
+    fn no_group_leader(pid: i32) -> bool {
+        match is_nonleader(pid) {
+            Ok(nonleader) => nonleader,
+            Err(e) if matches!(e.raw_os_error(), Some(libc::ENOENT | libc::ESRCH)) => {
+                // The thread may have exited before its status was read.
+                // Confirm that in the kernel before treating it as gone.
+                matches!(Self::open_pidfd(pid), Err(e) if e.raw_os_error() == Some(libc::ESRCH))
+            }
+            Err(_) => false,
+        }
     }
 
     /// A pidfd becomes readable when this process exits, including before it is reaped.
@@ -123,6 +153,25 @@ impl Process {
             Ok(())
         }
     }
+}
+
+fn is_nonleader(pid: i32) -> io::Result<bool> {
+    let mut status = Vec::new();
+    File::open(format!("/proc/{pid}/status"))?
+        .take(4096)
+        .read_to_end(&mut status)?;
+    // Read the IDs even when the thread's name includes non-UTF-8 bytes.
+    let field = |prefix: &[u8]| {
+        let value = status
+            .split(|&byte| byte == b'\n')
+            .find_map(|line| line.strip_prefix(prefix))?;
+        std::str::from_utf8(value)
+            .ok()?
+            .trim_ascii()
+            .parse::<i32>()
+            .ok()
+    };
+    Ok(field(b"Pid:") == Some(pid) && field(b"Tgid:").is_some_and(|tgid| tgid > 0 && tgid != pid))
 }
 
 /// What the starts of an app are held for: its mounts, and what it finds
@@ -1181,5 +1230,51 @@ mod tests {
         // be opened.
         assert!(held.signal(libc::SIGKILL).is_err());
         assert!(Process::open(i32::MAX).is_err());
+        assert_eq!(
+            Process::open(0).err().and_then(|e| e.raw_os_error()),
+            Some(libc::EINVAL)
+        );
+    }
+
+    #[test]
+    fn both_kernel_errors_for_a_nonleader_report_a_missing_process() {
+        std::thread::scope(|scope| {
+            let (send_tid, receive_tid) = std::sync::mpsc::channel();
+            let (keep_alive, finish) = std::sync::mpsc::channel::<()>();
+            scope.spawn(move || {
+                send_tid.send(unsafe { libc::gettid() }).unwrap();
+                let _ = finish.recv();
+            });
+            let tid = receive_tid.recv().unwrap();
+            assert_ne!(tid as u32, std::process::id());
+            for (errno, expected) in [
+                (libc::EINVAL, libc::ESRCH),
+                (libc::ENOENT, libc::ESRCH),
+                (libc::EPERM, libc::EPERM),
+            ] {
+                let error = Process::normalize_open_error(tid, io::Error::from_raw_os_error(errno));
+                assert_eq!(error.raw_os_error(), Some(expected), "input errno {errno}");
+            }
+            drop(keep_alive);
+        });
+    }
+
+    #[test]
+    fn a_leader_and_an_invalid_id_keep_the_original_open_error() {
+        for pid in [std::process::id() as i32, 0, -1] {
+            for errno in [libc::EINVAL, libc::ENOENT] {
+                let error = Process::normalize_open_error(pid, io::Error::from_raw_os_error(errno));
+                assert_eq!(error.raw_os_error(), Some(errno));
+            }
+        }
+    }
+
+    #[test]
+    fn a_vanished_thread_is_confirmed_by_the_kernel() {
+        for errno in [libc::EINVAL, libc::ENOENT] {
+            let error =
+                Process::normalize_open_error(i32::MAX, io::Error::from_raw_os_error(errno));
+            assert_eq!(error.raw_os_error(), Some(libc::ESRCH));
+        }
     }
 }
