@@ -19,4 +19,36 @@
     <string name="nav_apps">应用</string>
     <string name="nav_timeline">时间线</string>
     <string name="nav_jail">监狱</string>
+
+    <!-- First-launch guide. All access shown in the illustrations is sample data. -->
+    <string name="guide_access_title">监测应用的数据访问</string>
+    <string name="guide_access_body">Big Brother 在本机记录应用读取文件、获取位置等行为。将应用加入「监狱（应用隔离）」，可限制它访问个人数据，应用会被授予独立的存储空间，读取真实的设备标识符操作会被阻止。</string>
+    <string name="guide_timeline_title">查看访问时间线</string>
+    <string name="guide_timeline_body">时间线按小时列出各应用访问过的数据。点开一条记录，可查看该应用的访问详情。</string>
+    <string name="guide_jail_title">隔离指定应用</string>
+    <string name="guide_jail_body">把目标应用放入「监狱（应用隔离）」后，受支持的隔离设置立即生效。可为应用分配独立存储，让它读取剪贴板时得到空数据。各项限制可单独调整。</string>
+    <string name="guide_framework_title">启用完整隔离</string>
+    <string name="guide_framework_body">在 LSPosed 或 Vector 中启用 Big Brother，保留推荐作用域并勾选「系统框架」，然后重启设备。</string>
+    <string name="guide_skip">跳过</string>
+    <string name="guide_next">下一页</string>
+    <string name="guide_back">上一页</string>
+    <string name="guide_start">开始使用</string>
+    <string name="guide_progress">第 %1$d 页，共 %2$d 页</string>
+    <string name="guide_guard_description">戴墨镜的保镖抬起双臂，屈肘展示肌肉。</string>
+    <string name="guide_timeline_description">时间线示例：天气和手电筒的访问记录。</string>
+    <string name="guide_jail_description">天气的隔离详情示例：使用独立存储，剪贴板和账户返回空数据。</string>
+    <string name="guide_android_id">Android ID</string>
+    <string name="guide_android_id_result">各应用获得独立的虚拟 ID。</string>
+    <string name="guide_ad_id">广告标识</string>
+    <string name="guide_ad_id_result">无法读取真实广告 ID 或受支持的厂商标识（OAID）。</string>
+    <string name="guide_apps">应用列表</string>
+    <string name="guide_apps_result">仅能看到自身和系统应用。</string>
+    <string name="guide_files">文件授权</string>
+    <string name="guide_files_result">可打开本次选取的文件，隔离期间无法沿用长期授权。</string>
+    <string name="guide_weather">天气</string>
+    <string name="guide_flashlight">手电筒</string>
+    <string name="guide_weather_summary">媒体库、位置及其他 2 项</string>
+    <string name="guide_flashlight_summary">通讯录、账户及其他 2 项</string>
+    <string name="guide_timeline_caption">时间线 · 界面节选</string>
+    <string name="guide_jail_caption">监狱 · 应用详情节选</string>
 </resources>

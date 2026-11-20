@@ -27,25 +27,33 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dagger.hilt.android.AndroidEntryPoint
 import li.mercury.bigbrother.core.designsystem.theme.BigBrotherTheme
 import li.mercury.bigbrother.ui.BigBrotherApp
+import li.mercury.bigbrother.ui.FirstLaunchGuide
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     private val viewModel: MainActivityViewModel by viewModels()
 
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        viewModel.dismissGuide()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
-        // The splash screen stays until the settings are read, so that the
-        // first frame has the right colors instead of being blank.
-        installSplashScreen().setKeepOnScreenCondition { viewModel.userData.value == null }
+        installSplashScreen().setKeepOnScreenCondition { viewModel.uiState.value == MainActivityUiState.Loading }
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            val userData by viewModel.userData.collectAsStateWithLifecycle()
-            val recordingStopped by viewModel.recordingStopped.collectAsStateWithLifecycle()
-            // The settings are read within milliseconds; waiting for them
-            // avoids a first frame in the wrong colors.
-            val settings = userData ?: return@setContent
-            BigBrotherTheme(useDynamicColor = settings.useDynamicColor) {
-                BigBrotherApp(recordingStopped = recordingStopped)
+            val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+            when (val state = uiState) {
+                MainActivityUiState.Loading -> Unit
+
+                is MainActivityUiState.Ready -> BigBrotherTheme(useDynamicColor = state.useDynamicColor) {
+                    if (state.showGuide) {
+                        FirstLaunchGuide(onDismiss = viewModel::dismissGuide)
+                    } else {
+                        BigBrotherApp(recordingStopped = state.recordingStopped)
+                    }
+                }
             }
         }
     }

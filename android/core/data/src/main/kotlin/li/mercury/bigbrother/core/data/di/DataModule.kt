@@ -25,7 +25,9 @@ import li.mercury.bigbrother.core.data.repository.AppInfoRepository
 import li.mercury.bigbrother.core.data.repository.DataStoreUserDataRepository
 import li.mercury.bigbrother.core.data.repository.DiagnosticsRepository
 import li.mercury.bigbrother.core.data.repository.FileAccessRepository
+import li.mercury.bigbrother.core.data.repository.FirstLaunchRepository
 import li.mercury.bigbrother.core.data.repository.InstalledAppRepository
+import li.mercury.bigbrother.core.data.repository.LocalFirstLaunchRepository
 import li.mercury.bigbrother.core.data.repository.ModuleRepository
 import li.mercury.bigbrother.core.data.repository.NetworkRepository
 import li.mercury.bigbrother.core.data.repository.PackageManagerAppInfoRepository
@@ -49,6 +51,9 @@ internal abstract class DataModule {
     abstract fun bindsFileAccessRepository(
         repository: RootFileAccessRepository,
     ): FileAccessRepository
+
+    @Binds
+    abstract fun bindsFirstLaunchRepository(repository: LocalFirstLaunchRepository): FirstLaunchRepository
 
     @Binds
     abstract fun bindsModuleRepository(repository: RootModuleRepository): ModuleRepository
