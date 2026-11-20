@@ -13,6 +13,7 @@ androidxHiltLifecycleViewModelCompose = "1.4.0"
 androidxLifecycle = "2.11.0"
 androidxLifecycleViewModelNavigation3 = "2.11.0"
 androidxNavigation3 = "1.2.1"
+androidxNavigationEvent = "1.1.1"
 androidxProfileinstaller = "1.4.1"
 androidxSavedStateCompose = "1.5.0"
 androidxTestEspresso = "3.7.0"
@@ -60,6 +61,7 @@ androidx-lifecycle-runtimeCompose = { group = "androidx.lifecycle", name = "life
 androidx-lifecycle-viewModelCompose = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "androidxLifecycle" }
 androidx-lifecycle-viewModel-navigation3 = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-navigation3", version.ref = "androidxLifecycleViewModelNavigation3" }
 androidx-navigation3-runtime = { group = "androidx.navigation3", name = "navigation3-runtime", version.ref = "androidxNavigation3" }
+androidx-navigationEvent = { group = "androidx.navigationevent", name = "navigationevent", version.ref = "androidxNavigationEvent" }
 androidx-navigation3-ui = { group = "androidx.navigation3", name = "navigation3-ui", version.ref = "androidxNavigation3" }
 androidx-profileinstaller = { group = "androidx.profileinstaller", name = "profileinstaller", version.ref = "androidxProfileinstaller" }
 androidx-savedstate-compose = { group = "androidx.savedstate", name = "savedstate-compose", version.ref = "androidxSavedStateCompose" }

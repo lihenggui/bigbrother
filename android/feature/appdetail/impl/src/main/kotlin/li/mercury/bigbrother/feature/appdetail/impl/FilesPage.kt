@@ -16,7 +16,6 @@
 
 package li.mercury.bigbrother.feature.appdetail.impl
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -60,6 +59,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -67,6 +67,7 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
 import li.mercury.bigbrother.core.model.Access
@@ -80,6 +81,7 @@ import li.mercury.bigbrother.core.ui.VOLUME_ROOT
 import li.mercury.bigbrother.core.ui.exactDateTime
 import li.mercury.bigbrother.core.ui.label
 import li.mercury.bigbrother.core.ui.relativeTime
+import li.mercury.bigbrother.core.ui.rememberPredictiveBackTransition
 import li.mercury.bigbrother.feature.appdetail.impl.tree.FileNode
 import li.mercury.bigbrother.feature.appdetail.impl.tree.buildFileTree
 import li.mercury.bigbrother.core.ui.R as UiR
@@ -255,36 +257,41 @@ internal fun FilesPage(
 ) {
     val tree = browser.tree
     val here = tree.resolve(location)
-    BackHandler(enabled = handleBack && here != Location.ROOT) { onNavigate(tree.parentOf(here)) }
+    val parent = tree.parentOf(here)
+    val transition = rememberPredictiveBackTransition(
+        current = here,
+        previous = parent.takeIf { handleBack && here != Location.ROOT },
+        onBack = { onNavigate(parent) },
+    )
     Column(Modifier.fillMaxSize()) {
         ActivityFilter(browser.readOnly, onReadOnly)
-        // At the top the path says nothing; it appears once inside a folder.
-        if (here != Location.ROOT) Breadcrumb(tree, here, onNavigate)
         // Entering a folder slides the new list in from the end, leaving it
         // slides back, like turning pages.
         val motion = MaterialTheme.motionScheme
-        AnimatedContent(
-            targetState = here,
+        val forward = if (LocalLayoutDirection.current == LayoutDirection.Ltr) 1 else -1
+        transition.AnimatedContent(
             transitionSpec = {
                 val deeper = targetState.length >= initialState.length
-                val direction = if (deeper) 1 else -1
+                val direction = if (deeper) forward else -forward
                 val slide = motion.defaultSpatialSpec<IntOffset>()
                 val fade = motion.fastEffectsSpec<Float>()
                 slideInHorizontally(slide) { it / 3 * direction } + fadeIn(fade) togetherWith
                     slideOutHorizontally(slide) { -it / 3 * direction } + fadeOut(fade)
             },
-            label = "folder",
         ) { shown ->
-            Listing(
-                content = tree,
-                location = shown,
-                readOnly = browser.readOnly,
-                filtering = browser.filtering,
-                truncated = truncated,
-                onNavigate = onNavigate,
-                onShowAll = { onReadOnly(false) },
-                onFileDetails = onFileDetails,
-            )
+            Column {
+                if (shown != Location.ROOT) Breadcrumb(tree, shown, onNavigate)
+                Listing(
+                    content = tree,
+                    location = shown,
+                    readOnly = browser.readOnly,
+                    filtering = browser.filtering,
+                    truncated = truncated,
+                    onNavigate = onNavigate,
+                    onShowAll = { onReadOnly(false) },
+                    onFileDetails = onFileDetails,
+                )
+            }
         }
     }
 }

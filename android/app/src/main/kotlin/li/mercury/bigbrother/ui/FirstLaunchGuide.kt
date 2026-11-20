@@ -17,8 +17,14 @@
 package li.mercury.bigbrother.ui
 
 import android.animation.ValueAnimator
-import androidx.activity.compose.BackHandler
+import androidx.activity.compose.PredictiveBackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.MutatePriority
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.scrollable
@@ -76,14 +82,31 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import li.mercury.bigbrother.R
+import li.mercury.bigbrother.core.ui.rememberPredictiveBackTransition
 
 internal enum class GuidePage(val title: Int, val body: Int) {
     Access(R.string.guide_access_title, R.string.guide_access_body),
     Timeline(R.string.guide_timeline_title, R.string.guide_timeline_body),
     Jail(R.string.guide_jail_title, R.string.guide_jail_body),
     Framework(R.string.guide_framework_title, R.string.guide_framework_body),
+}
+
+@Composable
+internal fun FirstLaunchContent(showGuide: Boolean, onDismiss: () -> Unit, content: @Composable () -> Unit) {
+    val pager = rememberPagerState { GuidePage.entries.size }
+    val transition = rememberPredictiveBackTransition(
+        current = showGuide,
+        previous = false.takeIf { showGuide && pager.settledPage == 0 },
+        onBack = onDismiss,
+    )
+    transition.AnimatedContent(
+        transitionSpec = { fadeIn() togetherWith (scaleOut(targetScale = 0.9f) + fadeOut()) },
+    ) { show ->
+        if (show) FirstLaunchGuide(onDismiss = onDismiss, pager = pager) else content()
+    }
 }
 
 @Composable
@@ -100,7 +123,18 @@ internal fun FirstLaunchGuide(
             if (ValueAnimator.areAnimatorsEnabled()) pager.animateScrollToPage(target) else pager.scrollToPage(target)
         }
     }
-    BackHandler { if (page == 0) onDismiss() else navigate(page - 1) }
+    PredictiveBackHandler(enabled = page > 0) { events ->
+        try {
+            pager.scroll(MutatePriority.UserInput) {
+                // Keep the same settled page until the gesture commits or rolls back.
+                events.collect { if (page > 0) with(pager) { updateCurrentPage(page, -0.45f * it.progress) } }
+            }
+        } catch (cancelled: CancellationException) {
+            navigate(page)
+            throw cancelled
+        }
+        if (page > 0) navigate(page - 1)
+    }
 
     Surface(modifier.fillMaxSize()) {
         Column(

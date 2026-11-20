@@ -18,8 +18,12 @@ package li.mercury.bigbrother.ui
 
 import android.app.Application
 import android.content.ComponentName
+import androidx.activity.BackEventCompat
 import androidx.activity.ComponentActivity
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.material3.Text
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
@@ -137,6 +141,60 @@ class FirstLaunchGuideTest {
                 )
             }
         }
+    }
+
+    @Test
+    fun givenSecondPage_whenPredictiveBackCancelsThenCommits_thenPagerSettlesOnTheExpectedPage() {
+        lateinit var pager: PagerState
+        compose.setContent {
+            BigBrotherTheme {
+                pager = rememberPagerState(initialPage = 1) { GuidePage.entries.size }
+                FirstLaunchGuide(onDismiss = {}, pager = pager)
+            }
+        }
+        swipeBack()
+        compose.runOnIdle {
+            assertEquals(GuidePage.Timeline.ordinal, pager.settledPage)
+            check(pager.currentPageOffsetFraction < 0f)
+        }
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.dispatchOnBackCancelled() }
+        visible(R.string.guide_timeline_title)
+        compose.runOnIdle { assertEquals(0f, pager.currentPageOffsetFraction, 0.001f) }
+
+        swipeBack()
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        visible(R.string.guide_access_title)
+        compose.runOnIdle { assertEquals(GuidePage.Access.ordinal, pager.settledPage) }
+    }
+
+    @Test
+    fun givenFirstPage_whenPredictiveBackCancelsThenCommits_thenOverviewIsPreviewedAndShown() {
+        val showGuide = mutableStateOf(true)
+        compose.setContent {
+            BigBrotherTheme {
+                FirstLaunchContent(showGuide.value, onDismiss = { showGuide.value = false }) { Text("Overview content") }
+            }
+        }
+        swipeBack()
+        compose.onNodeWithText("Overview content").assertExists()
+        compose.runOnIdle { check(showGuide.value) }
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.dispatchOnBackCancelled() }
+        visible(R.string.guide_access_title)
+        compose.onNodeWithText("Overview content").assertDoesNotExist()
+
+        swipeBack()
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.onNodeWithText("Overview content").assertIsDisplayed()
+        compose.runOnIdle { check(!showGuide.value) }
+    }
+
+    private fun swipeBack() {
+        val dispatcher = compose.activity.onBackPressedDispatcher
+        compose.runOnUiThread {
+            dispatcher.dispatchOnBackStarted(BackEventCompat(1f, 400f, 0f, BackEventCompat.EDGE_LEFT))
+            dispatcher.dispatchOnBackProgressed(BackEventCompat(140f, 400f, 0.75f, BackEventCompat.EDGE_LEFT))
+        }
+        compose.waitForIdle()
     }
 
     private fun click(id: Int) = compose.onNodeWithText(compose.activity.getString(id)).performClick()
