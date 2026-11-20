@@ -177,21 +177,21 @@ impl Writer {
     /// Delete what is recorded of the network of `uid`, written or not;
     /// how many rows. The destinations it is kept from stay.
     pub fn net_clear(&self, uid: u32) -> anyhow::Result<usize> {
-        self.net.borrow_mut().retain(|key, _| key.uid != uid);
+        self.forget_pending_net(uid);
         Ok(self
             .conn
             .execute("DELETE FROM net_dest WHERE uid = ?1", params![uid])?)
     }
 
-    /// Delete all that is kept of the network of `uid`: its records, its
-    /// rules and that it is recorded. For a uid that has gone to another
-    /// app, which none of them is about.
-    pub fn net_forget(&self, uid: u32) -> anyhow::Result<()> {
-        self.net_clear(uid)?;
-        self.conn
-            .execute("DELETE FROM net_rule WHERE uid = ?1", params![uid])?;
-        self.conn
-            .execute("DELETE FROM net_recording WHERE uid = ?1", params![uid])?;
+    pub(super) fn forget_pending_net(&self, uid: u32) {
+        self.net.borrow_mut().retain(|key, _| key.uid != uid);
+    }
+
+    /// Delete network state for a UID as part of retiring its old owner.
+    pub(super) fn delete_net_for_uid(tx: &Transaction<'_>, uid: u32) -> rusqlite::Result<()> {
+        tx.execute("DELETE FROM net_dest WHERE uid = ?1", params![uid])?;
+        tx.execute("DELETE FROM net_rule WHERE uid = ?1", params![uid])?;
+        tx.execute("DELETE FROM net_recording WHERE uid = ?1", params![uid])?;
         Ok(())
     }
 

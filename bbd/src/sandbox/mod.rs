@@ -611,14 +611,14 @@ impl Sandbox {
                     }
                 }
                 Ok(None) => {
-                    entry.enabled = false;
-                    if let Err(e) = writer.put_sandbox(&entry) {
+                    if let Err(e) = writer.retire_sandbox(&entry) {
                         self.log_reconcile_error(uid, &e);
                         continue;
                     }
                     self.snapshot_write().remove(&uid);
                     self.awaiting_storage.remove(&uid);
                     self.auto.forget_uid(uid);
+                    self.pending_net_refresh.retain(|pending| *pending != uid);
                     // Nothing saved for the old installation may be applied
                     // to the one the uid belongs to now.
                     for effect in &mut self.effects {
@@ -629,11 +629,6 @@ impl Sandbox {
                         .lock()
                         .unwrap_or_else(|e| e.into_inner())
                         .remove(&uid);
-                    if let Err(e) = writer.net_forget(uid) {
-                        eprintln!(
-                            "bbd: sandbox: cannot delete the network records of a retired uid: {e:#}"
-                        );
-                    }
                 }
                 Err(_) => {
                     // A directory may be unavailable while the user starts.
