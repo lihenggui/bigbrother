@@ -187,7 +187,7 @@ impl EventHeader {
 
 /// Longest single path component (NAME_MAX + NUL).
 pub const NAME_CAP: usize = 256;
-/// A new component may start anywhere below this offset in `FileEvent::data`.
+/// A new component may start anywhere below this offset in the path payload.
 /// Must be a power of two: the eBPF side bounds the offset with a bit mask.
 pub const DATA_START_LIMIT: usize = 2048;
 /// Space for the components of one path: every allowed start offset leaves
@@ -211,11 +211,8 @@ pub struct FileEvent {
     pub in_syscall: u32,
     /// 1 if the path was too deep or too long and `data` is incomplete.
     pub truncated: u32,
-    /// Bytes used in `data`.
+    /// Bytes following the fixed fields: leaf-first, NUL-terminated path components.
     pub data_len: u32,
-    /// Path components relative to the filesystem root, leaf first, each
-    /// NUL-terminated: "a.jpg\0Camera\0DCIM\0" for DCIM/Camera/a.jpg.
-    pub data: [u8; DATA_CAP],
 }
 
 assert_no_padding!(FileEvent {
@@ -226,9 +223,21 @@ assert_no_padding!(FileEvent {
     mode,
     in_syscall,
     truncated,
-    data_len,
-    data
+    data_len
 });
+
+impl FileEvent {
+    /// The fixed fields followed by the used path bytes from the same record.
+    pub fn read(bytes: &[u8]) -> Option<(Self, &[u8])> {
+        let event = read_event::<Self>(bytes)?;
+        let len = event.data_len as usize;
+        if len > DATA_CAP {
+            return None;
+        }
+        let start = core::mem::size_of::<Self>();
+        Some((event, bytes.get(start..start + len)?))
+    }
+}
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -572,3 +581,26 @@ assert_no_padding!(TrafficEvent {
     recv_low,
     recv_high
 });
+
+#[cfg(test)]
+mod file_event_tests {
+    use super::*;
+
+    #[test]
+    fn reads_only_the_declared_file_path_within_the_record() {
+        const START: usize = core::mem::size_of::<FileEvent>();
+        const LEN: usize = core::mem::offset_of!(FileEvent, data_len);
+        let mut bytes = [0u8; START + DATA_CAP];
+        assert!(FileEvent::read(&bytes[..START - 1]).is_none());
+        assert_eq!(FileEvent::read(&bytes[..START]).unwrap().1, b"");
+        bytes[LEN..LEN + 4].copy_from_slice(&2u32.to_ne_bytes());
+        bytes[START..START + 2].copy_from_slice(b"x\0");
+        assert!(FileEvent::read(&bytes[..START + 1]).is_none());
+        assert_eq!(FileEvent::read(&bytes[..START + 2]).unwrap().1, b"x\0");
+        assert_eq!(FileEvent::read(&bytes).unwrap().1, b"x\0");
+        bytes[LEN..LEN + 4].copy_from_slice(&(DATA_CAP as u32).to_ne_bytes());
+        assert_eq!(FileEvent::read(&bytes).unwrap().1.len(), DATA_CAP);
+        bytes[LEN..LEN + 4].copy_from_slice(&(DATA_CAP as u32 + 1).to_ne_bytes());
+        assert!(FileEvent::read(&bytes).is_none());
+    }
+}

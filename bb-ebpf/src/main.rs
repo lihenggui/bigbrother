@@ -89,16 +89,16 @@ use bb_common::filter::{
 use bb_common::{
     ABI_COMPAT32, ABI_NATIVE, AF_INET, AF_INET6, BINDER_ARGS_CAP, BINDER_ARGS_SHORT, BINDER_CODES,
     BINDER_KEY_HEAD, BINDER_KEY_LEN, BINDER_KEY_TAIL, BINDER_MAX_NAME, BINDER_MIN_NAME,
-    BINDER_WAKE, BinderEvent, BinderKey, BinderValue, ConnectEvent, DATA_START_LIMIT, EV_BINDER,
-    EV_CONNECT, EV_EXEC, EV_FILE, EV_NETLINK, EV_PATH, EV_PROCESS, EV_RESULT, EV_TRAFFIC,
-    EXEC_ARG_CAP, EXEC_ARGS, EventHeader, ExecEvent, FUSE_SUPER_MAGIC, FileEvent, GATE_STALE_NS,
-    GateEvent, KNOWN_APP_WORDS, NAME_CAP, NetRuleKey, NetlinkEvent, OFF_COUNT, OFF_DENTRY_INODE,
-    OFF_DENTRY_NAME, OFF_DENTRY_PARENT, OFF_DENTRY_SB, OFF_FILE_DENTRY, OFF_FILE_FLAGS,
-    OFF_INODE_MODE, OFF_SB_DEV, OFF_SB_MAGIC, OFF_SK_DADDR, OFF_SK_DPORT, OFF_SK_FAMILY,
-    OFF_SK_UID, OFF_SK_V6_DADDR, OFF_SKB_DATA, OFF_SOCK_PROTOCOL, OFF_TCP_ACKED, OFF_TCP_RECEIVED,
-    OP_OPEN, OP_PAIRED, OP_PROBE, OP_WATCH, PROC_SUPER_MAGIC, PROCESS_READ, PROCESS_TRACE,
-    PROCESS_WRITE, PathEvent, ProcessEvent, ResultEvent, SELINUX_MAGIC, SYSFS_MAGIC, TrafficEvent,
-    known_app_bit,
+    BINDER_WAKE, BinderEvent, BinderKey, BinderValue, ConnectEvent, DATA_CAP, DATA_START_LIMIT,
+    EV_BINDER, EV_CONNECT, EV_EXEC, EV_FILE, EV_NETLINK, EV_PATH, EV_PROCESS, EV_RESULT,
+    EV_TRAFFIC, EXEC_ARG_CAP, EXEC_ARGS, EventHeader, ExecEvent, FUSE_SUPER_MAGIC, FileEvent,
+    GATE_STALE_NS, GateEvent, KNOWN_APP_WORDS, NAME_CAP, NetRuleKey, NetlinkEvent, OFF_COUNT,
+    OFF_DENTRY_INODE, OFF_DENTRY_NAME, OFF_DENTRY_PARENT, OFF_DENTRY_SB, OFF_FILE_DENTRY,
+    OFF_FILE_FLAGS, OFF_INODE_MODE, OFF_SB_DEV, OFF_SB_MAGIC, OFF_SK_DADDR, OFF_SK_DPORT,
+    OFF_SK_FAMILY, OFF_SK_UID, OFF_SK_V6_DADDR, OFF_SKB_DATA, OFF_SOCK_PROTOCOL, OFF_TCP_ACKED,
+    OFF_TCP_RECEIVED, OP_OPEN, OP_PAIRED, OP_PROBE, OP_WATCH, PROC_SUPER_MAGIC, PROCESS_READ,
+    PROCESS_TRACE, PROCESS_WRITE, PathEvent, ProcessEvent, ResultEvent, SELINUX_MAGIC, SYSFS_MAGIC,
+    TrafficEvent, known_app_bit,
 };
 
 const AT_FDCWD: i32 = -100;
@@ -136,12 +136,20 @@ static DROPPED: PerCpuArray<u64> = PerCpuArray::with_max_entries(1, 0);
 #[map]
 static LAST_EARLY_WAKE: Array<u64> = Array::with_max_entries(1, 0);
 
+#[repr(C)]
+struct FileScratch {
+    event: FileEvent,
+    data: [u8; DATA_CAP],
+}
+
+bb_common::assert_no_padding!(FileScratch { event, data });
+
 /// Where `file_open` assembles its event. Most of what it sees is dropped
 /// once the path is known, and a record reserved in the ring buffer and then
 /// discarded would still take up space there until the daemon next reads it.
 /// So the event is copied to the ring buffer only once it is to be kept.
 #[map]
-static FILE_SCRATCH: PerCpuArray<FileEvent> = PerCpuArray::with_max_entries(1, 0);
+static FILE_SCRATCH: PerCpuArray<FileScratch> = PerCpuArray::with_max_entries(1, 0);
 
 /// Destinations reported recently, with the time of the report. An app
 /// streaming to a device on the local network sends thousands of datagrams a
@@ -351,10 +359,12 @@ fn try_file_open(ctx: &ProbeContext) -> Result<(), i32> {
     // variable offset. Only the pointers are carried through the loop: the
     // verifier follows every iteration, and carrying the names themselves
     // multiplies the states it has to explore past its limit.
-    let is_sysfs = magic == SYSFS_MAGIC;
     let mut top_name: *const u8 = core::ptr::null();
     let mut second_name: *const u8 = core::ptr::null();
-    let mut len: usize = 0;
+    // The cursor lives in scratch so the verifier does not have to track
+    // every possible accumulated path length across all 32 iterations.
+    let cursor = unsafe { &raw mut (*ev).event.data_len };
+    unsafe { cursor.write_volatile(0) };
     let mut truncated = 1u32;
     let mut d = dentry;
     let walked: Result<(), i32> = (|| {
@@ -364,16 +374,14 @@ fn try_file_open(ctx: &ProbeContext) -> Result<(), i32> {
                 truncated = 0;
                 break;
             }
+            let len = unsafe { cursor.read_volatile() } as usize;
             if len >= DATA_START_LIMIT {
                 break;
             }
             let name: *const u8 = unsafe { read_at(d, off[OFF_DENTRY_NAME])? };
-            // The verifier must be able to prove `start + NAME_CAP` stays
-            // inside `data`. The comparison above doesn't do it: the compiler
-            // keeps `len` in a stack slot whose bounds the verifier doesn't
-            // refine. A mask applied right at the pointer arithmetic does —
-            // and `black_box` keeps the compiler from deleting the mask as
-            // redundant with the comparison.
+            // Mask at the pointer arithmetic so older verifiers can see
+            // that a full component fits. Keep LLVM from folding the mask
+            // away on the strength of the preceding comparison.
             let start = core::hint::black_box(len) & (DATA_START_LIMIT - 1);
             let dst = unsafe {
                 core::slice::from_raw_parts_mut(
@@ -382,49 +390,19 @@ fn try_file_open(ctx: &ProbeContext) -> Result<(), i32> {
                 )
             };
             let written = unsafe { bpf_probe_read_kernel_str_bytes(name, dst)? }.len();
-            len += written + 1;
+            unsafe { cursor.write_volatile((len + written + 1) as u32) };
             second_name = top_name;
             top_name = name;
             d = parent;
         }
         Ok(())
     })();
-
-    // Most of what apps open under /proc and /sys is of no interest: their
-    // own /proc/<pid> entries (where /proc/self resolves to), CPU and memory
-    // statistics, kernel tunables. Drop those here rather than pass them to
-    // the daemon.
-    let mut top = [0u8; 8];
-    let mut second = [0u8; 8];
-    // If the outermost name can't be read (which includes the filesystem's
-    // root itself, which has none), nothing is known about the path and the
-    // event is kept for the daemon to judge.
-    let mut known = false;
-    if is_proc || is_sysfs {
-        known = unsafe { bpf_probe_read_kernel_str_bytes(top_name, &mut top) }.is_ok();
-        let _ = unsafe { bpf_probe_read_kernel_str_bytes(second_name, &mut second) };
-    }
-    let boring = if !known {
-        false
-    } else if is_proc {
-        match leading_number(&top) {
-            // Another process's entry is kept. The caller's own is not,
-            // except where it stands for system-wide information.
-            Some(pid) => {
-                (pid == (pid_tgid >> 32) as u32 || pid == pid_tgid as u32)
-                    && !own_proc_entry_matters(&second)
-            }
-            None => !proc_entry_matters(&top),
-        }
-    } else {
-        is_sysfs && !sysfs_entry_matters(&top, &second)
-    };
-
     if walked.is_err() {
         count_drop();
         return Ok(());
     }
-    if boring {
+
+    if boring_file(magic, top_name, second_name, pid_tgid) {
         return Ok(());
     }
 
@@ -436,23 +414,52 @@ fn try_file_open(ctx: &ProbeContext) -> Result<(), i32> {
         None => 0,
     };
     unsafe {
-        (*ev).hdr = header(EV_FILE, uid, pid_tgid);
-        (*ev).flags = read_at::<u32>(file, off[OFF_FILE_FLAGS]).unwrap_or(0);
-        (*ev).magic = magic;
-        (*ev).dev = read_at::<u32>(sb, off[OFF_SB_DEV]).unwrap_or(0);
-        (*ev).mode = mode;
-        (*ev).in_syscall = in_syscall;
-        (*ev).truncated = truncated;
-        (*ev).data_len = len as u32;
+        (*ev).event.hdr = header(EV_FILE, uid, pid_tgid);
+        (*ev).event.flags = read_at::<u32>(file, off[OFF_FILE_FLAGS]).unwrap_or(0);
+        (*ev).event.magic = magic;
+        (*ev).event.dev = read_at::<u32>(sb, off[OFF_SB_DEV]).unwrap_or(0);
+        (*ev).event.mode = mode;
+        (*ev).event.in_syscall = in_syscall;
+        (*ev).event.truncated = truncated;
     }
-    if EVENTS
-        .output::<FileEvent>(unsafe { &*ev }, wakeup_flags())
-        .is_err()
-    {
+    // Only the initialized components belong to this record. Bound the size
+    // at the helper call as well, so the verifier can check the scratch read.
+    let used = unsafe { cursor.read_volatile() } as usize;
+    let size = size_of::<FileEvent>() + used.min(DATA_CAP);
+    let bytes = unsafe { core::slice::from_raw_parts(ev.cast::<u8>(), size) };
+    if EVENTS.output(bytes, wakeup_flags()).is_err() {
         count_drop();
         return Err(-1);
     }
     Ok(())
+}
+
+// Keep unknown paths for the daemon to judge. Most procfs entries need
+// only their outermost component, so read the next one only if it matters.
+#[inline(always)]
+fn boring_file(magic: u32, top_name: *const u8, second_name: *const u8, pid_tgid: u64) -> bool {
+    if magic != PROC_SUPER_MAGIC && magic != SYSFS_MAGIC {
+        return false;
+    }
+    let mut top = [0u8; 8];
+    if unsafe { bpf_probe_read_kernel_str_bytes(top_name, &mut top) }.is_err() {
+        return false;
+    }
+    if magic == PROC_SUPER_MAGIC {
+        let Some(pid) = leading_number(&top) else {
+            return !proc_entry_matters(&top);
+        };
+        if pid != (pid_tgid >> 32) as u32 && pid != pid_tgid as u32 {
+            return false;
+        }
+    }
+    let mut second = [0u8; 8];
+    let _ = unsafe { bpf_probe_read_kernel_str_bytes(second_name, &mut second) };
+    if magic == PROC_SUPER_MAGIC {
+        !own_proc_entry_matters(&second)
+    } else {
+        !sysfs_entry_matters(&top, &second)
+    }
 }
 
 // ---- syscall probes ---------------------------------------------------------
@@ -580,6 +587,10 @@ mod arch {
     const PSTATE_OFFSET: u32 = 33 * 8;
     const PSR_MODE32_BIT: u64 = 0x10;
 
+    pub unsafe fn path_args(regs: *const u8) -> Result<[u64; 3], i32> {
+        unsafe { super::read_at(regs, ARG_OFFSETS[0]) }
+    }
+
     /// True when the caller is a 32-bit (AArch32) process.
     pub unsafe fn is_compat(regs: *const u8) -> bool {
         match unsafe { super::read_at::<u64>(regs, PSTATE_OFFSET) } {
@@ -594,6 +605,11 @@ mod arch {
     /// Offsets of di, si, dx, r10, r8, r9 in x86_64 `struct pt_regs`
     /// (emulator / host testing).
     pub const ARG_OFFSETS: [u32; 6] = [14 * 8, 13 * 8, 12 * 8, 7 * 8, 9 * 8, 8 * 8];
+
+    pub unsafe fn path_args(regs: *const u8) -> Result<[u64; 3], i32> {
+        let [dx, si, di] = unsafe { super::read_at(regs, ARG_OFFSETS[2])? };
+        Ok([di, si, dx])
+    }
 
     pub unsafe fn is_compat(_regs: *const u8) -> bool {
         false
@@ -611,9 +627,7 @@ fn syscall_enter(ctx: &ProbeContext, op: u32, shape: Shape) -> Result<(), i32> {
         return Ok(());
     }
     let regs: *const u8 = ctx.arg(0).ok_or(-1)?;
-    let a0 = unsafe { read_at::<u64>(regs, arch::ARG_OFFSETS[0])? };
-    let a1 = unsafe { read_at::<u64>(regs, arch::ARG_OFFSETS[1])? };
-    let a2 = unsafe { read_at::<u64>(regs, arch::ARG_OFFSETS[2])? };
+    let [a0, a1, a2] = unsafe { arch::path_args(regs)? };
 
     let (dfd, path_ptr, flags, how_ptr) = match shape {
         Shape::Path0 => (AT_FDCWD, a0, 0, 0),
