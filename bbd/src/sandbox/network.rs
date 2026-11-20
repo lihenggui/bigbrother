@@ -120,7 +120,7 @@ impl Family {
 }
 
 /// Runs the tools of the packet filter.
-pub trait Tools {
+pub trait Tools: Send {
     /// Run `tool` with `args`, giving it `input`; what it exited with.
     fn run(&mut self, tool: &str, args: &[&str], input: &str) -> anyhow::Result<i32>;
 }
@@ -153,7 +153,7 @@ impl Tools for System {
 }
 
 /// The uids the program refuses.
-pub trait Listed {
+pub trait Listed: Send {
     fn insert(&mut self, uid: u32) -> anyhow::Result<()>;
     /// Does nothing for a uid that is not listed.
     fn remove(&mut self, uid: u32) -> anyhow::Result<()>;
@@ -529,7 +529,9 @@ impl Effect for Unavailable {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, collections::HashSet, rc::Rc};
+    use std::collections::HashSet;
+
+    use crate::test_sync::{Rc, RefCell};
 
     use super::*;
     use crate::sandbox::items::{Item, Mode};

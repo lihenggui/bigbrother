@@ -148,7 +148,7 @@ pub fn items_of(entry: &Entry, global: &Settings) -> Settings {
 /// last either way. When one fails, those that already ran are undone in
 /// reverse order and the command fails, so that an app is never left half
 /// sandboxed.
-pub trait Effect {
+pub trait Effect: Send {
     /// Names the effect in an error.
     fn name(&self) -> &'static str;
 
@@ -1712,7 +1712,9 @@ fn print_status(out: &mut impl std::io::Write, status: &Status) -> std::io::Resu
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, path::PathBuf, rc::Rc};
+    use std::path::PathBuf;
+
+    use crate::test_sync::{Rc, RefCell};
 
     use super::*;
 

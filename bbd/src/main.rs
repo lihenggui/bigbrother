@@ -39,6 +39,8 @@ mod sensors;
 mod spool;
 mod store;
 mod syscalls;
+#[cfg(test)]
+mod test_sync;
 mod trace;
 
 use std::{
