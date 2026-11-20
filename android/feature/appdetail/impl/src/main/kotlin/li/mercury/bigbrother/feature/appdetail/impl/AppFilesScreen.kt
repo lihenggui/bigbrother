@@ -17,7 +17,6 @@
 package li.mercury.bigbrother.feature.appdetail.impl
 
 import android.widget.Toast
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -51,7 +50,7 @@ import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.OpenFileResult
-import li.mercury.bigbrother.core.ui.SearchTopBar
+import li.mercury.bigbrother.core.ui.PredictiveSearchTopBar
 import li.mercury.bigbrother.core.ui.appDisplayName
 import li.mercury.bigbrother.core.ui.openFile
 import li.mercury.bigbrother.core.ui.R as UiR
@@ -114,7 +113,6 @@ internal fun AppFilesScreen(
         FileDetailsSheet(details, onOpen = { onOpenFile(details.path) }, onDismiss = onDismissFileDetails)
     }
     var location by rememberSaveable { mutableStateOf(initialLocation ?: Location.ROOT) }
-    BackHandler(enabled = state.searching, onBack = onCloseSearch)
     val browser = state.browser
     val background = MaterialTheme.colorScheme.surfaceContainer
     // Beside the app's page this is a pane of its own, closed rather than left.
@@ -122,14 +120,13 @@ internal fun AppFilesScreen(
     Scaffold(
         containerColor = background,
         topBar = {
-            if (state.searching) {
-                SearchTopBar(
-                    query = state.query,
-                    onQueryChange = onQueryChange,
-                    placeholder = stringResource(R.string.search_paths),
-                    onClose = onCloseSearch,
-                )
-            } else {
+            PredictiveSearchTopBar(
+                searching = state.searching,
+                query = state.query,
+                onQueryChange = onQueryChange,
+                placeholder = stringResource(R.string.search_paths),
+                onClose = onCloseSearch,
+            ) {
                 TopAppBar(
                     title = { Text(stringResource(R.string.files_title), maxLines = 1) },
                     subtitle = {

@@ -16,11 +16,16 @@
 
 package li.mercury.bigbrother.feature.appdetail.impl
 
+import androidx.activity.BackEventCompat
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithText
+import li.mercury.bigbrother.core.designsystem.theme.BigBrotherTheme
 import li.mercury.bigbrother.core.model.AccessPeriod
 import li.mercury.bigbrother.core.model.Action
 import li.mercury.bigbrother.core.model.LoadFailure
@@ -132,6 +137,60 @@ class AppFilesScreenScreenshotTests {
         }
     }
 
+    @Test
+    fun givenCameraFolder_whenPredictiveBackCancelsThenCommits_thenOnlyCommitLeavesTheFolder() {
+        composeTestRule.setContent { BigBrotherTheme { CameraFolder() } }
+        val photo = composeTestRule.onNodeWithText(PHOTO.substringAfterLast('/'))
+        photo.assertIsDisplayed()
+        val fullBounds = photo.fetchSemanticsNode().boundsInRoot
+
+        swipeBack()
+        check(photo.fetchSemanticsNode().boundsInRoot != fullBounds)
+        composeTestRule.runOnUiThread { composeTestRule.activity.onBackPressedDispatcher.dispatchOnBackCancelled() }
+        photo.assertIsDisplayed()
+        check(photo.fetchSemanticsNode().boundsInRoot == fullBounds)
+
+        swipeBack()
+        composeTestRule.runOnUiThread { composeTestRule.activity.onBackPressedDispatcher.onBackPressed() }
+        photo.assertDoesNotExist()
+        composeTestRule.onNodeWithText("DCIM/Camera").assertIsDisplayed()
+    }
+
+    @Test
+    fun givenFolderSearch_whenPredictiveBackCancelsThenCommits_thenOnlySearchCloses() {
+        val searching = mutableStateOf(true)
+        composeTestRule.setContent {
+            BigBrotherTheme {
+                Files(onCloseSearch = { searching.value = false }) { it.copy(searching = searching.value) }
+            }
+        }
+        val title = composeTestRule.onNodeWithText(composeTestRule.activity.getString(R.string.files_title))
+        val search = composeTestRule.onNodeWithText(composeTestRule.activity.getString(R.string.search_paths))
+        search.assertIsDisplayed()
+        title.assertDoesNotExist()
+
+        swipeBack()
+        title.assertExists()
+        composeTestRule.runOnIdle { check(searching.value) }
+        composeTestRule.runOnUiThread { composeTestRule.activity.onBackPressedDispatcher.dispatchOnBackCancelled() }
+        search.assertIsDisplayed()
+        title.assertDoesNotExist()
+
+        swipeBack()
+        composeTestRule.runOnUiThread { composeTestRule.activity.onBackPressedDispatcher.onBackPressed() }
+        title.assertIsDisplayed()
+        composeTestRule.onNodeWithText(PHOTO.substringAfterLast('/')).assertIsDisplayed()
+    }
+
+    private fun swipeBack() {
+        val dispatcher = composeTestRule.activity.onBackPressedDispatcher
+        composeTestRule.runOnUiThread {
+            dispatcher.dispatchOnBackStarted(BackEventCompat(1f, 400f, 0f, BackEventCompat.EDGE_LEFT))
+            dispatcher.dispatchOnBackProgressed(BackEventCompat(140f, 400f, 0.65f, BackEventCompat.EDGE_LEFT))
+        }
+        composeTestRule.waitForIdle()
+    }
+
     private fun capturePhone(name: String, body: @Composable () -> Unit) {
         composeTestRule.captureForDevice("phone", DefaultTestDevices.PHONE.spec, name, body = body)
     }
@@ -150,6 +209,7 @@ class AppFilesScreenScreenshotTests {
     private fun Files(
         app: DemoApp = DemoApp.WEATHER,
         location: String? = CAMERA,
+        onCloseSearch: () -> Unit = {},
         state: (AppFilesUiState) -> AppFilesUiState = { it },
     ) {
         val records = remember { DemoRecords(clock) }
@@ -167,7 +227,7 @@ class AppFilesScreenScreenshotTests {
                 onBack = {},
                 onRetry = {},
                 onOpenSearch = {},
-                onCloseSearch = {},
+                onCloseSearch = onCloseSearch,
                 onQueryChange = {},
                 onReadOnly = {},
                 onFileDetails = {},

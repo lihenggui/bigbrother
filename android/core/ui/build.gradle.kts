@@ -27,6 +27,7 @@ dependencies {
     api(projects.core.designsystem)
     api(projects.core.model)
 
+    implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.core.ktx)
     implementation(libs.appiconloader)
     implementation(libs.coil.compose)

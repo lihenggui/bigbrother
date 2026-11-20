@@ -18,6 +18,9 @@ package li.mercury.bigbrother.core.navigation
 
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.SheetState
+import androidx.compose.material3.SheetValue
+import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.navigation3.runtime.NavEntry
 import androidx.navigation3.scene.OverlayScene
@@ -65,12 +68,20 @@ private class BottomSheetScene<T : Any>(
     private val onBack: () -> Unit,
 ) : OverlayScene<T> {
     override val entries: List<NavEntry<T>> = listOf(entry)
+    private var sheetState: SheetState? = null
 
     override val content: @Composable () -> Unit = {
+        val state = rememberBottomSheetState(initialValue = SheetValue.Hidden)
+        sheetState = state
         // Dismissing the sheet, by swiping it away or with back, pops the entry.
-        ModalBottomSheet(onDismissRequest = onBack) {
+        ModalBottomSheet(onDismissRequest = onBack, sheetState = state) {
             entry.Content()
         }
+    }
+
+    override suspend fun onRemove() {
+        // The record also has a close action that pops its entry directly.
+        sheetState?.hide()
     }
 
     // Navigation compares scenes to decide whether to animate between them.

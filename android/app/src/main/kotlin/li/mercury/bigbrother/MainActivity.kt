@@ -27,7 +27,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dagger.hilt.android.AndroidEntryPoint
 import li.mercury.bigbrother.core.designsystem.theme.BigBrotherTheme
 import li.mercury.bigbrother.ui.BigBrotherApp
-import li.mercury.bigbrother.ui.FirstLaunchGuide
+import li.mercury.bigbrother.ui.FirstLaunchContent
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -48,9 +48,7 @@ class MainActivity : ComponentActivity() {
                 MainActivityUiState.Loading -> Unit
 
                 is MainActivityUiState.Ready -> BigBrotherTheme(useDynamicColor = state.useDynamicColor) {
-                    if (state.showGuide) {
-                        FirstLaunchGuide(onDismiss = viewModel::dismissGuide)
-                    } else {
+                    FirstLaunchContent(showGuide = state.showGuide, onDismiss = viewModel::dismissGuide) {
                         BigBrotherApp(recordingStopped = state.recordingStopped)
                     }
                 }

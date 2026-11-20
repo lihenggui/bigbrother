@@ -16,12 +16,18 @@
 
 package li.mercury.bigbrother.feature.jail.impl
 
+import androidx.activity.BackEventCompat
 import androidx.activity.ComponentActivity
+import androidx.activity.ComponentDialog
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithText
 import androidx.test.core.app.ApplicationProvider
+import li.mercury.bigbrother.core.designsystem.theme.BigBrotherTheme
 import li.mercury.bigbrother.core.model.InstalledApp
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.SandboxItem
@@ -43,6 +49,7 @@ import li.mercury.bigbrother.core.testing.repository.TestAppInfoRepository
 import li.mercury.bigbrother.core.testing.repository.TestUserDataRepository
 import li.mercury.bigbrother.feature.search.impl.GlobalSearchBar
 import li.mercury.bigbrother.feature.search.impl.SearchViewModel
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -51,6 +58,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.annotation.LooperMode
+import org.robolectric.shadows.ShadowDialog
 import java.util.Locale
 
 @RunWith(RobolectricTestRunner::class)
@@ -370,6 +378,47 @@ class JailScreenScreenshotTests {
             onErrorDismiss = {},
             onAllowNetwork = {},
         )
+    }
+
+    @Test
+    @Config(qualifiers = "en-rUS-w412dp-h880dp")
+    fun givenAddAppsDialog_whenPredictiveBackCancelsThenCommits_thenOnlyCommitDismissesTheDialog() {
+        val shown = mutableStateOf(true)
+        composeTestRule.setContent {
+            BigBrotherTheme {
+                if (shown.value) {
+                    AddAppsDialog(
+                        state = AddAppsUiState(apps = emptyList()),
+                        query = rememberTextFieldState(),
+                        onToggle = {},
+                        onDismiss = { shown.value = false },
+                        onConfirm = {},
+                    )
+                }
+            }
+        }
+        val title = composeTestRule.onNodeWithText(composeTestRule.activity.getString(R.string.jail_add_apps))
+        title.assertIsDisplayed()
+        val dialog = ShadowDialog.getLatestDialog() as ComponentDialog
+        val dispatcher = dialog.onBackPressedDispatcher
+        val fullBounds = title.fetchSemanticsNode().boundsInRoot
+        fun beginSwipe() {
+            composeTestRule.runOnUiThread {
+                dispatcher.dispatchOnBackStarted(BackEventCompat(1f, 400f, 0f, BackEventCompat.EDGE_LEFT))
+                dispatcher.dispatchOnBackProgressed(BackEventCompat(140f, 400f, 0.75f, BackEventCompat.EDGE_LEFT))
+            }
+            composeTestRule.waitForIdle()
+        }
+
+        beginSwipe()
+        check(title.fetchSemanticsNode().boundsInRoot != fullBounds)
+        composeTestRule.runOnUiThread { dispatcher.dispatchOnBackCancelled() }
+        title.assertIsDisplayed()
+        assertEquals(fullBounds, title.fetchSemanticsNode().boundsInRoot)
+
+        beginSwipe()
+        composeTestRule.runOnUiThread { dispatcher.onBackPressed() }
+        title.assertDoesNotExist()
     }
 
     @Composable

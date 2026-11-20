@@ -98,7 +98,7 @@ import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.MenuFilterChip
 import li.mercury.bigbrother.core.ui.MenuOption
-import li.mercury.bigbrother.core.ui.SearchTopBar
+import li.mercury.bigbrother.core.ui.PredictiveSearchTopBar
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.TimeRangeButtonGroup
 import li.mercury.bigbrother.feature.jail.impl.ErrorEffect
@@ -201,17 +201,16 @@ internal fun NetworkActivityScreen(
         containerColor = background,
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
-            if (searching) {
-                SearchTopBar(
-                    query = state.query,
-                    onQueryChange = actions.onQuery,
-                    placeholder = stringResource(R.string.jail_net_search),
-                    onClose = {
-                        searching = false
-                        actions.onQuery("")
-                    },
-                )
-            } else {
+            PredictiveSearchTopBar(
+                searching = searching,
+                query = state.query,
+                onQueryChange = actions.onQuery,
+                placeholder = stringResource(R.string.jail_net_search),
+                onClose = {
+                    searching = false
+                    actions.onQuery("")
+                },
+            ) {
                 MediumFlexibleTopAppBar(
                     title = { Text(stringResource(R.string.jail_network_activity)) },
                     subtitle = {
