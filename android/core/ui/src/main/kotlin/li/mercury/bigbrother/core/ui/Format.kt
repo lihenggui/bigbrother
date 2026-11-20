@@ -19,28 +19,32 @@ package li.mercury.bigbrother.core.ui
 import android.content.Context
 import android.text.format.DateUtils
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import java.time.Clock
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
+
+/** Wall clock for timestamps shown as elapsed time. */
+val LocalWallClock = compositionLocalOf { Clock.systemUTC() }
 
 /**
  * "5 minutes ago", localized by the platform. [epochSeconds] is a Unix
  * timestamp. Anything under a minute old reads "Moments ago" rather than the
  * platform's "0 minutes ago".
  */
-fun relativeTime(epochSeconds: Long): String {
-    val now = System.currentTimeMillis()
+fun relativeTime(epochSeconds: Long, nowMillis: Long): String {
     val then = epochSeconds * 1000
-    val resolution = if (now - then < DateUtils.MINUTE_IN_MILLIS) {
+    val resolution = if (nowMillis - then < DateUtils.MINUTE_IN_MILLIS) {
         // At second resolution the platform says "Moments ago" for recent times.
         DateUtils.SECOND_IN_MILLIS
     } else {
         DateUtils.MINUTE_IN_MILLIS
     }
-    return DateUtils.getRelativeTimeSpanString(then, now, resolution).toString()
+    return DateUtils.getRelativeTimeSpanString(then, nowMillis, resolution).toString()
 }
 
 // Made for each use: a formatter keeps the locale it was made in, and the

@@ -18,6 +18,7 @@ package li.mercury.bigbrother.feature.appdetail.impl
 
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import li.mercury.bigbrother.core.model.AccessPeriod
@@ -32,6 +33,7 @@ import li.mercury.bigbrother.core.screenshottesting.StoreScreenshotType
 import li.mercury.bigbrother.core.screenshottesting.captureForDevice
 import li.mercury.bigbrother.core.screenshottesting.captureStoreScreenshot
 import li.mercury.bigbrother.core.screenshottesting.screenshotName
+import li.mercury.bigbrother.core.ui.LocalWallClock
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -151,26 +153,28 @@ class AppFilesScreenScreenshotTests {
         state: (AppFilesUiState) -> AppFilesUiState = { it },
     ) {
         val records = remember { DemoRecords(clock) }
-        AppFilesScreen(
-            state = state(
-                AppFilesUiState(
-                    packageName = app.packageName,
-                    appInfo = records.appInfo.getValue(app.packageName),
-                    browser = fileBrowserOf(records.accesses(app).filter { it.isFile() }),
+        CompositionLocalProvider(LocalWallClock provides clock.shownClock) {
+            AppFilesScreen(
+                state = state(
+                    AppFilesUiState(
+                        packageName = app.packageName,
+                        appInfo = records.appInfo.getValue(app.packageName),
+                        browser = fileBrowserOf(records.accesses(app).filter { it.isFile() }),
+                    ),
                 ),
-            ),
-            uid = app.uid,
-            initialLocation = location,
-            onBack = {},
-            onRetry = {},
-            onOpenSearch = {},
-            onCloseSearch = {},
-            onQueryChange = {},
-            onReadOnly = {},
-            onFileDetails = {},
-            onDismissFileDetails = {},
-            onOpenFile = {},
-        )
+                uid = app.uid,
+                initialLocation = location,
+                onBack = {},
+                onRetry = {},
+                onOpenSearch = {},
+                onCloseSearch = {},
+                onQueryChange = {},
+                onReadOnly = {},
+                onFileDetails = {},
+                onDismissFileDetails = {},
+                onOpenFile = {},
+            )
+        }
     }
 
     private companion object {

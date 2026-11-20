@@ -74,6 +74,7 @@ import li.mercury.bigbrother.core.model.AccessPeriod
 import li.mercury.bigbrother.core.model.Action
 import li.mercury.bigbrother.core.model.Category
 import li.mercury.bigbrother.core.model.LoadFailure
+import li.mercury.bigbrother.core.ui.LocalWallClock
 import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.VOLUME_ROOT
 import li.mercury.bigbrother.core.ui.exactDateTime
@@ -481,7 +482,7 @@ private fun LazyItemScope.EntryRow(
     val detail: (@Composable () -> Unit)? = node.accesses.takeIf { it.isNotEmpty() }?.let { accesses ->
         if (readOnly) {
             // Only reads are listed here; the trailing count gives their number.
-            { Text(relativeTime(accesses.maxOf { it.lastSeen })) }
+            { Text(relativeTime(accesses.maxOf { it.lastSeen }, LocalWallClock.current.millis())) }
         } else {
             { AccessLines(accesses) }
         }
@@ -593,7 +594,8 @@ private fun AccessLines(accesses: List<Access>) {
         }
     }
     val lastSeen = accesses.maxOf { it.lastSeen }
-    val time = remember(lastSeen) { relativeTime(lastSeen) }
+    val clock = LocalWallClock.current
+    val time = remember(lastSeen, clock) { relativeTime(lastSeen, clock.millis()) }
     Column {
         Text(
             text = actions.joinToString(stringResource(R.string.access_separator)),
