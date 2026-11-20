@@ -205,6 +205,8 @@
     <plurals name="jail_net_facts_counts">
         <item quantity="other">连接 %1$s 次 · 拒绝 %2$s 次</item>
     </plurals>
+    <string name="jail_net_choose_period">选择时段</string>
+    <string name="jail_net_all_periods">全部时段</string>
     <string name="jail_net_legend_connected">已连接</string>
     <string name="jail_net_legend_refused">已拒绝</string>
     <string name="jail_net_now">现在</string>
