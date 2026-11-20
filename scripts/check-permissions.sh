@@ -85,20 +85,7 @@ as_shell() {
     fi
 }
 
-# A system dialog (an app that crashed elsewhere, say) takes the focus the
-# canary waits for: the screen is woken and such dialogs are closed before
-# it starts and while it is waited for.
-clear_screen() {
-    adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
-    adb shell wm dismiss-keyguard >/dev/null 2>&1 || true
-    adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS >/dev/null 2>&1 || true
-}
-# Whether a window other than the canary's has the focus.
-focus_elsewhere() {
-    local focus
-    focus="$(adb shell dumpsys window displays 2>/dev/null | tr -d '\r' | sed -n 's/.*mCurrentFocus=//p')"
-    [[ -n "$focus" && "$focus" != *"$PACKAGE"* ]]
-}
+source scripts/canary-runner.sh
 
 # What a case's subject is: the permissions pm and settings steps grant,
 # those "Don't allow" denies in the settings (location takes background
@@ -319,17 +306,8 @@ run_canary() {
     if [[ "$test_location" == yes ]]; then
         as_shell cmd location providers set-test-provider-location gps --location 52.52,13.405 --accuracy 5
     fi
-    clear_screen
-    adb shell am start -W -n "$PACKAGE/.MainActivity" --es ops "android:camera" >/dev/null
-    local i log=""
-    for ((i = 0; i < 90; i++)); do
-        log="$(adb logcat -d -s BigBrotherCanary:I | tr -d '\r')"
-        grep -q "BigBrotherCanary: done" <<<"$log" && break
-        if ((i % 5 == 4)) && focus_elsewhere; then clear_screen; fi
-        sleep 1
-    done
-    ((i < 90)) || return 1
-    view="$(sed -n 's/.*BigBrotherCanary: sandbox //p' <<<"$log")"
+    launch_and_wait_for_canary 90 --es ops "android:camera" || return 1
+    view="$(sed -n 's/.*BigBrotherCanary: sandbox //p' <<<"$canary_log")"
 }
 
 # The value the canary reported for key $1.
@@ -450,7 +428,7 @@ play_case() {
         sleep "$SETTLE"
     done
 
-    run_canary || { why="the canary did not finish; is the screen on and unlocked?"; return 1; }
+    run_canary || { why="$canary_error"; return 1; }
     dump="$(package_dump)"
     local line mode granted=denied
     line="$(line_of "$(subject_permission "$subject")")"

@@ -183,8 +183,19 @@ impl Writer {
             .execute("DELETE FROM net_dest WHERE uid = ?1", params![uid])?)
     }
 
+    /// Tell `cleared` of every uid whose network records are cleared, for
+    /// the writer that records connections to drop what it holds of them.
+    pub fn tell_net_cleared(&mut self, cleared: std::sync::mpsc::Sender<u32>) {
+        self.net_cleared = Some(cleared);
+    }
+
+    /// Drop what is held of the network of `uid`, here and, through
+    /// [`Self::tell_net_cleared`], on the writer that records connections.
     pub(super) fn forget_pending_net(&self, uid: u32) {
         self.net.borrow_mut().retain(|key, _| key.uid != uid);
+        if let Some(cleared) = &self.net_cleared {
+            let _ = cleared.send(uid);
+        }
     }
 
     /// Delete network state for a UID as part of retiring its old owner.

@@ -119,7 +119,7 @@ fn bytes(key: &NetRuleKey) -> [u8; 24] {
 }
 
 /// The destinations the program refuses.
-pub trait RuleMap {
+pub trait RuleMap: Send {
     fn insert(&mut self, key: NetRuleKey) -> anyhow::Result<()>;
     fn remove(&mut self, key: NetRuleKey) -> anyhow::Result<()>;
 }
@@ -376,11 +376,6 @@ impl Effect for Destinations {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        cell::{Cell, RefCell},
-        rc::Rc,
-    };
-
     use super::*;
     use crate::{
         sandbox::{
@@ -392,6 +387,7 @@ mod tests {
             Counters, Reader, Writer,
             net::{NetKey, NetSeen},
         },
+        test_sync::{Cell, Rc, RefCell},
     };
 
     #[derive(Default)]

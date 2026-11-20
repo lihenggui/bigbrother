@@ -88,20 +88,7 @@ as_root() {
     fi
 }
 
-# A system dialog (an app that crashed elsewhere, say) takes the focus the
-# canary waits for: the screen is woken and such dialogs are closed before
-# it starts and while it is waited for.
-clear_screen() {
-    adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
-    adb shell wm dismiss-keyguard >/dev/null 2>&1 || true
-    adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS >/dev/null 2>&1 || true
-}
-# Whether a window other than the canary's has the focus.
-focus_elsewhere() {
-    local focus
-    focus="$(adb shell dumpsys window windows 2>/dev/null | tr -d '\r' | sed -n 's/.*mCurrentFocus=//p')"
-    [[ -n "$focus" && "$focus" != *"$PACKAGE"* ]]
-}
+source scripts/canary-runner.sh
 
 [[ -f "$APK" ]] || {
     echo "error: $APK not found; build it with: (cd android && ./gradlew :canary:assembleDebug)" >&2
@@ -135,19 +122,8 @@ as_root "$BBD stats" | tr ',' '\n' | grep -o '"coverage_[a-z]*":[01]' | sed 's/^
 
 adb shell am force-stop "$PACKAGE"
 adb logcat -c
-clear_screen
-adb shell am start -W -n "$PACKAGE/.MainActivity" >/dev/null
-# The probes take about 15 s: two connection timeouts and the sensors. They
-# start once the canary's window has focus, which needs the screen on.
-for ((i = 0; i < 60; i++)); do
-    grep -q "BigBrotherCanary: done" <<<"$(adb logcat -d -s BigBrotherCanary:I)" && break
-    if ((i % 5 == 4)) && focus_elsewhere; then clear_screen; fi
-    sleep 1
-done
-((i < 60)) || {
-    echo "error: the canary did not finish; is the screen on and unlocked?" >&2
-    exit 2
-}
+# The probes start once the canary's window has focus.
+launch_and_wait_for_canary 60 || { echo "error: $canary_error" >&2; exit 2; }
 missing=0
 report=""
 say() { report+="$*"$'\n'; }

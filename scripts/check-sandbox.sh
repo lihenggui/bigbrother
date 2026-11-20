@@ -142,20 +142,7 @@ as_shell() {
     exit 2
 }
 
-# A system dialog (an app that crashed elsewhere, say) takes the focus the
-# canary waits for: the screen is woken and such dialogs are closed before
-# it starts and while it is waited for.
-clear_screen() {
-    adb shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
-    adb shell wm dismiss-keyguard >/dev/null 2>&1 || true
-    adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS >/dev/null 2>&1 || true
-}
-# Whether a window other than the canary's has the focus.
-focus_elsewhere() {
-    local focus
-    focus="$(adb shell dumpsys window windows 2>/dev/null | tr -d '\r' | sed -n 's/.*mCurrentFocus=//p')"
-    [[ -n "$focus" && "$focus" != *"$PACKAGE"* ]]
-}
+source scripts/canary-runner.sh
 
 failed=0
 skipped=0
@@ -184,20 +171,8 @@ run_canary() {
     if [[ "$location" == yes ]]; then
         as_shell cmd location providers set-test-provider-location gps --location 52.52,13.405 --accuracy 5
     fi
-    clear_screen
-    adb shell am start -W -n "$PACKAGE/.MainActivity" --es ops "$ALL_OPS" --es net "${net:-$NET_TARGET}" >/dev/null
-    local i log=""
-    for ((i = 0; i < 90; i++)); do
-        log="$(adb logcat -d -s BigBrotherCanary:I | tr -d '\r')"
-        grep -q "BigBrotherCanary: done" <<<"$log" && break
-        if ((i % 5 == 4)) && focus_elsewhere; then clear_screen; fi
-        sleep 1
-    done
-    ((i < 90)) || {
-        echo "error: the canary did not finish; is the screen on and unlocked?" >&2
-        exit 2
-    }
-    view="$(sed -n 's/.*BigBrotherCanary: sandbox //p' <<<"$log")"
+    launch_and_wait_for_canary 90 --es ops "$ALL_OPS" --es net "${net:-$NET_TARGET}" || { echo "error: $canary_error" >&2; exit 2; }
+    view="$(sed -n 's/.*BigBrotherCanary: sandbox //p' <<<"$canary_log")"
 }
 
 # Have the canary ask for a file and pick the marker for it in the system's

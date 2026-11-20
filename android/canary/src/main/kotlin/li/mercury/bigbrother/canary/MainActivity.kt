@@ -186,8 +186,7 @@ class MainActivity : Activity() {
             contentResolver.query(Telephony.Sms.CONTENT_URI, null, null, null, null)?.use { it.count }
         }
         reportView()
-        reportIsolated()
-        report("done")
+        completeAfterIsolatedProbe()
     }
 
     /**
@@ -311,18 +310,24 @@ class MainActivity : Activity() {
         }
     }
 
-    /**
-     * Has an isolated process of this app report what it sees
-     * ([IsolatedProbe]), and waits for it to have.
-     */
-    private fun reportIsolated() {
+    private fun completeAfterIsolatedProbe() {
         val reported = CountDownLatch(1)
         val connection = object : ServiceConnection {
             override fun onServiceConnected(name: ComponentName, service: IBinder) = reported.countDown()
             override fun onServiceDisconnected(name: ComponentName) = Unit
         }
-        if (bindService(Intent(this, IsolatedProbe::class.java), connection, BIND_AUTO_CREATE)) {
-            reported.await(ISOLATED_WAIT_S, TimeUnit.SECONDS)
+        val bound = bindService(Intent(this, IsolatedProbe::class.java), connection, BIND_AUTO_CREATE)
+        try {
+            when {
+                !bound -> report("probe failed: could not bind the isolated probe")
+
+                !reported.await(ISOLATED_WAIT_S, TimeUnit.SECONDS) -> report("probe failed: the isolated probe did not connect")
+
+                // The service publishes its binder after logging the results.
+                // Report completion before the synchronous service teardown.
+                else -> report("done")
+            }
+        } finally {
             unbindService(connection)
         }
     }

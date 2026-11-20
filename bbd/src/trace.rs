@@ -271,11 +271,11 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     }
     // The sandbox (see `sandbox`). Like the optional probes, it costs only
     // itself where it cannot work: the daemon records regardless.
-    let (new_starts_sender, mut new_starts) = tokio::sync::mpsc::channel(NEW_STARTS_QUEUE);
+    let (new_starts_sender, new_starts) = tokio::sync::mpsc::channel(NEW_STARTS_QUEUE);
     // Woken when the app ops helper finds a permission changed by the user,
     // which is kept in its entry at once (`Sandbox::keep_found`, below).
     let found = Arc::new(Notify::new());
-    let mut sandbox = if opts.sandbox {
+    let sandbox = if opts.sandbox {
         start_sandbox(
             &mut ebpf,
             &symbols,
@@ -289,17 +289,22 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     } else {
         None
     };
-    // Commands from `bbd sandbox` (see `control`). Listened for before the
-    // flush socket, which is what tells a client that the daemon is up.
-    let commands = sandbox
-        .as_ref()
-        .and_then(|_| match control::listen_commands(opts.db) {
-            Ok(listener) => Some(listener),
-            Err(e) => {
-                eprintln!("bbd: warning: not taking sandbox commands: {e:#}");
-                None
-            }
-        });
+    // Commands from `bbd sandbox` (see `control`) are listened for on the
+    // sandbox's thread, before the flush socket, which is what tells a
+    // client that the daemon is up.
+    let (net_cleared_sender, net_cleared) = std::sync::mpsc::channel();
+    let mut sandbox = sandbox.and_then(|sandbox| {
+        SandboxThread::start(SandboxParts {
+            sandbox,
+            db: opts.db.to_owned(),
+            packages_list: opts.packages_list.to_owned(),
+            new_starts,
+            found,
+            net_cleared: net_cleared_sender,
+        })
+        .inspect_err(|e| eprintln!("bbd: warning: the sandbox is off: {e:#}"))
+        .ok()
+    });
     // Queries ask for what is held to be written first (see `control`).
     let requests = match control::listen(opts.db) {
         Ok(listener) => Some(listener),
@@ -308,7 +313,6 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
             None
         }
     };
-    let mut command_reads = tokio::task::JoinSet::new();
     let mut flush_tick = interval(FLUSH_INTERVAL);
     flush_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
     let mut prune_tick = interval(PRUNE_INTERVAL);
@@ -317,35 +321,14 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     let mut sigterm = signal(SignalKind::terminate())?;
     let mut write_errors = RecurringLog::default();
     let mut sensor_check = SensorCheck::default();
-    // The package list, watched while newly installed apps are sandboxed.
-    let mut package_watch = sandbox::auto::Watch::default();
 
     loop {
         sensor_check.arm(tracer.sensors.any_on());
-        if let Some(sandbox) = sandbox.as_mut()
-            && package_watch.arm(
-                sandbox.auto_on(),
-                Path::new(sandbox::auto::PACKAGE_DIR),
-                Path::new(USER_DATA),
-            )
-        {
-            // What was installed before the watch began.
-            sandbox.isolate_new(&tracer.writer, &mut tracer.packages);
-        }
-        // A new app left out of the sandbox is tried again then; no timer
-        // while none is.
-        let next_look = sandbox.as_ref().and_then(Sandbox::auto_next_look);
         // Every branch that does not end in a flush continues the loop.
         let request = tokio::select! {
             _ = sigint.recv() => break,
             _ = sigterm.recv() => break,
-            _ = flush_tick.tick() => {
-                if let Some(sandbox) = sandbox.as_mut() {
-                    sandbox.retry_net_refresh();
-                }
-                None
-            },
-            _ = found.notified() => None,
+            _ = flush_tick.tick() => None,
             // Sessions whose process has ended end now, and are written
             // with the next write. Sensors turned on since that did not
             // wake the daemon (the kernel side wakes it at most once a
@@ -374,53 +357,6 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
                 Some(stream) => Some(stream),
                 None => continue,
             },
-            // A command is read without holding up the loop, and carried
-            // out once it has arrived.
-            stream = next_request(commands.as_ref()) => {
-                if let Some(stream) = stream
-                    && command_reads.len() < MAX_PENDING_COMMANDS
-                {
-                    command_reads.spawn(control::read_request(stream));
-                }
-                continue;
-            }
-            Some(read) = command_reads.join_next(), if !command_reads.is_empty() => {
-                if let (Ok(Some((stream, line))), Some(sandbox)) = (read, sandbox.as_mut()) {
-                    let answer = sandbox.answer(&line, &tracer.writer, &mut tracer.packages);
-                    control::send_answer(stream, answer);
-                }
-                continue;
-            }
-            // An app was installed, updated or removed.
-            changed = package_watch.changed(), if package_watch.armed() => {
-                match changed {
-                    Ok(()) => {
-                        if let Some(sandbox) = sandbox.as_mut() {
-                            sandbox.isolate_new(&tracer.writer, &mut tracer.packages);
-                        }
-                    }
-                    Err(e) => package_watch.give_up(&e),
-                }
-                continue;
-            }
-            _ = sleep_until(next_look), if next_look.is_some() => {
-                if let Some(sandbox) = sandbox.as_mut() {
-                    sandbox.isolate_new(&tracer.writer, &mut tracer.packages);
-                }
-                continue;
-            }
-            // The gate ended a start for a new app or a stale entry.
-            Some(_) = new_starts.recv() => {
-                while new_starts.try_recv().is_ok() {}
-                if let Some(sandbox) = sandbox.as_mut() {
-                    if sandbox.auto_on() {
-                        sandbox.isolate_new(&tracer.writer, &mut tracer.packages);
-                    } else {
-                        sandbox.release_reassigned(&tracer.writer, &mut tracer.packages);
-                    }
-                }
-                continue;
-            }
             _ = prune_tick.tick() => {
                 if let Err(e) = tracer.writer.prune(opts.retention_days, now()) {
                     eprintln!("bbd: could not prune old records: {e:#}");
@@ -455,9 +391,12 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
             }
         }
         tracer.settle_sensors(SENSOR_LIST_WAIT);
-        if let Some(sandbox) = sandbox.as_mut() {
-            sandbox.release_reassigned(&tracer.writer, &mut tracer.packages);
-            sandbox.keep_found(&tracer.writer);
+        // What the sandbox cleared of an app's network is not written from
+        // what was held of it.
+        while let Ok(uid) = net_cleared.try_recv() {
+            if let Err(e) = tracer.writer.net_clear(uid) {
+                write_errors.log(format!("bbd: could not clear network records: {e:#}"));
+            }
         }
         // A failed write (disk full, database busy) keeps the batch for the
         // next attempt; it is not a reason to stop recording.
@@ -478,8 +417,9 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         let _ = loader.await;
     }
     control::unlisten(opts.db);
-    if commands.is_some() {
-        control::unlisten_commands(opts.db);
+    // Ends with what it has learned kept, and takes no more commands.
+    if let Some(sandbox) = sandbox.take() {
+        sandbox.stop();
     }
     if opts.profile {
         print_profile(&ebpf);
@@ -490,9 +430,6 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     tracer.settle_sensors(Duration::from_secs(2));
     tracer.counters.dropped = dropped_events();
     tracer.expire(i64::MAX);
-    if let Some(sandbox) = sandbox.as_mut() {
-        sandbox.keep_found(&tracer.writer);
-    }
     tracer.writer.flush(&tracer.counters, now())?;
     // Sensors still on when it stopped were on at least until now; the next
     // run ends them here if their apps have ended by then.
@@ -745,6 +682,151 @@ fn start_sandbox(
     sandbox.note_recording(&tracer.writer);
     sandbox.resume_auto(new_apps, &tracer.writer, &mut tracer.packages);
     Some(sandbox)
+}
+
+/// What the sandbox's thread is started with.
+struct SandboxParts {
+    sandbox: Sandbox,
+    db: std::path::PathBuf,
+    packages_list: String,
+    /// Starts the gate ended for a new app or a stale entry.
+    new_starts: tokio::sync::mpsc::Receiver<u32>,
+    /// Woken when the app ops helper finds a permission changed by the
+    /// user, which is kept in its entry at once (`Sandbox::keep_found`).
+    found: Arc<Notify>,
+    /// The apps whose network records the sandbox cleared, for the event
+    /// loop to drop what it holds of them.
+    net_cleared: std::sync::mpsc::Sender<u32>,
+}
+
+/// The sandbox, run on a thread of its own. Carrying out a command waits
+/// for the app ops helper's answer, which takes up to seconds; on the event
+/// loop that would leave the kernel's events unread for as long, and lose
+/// them once its buffer is full.
+struct SandboxThread {
+    stop: tokio::sync::oneshot::Sender<()>,
+    thread: std::thread::JoinHandle<()>,
+}
+
+impl SandboxThread {
+    /// Start the thread, and return once it listens for commands.
+    fn start(parts: SandboxParts) -> anyhow::Result<Self> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("starting the sandbox's runtime")?;
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let (listening, listened) = std::sync::mpsc::channel();
+        let thread = std::thread::Builder::new()
+            .name("sandbox".into())
+            .spawn(move || runtime.block_on(run_sandbox(parts, stopped, listening)))
+            .context("starting the sandbox's thread")?;
+        // Sent once the command socket is bound or could not be; a thread
+        // that ended first drops the sender.
+        let _ = listened.recv();
+        Ok(Self { stop, thread })
+    }
+
+    /// Stop the sandbox, which keeps what it has learned first.
+    fn stop(self) {
+        let _ = self.stop.send(());
+        if self.thread.join().is_err() {
+            eprintln!("bbd: warning: the sandbox's thread panicked");
+        }
+    }
+}
+
+async fn run_sandbox(
+    parts: SandboxParts,
+    mut stopped: tokio::sync::oneshot::Receiver<()>,
+    listening: std::sync::mpsc::Sender<()>,
+) {
+    let SandboxParts {
+        mut sandbox,
+        db,
+        packages_list,
+        mut new_starts,
+        found,
+        net_cleared,
+    } = parts;
+    let commands = match control::listen_commands(&db) {
+        Ok(listener) => Some(listener),
+        Err(e) => {
+            eprintln!("bbd: warning: not taking sandbox commands: {e:#}");
+            None
+        }
+    };
+    let _ = listening.send(());
+    // A connection of its own: the event loop's writes and the sandbox's
+    // wait for each other only while one commits.
+    let mut writer = match Writer::open(&db) {
+        Ok(writer) => writer,
+        Err(e) => {
+            eprintln!("bbd: warning: the sandbox cannot write: {e:#}");
+            control::unlisten_commands(&db);
+            return;
+        }
+    };
+    writer.tell_net_cleared(net_cleared);
+    let mut packages = Packages::new(&packages_list);
+    let mut command_reads = tokio::task::JoinSet::new();
+    // The package list, watched while newly installed apps are sandboxed.
+    let mut package_watch = sandbox::auto::Watch::default();
+    let mut tick = interval(FLUSH_INTERVAL);
+    tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    loop {
+        if package_watch.arm(
+            sandbox.auto_on(),
+            Path::new(sandbox::auto::PACKAGE_DIR),
+            Path::new(USER_DATA),
+        ) {
+            // What was installed before the watch began.
+            sandbox.isolate_new(&writer, &mut packages);
+        }
+        // A new app left out of the sandbox is tried again then; no timer
+        // while none is.
+        let next_look = sandbox.auto_next_look();
+        tokio::select! {
+            _ = &mut stopped => break,
+            _ = tick.tick() => sandbox.retry_net_refresh(),
+            _ = found.notified() => {}
+            // A command is read without holding up the others, and carried
+            // out once it has arrived.
+            stream = next_request(commands.as_ref()) => {
+                if let Some(stream) = stream
+                    && command_reads.len() < MAX_PENDING_COMMANDS
+                {
+                    command_reads.spawn(control::read_request(stream));
+                }
+                continue;
+            }
+            Some(read) = command_reads.join_next(), if !command_reads.is_empty() => {
+                if let Ok(Some((stream, line))) = read {
+                    let answer = sandbox.answer(&line, &writer, &mut packages);
+                    control::send_answer(stream, answer);
+                }
+            }
+            // An app was installed, updated or removed.
+            changed = package_watch.changed(), if package_watch.armed() => match changed {
+                Ok(()) => sandbox.isolate_new(&writer, &mut packages),
+                Err(e) => package_watch.give_up(&e),
+            },
+            _ = sleep_until(next_look), if next_look.is_some() => {
+                sandbox.isolate_new(&writer, &mut packages);
+            }
+            // The gate ended a start for a new app or a stale entry.
+            Some(_) = new_starts.recv() => {
+                while new_starts.try_recv().is_ok() {}
+                if sandbox.auto_on() {
+                    sandbox.isolate_new(&writer, &mut packages);
+                }
+            }
+        }
+        sandbox.release_reassigned(&writer, &mut packages);
+        sandbox.keep_found(&writer);
+    }
+    control::unlisten_commands(&db);
+    sandbox.keep_found(&writer);
 }
 
 /// The eBPF programs, loaded, with the recorders attached.

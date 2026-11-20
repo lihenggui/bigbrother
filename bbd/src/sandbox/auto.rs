@@ -135,7 +135,7 @@ pub struct Auto {
 /// not put in the sandbox. What tells it is a flag the package manager keeps
 /// for the package, which the package cannot set: never its name or any
 /// text it controls.
-pub trait Libraries {
+pub trait Libraries: Send {
     /// Whether `package`, one of `uid`'s, is a library; `None` if that
     /// cannot be told by `until`.
     fn is_library(&self, uid: u32, package: &str, until: Instant) -> Option<bool>;
@@ -1576,8 +1576,8 @@ mod tests {
     /// Refuses to put an app in while `refusing` is set, as when the app ops
     /// helper does not answer, and counts the tries.
     struct Refusing {
-        refusing: std::rc::Rc<std::cell::Cell<bool>>,
-        tries: std::rc::Rc<std::cell::Cell<u32>>,
+        refusing: crate::test_sync::Rc<crate::test_sync::Cell<bool>>,
+        tries: crate::test_sync::Rc<crate::test_sync::Cell<u32>>,
     }
 
     impl crate::sandbox::Effect for Refusing {
@@ -1619,8 +1619,8 @@ mod tests {
     #[test]
     fn an_app_that_cannot_be_put_in_is_tried_again_later_and_reported() {
         let mut f = Fixture::new("auto-retry");
-        let refusing = std::rc::Rc::new(std::cell::Cell::new(true));
-        let tries = std::rc::Rc::new(std::cell::Cell::new(0));
+        let refusing = crate::test_sync::Rc::new(crate::test_sync::Cell::new(true));
+        let tries = crate::test_sync::Rc::new(crate::test_sync::Cell::new(0));
         let effect = Refusing {
             refusing: refusing.clone(),
             tries: tries.clone(),
@@ -1696,10 +1696,10 @@ mod tests {
     struct PackageManager {
         libraries: Vec<&'static str>,
         /// None of its answers arrive.
-        silent: std::rc::Rc<std::cell::Cell<bool>>,
-        asked: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+        silent: crate::test_sync::Rc<crate::test_sync::Cell<bool>>,
+        asked: crate::test_sync::Rc<crate::test_sync::RefCell<Vec<String>>>,
         /// By when each question was to be answered.
-        deadlines: std::rc::Rc<std::cell::RefCell<Vec<Instant>>>,
+        deadlines: crate::test_sync::Rc<crate::test_sync::RefCell<Vec<Instant>>>,
     }
 
     impl Libraries for PackageManager {
@@ -1715,14 +1715,14 @@ mod tests {
         silent: bool,
     ) -> (
         Box<PackageManager>,
-        std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+        crate::test_sync::Rc<crate::test_sync::RefCell<Vec<String>>>,
     ) {
-        let asked = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let asked = crate::test_sync::Rc::new(crate::test_sync::RefCell::new(Vec::new()));
         let manager = PackageManager {
             libraries,
-            silent: std::rc::Rc::new(std::cell::Cell::new(silent)),
+            silent: crate::test_sync::Rc::new(crate::test_sync::Cell::new(silent)),
             asked: asked.clone(),
-            deadlines: std::rc::Rc::default(),
+            deadlines: crate::test_sync::Rc::default(),
         };
         (Box::new(manager), asked)
     }
@@ -2059,8 +2059,8 @@ mod tests {
     #[test]
     fn a_retry_that_cannot_be_made_is_put_off() {
         let mut f = Fixture::new("auto-put-off");
-        let refusing = std::rc::Rc::new(std::cell::Cell::new(true));
-        let tries = std::rc::Rc::new(std::cell::Cell::new(0));
+        let refusing = crate::test_sync::Rc::new(crate::test_sync::Cell::new(true));
+        let tries = crate::test_sync::Rc::new(crate::test_sync::Cell::new(0));
         let effect = Refusing {
             refusing: refusing.clone(),
             tries,
