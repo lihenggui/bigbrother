@@ -74,8 +74,10 @@ fun Navigator.navigateToJailDestination(uid: Int, packageName: String, target: S
  * the list, not to an app chosen before.
  */
 fun Navigator.navigateToJailApp(uid: Int, packageName: String) {
-    state.currentSubStack.removeAll { it != JailNavKey }
-    navigate(JailAppNavKey(uid, packageName))
+    if (state.currentTopLevelKey != JailNavKey) navigate(JailNavKey)
+    val app = JailAppNavKey(uid, packageName)
+    state.currentSubStack.removeAll { it != JailNavKey && it != app }
+    if (state.currentKey != app) navigate(app)
 }
 
 /**

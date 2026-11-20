@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.PhotoLibrary
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
@@ -45,12 +46,14 @@ import androidx.compose.material3.MediumFlexibleTopAppBar
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -67,9 +70,11 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
+import li.mercury.bigbrother.core.designsystem.icon.CageIcons
 import li.mercury.bigbrother.core.model.Access
 import li.mercury.bigbrother.core.model.Action
 import li.mercury.bigbrother.core.model.Category
+import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.ui.AppIcon
 import li.mercury.bigbrother.core.ui.DataCategory
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
@@ -93,9 +98,18 @@ fun AppDetailScreen(
     onBack: () -> Unit,
     onOpenFiles: (location: String?) -> Unit,
     onOpenRecord: (topic: String, source: String) -> Unit,
+    onOpenJail: (packageName: String) -> Unit,
     viewModel: AppDetailViewModel,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val action = uiState.jailAction
+    val openJail by rememberUpdatedState(onOpenJail)
+    LaunchedEffect(action) {
+        if (action is JailAction.Open) {
+            viewModel.dismissJailAction()
+            openJail(action.packageName)
+        }
+    }
     AppDetailScreen(
         state = uiState,
         focusCategory = focusCategory,
@@ -104,6 +118,9 @@ fun AppDetailScreen(
         onRetry = viewModel::retry,
         onOpenFiles = onOpenFiles,
         onOpenRecord = onOpenRecord,
+        onRequestJail = viewModel::requestJail,
+        onConfirmIsolation = viewModel::confirmIsolation,
+        onDismissJailAction = viewModel::dismissJailAction,
     )
 }
 
@@ -195,10 +212,14 @@ internal fun AppDetailScreen(
     onRetry: () -> Unit,
     onOpenFiles: (location: String?) -> Unit,
     onOpenRecord: (topic: String, source: String) -> Unit,
+    onRequestJail: () -> Unit,
+    onConfirmIsolation: () -> Unit,
+    onDismissJailAction: () -> Unit,
 ) {
     val context = LocalContext.current
     val app = state.app
     val name = appDisplayName(app, state.appInfo)
+    JailActionDialog(state.jailAction, name, onConfirmIsolation, onDismissJailAction)
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     // Grouped list items are surface-colored and sit on a tonal background,
     // which is what separates the groups.
@@ -243,6 +264,11 @@ internal fun AppDetailScreen(
                     }
                 },
                 actions = {
+                    if (state.canOpenJail) {
+                        IconButton(onClick = onRequestJail, enabled = state.jailAction == null) {
+                            Icon(CageIcons.Outlined, contentDescription = stringResource(R.string.open_jail))
+                        }
+                    }
                     if (state.packageDetails != null) {
                         IconButton(onClick = { context.startActivity(appSettingsIntent(app.packageName)) }) {
                             Icon(
@@ -278,6 +304,47 @@ internal fun AppDetailScreen(
                 onOpenRecord = onOpenRecord,
             )
         }
+    }
+}
+
+@Composable
+private fun JailActionDialog(action: JailAction?, appName: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    when (action) {
+        JailAction.Confirm, JailAction.Isolating -> {
+            val busy = action == JailAction.Isolating
+            AlertDialog(
+                onDismissRequest = { if (!busy) onDismiss() },
+                title = { Text(stringResource(R.string.isolate_app_title, appName)) },
+                text = { Text(stringResource(if (busy) R.string.isolating_app else R.string.isolate_app_summary)) },
+                confirmButton = {
+                    TextButton(onClick = onConfirm, enabled = !busy) { Text(stringResource(R.string.isolate_app)) }
+                },
+                dismissButton = {
+                    TextButton(onClick = onDismiss, enabled = !busy) { Text(stringResource(android.R.string.cancel)) }
+                },
+            )
+        }
+
+        is JailAction.Failed -> AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text(stringResource(R.string.jail_action_failed)) },
+            text = {
+                Text(
+                    stringResource(
+                        when (action.failure) {
+                            LoadFailure.NoRoot -> UiR.string.no_root_title
+                            LoadFailure.ModuleMissing -> UiR.string.no_module_title
+                            LoadFailure.ModuleOutdated -> UiR.string.old_module_title
+                            is LoadFailure.Other -> R.string.jail_action_retry
+                            null -> R.string.jail_app_unavailable
+                        },
+                    ),
+                )
+            },
+            confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.ok)) } },
+        )
+
+        else -> Unit
     }
 }
 

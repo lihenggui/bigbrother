@@ -128,7 +128,7 @@ class AppDetailScreenScreenshotTests {
 
     @Test
     fun givenAppNoLongerInstalled_whenShown_thenNamedByPackage() {
-        capturePhone("AppDetailUninstalled") { AppPage(DemoApp.NEWS) { it.copy(appInfo = null, packageDetails = null) } }
+        capturePhone("AppDetailUninstalled") { AppPage(DemoApp.NEWS) { it.copy(appInfo = null, packageDetails = null, canOpenJail = false) } }
     }
 
     @Test
@@ -144,6 +144,9 @@ class AppDetailScreenScreenshotTests {
                 onRetry = {},
                 onOpenFiles = {},
                 onOpenRecord = { _, _ -> },
+                onRequestJail = {},
+                onConfirmIsolation = {},
+                onDismissJailAction = {},
             )
         }
     }
@@ -160,6 +163,7 @@ class AppDetailScreenScreenshotTests {
             state = state(
                 AppDetailUiState(
                     app = records.summary(app),
+                    canOpenJail = true,
                     appInfo = records.appInfo.getValue(app.packageName),
                     records = summarizeAccesses(records.accesses(app)),
                     range = TimeRange.DAY,
@@ -172,6 +176,9 @@ class AppDetailScreenScreenshotTests {
             onRetry = {},
             onOpenFiles = {},
             onOpenRecord = { _, _ -> },
+            onRequestJail = {},
+            onConfirmIsolation = {},
+            onDismissJailAction = {},
         )
     }
 }

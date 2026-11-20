@@ -54,7 +54,9 @@ The mounts, the app ops and the packet filter work without LSPosed. `bbd sandbox
 are in place on the device. `bbd sandbox list` names, for each app, the
 items that are on but not in effect and the part each lacks: the mounts,
 the app ops (read back after they are set, and whenever the system changes
-them), a hook, or the packet filter. An item is in effect only with all its parts: the device
+them), a hook, or the packet filter. While the helper checks an app after
+restarting, `appops_checking` marks its Android restrictions as pending
+readback. An item is in effect only with all its parts: the device
 identifiers, for one, need the ANDROID_ID and advertising ID hooks and the
 phone-state app ops.
 

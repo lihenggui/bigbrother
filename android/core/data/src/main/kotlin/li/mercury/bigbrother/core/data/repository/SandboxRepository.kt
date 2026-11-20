@@ -192,6 +192,7 @@ internal class RootSandboxRepository @Inject constructor(
         settings = getJSONObject("settings").toModes(),
         items = getJSONObject("items").toModes(),
         unmet = optJSONObject("unmet")?.toParts().orEmpty(),
+        appOpsChecking = optBoolean("appops_checking"),
         networkRules = getInt("network_rules"),
         recordingSince = if (isNull("recording_since")) null else getLong("recording_since"),
     )

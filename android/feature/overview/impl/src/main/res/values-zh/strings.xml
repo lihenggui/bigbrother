@@ -22,7 +22,7 @@
         <item quantity="other">另有 %d 个应用查找过文件，但未读取</item>
     </plurals>
     <string name="more_count">+%d</string>
-    <string name="other_categories">其他数据类别</string>
+    <string name="other_categories">其他敏感权限</string>
     <plurals name="category_count">
         <item quantity="other">%d 类</item>
     </plurals>

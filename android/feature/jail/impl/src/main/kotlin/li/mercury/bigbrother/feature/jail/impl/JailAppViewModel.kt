@@ -22,10 +22,15 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.runningReduce
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -41,6 +46,7 @@ import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
+import li.mercury.bigbrother.core.model.SandboxPart
 import li.mercury.bigbrother.core.model.SandboxedApp
 import li.mercury.bigbrother.feature.jail.impl.network.networkMode
 
@@ -102,7 +108,7 @@ class JailAppViewModel @AssistedInject constructor(
         loaded.copy(
             app = app,
             global = global.orEmpty(),
-            left = released || (apps != null && app == null),
+            left = released || (!loaded.loading && loaded.failure == null && apps != null && app == null),
         )
     }.runningReduce { shown, next ->
         // Going straight from the app to leaving: not by a page without it.
@@ -124,6 +130,24 @@ class JailAppViewModel @AssistedInject constructor(
             }
         }
     }
+
+    /** While the page is visible, read back restrictions that the daemon may recover. */
+    fun watchAppOps(): Job = viewModelScope.launch {
+        while (true) {
+            val app = sandboxRepository.apps.map(::appWithUnheldOps).filterNotNull().first()
+            delay(if (app.appOpsChecking) CHECKING_REFRESH_MS else RECOVERY_REFRESH_MS)
+            if (appWithUnheldOps(sandboxRepository.apps.value) != null) {
+                try {
+                    sandboxRepository.refresh()
+                    load.update { it.copy(failure = null) }
+                } catch (e: RecordsException) {
+                    load.update { it.copy(failure = e.toLoadFailure()) }
+                }
+            }
+        }
+    }
+
+    private fun appWithUnheldOps(apps: List<SandboxedApp>?): SandboxedApp? = apps?.firstOrNull { it.uid == uid && it.enabled && it.unmet.values.any { parts -> SandboxPart.APP_OPS in parts } }
 
     /**
      * Turns [item] on or off. On, it takes the global mode if that is on
@@ -209,5 +233,7 @@ class JailAppViewModel @AssistedInject constructor(
     private companion object {
         const val PER_USER_RANGE = 100_000
         const val DAY = 86_400L
+        const val CHECKING_REFRESH_MS = 1_000L
+        const val RECOVERY_REFRESH_MS = 30_000L
     }
 }

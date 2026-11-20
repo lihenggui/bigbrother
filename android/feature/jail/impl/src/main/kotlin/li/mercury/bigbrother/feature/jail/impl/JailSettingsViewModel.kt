@@ -77,8 +77,7 @@ class JailSettingsViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 if (sandboxRepository.global.value == null) sandboxRepository.refresh()
-                val status = sandboxRepository.relevantStatus()
-                load.update { it.copy(status = status, failure = null) }
+                refreshStatus()
             } catch (e: RecordsException) {
                 load.update { it.copy(failure = e.toLoadFailure()) }
             }
@@ -118,7 +117,20 @@ class JailSettingsViewModel @Inject constructor(
                 block()
             } catch (e: RecordsException) {
                 load.update { it.copy(error = e.toLoadFailure()) }
+                return@launch
             }
+            // A change can start or stop the helper. The old status no
+            // longer describes the restrictions that the app list shows.
+            refreshStatus()
+        }
+    }
+
+    private suspend fun refreshStatus() {
+        try {
+            val status = sandboxRepository.relevantStatus()
+            load.update { it.copy(status = status, failure = null) }
+        } catch (e: RecordsException) {
+            load.update { it.copy(status = null, failure = e.toLoadFailure()) }
         }
     }
 }

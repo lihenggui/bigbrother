@@ -16,17 +16,47 @@
 
 package li.mercury.bigbrother.feature.jail.impl.navigation
 
+import androidx.navigation3.runtime.NavBackStack
+import androidx.navigation3.runtime.NavKey
+import li.mercury.bigbrother.core.navigation.NavigationState
+import li.mercury.bigbrother.core.navigation.Navigator
 import li.mercury.bigbrother.feature.appdetail.api.navigation.AppDetailNavKey
 import li.mercury.bigbrother.feature.appdetail.api.navigation.RecordNavKey
 import li.mercury.bigbrother.feature.jail.api.navigation.JailAppNavKey
 import li.mercury.bigbrother.feature.jail.api.navigation.JailNavKey
 import li.mercury.bigbrother.feature.jail.api.navigation.JailSettingsNavKey
+import li.mercury.bigbrother.feature.jail.api.navigation.navigateToJailApp
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 class ShownBesideListTest {
     private val notes = JailAppNavKey(10156, "com.example.notes")
+
+    private data object Apps : NavKey
+
+    @Test
+    fun givenRecordsOpenedFromApps_whenJailAppOpened_thenBackCanReturnToRecords() {
+        val records = AppDetailNavKey(notes.uid, notes.packageName, 24)
+        val state = NavigationState(
+            startKey = Apps,
+            topLevelStack = NavBackStack(Apps),
+            subStacks = mapOf(
+                Apps to NavBackStack(Apps, records),
+                JailNavKey to NavBackStack(JailNavKey, JailSettingsNavKey),
+            ),
+        )
+        val navigator = Navigator(state)
+
+        navigator.navigateToJailApp(notes.uid, notes.packageName)
+
+        assertEquals(JailNavKey, state.currentTopLevelKey)
+        assertEquals(notes, state.currentKey)
+        navigator.goBack()
+        assertEquals(JailNavKey, state.currentKey)
+        navigator.goBack()
+        assertEquals(records, state.currentKey)
+    }
 
     @Test
     fun givenNothingOpened_whenListShown_thenNothingMarked() {
