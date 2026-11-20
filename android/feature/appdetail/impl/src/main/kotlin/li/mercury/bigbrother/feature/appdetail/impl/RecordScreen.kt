@@ -60,6 +60,7 @@ import li.mercury.bigbrother.core.model.ClipboardUse
 import li.mercury.bigbrother.core.model.clipboardUse
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
+import li.mercury.bigbrother.core.ui.LocalWallClock
 import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.appDisplayName
@@ -97,8 +98,9 @@ internal fun RecordScreen(
     onRetry: () -> Unit,
 ) {
     val group = state.group
+    val clock = LocalWallClock.current
     // Sessions still going are counted up to when they were loaded.
-    val now = remember(state.sensorSessions) { System.currentTimeMillis() / 1000 }
+    val now = remember(state.sensorSessions, clock) { clock.millis() / 1000 }
     val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     // As a pane it reaches the top of the window, under the status bar; in a
     // bottom sheet it starts below it.
@@ -223,8 +225,9 @@ private fun Header(state: RecordUiState, uid: Int, packageName: String, onClose:
             }
         }
         if (group != null) {
+            val clock = LocalWallClock.current
             val asked = remember(group) { appsAsked(group) }
-            val last = remember(group) { relativeTime(group.lastSeen) }
+            val last = remember(group, clock) { relativeTime(group.lastSeen, clock.millis()) }
             val records = remember(group) { group.records }
             val summary = if (group.allowed == 0) {
                 topicRecordsSummary(group.topic, records)

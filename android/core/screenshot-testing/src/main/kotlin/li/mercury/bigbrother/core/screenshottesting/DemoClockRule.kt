@@ -18,36 +18,39 @@ package li.mercury.bigbrother.core.screenshottesting
 
 import android.os.SystemClock
 import org.junit.rules.ExternalResource
+import java.time.Clock
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
-import java.time.ZoneId
 import java.util.Locale
 import java.util.TimeZone
 import kotlin.math.abs
 
 /**
- * Makes it [SHOWN_TIME] today, whenever the screenshots are taken.
+ * Places the demo records on today's date and gives elapsed-time labels a
+ * fixed reference at [SHOWN_TIME].
  *
- * The screens read the real clock (`System.currentTimeMillis()`,
- * `LocalDate.now()`), which a test cannot set, and show times of day, "today"
- * and "2 hours ago". What a test can set is the time zone: this rule picks
- * the offset from UTC at which it is [SHOWN_TIME] now, so that records
- * placed at fixed times of today ([todayAt]) are always today, always in
- * the past, and always show the same times. The previous time zone is
- * restored afterwards.
+ * The time zone puts the real clock near [SHOWN_TIME], so records placed
+ * at fixed times of day are already in the past. Use [shownClock] for
+ * elapsed times, which otherwise depend on how long the capture takes.
  *
- * Apply it before the compose rule: it also sets Robolectric's clock, which
- * the framework reads (`DateUtils.isToday`), to the real time, which the
- * app reads. Robolectric resets that clock after each test.
+ * Apply it before the compose rule. It aligns Robolectric's wall clock
+ * with the host for the framework's date checks (`DateUtils.isToday`).
  */
 class DemoClockRule : ExternalResource() {
     private var previous: TimeZone? = null
+    lateinit var shownClock: Clock
+        private set
 
     override fun before() {
         val now = System.currentTimeMillis()
         previous = TimeZone.getDefault()
-        TimeZone.setDefault(TimeZone.getTimeZone(zoneId(now)))
+        val timeZone = TimeZone.getTimeZone(zoneId(now))
+        TimeZone.setDefault(timeZone)
+        val zone = timeZone.toZoneId()
+        val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+        shownClock = Clock.fixed(today.atTime(SHOWN_TIME).atZone(zone).toInstant(), zone)
         // With a paused looper, Robolectric's wall clock starts at its
         // uptime, in 1970; it can only move forward.
         SystemClock.setCurrentTimeMillis(now)
@@ -58,14 +61,14 @@ class DemoClockRule : ExternalResource() {
     }
 
     /** [hour]:[minute] today, as Unix time. */
-    fun todayAt(hour: Int, minute: Int): Long = LocalDate.now().atTime(hour, minute).atZone(ZoneId.systemDefault()).toEpochSecond()
+    fun todayAt(hour: Int, minute: Int): Long = at(LocalDate.now(shownClock).atTime(hour, minute))
 
     /**
      * A fixed date and time, as Unix time: shown the same in any time zone
      * the rule picks. For what a screen shows with its date: a time of
      * [todayAt] shows the day the test runs.
      */
-    fun at(dateTime: LocalDateTime): Long = dateTime.atZone(ZoneId.systemDefault()).toEpochSecond()
+    fun at(dateTime: LocalDateTime): Long = dateTime.atZone(shownClock.zone).toEpochSecond()
 
     private companion object {
         /** The time of day the screenshots show as now. */

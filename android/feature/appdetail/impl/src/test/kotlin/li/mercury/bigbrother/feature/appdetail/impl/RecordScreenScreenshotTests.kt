@@ -18,6 +18,7 @@ package li.mercury.bigbrother.feature.appdetail.impl
 
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import li.mercury.bigbrother.core.model.Access
@@ -32,6 +33,7 @@ import li.mercury.bigbrother.core.screenshottesting.DemoLoadFailure
 import li.mercury.bigbrother.core.screenshottesting.DemoRecords
 import li.mercury.bigbrother.core.screenshottesting.captureForDevice
 import li.mercury.bigbrother.core.screenshottesting.screenshotName
+import li.mercury.bigbrother.core.ui.LocalWallClock
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -55,31 +57,25 @@ class RecordScreenScreenshotTests {
     @Test
     @Config(qualifiers = "en-rUS")
     fun givenSensorsTurnedOn_whenShownOnPhone_thenMatchesGolden() {
-        capture("phone", DefaultTestDevices.PHONE.spec)
+        captureSensors("phone", DefaultTestDevices.PHONE.spec)
     }
 
     @Test
     @Config(qualifiers = "en-rUS")
     fun givenSensorsTurnedOn_whenShownOnFoldable_thenMatchesGolden() {
-        capture("foldable", DefaultTestDevices.FOLDABLE.spec)
+        captureSensors("foldable", DefaultTestDevices.FOLDABLE.spec)
     }
 
     @Test
     @Config(qualifiers = "zh-rCN")
     fun givenSensorsTurnedOn_whenShownInChinese_thenMatchesGolden() {
-        capture("phone_zh", DefaultTestDevices.PHONE.spec)
+        captureSensors("phone_zh", DefaultTestDevices.PHONE.spec)
     }
 
     @Test
     @Config(qualifiers = "en-rUS")
     fun givenClipboardReadAndWritten_whenShownOnPhone_thenMatchesGolden() {
-        composeTestRule.captureForDevice(
-            deviceName = "phone",
-            deviceSpec = DefaultTestDevices.PHONE.spec,
-            screenshotName = "ClipboardRecord",
-        ) {
-            Record(DemoApp.KEYBOARD, CLIPBOARD)
-        }
+        capturePhone("ClipboardRecord") { Record(DemoApp.KEYBOARD, CLIPBOARD) }
     }
 
     @Test
@@ -151,14 +147,20 @@ class RecordScreenScreenshotTests {
         }
     }
 
-    private fun capture(deviceName: String, deviceSpec: String) {
-        composeTestRule.captureForDevice(deviceName = deviceName, deviceSpec = deviceSpec, screenshotName = "SensorsRecord") {
+    private fun captureSensors(deviceName: String, deviceSpec: String) {
+        capture(deviceName, deviceSpec, "SensorsRecord") {
             Record(DemoApp.STEP_COUNTER, SENSORS)
         }
     }
 
     private fun capturePhone(name: String, body: @Composable () -> Unit) {
-        composeTestRule.captureForDevice("phone", DefaultTestDevices.PHONE.spec, name, body = body)
+        capture("phone", DefaultTestDevices.PHONE.spec, name, body)
+    }
+
+    private fun capture(deviceName: String, deviceSpec: String, name: String, body: @Composable () -> Unit) {
+        composeTestRule.captureForDevice(deviceName, deviceSpec, name) {
+            CompositionLocalProvider(LocalWallClock provides clock.shownClock, content = body)
+        }
     }
 
     /** The record sheet of one of [app]'s kinds of data, from its own records, in the state [state] makes of it. */
