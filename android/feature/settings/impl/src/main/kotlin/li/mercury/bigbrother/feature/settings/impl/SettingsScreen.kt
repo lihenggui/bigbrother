@@ -50,6 +50,7 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MediumFlexibleTopAppBar
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
@@ -71,12 +72,15 @@ import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import li.mercury.bigbrother.core.data.repository.UserSettingsWriter
 import li.mercury.bigbrother.core.ui.SectionHeader
+import li.mercury.bigbrother.core.ui.rememberSettingsWriteSnackbar
 import li.mercury.bigbrother.core.ui.R as UiR
 
 @Composable
 fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val settingsWriteFailures by viewModel.settingsWriteFailures.collectAsStateWithLifecycle()
     LifecycleResumeEffect(Unit) {
         viewModel.refresh()
         onPauseOrDispose {}
@@ -95,6 +99,8 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel) {
         onUseDynamicColor = viewModel::setUseDynamicColor,
         onExportLogs = viewModel::exportLogs,
         onDismissLogExport = viewModel::dismissLogExport,
+        settingsWriteFailure = settingsWriteFailures.firstOrNull(),
+        onSettingsWriteResult = viewModel::resolveSettingsWrite,
     )
 }
 
@@ -122,6 +128,8 @@ internal fun SettingsScreen(
     onUseDynamicColor: (Boolean) -> Unit,
     onExportLogs: () -> Unit,
     onDismissLogExport: () -> Unit,
+    settingsWriteFailure: UserSettingsWriter.Failure? = null,
+    onSettingsWriteResult: (UserSettingsWriter.Failure, Boolean) -> Unit = { _, _ -> },
 ) {
     val context = LocalContext.current
     val exported = state.logExport as? LogExport.Ready
@@ -140,9 +148,11 @@ internal fun SettingsScreen(
     }
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val background = MaterialTheme.colorScheme.surfaceContainer
+    val snackbar = rememberSettingsWriteSnackbar(settingsWriteFailure, onSettingsWriteResult)
     Scaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         containerColor = background,
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             MediumFlexibleTopAppBar(
                 title = { Text(stringResource(R.string.settings_title)) },

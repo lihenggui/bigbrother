@@ -20,9 +20,10 @@ import kotlinx.coroutines.flow.Flow
 import li.mercury.bigbrother.core.datastore.UserPreferencesDataSource
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.model.UserData
+import java.io.IOException
 import javax.inject.Inject
 
-/** The user's settings. */
+/** The user's settings. Setters throw [IOException] if the value cannot be saved. */
 interface UserDataRepository {
     val userData: Flow<UserData>
 

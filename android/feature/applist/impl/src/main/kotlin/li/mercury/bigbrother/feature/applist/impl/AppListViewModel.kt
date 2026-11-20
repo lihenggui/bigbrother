@@ -33,6 +33,7 @@ import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.AccessRepository
 import li.mercury.bigbrother.core.data.repository.AppInfoRepository
 import li.mercury.bigbrother.core.data.repository.UserDataRepository
+import li.mercury.bigbrother.core.data.repository.UserSettingsWriter
 import li.mercury.bigbrother.core.data.toLoadFailure
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
@@ -60,6 +61,9 @@ class AppListViewModel @Inject constructor(
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(AppListUiState())
     val uiState: StateFlow<AppListUiState> = _uiState.asStateFlow()
+
+    private val settingsWriter = UserSettingsWriter(viewModelScope, userDataRepository)
+    val settingsWriteFailures = settingsWriter.failures
 
     private var loadJob: Job? = null
 
@@ -112,13 +116,11 @@ class AppListViewModel @Inject constructor(
         }
     }
 
-    fun setRange(range: TimeRange) {
-        viewModelScope.launch { userDataRepository.setTimeRange(range) }
-    }
+    fun setRange(range: TimeRange) = settingsWriter.setTimeRange(range)
 
-    fun setShowSystemApps(show: Boolean) {
-        viewModelScope.launch { userDataRepository.setShowSystemApps(show) }
-    }
+    fun setShowSystemApps(show: Boolean) = settingsWriter.setShowSystemApps(show)
+
+    fun resolveSettingsWrite(failure: UserSettingsWriter.Failure, retry: Boolean) = settingsWriter.resolve(failure, retry)
 }
 
 /** How soon after a load the screen being shown again reloads it. */

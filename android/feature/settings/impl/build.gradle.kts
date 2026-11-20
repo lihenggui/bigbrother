@@ -33,4 +33,5 @@ dependencies {
 
     testImplementation(libs.robolectric)
     testImplementation(projects.core.screenshotTesting)
+    testImplementation(projects.core.testing)
 }
