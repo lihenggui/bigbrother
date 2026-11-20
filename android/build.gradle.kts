@@ -27,18 +27,23 @@ plugins {
     alias(libs.plugins.spotless)
 }
 
-val robolectricSdk = configurations.resolvable("robolectricSdk") {
+// Resolve the versions separately so dependency conflict resolution keeps both.
+val robolectricSdk24 = configurations.resolvable("robolectricSdk24") {
+    isTransitive = false
+}
+val robolectricSdk37 = configurations.resolvable("robolectricSdk37") {
     isTransitive = false
 }
 dependencies {
-    add(robolectricSdk.name, libs.robolectricAndroid)
+    add(robolectricSdk24.name, libs.robolectricAndroid24)
+    add(robolectricSdk37.name, libs.robolectricAndroid37)
 }
 
-// Gradle caches the SDK alongside the other test dependencies, so test workers
-// can use it without making their own Maven requests.
+// Gradle caches the SDKs alongside the other test dependencies, so test workers
+// can use them without making their own Maven requests.
 val robolectricSdkDirectory = layout.buildDirectory.dir("robolectric-sdk")
 val prepareRobolectricSdk = tasks.register<Sync>("prepareRobolectricSdk") {
-    from(robolectricSdk)
+    from(robolectricSdk24, robolectricSdk37)
     into(robolectricSdkDirectory)
 }
 if (providers.environmentVariable("CI").orNull == "true") {
