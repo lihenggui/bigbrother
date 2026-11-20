@@ -7,6 +7,9 @@ authors.workspace = true
 # under version 2 as well as later versions.
 license = "GPL-2.0-or-later"
 
+[features]
+task-storage = []
+
 [dependencies]
 bb-common = { path = "../bb-common" }
 aya-ebpf = { workspace = true }

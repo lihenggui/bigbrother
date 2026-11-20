@@ -774,13 +774,18 @@ pub fn load_probes() -> anyhow::Result<Probes> {
     }
 
     let offsets = Btf::from_kernel()?.kernel_offsets()?;
-    let mut ebpf = EbpfLoader::new()
-        .override_global("OFFSETS", &offsets[..], true)
-        .load(aya::include_bytes_aligned!(concat!(
-            env!("OUT_DIR"),
-            "/bb-ebpf"
-        )))
-        .context("loading eBPF object (need root and a BPF-enabled kernel)")?;
+    let modern = aya::include_bytes_aligned!(concat!(env!("OUT_DIR"), "/bb-ebpf"));
+    let legacy = aya::include_bytes_aligned!(concat!(env!("OUT_DIR"), "/bb-ebpf-legacy"));
+    let mut ebpf = match load_file_programs(modern, &offsets, true) {
+        Ok(ebpf) => ebpf,
+        Err(error) => {
+            eprintln!(
+                "bbd: using the syscall hash table: {error} ({})",
+                error.root_cause()
+            );
+            load_file_programs(legacy, &offsets, false)?
+        }
+    };
 
     let symbols = syscalls::kernel_symbols().context("reading /proc/kallsyms")?;
     anyhow::ensure!(
@@ -793,7 +798,6 @@ pub fn load_probes() -> anyhow::Result<Probes> {
         .program_mut("file_open")
         .context("program file_open missing from object")?
         .try_into()?;
-    kprobe.load().context("verifier rejected file_open")?;
     let selinux = syscalls::selinux_running();
     let hook = syscalls::file_open_hook(&symbols, selinux);
     kprobe
@@ -804,11 +808,6 @@ pub fn load_probes() -> anyhow::Result<Probes> {
     // Syscall probes: one entry program per argument layout plus a shared
     // return program, attached to each syscall function this kernel has.
     // The return program is shared by every feature that reports outcomes.
-    let returns: &mut KProbe = ebpf
-        .program_mut("sys_ret")
-        .context("program sys_ret missing from object")?
-        .try_into()?;
-    returns.load().context("verifier rejected sys_ret")?;
     let mut files = vec![("file_open", hook)];
     files.extend(
         attach_feature(&mut ebpf, &syscalls::FILES, &symbols, selinux, &offsets)
@@ -833,6 +832,34 @@ pub fn load_probes() -> anyhow::Result<Probes> {
         selinux,
         features,
     })
+}
+
+/// Verify the lookup, insertion and return paths before attaching anything.
+/// Some kernels advertise BTF but lack the map type or one of its helpers.
+fn load_file_programs(
+    object: &[u8],
+    offsets: &[u32; OFF_COUNT],
+    task_storage: bool,
+) -> anyhow::Result<aya::Ebpf> {
+    let mut loader = EbpfLoader::new();
+    if task_storage {
+        // Aya can load task storage but has no userspace map wrapper for it.
+        loader.allow_unsupported_maps();
+    }
+    let mut ebpf = loader
+        .override_global("OFFSETS", &offsets[..], true)
+        .load(object)
+        .context("loading eBPF object (need root and a BPF-enabled kernel)")?;
+    for name in ["file_open", "enter_openat", "sys_ret"] {
+        let program: &mut KProbe = ebpf
+            .program_mut(name)
+            .with_context(|| format!("program {name} missing from object"))?
+            .try_into()?;
+        program
+            .load()
+            .with_context(|| format!("verifier rejected {name}"))?;
+    }
+    Ok(ebpf)
 }
 
 /// Load and attach the probes of one optional feature. Returns the
@@ -861,9 +888,11 @@ fn attach_feature(
             .program_mut(name)
             .with_context(|| format!("program {name} missing from object"))?
             .try_into()?;
-        program
-            .load()
-            .with_context(|| format!("verifier rejected {name}"))?;
+        if program.fd().is_err() {
+            program
+                .load()
+                .with_context(|| format!("verifier rejected {name}"))?;
+        }
     }
     // All or nothing: a feature left half attached would go on producing
     // records, some of them wrong (a call whose return is not seen counts
