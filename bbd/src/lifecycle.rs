@@ -21,9 +21,13 @@ use anyhow::{Context as _, ensure};
 use crate::sandbox::gate::Process;
 
 pub fn stop(module: &Path) -> anyhow::Result<()> {
+    stop_in(module, Path::new("/data/adb/big_brother"))
+}
+
+fn stop_in(module: &Path, data: &Path) -> anyhow::Result<()> {
     // The supervisor normally stops its child and waits for the records to flush.
     for (name, program) in [("supervisor", "supervise.sh"), ("bbd", "bin/bbd")] {
-        let file = Path::new("/data/adb/big_brother").join(format!("{name}.pid"));
+        let file = data.join(format!("{name}.pid"));
         let text = match fs::read_to_string(&file) {
             Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
             result => result?,
@@ -88,7 +92,90 @@ fn matches_command(cmdline: &[u8], path: &[u8], supervisor: bool) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        io::{BufRead as _, BufReader},
+        os::unix::{fs::DirBuilderExt as _, process::ExitStatusExt as _},
+        path::PathBuf,
+        process::{Command, Stdio},
+        sync::mpsc::channel,
+    };
+
     use super::*;
+
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir().join(format!("bbd-stop-{name}-{}", std::process::id()));
+            fs::DirBuilder::new().mode(0o700).create(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn discards_a_stale_thread_marker_without_stopping_its_process() {
+        let scratch = Scratch::new("thread");
+        let marker = scratch.0.join("supervisor.pid");
+        std::thread::scope(|scope| {
+            let (ready, tid) = channel();
+            let (keep_alive, finish) = channel::<()>();
+            scope.spawn(move || {
+                ready.send(unsafe { libc::gettid() }).unwrap();
+                let _ = finish.recv();
+            });
+            let tid = tid.recv().unwrap();
+            assert_ne!(tid as u32, std::process::id());
+            fs::write(&marker, tid.to_string()).unwrap();
+            stop_in(&scratch.0, &scratch.0).unwrap();
+            assert!(Path::new(&format!("/proc/{tid}/status")).exists());
+            assert_eq!(
+                Process::open(tid).err().and_then(|e| e.raw_os_error()),
+                Some(libc::ESRCH)
+            );
+            assert!(!marker.exists());
+            drop(keep_alive);
+        });
+    }
+
+    #[test]
+    fn stops_only_the_recognized_root_owned_supervisor() {
+        let scratch = Scratch::new("leader");
+        let marker = scratch.0.join("supervisor.pid");
+        for name in ["supervise.sh", "unrelated.sh"] {
+            let script = scratch.0.join(name);
+            fs::write(&script, "printf 'ready\\n'\nread -r unused\n").unwrap();
+            let mut child = Command::new("/bin/sh")
+                .arg(&script)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let mut ready = String::new();
+            BufReader::new(child.stdout.take().unwrap())
+                .read_line(&mut ready)
+                .unwrap();
+            assert_eq!(ready, "ready\n");
+            fs::write(&marker, child.id().to_string()).unwrap();
+
+            let result = stop_in(&scratch.0, &scratch.0);
+            let stopped = child.try_wait().unwrap();
+            drop(child.stdin.take());
+            child.wait().unwrap();
+            result.unwrap();
+            assert!(!marker.exists());
+            if name == "supervise.sh" && unsafe { libc::geteuid() } == 0 {
+                assert_eq!(stopped.unwrap().signal(), Some(libc::SIGTERM));
+            } else {
+                assert!(stopped.is_none());
+            }
+        }
+    }
 
     #[test]
     fn stop_recognizes_the_supervisor_from_android_or_the_root_manager_shell() {

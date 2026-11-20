@@ -41,7 +41,7 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     fs::{self, File},
-    io,
+    io::{self, Read as _},
     os::{
         fd::{AsRawFd, FromRawFd, OwnedFd},
         unix::fs::PermissionsExt as _,
@@ -84,13 +84,40 @@ const FAILURE_LOG_INTERVAL: Duration = Duration::from_secs(60);
 pub struct Process(OwnedFd);
 
 impl Process {
+    /// Hold `pid` as a process leader. A reused ID belonging to a non-leader
+    /// is the same as a missing leader for callers holding process IDs.
     pub fn open(pid: i32) -> io::Result<Self> {
+        match Self::open_pidfd(pid) {
+            Err(e)
+                if pid > 0
+                    && e.raw_os_error() == Some(libc::EINVAL)
+                    && Self::no_group_leader(pid) =>
+            {
+                Err(io::Error::from_raw_os_error(libc::ESRCH))
+            }
+            result => result,
+        }
+    }
+
+    fn open_pidfd(pid: i32) -> io::Result<Self> {
         let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
         if fd < 0 {
             return Err(io::Error::last_os_error());
         }
         // SAFETY: just opened, and owned by nothing else.
         Ok(Self(unsafe { OwnedFd::from_raw_fd(fd as i32) }))
+    }
+
+    fn no_group_leader(pid: i32) -> bool {
+        match is_nonleader(pid) {
+            Ok(nonleader) => nonleader,
+            Err(e) if matches!(e.raw_os_error(), Some(libc::ENOENT | libc::ESRCH)) => {
+                // The thread may have exited before its status was read.
+                // Confirm that in the kernel before treating it as gone.
+                matches!(Self::open_pidfd(pid), Err(e) if e.raw_os_error() == Some(libc::ESRCH))
+            }
+            Err(_) => false,
+        }
     }
 
     /// A pidfd becomes readable when this process exits, including before it is reaped.
@@ -123,6 +150,25 @@ impl Process {
             Ok(())
         }
     }
+}
+
+fn is_nonleader(pid: i32) -> io::Result<bool> {
+    let mut status = Vec::new();
+    File::open(format!("/proc/{pid}/status"))?
+        .take(4096)
+        .read_to_end(&mut status)?;
+    // Read the IDs even when the thread's name includes non-UTF-8 bytes.
+    let field = |prefix: &[u8]| {
+        let value = status
+            .split(|&byte| byte == b'\n')
+            .find_map(|line| line.strip_prefix(prefix))?;
+        std::str::from_utf8(value)
+            .ok()?
+            .trim_ascii()
+            .parse::<i32>()
+            .ok()
+    };
+    Ok(field(b"Pid:") == Some(pid) && field(b"Tgid:").is_some_and(|tgid| tgid > 0 && tgid != pid))
 }
 
 /// What the starts of an app are held for: its mounts, and what it finds
@@ -1181,5 +1227,9 @@ mod tests {
         // be opened.
         assert!(held.signal(libc::SIGKILL).is_err());
         assert!(Process::open(i32::MAX).is_err());
+        assert_eq!(
+            Process::open(0).err().and_then(|e| e.raw_os_error()),
+            Some(libc::EINVAL)
+        );
     }
 }
