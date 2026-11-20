@@ -40,6 +40,7 @@ import li.mercury.bigbrother.core.data.repository.AppInfoRepository
 import li.mercury.bigbrother.core.data.repository.InstalledModule
 import li.mercury.bigbrother.core.data.repository.ModuleRepository
 import li.mercury.bigbrother.core.data.repository.UserDataRepository
+import li.mercury.bigbrother.core.data.repository.UserSettingsWriter
 import li.mercury.bigbrother.core.data.toLoadFailure
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
@@ -119,6 +120,9 @@ class OverviewViewModel @Inject constructor(
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(OverviewUiState())
     val uiState: StateFlow<OverviewUiState> = _uiState.asStateFlow()
+
+    private val settingsWriter = UserSettingsWriter(viewModelScope, userDataRepository)
+    val settingsWriteFailures = settingsWriter.failures
 
     private var loadJob: Job? = null
 
@@ -282,9 +286,9 @@ class OverviewViewModel @Inject constructor(
         showSystemApps: Boolean,
     ): List<AppSummary> = apps.filter { isShown(it, appInfo, showSystemApps, ownPackage) }
 
-    fun setRange(range: TimeRange) {
-        viewModelScope.launch { userDataRepository.setTimeRange(range) }
-    }
+    fun setRange(range: TimeRange) = settingsWriter.setTimeRange(range)
+
+    fun resolveSettingsWrite(failure: UserSettingsWriter.Failure, retry: Boolean) = settingsWriter.resolve(failure, retry)
 
     /**
      * Start the daemon when the module is installed but not running, then

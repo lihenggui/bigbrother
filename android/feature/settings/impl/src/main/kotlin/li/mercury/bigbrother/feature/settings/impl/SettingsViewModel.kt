@@ -30,6 +30,7 @@ import li.mercury.bigbrother.core.data.repository.AccessRepository
 import li.mercury.bigbrother.core.data.repository.DiagnosticsRepository
 import li.mercury.bigbrother.core.data.repository.ModuleRepository
 import li.mercury.bigbrother.core.data.repository.UserDataRepository
+import li.mercury.bigbrother.core.data.repository.UserSettingsWriter
 import li.mercury.bigbrother.core.model.RecorderStatus
 import li.mercury.bigbrother.core.model.UserData
 import timber.log.Timber
@@ -60,11 +61,14 @@ data class SettingsUiState(
 class SettingsViewModel @Inject constructor(
     private val accessRepository: AccessRepository,
     private val moduleRepository: ModuleRepository,
-    private val userDataRepository: UserDataRepository,
+    userDataRepository: UserDataRepository,
     private val diagnosticsRepository: DiagnosticsRepository,
 ) : ViewModel() {
     private val moduleVersion = MutableStateFlow<String?>(null)
     private val logExport = MutableStateFlow<LogExport>(LogExport.Idle)
+
+    private val settingsWriter = UserSettingsWriter(viewModelScope, userDataRepository)
+    val settingsWriteFailures = settingsWriter.failures
 
     val uiState: StateFlow<SettingsUiState> = combine(
         userDataRepository.userData,
@@ -103,11 +107,9 @@ class SettingsViewModel @Inject constructor(
         logExport.value = LogExport.Idle
     }
 
-    fun setShowSystemApps(show: Boolean) {
-        viewModelScope.launch { userDataRepository.setShowSystemApps(show) }
-    }
+    fun setShowSystemApps(show: Boolean) = settingsWriter.setShowSystemApps(show)
 
-    fun setUseDynamicColor(use: Boolean) {
-        viewModelScope.launch { userDataRepository.setUseDynamicColor(use) }
-    }
+    fun setUseDynamicColor(use: Boolean) = settingsWriter.setUseDynamicColor(use)
+
+    fun resolveSettingsWrite(failure: UserSettingsWriter.Failure, retry: Boolean) = settingsWriter.resolve(failure, retry)
 }

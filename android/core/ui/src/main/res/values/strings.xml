@@ -19,6 +19,7 @@
     <string name="isolated_process_uid">Isolated process (UID %d)</string>
     <string name="back">Back</string>
     <string name="retry">Try again</string>
+    <string name="settings_write_failed">Couldn’t save the setting</string>
     <string name="search">Search</string>
     <string name="close_search">Close search</string>
     <string name="clear_search">Clear search</string>

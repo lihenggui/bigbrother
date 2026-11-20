@@ -26,12 +26,18 @@ import li.mercury.bigbrother.core.model.UserData
 /** Settings kept in memory. */
 class TestUserDataRepository(initial: UserData = UserData()) : UserDataRepository {
     private val state = MutableStateFlow(initial)
+    var writeFailure: Exception? = null
 
     override val userData: Flow<UserData> = state
 
-    override suspend fun setTimeRange(range: TimeRange) = state.update { it.copy(timeRange = range) }
+    override suspend fun setTimeRange(range: TimeRange) = edit { it.copy(timeRange = range) }
 
-    override suspend fun setShowSystemApps(show: Boolean) = state.update { it.copy(showSystemApps = show) }
+    override suspend fun setShowSystemApps(show: Boolean) = edit { it.copy(showSystemApps = show) }
 
-    override suspend fun setUseDynamicColor(use: Boolean) = state.update { it.copy(useDynamicColor = use) }
+    override suspend fun setUseDynamicColor(use: Boolean) = edit { it.copy(useDynamicColor = use) }
+
+    private fun edit(transform: (UserData) -> UserData) {
+        writeFailure?.let { throw it }
+        state.update(transform)
+    }
 }

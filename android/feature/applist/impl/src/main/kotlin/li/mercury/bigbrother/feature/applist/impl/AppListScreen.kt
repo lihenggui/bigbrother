@@ -39,6 +39,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
@@ -55,6 +56,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import li.mercury.bigbrother.core.data.repository.UserSettingsWriter
 import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
@@ -73,6 +75,7 @@ import li.mercury.bigbrother.core.ui.dataCategories
 import li.mercury.bigbrother.core.ui.isShown
 import li.mercury.bigbrother.core.ui.label
 import li.mercury.bigbrother.core.ui.readFiles
+import li.mercury.bigbrother.core.ui.rememberSettingsWriteSnackbar
 import li.mercury.bigbrother.core.ui.shortTime
 import li.mercury.bigbrother.core.ui.R as UiR
 
@@ -92,6 +95,7 @@ fun AppListScreen(
     viewModel: AppListViewModel,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val settingsWriteFailures by viewModel.settingsWriteFailures.collectAsStateWithLifecycle()
     // Records keep accumulating in the background, so reload on return.
     LifecycleResumeEffect(Unit) {
         viewModel.refreshIfStale()
@@ -105,6 +109,8 @@ fun AppListScreen(
         onRefresh = viewModel::refresh,
         onOpen = onOpenApp,
         onShowSystemApps = viewModel::setShowSystemApps,
+        settingsWriteFailure = settingsWriteFailures.firstOrNull(),
+        onSettingsWriteResult = viewModel::resolveSettingsWrite,
     )
 }
 
@@ -131,6 +137,8 @@ internal fun AppListScreen(
     onRefresh: () -> Unit,
     onOpen: (AppSummary, TimeRange, DataCategory?) -> Unit,
     onShowSystemApps: (Boolean) -> Unit,
+    settingsWriteFailure: UserSettingsWriter.Failure? = null,
+    onSettingsWriteResult: (UserSettingsWriter.Failure, Boolean) -> Unit = { _, _ -> },
 ) {
     // This app's own probes are not what the user is looking for.
     val ownPackage = LocalContext.current.packageName
@@ -142,10 +150,12 @@ internal fun AppListScreen(
     val hiddenApps = state.apps.orEmpty().count { it.packageName != ownPackage } - entries.orEmpty().size
     var sort by rememberSaveable { mutableStateOf(SortOrder.SENSITIVITY) }
     var category by rememberSaveable { mutableStateOf<DataCategory?>(null) }
+    val snackbar = rememberSettingsWriteSnackbar(settingsWriteFailure, onSettingsWriteResult)
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
         topBar = topBar,
+        snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         Column(
             Modifier

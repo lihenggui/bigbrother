@@ -52,6 +52,7 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
@@ -69,6 +70,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import li.mercury.bigbrother.core.data.repository.UserSettingsWriter
 import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
 import li.mercury.bigbrother.core.designsystem.component.ShapedIcon
 import li.mercury.bigbrother.core.model.AppInfo
@@ -83,6 +85,7 @@ import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.TimeRangeButtonGroup
 import li.mercury.bigbrother.core.ui.appDisplayName
 import li.mercury.bigbrother.core.ui.namedList
+import li.mercury.bigbrother.core.ui.rememberSettingsWriteSnackbar
 import li.mercury.bigbrother.core.ui.topicTitle
 import li.mercury.bigbrother.core.ui.R as UiR
 
@@ -93,6 +96,7 @@ fun OverviewScreen(
     viewModel: OverviewViewModel,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val settingsWriteFailures by viewModel.settingsWriteFailures.collectAsStateWithLifecycle()
     // The app counts as started once the overview shows records, or why it
     // can't (`am start -W`, startup benchmarks).
     ReportDrawnWhen { uiState.files != null || uiState.failure != null }
@@ -110,6 +114,8 @@ fun OverviewScreen(
         onInstallModule = viewModel::installModule,
         onUpdateModule = viewModel::updateModule,
         onStartDaemon = viewModel::startDaemon,
+        settingsWriteFailure = settingsWriteFailures.firstOrNull(),
+        onSettingsWriteResult = viewModel::resolveSettingsWrite,
     )
 }
 
@@ -124,10 +130,14 @@ internal fun OverviewScreen(
     onInstallModule: () -> Unit,
     onUpdateModule: () -> Unit,
     onStartDaemon: () -> Unit,
+    settingsWriteFailure: UserSettingsWriter.Failure? = null,
+    onSettingsWriteResult: (UserSettingsWriter.Failure, Boolean) -> Unit = { _, _ -> },
 ) {
+    val snackbar = rememberSettingsWriteSnackbar(settingsWriteFailure, onSettingsWriteResult)
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
         topBar = topBar,
+        snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         val files = state.files
         PullToRefreshBox(

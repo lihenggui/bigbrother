@@ -17,6 +17,7 @@
 package li.mercury.bigbrother.feature.overview.impl
 
 import android.content.pm.PackageInfo
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -26,15 +27,18 @@ import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.Category
 import li.mercury.bigbrother.core.model.LoadFailure
+import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.testing.MainDispatcherRule
 import li.mercury.bigbrother.core.testing.repository.TestAccessRepository
 import li.mercury.bigbrother.core.testing.repository.TestAppInfoRepository
 import li.mercury.bigbrother.core.testing.repository.TestModuleRepository
 import li.mercury.bigbrother.core.testing.repository.TestUserDataRepository
 import org.junit.Rule
+import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class OverviewViewModelTest {
@@ -135,6 +139,52 @@ class OverviewViewModelTest {
         assertEquals(LoadFailure.NoRoot, viewModel.uiState.value.failure)
         assertNull(viewModel.uiState.value.files)
         assertEquals(0, moduleRepository.updates)
+    }
+
+    @Test
+    fun givenUnsavedRange_whenRetried_thenUpdatesAfterSaving() = runTest {
+        val viewModel = viewModel()
+        userDataRepository.writeFailure = IOException("Storage unavailable")
+        viewModel.setRange(TimeRange.WEEK)
+        advanceUntilIdle()
+
+        assertEquals(TimeRange.DAY, viewModel.uiState.value.range)
+        val failure = viewModel.settingsWriteFailures.value.single()
+
+        userDataRepository.writeFailure = null
+        viewModel.resolveSettingsWrite(failure, retry = true)
+        advanceUntilIdle()
+
+        assertEquals(TimeRange.WEEK, viewModel.uiState.value.range)
+        assertTrue(viewModel.settingsWriteFailures.value.isEmpty())
+    }
+
+    @Test
+    fun givenUnsavedRange_whenNewerRangeSaved_thenOldRetryCannotOverrideIt() = runTest {
+        val viewModel = viewModel()
+        userDataRepository.writeFailure = IOException("Storage unavailable")
+        viewModel.setRange(TimeRange.WEEK)
+        val failure = viewModel.settingsWriteFailures.value.single()
+
+        userDataRepository.writeFailure = null
+        viewModel.setRange(TimeRange.ALL)
+        viewModel.resolveSettingsWrite(failure, retry = true)
+        advanceUntilIdle()
+
+        assertEquals(TimeRange.ALL, viewModel.uiState.value.range)
+        assertTrue(viewModel.settingsWriteFailures.value.isEmpty())
+    }
+
+    @Test
+    fun givenCancelledWrite_whenRangeChanged_thenNoFailureIsShown() = runTest {
+        val viewModel = viewModel()
+        userDataRepository.writeFailure = CancellationException()
+
+        viewModel.setRange(TimeRange.WEEK)
+        advanceUntilIdle()
+
+        assertEquals(TimeRange.DAY, viewModel.uiState.value.range)
+        assertTrue(viewModel.settingsWriteFailures.value.isEmpty())
     }
 
     private companion object {
