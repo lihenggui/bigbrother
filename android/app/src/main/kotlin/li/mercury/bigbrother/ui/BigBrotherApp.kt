@@ -18,6 +18,7 @@ package li.mercury.bigbrother.ui
 
 import androidx.annotation.StringRes
 import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -25,7 +26,11 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
@@ -38,6 +43,7 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MotionScheme
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
 import androidx.compose.material3.adaptive.WindowAdaptiveInfo
@@ -45,21 +51,24 @@ import androidx.compose.material3.adaptive.currentWindowAdaptiveInfoV2
 import androidx.compose.material3.adaptive.layout.PaneScaffoldDirective
 import androidx.compose.material3.adaptive.layout.calculatePaneScaffoldDirective
 import androidx.compose.material3.adaptive.navigation3.rememberListDetailSceneStrategy
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuite
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteItem
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffoldDefaults
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
-import androidx.compose.material3.adaptive.navigationsuite.rememberNavigationSuiteScaffoldState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
@@ -69,6 +78,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.util.lerp
 import androidx.navigation3.runtime.EntryProviderScope
 import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
@@ -76,6 +86,7 @@ import androidx.navigation3.scene.NavigationBackHandler
 import androidx.navigation3.scene.rememberNavigationEventState
 import androidx.navigation3.scene.rememberSceneState
 import androidx.navigation3.ui.NavDisplay
+import androidx.navigationevent.NavigationEventTransitionState.InProgress
 import androidx.window.core.layout.WindowSizeClass
 import li.mercury.bigbrother.R
 import li.mercury.bigbrother.core.designsystem.icon.CageIcons
@@ -101,6 +112,7 @@ import li.mercury.bigbrother.feature.settings.api.navigation.SettingsNavKey
 import li.mercury.bigbrother.feature.settings.impl.navigation.settingsEntry
 import li.mercury.bigbrother.feature.timeline.api.navigation.TimelineNavKey
 import li.mercury.bigbrother.feature.timeline.impl.navigation.timelineEntry
+import kotlin.math.roundToInt
 
 /** A destination in the navigation bar or rail. */
 internal class TopLevelDestination(
@@ -192,84 +204,83 @@ internal fun BigBrotherNavigation(
 
     val entryProvider = remember(navigator, registerEntries) { entryProvider { registerEntries(navigator) } }
 
+    val sceneState = rememberSceneState(
+        entries = navigationState.toEntries(entryProvider),
+        sceneStrategies = listOf(bottomSheetStrategy, listDetailStrategy),
+        onBack = navigator::goBack,
+    )
+    val navigationEventState = rememberNavigationEventState(sceneState)
+    NavigationBackHandler(sceneState, navigationEventState, onBackCompleted = navigator::goBack)
+
+    val rootKeys = remember(entryProvider) { topLevelKeys.associateBy { entryProvider(it).contentKey } }
+    val currentRoot = navigationState.currentTopLevelKey
+    val progress = (navigationEventState.transitionState as? InProgress)?.latestEvent?.progress
+    val previousScene = sceneState.previousScenes.lastOrNull()?.takeIf { progress != null }
+    val previousEntries = sceneState.currentScene.previousEntries
+    val previousRoot = previousScene?.let {
+        previousEntries.findLast { it.contentKey in rootKeys }?.let { rootKeys[it.contentKey] }
+    }
+    // A top-level list can still be visible beside a detail pane.
+    val showSearch = sceneState.currentScene.entries.any { rootKeys[it.contentKey] == currentRoot }
+    val previousShowsSearch = previousScene?.entries?.any { rootKeys[it.contentKey] == previousRoot && previousRoot != null }
+    val searchVisibility = rememberBarVisibility(showSearch, previousShowsSearch, progress)
+
     val suiteType = navigationSuiteType(adaptiveInfo)
-    // A navigation bar makes room on the screens below a destination; a
-    // rail stays, being out of the way at the side.
-    val scaffoldState = rememberNavigationSuiteScaffoldState()
     val isBar = suiteType == NavigationSuiteType.ShortNavigationBarCompact ||
         suiteType == NavigationSuiteType.ShortNavigationBarMedium
-    val hideBar = isBar && navigationState.currentKey !in topLevelKeys
-    LaunchedEffect(hideBar) { if (hideBar) scaffoldState.hide() else scaffoldState.show() }
-
     val hint = remember { TransitionHint() }
-    NavigationSuiteScaffold(
-        modifier = modifier,
-        navigationItems = {
-            for (destination in TOP_LEVEL_DESTINATIONS) {
-                val selected = navigationState.currentTopLevelKey == destination.key
-                NavigationSuiteItem(
-                    selected = selected,
-                    onClick = {
-                        hint.topLevelSwitch = destination.key != navigationState.currentTopLevelKey
+    val navigationItems: @Composable () -> Unit = {
+        for (destination in TOP_LEVEL_DESTINATIONS) {
+            val selected = (previousRoot ?: currentRoot) == destination.key
+            NavigationSuiteItem(
+                selected = selected,
+                onClick = {
+                    if (previousScene == null) {
+                        hint.topLevelSwitch = destination.key != currentRoot
                         navigator.navigate(destination.key)
-                    },
-                    icon = {
-                        Icon(
-                            if (selected) destination.selectedIcon else destination.icon,
-                            contentDescription = null,
-                        )
-                    },
-                    label = { Text(stringResource(destination.label)) },
-                    navigationSuiteType = suiteType,
-                    // While recording is stopped, the overview, which says
-                    // so, is marked from the other destinations.
-                    badge = if (recordingStopped && destination.key == OverviewNavKey && !selected) {
-                        { Badge() }
-                    } else {
-                        null
-                    },
-                )
-            }
-        },
-        navigationSuiteType = suiteType,
-        state = scaffoldState,
-        containerColor = MaterialTheme.colorScheme.surfaceContainer,
-    ) {
+                    }
+                },
+                icon = {
+                    Icon(
+                        if (selected) destination.selectedIcon else destination.icon,
+                        contentDescription = null,
+                    )
+                },
+                label = { Text(stringResource(destination.label)) },
+                navigationSuiteType = suiteType,
+                // While recording is stopped, the overview, which says
+                // so, is marked from the other destinations.
+                badge = if (recordingStopped && destination.key == OverviewNavKey && !selected) {
+                    { Badge() }
+                } else {
+                    null
+                },
+            )
+        }
+    }
+    val content: @Composable () -> Unit = {
         // A list and its detail share the window only if a list is on the
         // stack: an app opened from the search on the overview stands alone,
         // and keeps its back arrow.
         val listOnStack = navigationState.currentSubStack.any { it in LIST_PANE_KEYS || it is CategoryNavKey }
         CompositionLocalProvider(LocalShowsDetailBesideList provides (!singlePane && listOnStack)) {
-            // Screen transitions use the standard motion scheme: expressive
-            // springs overshoot, which suits components but not a whole
-            // screen moving. Going forward, the new screen slides in over the
-            // old one; going back reverses it; switching destinations fades.
-            // Predictive back keeps the navigation library's default, which
-            // follows the system's back preview.
             val motion = MotionScheme.standard()
             val slide = motion.defaultSpatialSpec<IntOffset>()
             val fade = motion.defaultEffectsSpec<Float>()
-            val forward = slideInHorizontally(slide) { it } + fadeIn(fade) togetherWith
-                slideOutHorizontally(slide) { -it / PARALLAX } + fadeOut(fade)
-            val backward = slideInHorizontally(slide) { -it / PARALLAX } + fadeIn(fade) togetherWith
-                slideOutHorizontally(slide) { it } + fadeOut(fade)
+            val direction = if (LocalLayoutDirection.current == LayoutDirection.Ltr) 1 else -1
+            val forward = slideInHorizontally(slide) { it * direction } + fadeIn(fade) togetherWith
+                slideOutHorizontally(slide) { -it * direction / PARALLAX } + fadeOut(fade)
+            val backward = slideInHorizontally(slide) { -it * direction / PARALLAX } + fadeIn(fade) togetherWith
+                slideOutHorizontally(slide) { it * direction } + fadeOut(fade)
             val switch: ContentTransform = fadeIn(fade) togetherWith fadeOut(motion.fastEffectsSpec())
-            val sceneState = rememberSceneState(
-                entries = navigationState.toEntries(entryProvider),
-                sceneStrategies = listOf(bottomSheetStrategy, listDetailStrategy),
-                onBack = navigator::goBack,
-            )
-            val navigationEventState = rememberNavigationEventState(sceneState)
-            NavigationBackHandler(sceneState, navigationEventState, onBackCompleted = navigator::goBack)
 
-            // A top-level list can still be visible beside a detail pane.
-            val rootContentKey = entryProvider(navigationState.currentTopLevelKey).contentKey
-            val showSearch = sceneState.currentScene.entries.any { it.contentKey == rootContentKey }
             SearchScaffold(
                 topBar = {
-                    if (showSearch) {
-                        SearchBarBeforeHinge(directive.excludedBounds) { barModifier ->
-                            searchBar(navigator, barModifier)
+                    if (showSearch || previousShowsSearch == true || searchVisibility.value > 0f) {
+                        Box(Modifier.revealBar(searchVisibility, top = true)) {
+                            SearchBarBeforeHinge(directive.excludedBounds) { barModifier ->
+                                searchBar(navigator, barModifier)
+                            }
                         }
                     }
                 },
@@ -291,6 +302,61 @@ internal fun BigBrotherNavigation(
                 )
             }
         }
+    }
+
+    if (isBar) {
+        val showBar = navigationState.currentKey in topLevelKeys
+        val previousShowsBar = previousScene?.let { previousEntries.lastOrNull()?.contentKey in rootKeys }
+        val barVisibility = rememberBarVisibility(showBar, previousShowsBar, progress)
+        Scaffold(
+            modifier = modifier,
+            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
+            bottomBar = {
+                if (showBar || previousShowsBar == true || barVisibility.value > 0f) {
+                    NavigationSuite(
+                        navigationSuiteType = suiteType,
+                        modifier = Modifier.revealBar(barVisibility, top = false),
+                        content = navigationItems,
+                    )
+                }
+            },
+        ) { padding ->
+            Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) { content() }
+        }
+    } else {
+        NavigationSuiteScaffold(
+            modifier = modifier,
+            navigationItems = navigationItems,
+            navigationSuiteType = suiteType,
+            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            content = content,
+        )
+    }
+}
+
+/** Settle from the last measured gesture frame when the user releases or cancels. */
+@Composable
+private fun rememberBarVisibility(current: Boolean, previous: Boolean?, progress: Float?): State<Float> {
+    val resting = if (current) 1f else 0f
+    val visibility = remember { Animatable(resting) }
+    val motion = MotionScheme.standard()
+    LaunchedEffect(current, previous, progress) {
+        if (previous != null && progress != null) {
+            visibility.snapTo(lerp(resting, if (previous) 1f else 0f, progress))
+        } else {
+            visibility.animateTo(resting, motion.fastEffectsSpec())
+        }
+    }
+    return visibility.asState()
+}
+
+/** The bar occupies only its revealed height, keeping the destination's insets in sync. */
+private fun Modifier.revealBar(visibility: State<Float>, top: Boolean): Modifier = clipToBounds().layout { measurable, constraints ->
+    val bar = measurable.measure(constraints)
+    val height = (bar.height * visibility.value).roundToInt()
+    layout(bar.width, height) {
+        bar.placeRelative(0, if (top) height - bar.height else 0)
     }
 }
 

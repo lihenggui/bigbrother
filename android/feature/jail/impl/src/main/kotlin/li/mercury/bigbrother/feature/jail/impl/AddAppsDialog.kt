@@ -17,6 +17,7 @@
 package li.mercury.bigbrother.feature.jail.impl
 
 import android.view.WindowInsetsController
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -56,11 +57,13 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfoV2
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.pluralStringResource
@@ -73,6 +76,7 @@ import androidx.compose.ui.window.DialogWindowProvider
 import androidx.window.core.layout.WindowSizeClass
 import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
 import li.mercury.bigbrother.core.ui.AppIcon
+import li.mercury.bigbrother.core.ui.rememberPredictiveDismissProgress
 
 /**
  * The installed apps, to choose those to put in the sandbox. Full-screen on
@@ -92,11 +96,30 @@ internal fun AddAppsDialog(
     // Full-screen, it covers the system bars too, as the screen behind it does.
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = !compact),
+        properties = DialogProperties(
+            dismissOnBackPress = false,
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = !compact,
+        ),
     ) {
-        AddAppsSheet(state, query, compact, onToggle, onDismiss, onConfirm)
+        val progress by rememberPredictiveDismissProgress(onDismiss)
+        AddAppsSheet(
+            state,
+            query,
+            compact,
+            onToggle,
+            onDismiss,
+            onConfirm,
+            modifier = Modifier.graphicsLayer {
+                val fraction = PredictiveBackEasing.transform(progress)
+                scaleX = 1f - 0.1f * fraction
+                scaleY = scaleX
+            },
+        )
     }
 }
+
+private val PredictiveBackEasing = CubicBezierEasing(0.1f, 0.1f, 0f, 1f)
 
 /** What the dialog shows: the whole window when [compact], a card otherwise. */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
@@ -108,13 +131,14 @@ internal fun AddAppsSheet(
     onToggle: (String) -> Unit,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     if (compact) SystemBarsOver(MaterialTheme.colorScheme.surfaceContainer)
     Surface(
         modifier = if (compact) {
-            Modifier.fillMaxSize()
+            modifier.fillMaxSize()
         } else {
-            Modifier
+            modifier
                 .padding(24.dp)
                 .widthIn(max = 560.dp)
                 .heightIn(max = 640.dp)

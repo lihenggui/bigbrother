@@ -105,6 +105,7 @@ dependencies {
     implementation(libs.coil)
     implementation(libs.androidx.lifecycle.viewModel.navigation3)
     implementation(libs.androidx.navigation3.ui)
+    implementation(libs.androidx.navigationEvent)
     implementation(libs.androidx.compose.material3)
 
     testImplementation(libs.robolectric)

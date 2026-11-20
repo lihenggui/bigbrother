@@ -16,6 +16,11 @@
 
 package li.mercury.bigbrother.core.ui
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -37,8 +42,36 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
+
+/** Keeps the normal title available as the return preview from an inline search. */
+@Composable
+fun PredictiveSearchTopBar(
+    searching: Boolean,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    placeholder: String,
+    onClose: () -> Unit,
+    titleBar: @Composable () -> Unit,
+) {
+    val focus = LocalFocusManager.current
+    val close = {
+        focus.clearFocus()
+        onClose()
+    }
+    val transition = rememberPredictiveBackTransition(searching, false.takeIf { searching }, close)
+    transition.AnimatedContent(
+        transitionSpec = { fadeIn(tween(100, delayMillis = 75)) togetherWith fadeOut(tween(75)) },
+    ) { showSearch ->
+        if (showSearch) {
+            SearchTopBar(query, onQueryChange, placeholder, close)
+        } else {
+            titleBar()
+        }
+    }
+}
 
 /** Top bar shown while searching: a text field in place of the title. */
 @OptIn(ExperimentalMaterial3Api::class)

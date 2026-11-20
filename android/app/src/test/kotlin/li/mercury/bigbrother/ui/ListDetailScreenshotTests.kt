@@ -18,6 +18,7 @@ package li.mercury.bigbrother.ui
 
 import android.app.Application
 import android.content.ComponentName
+import androidx.activity.BackEventCompat
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.clickable
 import androidx.compose.material3.Icon
@@ -168,6 +169,50 @@ class ListDetailScreenshotTests {
         composeTestRule.runOnIdle { composeTestRule.activity.onBackPressedDispatcher.onBackPressed() }
         composeTestRule.onNodeWithContentDescription("Search apps and files").assertIsDisplayed()
         composeTestRule.onNodeWithText("Open app").assertIsDisplayed()
+    }
+
+    @Test
+    @Config(qualifiers = "en-rUS-w412dp-h880dp")
+    fun givenPhoneDetail_whenPredictiveBackCancelsThenCommits_thenBarsFollowTheListPreview() {
+        showNavigation()
+        openApp()
+        val detail = composeTestRule.onNodeWithText("App detail")
+        val search = composeTestRule.onNodeWithContentDescription("Search apps and files")
+        val apps = composeTestRule.onNodeWithText("Apps")
+        val dispatcher = composeTestRule.activity.onBackPressedDispatcher
+        val detailBounds = detail.fetchSemanticsNode().boundsInRoot
+
+        composeTestRule.runOnUiThread {
+            dispatcher.dispatchOnBackStarted(BackEventCompat(1f, 410f, 0f, BackEventCompat.EDGE_LEFT))
+            dispatcher.dispatchOnBackProgressed(BackEventCompat(152f, 410f, 0.65f, BackEventCompat.EDGE_LEFT))
+        }
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("Open app").assertExists()
+        search.assertIsDisplayed()
+        apps.assertIsDisplayed()
+        check(detail.fetchSemanticsNode().boundsInRoot != detailBounds)
+
+        composeTestRule.runOnUiThread { dispatcher.dispatchOnBackCancelled() }
+        composeTestRule.waitForIdle()
+        detail.assertIsDisplayed()
+        search.assertDoesNotExist()
+        apps.assertDoesNotExist()
+        assertEquals(detailBounds, detail.fetchSemanticsNode().boundsInRoot)
+
+        composeTestRule.runOnUiThread {
+            dispatcher.dispatchOnBackStarted(BackEventCompat(411f, 410f, 0f, BackEventCompat.EDGE_RIGHT))
+            dispatcher.dispatchOnBackProgressed(BackEventCompat(260f, 410f, 0.65f, BackEventCompat.EDGE_RIGHT))
+        }
+        composeTestRule.waitForIdle()
+        search.assertIsDisplayed()
+        apps.assertIsDisplayed()
+        composeTestRule.runOnUiThread { dispatcher.onBackPressed() }
+        composeTestRule.onNodeWithText("Open app").assertIsDisplayed()
+        detail.assertDoesNotExist()
+
+        composeTestRule.runOnUiThread { dispatcher.onBackPressed() }
+        composeTestRule.onNodeWithText("Overview content").assertIsDisplayed()
+        composeTestRule.runOnIdle { check(!dispatcher.hasEnabledCallbacks()) }
     }
 
     @Test
