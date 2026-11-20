@@ -113,12 +113,12 @@ class AppDetailScreenScreenshotTests {
     @Test
     fun givenLoadFailure_whenShown_thenSaysWhy() {
         val failure = DemoLoadFailure
-        capturePhone("AppDetailFailure${failure.screenshotName}") { AppPage { it.copy(accesses = null, failure = failure) } }
+        capturePhone("AppDetailFailure${failure.screenshotName}") { AppPage { it.copy(records = null, failure = failure) } }
     }
 
     @Test
     fun givenNoRecordsInRange_whenShown_thenSaysNothingIsRecordedAboveAppInfo() {
-        capturePhone("AppDetailEmpty") { AppPage { it.copy(accesses = emptyList()) } }
+        capturePhone("AppDetailEmpty") { AppPage { it.copy(records = summarizeAccesses(emptyList())) } }
     }
 
     @Test
@@ -137,7 +137,7 @@ class AppDetailScreenScreenshotTests {
             val records = remember { DemoRecords(clock) }
             val app = records.apps.first { it.packageName.isEmpty() }
             AppDetailScreen(
-                state = AppDetailUiState(app = app, accesses = records.accesses(app.uid)),
+                state = AppDetailUiState(app = app, records = summarizeAccesses(records.accesses(app.uid))),
                 focusCategory = null,
                 openRecord = null,
                 onBack = {},
@@ -161,7 +161,7 @@ class AppDetailScreenScreenshotTests {
                 AppDetailUiState(
                     app = records.summary(app),
                     appInfo = records.appInfo.getValue(app.packageName),
-                    accesses = records.accesses(app),
+                    records = summarizeAccesses(records.accesses(app)),
                     range = TimeRange.DAY,
                     packageDetails = records.packageDetails,
                 ),

@@ -43,7 +43,8 @@ private class Builder(val name: String, val path: String) {
     val children = LinkedHashMap<String, Builder>()
     val accesses = ArrayList<Access>()
 
-    fun build(): FileNode {
+    fun build(checkActive: () -> Unit): FileNode {
+        checkActive()
         // Collapse "a" -> "b" -> "c" into one "a/b/c" row when the folders in
         // between were not touched themselves and hold nothing else.
         var node = this
@@ -56,7 +57,7 @@ private class Builder(val name: String, val path: String) {
             label = "$label/${only.name}"
             node = only
         }
-        val built = node.children.values.map { it.build() }
+        val built = node.children.values.map { it.build(checkActive) }
             .sortedWith(compareBy<FileNode> { !it.isFolder }.thenBy { it.name.lowercase() })
         return FileNode(
             name = label,
@@ -69,9 +70,10 @@ private class Builder(val name: String, val path: String) {
 }
 
 /** Arrange [accesses] into a tree by path. Returns the top-level nodes. */
-internal fun buildFileTree(accesses: List<Access>): List<FileNode> {
+internal fun buildFileTree(accesses: List<Access>, checkActive: () -> Unit = {}): List<FileNode> {
     val root = Builder("", "")
     for (access in accesses) {
+        checkActive()
         var node = root
         for (component in access.path.split('/')) {
             if (component.isEmpty()) continue
@@ -82,7 +84,7 @@ internal fun buildFileTree(accesses: List<Access>): List<FileNode> {
         }
         if (node !== root) node.accesses.add(access)
     }
-    return root.children.values.map { it.build() }
+    return root.children.values.map { it.build(checkActive) }
         .sortedWith(compareBy<FileNode> { !it.isFolder }.thenBy { it.name.lowercase() })
         // A leading slash marks the top-level names as absolute paths.
         .map { it.copy(name = "/${it.name}") }

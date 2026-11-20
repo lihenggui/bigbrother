@@ -16,17 +16,24 @@
 
 package li.mercury.bigbrother.feature.appdetail.impl
 
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.DEFAULT
+import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.AccessRepository
 import li.mercury.bigbrother.core.data.repository.AppInfoRepository
@@ -46,11 +53,12 @@ data class FileDetails(
     val failure: LoadFailure? = null,
 )
 
-data class AppFilesUiState(
+internal data class AppFilesUiState(
     val packageName: String,
     val appInfo: AppInfo? = null,
-    /** The app's file records; null until loaded. */
-    val accesses: List<Access>? = null,
+    val browser: FileBrowser? = null,
+    val searching: Boolean = false,
+    val query: String = "",
     val truncated: Boolean = false,
     val failure: LoadFailure? = null,
     /** Set while the details of one file are open. */
@@ -62,12 +70,25 @@ class AppFilesViewModel @AssistedInject constructor(
     private val accessRepository: AccessRepository,
     private val appInfoRepository: AppInfoRepository,
     private val fileAccessRepository: FileAccessRepository,
+    private val savedState: SavedStateHandle,
+    @Dispatcher(DEFAULT) private val defaultDispatcher: CoroutineDispatcher,
     @Assisted private val uid: Int,
     @Assisted packageName: String,
     @Assisted private val range: TimeRange,
 ) : ViewModel() {
-    private val _uiState = MutableStateFlow(AppFilesUiState(packageName))
-    val uiState: StateFlow<AppFilesUiState> = _uiState.asStateFlow()
+    private val mutableUiState = MutableStateFlow(
+        AppFilesUiState(
+            packageName = packageName,
+            searching = savedState[SEARCHING] ?: false,
+            query = savedState[QUERY] ?: "",
+        ),
+    )
+    internal val uiState: StateFlow<AppFilesUiState> = mutableUiState.asStateFlow()
+
+    private var loadJob: Job? = null
+    private var browserJob: Job? = null
+    private var detailsJob: Job? = null
+    private var files: List<Access>? = null
 
     init {
         load()
@@ -76,46 +97,98 @@ class AppFilesViewModel @AssistedInject constructor(
     fun retry() = load()
 
     private fun load() {
-        val packageName = _uiState.value.packageName.takeIf { it.isNotEmpty() }
-        if (packageName != null) {
-            viewModelScope.launch {
-                _uiState.update { it.copy(appInfo = appInfoRepository.getAppInfo(packageName)) }
+        loadJob?.cancel()
+        browserJob?.cancel()
+        files = null
+        mutableUiState.update { it.copy(browser = null, truncated = false, failure = null) }
+        val packageName = mutableUiState.value.packageName
+        loadJob = viewModelScope.launch {
+            if (packageName.isNotEmpty()) {
+                launch {
+                    val info = appInfoRepository.getAppInfo(packageName)
+                    ensureActive()
+                    mutableUiState.update { it.copy(appInfo = info) }
+                }
+            }
+            try {
+                // One request for everything so a folder can be assembled from all its paths.
+                val accesses = accessRepository.getAccesses(uid, null, range, MAX_ACCESSES, 0)
+                files = withContext(defaultDispatcher) {
+                    accesses.filter { access ->
+                        ensureActive()
+                        access.isFile()
+                    }
+                }
+                ensureActive()
+                mutableUiState.update { it.copy(truncated = accesses.size == MAX_ACCESSES) }
+                buildBrowser()
+            } catch (e: RecordsException) {
+                ensureActive()
+                mutableUiState.update { it.copy(failure = e.toLoadFailure()) }
             }
         }
-        viewModelScope.launch {
-            try {
-                // One request for everything: the screen arranges the paths
-                // into a tree, which needs all of them at once.
-                val accesses = accessRepository.getAccesses(uid, null, range, MAX_ACCESSES, 0)
-                _uiState.update {
-                    it.copy(
-                        accesses = accesses.filter { access -> access.isFile() },
-                        truncated = accesses.size == MAX_ACCESSES,
-                        failure = null,
-                    )
-                }
-            } catch (e: RecordsException) {
-                _uiState.update { it.copy(accesses = emptyList(), failure = e.toLoadFailure()) }
+    }
+
+    fun openSearch() {
+        savedState[SEARCHING] = true
+        mutableUiState.update { it.copy(searching = true) }
+    }
+
+    fun closeSearch() {
+        val wasFiltering = mutableUiState.value.query.isNotBlank()
+        savedState[SEARCHING] = false
+        savedState[QUERY] = ""
+        mutableUiState.update { it.copy(searching = false, query = "") }
+        if (wasFiltering) buildBrowser()
+    }
+
+    fun search(query: String) {
+        val changed = query.trim() != mutableUiState.value.query.trim()
+        savedState[QUERY] = query
+        mutableUiState.update { it.copy(query = query) }
+        if (changed) buildBrowser()
+    }
+
+    fun showReadOnly(readOnly: Boolean) {
+        if (readOnly == savedState.get<Boolean>(READ_ONLY)) return
+        savedState[READ_ONLY] = readOnly
+        buildBrowser()
+    }
+
+    private fun buildBrowser() {
+        val files = files ?: return
+        val state = mutableUiState.value
+        val query = if (state.searching) state.query.trim() else ""
+        val readOnly = savedState.get<Boolean>(READ_ONLY)
+        browserJob?.cancel()
+        browserJob = viewModelScope.launch {
+            val browser = withContext(defaultDispatcher) {
+                fileBrowserOf(files, query, readOnly) { ensureActive() }
             }
+            ensureActive()
+            if (readOnly == null) savedState[READ_ONLY] = browser.readOnly
+            mutableUiState.update { it.copy(browser = browser) }
         }
     }
 
     /** Open the details of the file at [path] and load when it was accessed. */
     fun showFileDetails(path: String) {
-        _uiState.update { it.copy(fileDetails = FileDetails(path)) }
-        viewModelScope.launch {
+        detailsJob?.cancel()
+        mutableUiState.update { it.copy(fileDetails = FileDetails(path)) }
+        detailsJob = viewModelScope.launch {
             val details = try {
                 FileDetails(path, periods = accessRepository.getHistory(uid, listOf(path), range))
             } catch (e: RecordsException) {
                 FileDetails(path, failure = e.toLoadFailure())
             }
-            // Unless the user has closed it or opened another file meanwhile.
-            _uiState.update { if (it.fileDetails?.path == path) it.copy(fileDetails = details) else it }
+            ensureActive()
+            mutableUiState.update { it.copy(fileDetails = details) }
         }
     }
 
     fun dismissFileDetails() {
-        _uiState.update { it.copy(fileDetails = null) }
+        detailsJob?.cancel()
+        mutableUiState.update { it.copy(fileDetails = null) }
     }
 
     /** Whether this app can reach files on shared storage, obtaining access if it can. */
@@ -124,5 +197,11 @@ class AppFilesViewModel @AssistedInject constructor(
     @AssistedFactory
     interface Factory {
         fun create(uid: Int, packageName: String, range: TimeRange): AppFilesViewModel
+    }
+
+    private companion object {
+        const val SEARCHING = "searching"
+        const val QUERY = "query"
+        const val READ_ONLY = "readOnly"
     }
 }

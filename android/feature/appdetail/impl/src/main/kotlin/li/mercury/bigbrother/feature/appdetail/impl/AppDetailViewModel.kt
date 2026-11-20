@@ -24,29 +24,33 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.DEFAULT
+import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.AccessRepository
 import li.mercury.bigbrother.core.data.repository.AppInfoRepository
 import li.mercury.bigbrother.core.data.toLoadFailure
-import li.mercury.bigbrother.core.model.Access
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.PackageDetails
 import li.mercury.bigbrother.core.model.TimeRange
 
-data class AppDetailUiState(
+internal data class AppDetailUiState(
     /** The app's totals. Until loaded, a placeholder that only carries the uid. */
     val app: AppSummary,
     val appInfo: AppInfo? = null,
     /** Everything the app touched; null until loaded. */
-    val accesses: List<Access>? = null,
+    val records: AppDetailRecords? = null,
     /** There were more records than are shown. */
     val truncated: Boolean = false,
     val failure: LoadFailure? = null,
@@ -60,17 +64,18 @@ data class AppDetailUiState(
 class AppDetailViewModel @AssistedInject constructor(
     private val accessRepository: AccessRepository,
     private val appInfoRepository: AppInfoRepository,
+    @Dispatcher(DEFAULT) private val defaultDispatcher: CoroutineDispatcher,
     @Assisted private val uid: Int,
     @Assisted packageName: String,
     @Assisted private val range: TimeRange,
 ) : ViewModel() {
-    private val _uiState = MutableStateFlow(
+    private val mutableUiState = MutableStateFlow(
         AppDetailUiState(
             app = AppSummary(uid, packageName, counts = emptyMap(), lastSeen = 0),
             range = range,
         ),
     )
-    val uiState: StateFlow<AppDetailUiState> = _uiState.asStateFlow()
+    internal val uiState: StateFlow<AppDetailUiState> = mutableUiState.asStateFlow()
 
     private var loadJob: Job? = null
 
@@ -89,7 +94,7 @@ class AppDetailViewModel @AssistedInject constructor(
     private fun loadSummary() {
         // Name and package facts come from the package manager, so they show
         // even if the records fail to load; the two are fetched side by side.
-        val packageName = _uiState.value.app.packageName.takeIf { it.isNotEmpty() }
+        val packageName = mutableUiState.value.app.packageName.takeIf { it.isNotEmpty() }
         if (packageName != null) {
             viewModelScope.launch {
                 val info = appInfoRepository.getAppInfo(packageName)
@@ -102,13 +107,14 @@ class AppDetailViewModel @AssistedInject constructor(
                 } else {
                     null
                 }
-                _uiState.update { it.copy(appInfo = info, packageDetails = details) }
+                mutableUiState.update { it.copy(appInfo = info, packageDetails = details) }
             }
         }
         viewModelScope.launch {
             try {
-                val app = accessRepository.getApps(range).firstOrNull { it.uid == uid } ?: return@launch
-                _uiState.update { it.copy(app = app) }
+                val apps = accessRepository.getApps(range)
+                val app = withContext(defaultDispatcher) { apps.firstOrNull { it.uid == uid } } ?: return@launch
+                mutableUiState.update { it.copy(app = app) }
             } catch (_: RecordsException) {
                 // The access list reports the failure; the header keeps its placeholder.
             }
@@ -126,15 +132,18 @@ class AppDetailViewModel @AssistedInject constructor(
                     limit = MAX_ACCESSES,
                     offset = 0,
                 )
-                _uiState.update {
+                val records = withContext(defaultDispatcher) { summarizeAccesses(accesses) }
+                ensureActive()
+                mutableUiState.update {
                     it.copy(
-                        accesses = accesses,
+                        records = records,
                         truncated = accesses.size == MAX_ACCESSES,
                         failure = null,
                     )
                 }
             } catch (e: RecordsException) {
-                _uiState.update { it.copy(accesses = emptyList(), failure = e.toLoadFailure()) }
+                ensureActive()
+                mutableUiState.update { it.copy(records = null, failure = e.toLoadFailure()) }
             }
         }
     }
