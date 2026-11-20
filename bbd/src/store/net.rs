@@ -107,6 +107,11 @@ pub struct NetRule {
     pub manual: bool,
 }
 
+pub enum RuleChange {
+    Block { created: i64, manual: bool },
+    Unblock,
+}
+
 /// Rows not yet written, with when each was first and last added to.
 pub type Pending = HashMap<NetKey, (NetSeen, i64, i64)>;
 
@@ -195,23 +200,32 @@ impl Writer {
         net_rules(&self.conn, None)
     }
 
-    /// Written at once, as the sandbox's entries are: a rule is the
-    /// user's, and is nowhere else.
-    pub fn put_net_rule(&self, rule: &NetRule) -> anyhow::Result<()> {
-        self.conn.execute(
-            "INSERT INTO net_rule (uid, target, created, manual) VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT (uid, target) DO NOTHING",
-            params![rule.uid, rule.target, rule.created, rule.manual],
-        )?;
-        Ok(())
-    }
-
-    /// Whether there was such a rule.
-    pub fn delete_net_rule(&self, uid: u32, target: &str) -> anyhow::Result<bool> {
-        Ok(self.conn.execute(
-            "DELETE FROM net_rule WHERE uid = ?1 AND target = ?2",
-            params![uid, target],
-        )? > 0)
+    /// Commit the rule through to disk only if its effects could be applied.
+    pub fn change_net_rule(
+        &self,
+        uid: u32,
+        target: &str,
+        change: RuleChange,
+        apply: impl FnOnce() -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        self.write_sandbox(|tx| {
+            match change {
+                RuleChange::Block { created, manual } => {
+                    tx.execute(
+                        "INSERT INTO net_rule (uid, target, created, manual) VALUES (?1, ?2, ?3, ?4)
+                         ON CONFLICT (uid, target) DO NOTHING",
+                        params![uid, target, created, manual],
+                    )?;
+                }
+                RuleChange::Unblock => {
+                    tx.execute(
+                        "DELETE FROM net_rule WHERE uid = ?1 AND target = ?2",
+                        params![uid, target],
+                    )?;
+                }
+            }
+            apply()
+        })
     }
 
     /// How many destinations each uid is kept from.

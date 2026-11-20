@@ -16,6 +16,8 @@
 
 package li.mercury.bigbrother.feature.jail.impl
 
+import androidx.lifecycle.SavedStateHandle
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
@@ -29,6 +31,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class AddAppsViewModelTest {
     @get:Rule
     val mainDispatcherRule = MainDispatcherRule()
@@ -44,14 +47,24 @@ class AddAppsViewModelTest {
             installed(1000, "android", "Android System", isSystem = true),
         ),
     )
-    private val sandboxRepository = TestSandboxRepository(apps = listOf(sandboxed(10204, "com.example.shopping", enabled = true)))
+    private val sandboxRepository = TestSandboxRepository(
+        apps = listOf(
+            sandboxed(10204, "com.example.shopping", enabled = true),
+            sandboxed(10187, "com.example.weather", enabled = false),
+        ),
+    )
 
-    private suspend fun viewModel(showSystemApps: Boolean = false): AddAppsViewModel {
-        sandboxRepository.refresh()
+    private suspend fun viewModel(
+        showSystemApps: Boolean = false,
+        savedStateHandle: SavedStateHandle = SavedStateHandle(),
+        sandboxLoaded: Boolean = true,
+    ): AddAppsViewModel {
+        if (sandboxLoaded) sandboxRepository.refresh()
         return AddAppsViewModel(
             installedAppRepository = installedAppRepository,
             sandboxRepository = sandboxRepository,
             userDataRepository = TestUserDataRepository(UserData(showSystemApps = showSystemApps)),
+            savedStateHandle = savedStateHandle,
             ownPackage = OWN_PACKAGE,
             defaultDispatcher = mainDispatcherRule.testDispatcher,
         )
@@ -101,6 +114,62 @@ class AddAppsViewModelTest {
         assertTrue(viewModel.chosen().isEmpty())
         assertEquals(listOf("Notes", "Weather"), viewModel.uiState.value.apps?.map { it.info.label })
     }
+
+    @Test
+    fun givenSavedSelection_whenRecreated_thenChoicesReturnAndClearTogether() = runTest {
+        val saved = SavedStateHandle()
+        val original = viewModel(savedStateHandle = saved)
+        original.toggle("com.example.notes")
+        original.toggle("com.example.weather")
+
+        assertEquals(listOf(listOf("com.example.notes", "com.example.weather")), saved.keys().map { saved.get<Any>(it) })
+        val restoredState = saved.restored()
+        val restored = viewModel(savedStateHandle = restoredState)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { restored.uiState.collect {} }
+        restored.setQuery("weather")
+
+        assertEquals(setOf("com.example.notes", "com.example.weather"), restored.uiState.value.selected)
+        assertEquals(listOf("Weather"), restored.uiState.value.apps?.map { it.info.label })
+        assertEquals(setOf("com.example.notes", "com.example.weather"), restored.chosen().map { it.packageName }.toSet())
+
+        restored.clear()
+
+        assertTrue(viewModel(savedStateHandle = restoredState.restored()).chosen().isEmpty())
+    }
+
+    @Test
+    fun givenSavedSelection_whenAppsBecomeIneligible_thenTheyCannotBeConfirmed() = runTest {
+        val saved = SavedStateHandle()
+        val original = viewModel(savedStateHandle = saved)
+        original.toggle("com.example.notes")
+        original.toggle("com.example.weather")
+        installedAppRepository.apps = installedAppRepository.apps.filterNot { it.packageName == "com.example.notes" }
+        sandboxRepository.isolate("com.example.weather", userId = 0)
+
+        val restored = viewModel(savedStateHandle = saved.restored())
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { restored.uiState.collect {} }
+
+        assertTrue(restored.uiState.value.selected.isEmpty())
+        assertTrue(restored.chosen().isEmpty())
+    }
+
+    @Test
+    fun givenRestoredDraft_whenSandboxIsStillLoading_thenConfirmationWaits() = runTest {
+        val saved = SavedStateHandle()
+        viewModel(savedStateHandle = saved, sandboxLoaded = false).toggle("com.example.notes")
+        val restored = viewModel(savedStateHandle = saved.restored(), sandboxLoaded = false)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { restored.uiState.collect {} }
+
+        assertTrue(restored.uiState.value.selected.isEmpty())
+        assertTrue(restored.chosen().isEmpty())
+
+        sandboxRepository.refresh()
+
+        assertEquals(setOf("com.example.notes"), restored.uiState.value.selected)
+        assertEquals(listOf("com.example.notes"), restored.chosen().map { it.packageName })
+    }
+
+    private fun SavedStateHandle.restored() = SavedStateHandle(keys().associateWith { get<Any>(it) })
 
     private companion object {
         const val OWN_PACKAGE = "li.mercury.bigbrother"

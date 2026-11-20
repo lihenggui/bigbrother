@@ -225,9 +225,6 @@ impl Destinations {
             let book = self.book.lock().unwrap_or_else(|e| e.into_inner());
             book.get(&uid).cloned().unwrap_or_default()
         };
-        // Those of a rule that is gone go with it.
-        self.with_names
-            .retain(|(of, target), _| *of != uid || targets.contains(target));
         let mut wanted = BTreeSet::new();
         let mut with_names = BTreeSet::new();
         for target in targets {
@@ -340,6 +337,16 @@ impl Effect for Destinations {
         self.carry_out(entry.uid, true, items.network_recorded())
     }
 
+    fn finish_refresh(&mut self, uid: u32) {
+        // A rule being removed may still be restored if its removal fails.
+        // Keep its addresses until that is known, even if the app since
+        // looked up another name that resolves to the same address.
+        let book = self.book.lock().unwrap_or_else(|e| e.into_inner());
+        let targets = book.get(&uid);
+        self.with_names
+            .retain(|(of, target), _| *of != uid || targets.is_some_and(|t| t.contains(target)));
+    }
+
     fn resume(&mut self, apps: &[Resumed]) {
         for app in apps {
             if let Err(e) = self.carry_out(app.entry.uid, true, app.items.network_recorded()) {
@@ -369,10 +376,20 @@ impl Effect for Destinations {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, rc::Rc};
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+    };
 
     use super::*;
-    use crate::sandbox::items::{Item, Mode};
+    use crate::{
+        sandbox::{
+            Sandbox,
+            items::{Item, Mode},
+            tests::Fixture as SandboxFixture,
+        },
+        store::Writer,
+    };
 
     #[derive(Default)]
     struct Kernel {
@@ -381,6 +398,7 @@ mod tests {
         rules: BTreeSet<[u8; 24]>,
         /// Whether a destination can be neither listed nor taken off.
         rules_fail: bool,
+        fail_insert: Option<[u8; 24]>,
     }
 
     #[derive(Clone)]
@@ -415,8 +433,12 @@ mod tests {
     impl RuleMap for Rules {
         fn insert(&mut self, key: NetRuleKey) -> anyhow::Result<()> {
             let mut kernel = self.0.borrow_mut();
-            anyhow::ensure!(!kernel.rules_fail, "the list is full");
-            kernel.rules.insert(bytes(&key));
+            let key = bytes(&key);
+            anyhow::ensure!(
+                !kernel.rules_fail && kernel.fail_insert != Some(key),
+                "the list is full"
+            );
+            kernel.rules.insert(key);
             Ok(())
         }
         fn remove(&mut self, key: NetRuleKey) -> anyhow::Result<()> {
@@ -435,8 +457,11 @@ mod tests {
     }
 
     fn fixture() -> Fixture {
+        fixture_with(Book::default())
+    }
+
+    fn fixture_with(book: Book) -> Fixture {
         let kernel = Rc::new(RefCell::new(Kernel::default()));
-        let book = Book::default();
         let any = Arc::new(AtomicBool::new(false));
         let effect = Destinations::with(
             Box::new(Recorded(kernel.clone())),
@@ -499,6 +524,205 @@ mod tests {
         let mut own = Settings::default();
         own.set(Item::NetworkRecord, Some(record)).unwrap();
         own.over(&Settings::default())
+    }
+
+    fn sandbox_with_filter(
+        f: &mut SandboxFixture,
+        names: Arc<Names>,
+    ) -> (Sandbox, Rc<RefCell<Kernel>>) {
+        let mut sandbox = f.sandbox();
+        let Fixture {
+            mut effect, kernel, ..
+        } = fixture_with(sandbox.book());
+        effect.with_names(names);
+        sandbox.add_effect(Box::new(effect));
+        sandbox
+            .enable(&f.writer, &mut f.packages, "com.app", 0, 1000)
+            .unwrap();
+        (sandbox, kernel)
+    }
+
+    #[test]
+    fn a_failed_rule_delete_keeps_the_destination_refused_live_and_after_reload() {
+        let mut f = SandboxFixture::new("sandbox-net-delete");
+        let names = Arc::new(Names::default());
+        let ip = "203.0.113.7".parse().unwrap();
+        names.learn(10100, "blocked.example", &[ip]);
+        let (mut sandbox, kernel) = sandbox_with_filter(&mut f, names.clone());
+        let target = "domain:blocked.example";
+        let key = bytes(&key(10100, (ip, None)));
+        sandbox
+            .net_block(&f.writer, &mut f.packages, "com.app", 0, target, true)
+            .unwrap();
+        assert!(kernel.borrow().rules.contains(&key));
+        let rules = f.writer.net_rules().unwrap();
+
+        let db = f.dir.join("bb.db");
+        let connection = rusqlite::Connection::open(&db).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TRIGGER fail_rule_delete BEFORE DELETE ON net_rule
+                 BEGIN SELECT RAISE(FAIL, 'injected rule delete failure'); END;",
+            )
+            .unwrap();
+        let error = sandbox
+            .net_unblock(&f.writer, &mut f.packages, "com.app", 0, target)
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("injected rule delete failure"));
+        assert!(kernel.borrow().rules.contains(&key));
+        assert!(names.refused(10100, ip));
+        let reloaded = Writer::open(&db).unwrap();
+        assert_eq!(reloaded.net_rules().unwrap(), rules);
+        let reloaded = Sandbox::load(&reloaded, Vec::new(), None).unwrap();
+        assert_eq!(
+            reloaded.book().lock().unwrap().get(&10100),
+            sandbox.book().lock().unwrap().get(&10100),
+        );
+
+        connection
+            .execute_batch("DROP TRIGGER fail_rule_delete")
+            .unwrap();
+        sandbox
+            .net_unblock(&f.writer, &mut f.packages, "com.app", 0, target)
+            .unwrap();
+        assert!(!kernel.borrow().rules.contains(&key));
+        assert!(!names.refused(10100, ip));
+        assert!(f.writer.net_rules().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_failed_rule_apply_does_not_leave_a_rule_to_reload() {
+        let mut f = SandboxFixture::new("sandbox-net-apply");
+        let names = Arc::new(Names::default());
+        let ip = "203.0.113.7".parse().unwrap();
+        names.learn(10100, "blocked.example", &[ip]);
+        let (mut sandbox, kernel) = sandbox_with_filter(&mut f, names.clone());
+        kernel.borrow_mut().rules_fail = true;
+
+        let db = f.dir.join("bb.db");
+        let connection = rusqlite::Connection::open(&db).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TRIGGER reject_compensating_delete BEFORE DELETE ON net_rule
+             BEGIN SELECT RAISE(FAIL, 'injected rule delete failure'); END;",
+            )
+            .unwrap();
+        let target = "domain:blocked.example";
+        let error = sandbox
+            .net_block(&f.writer, &mut f.packages, "com.app", 0, target, false)
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("the list is full"));
+        assert!(kernel.borrow().rules.is_empty());
+        assert!(!names.refused(10100, ip));
+        assert!(
+            sandbox
+                .book()
+                .lock()
+                .unwrap()
+                .get(&10100)
+                .is_none_or(BTreeSet::is_empty)
+        );
+        assert!(Writer::open(&db).unwrap().net_rules().unwrap().is_empty());
+    }
+
+    struct RefreshWitness(Rc<Cell<usize>>);
+
+    impl Effect for RefreshWitness {
+        fn name(&self) -> &'static str {
+            "refresh witness"
+        }
+
+        fn enable(&mut self, _: &mut Entry, _: &[String], _: &Settings) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn disable(&mut self, _: &mut Entry, _: &[String], _: &Settings) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn update(
+            &mut self,
+            _: &mut Entry,
+            _: &[String],
+            _: &Settings,
+            _: &Settings,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn refresh(&mut self, _: &Entry, _: &Settings) -> anyhow::Result<()> {
+            self.0.set(self.0.get() + 1);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_failed_rule_commit_restores_previously_learned_addresses_and_retries_failed_effects() {
+        let mut f = SandboxFixture::new("sandbox-net-commit");
+        let names = Arc::new(Names::default());
+        let ip = "203.0.113.7".parse().unwrap();
+        names.learn(10100, "blocked.example", &[ip]);
+        let (mut sandbox, kernel) = sandbox_with_filter(&mut f, names.clone());
+        let target = "domain:blocked.example";
+        let key = bytes(&key(10100, (ip, None)));
+        sandbox
+            .net_block(&f.writer, &mut f.packages, "com.app", 0, target, true)
+            .unwrap();
+        names.learn(10100, "different.example", &[ip]);
+        let rules = f.writer.net_rules().unwrap();
+
+        // The DELETE is accepted, but COMMIT fails after the effects ran.
+        let db = f.dir.join("bb.db");
+        let connection = rusqlite::Connection::open(&db).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE commit_parent (id INTEGER PRIMARY KEY);
+             CREATE TABLE commit_child (parent INTEGER REFERENCES commit_parent(id)
+                                        DEFERRABLE INITIALLY DEFERRED);
+             CREATE TRIGGER fail_rule_commit AFTER DELETE ON net_rule
+             BEGIN INSERT INTO commit_child VALUES (1); END;",
+            )
+            .unwrap();
+        let error = sandbox
+            .net_unblock(&f.writer, &mut f.packages, "com.app", 0, target)
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("FOREIGN KEY constraint failed"));
+        assert!(kernel.borrow().rules.contains(&key));
+        assert!(names.refused(10100, ip));
+
+        let refreshed = Rc::new(Cell::new(0));
+        sandbox.add_effect(Box::new(RefreshWitness(refreshed.clone())));
+        kernel.borrow_mut().fail_insert = Some(key);
+        let error = sandbox
+            .net_unblock(&f.writer, &mut f.packages, "com.app", 0, target)
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "could not restore the previous network policy (network destinations)"
+        );
+        assert!(format!("{error:#}").contains("FOREIGN KEY constraint failed"));
+        assert_eq!(refreshed.get(), 2);
+        assert!(!kernel.borrow().rules.contains(&key));
+        assert_eq!(Writer::open(&db).unwrap().net_rules().unwrap(), rules);
+
+        kernel.borrow_mut().fail_insert = None;
+        sandbox.retry_net_refresh();
+        sandbox.retry_net_refresh();
+        assert_eq!(refreshed.get(), 3);
+        assert!(kernel.borrow().rules.contains(&key));
+        assert!(names.refused(10100, ip));
+
+        connection
+            .execute_batch("DROP TRIGGER fail_rule_commit")
+            .unwrap();
+        sandbox
+            .net_unblock(&f.writer, &mut f.packages, "com.app", 0, target)
+            .unwrap();
+        sandbox
+            .net_block(&f.writer, &mut f.packages, "com.app", 0, target, true)
+            .unwrap();
+        assert!(!kernel.borrow().rules.contains(&key));
+        assert!(!names.refused(10100, ip));
     }
 
     #[test]

@@ -814,19 +814,20 @@ impl Writer {
     /// Sync the WAL at commit, even when readers prevent a checkpoint.
     fn write_sandbox(
         &self,
-        write: impl FnOnce(&Transaction<'_>) -> rusqlite::Result<()>,
+        write: impl FnOnce(&Transaction<'_>) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
         self.conn.pragma_update(None, "synchronous", "FULL")?;
         let result = (|| {
             let tx = self.conn.unchecked_transaction()?;
             write(&tx)?;
-            tx.commit()
+            tx.commit()?;
+            Ok(())
         })();
         if let Err(e) = self.conn.pragma_update(None, "synchronous", "NORMAL") {
             // A commit may already have succeeded. Report the transaction result.
             eprintln!("bbd: could not restore the recording sync mode: {e}");
         }
-        Ok(result?)
+        result
     }
 
     /// Forget the entry for `uid`. Only for undoing the first enable of an

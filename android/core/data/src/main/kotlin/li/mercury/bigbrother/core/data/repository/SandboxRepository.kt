@@ -16,12 +16,17 @@
 
 package li.mercury.bigbrother.core.data.repository
 
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
+import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.DEFAULT
+import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.root.RootShell
 import li.mercury.bigbrother.core.data.root.bbd
+import li.mercury.bigbrother.core.data.root.parseBbdOutput
 import li.mercury.bigbrother.core.data.root.shellQuoted
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
@@ -80,6 +85,7 @@ interface SandboxRepository {
 @Singleton
 internal class RootSandboxRepository @Inject constructor(
     private val rootShell: RootShell,
+    @Dispatcher(DEFAULT) private val defaultDispatcher: CoroutineDispatcher,
 ) : SandboxRepository {
     private val _apps = MutableStateFlow<List<SandboxedApp>?>(null)
     override val apps: StateFlow<List<SandboxedApp>?> = _apps.asStateFlow()
@@ -90,18 +96,16 @@ internal class RootSandboxRepository @Inject constructor(
     private val _autoIsolate = MutableStateFlow<Boolean?>(null)
     override val autoIsolate: StateFlow<Boolean?> = _autoIsolate.asStateFlow()
 
-    override suspend fun refresh() {
-        _apps.value = parsing {
-            val rows = JSONObject(sandbox("list")).getJSONArray("apps")
-            List(rows.length()) { rows.getJSONObject(it).toSandboxedApp() }
-        }
-        val global = parsing { JSONObject(sandbox("global")) }
-        _global.value = parsing { global.getJSONObject("items").toModes() }
+    override suspend fun refresh() = defaultDispatcher.parseBbdOutput {
+        val rows = JSONObject(sandbox("list")).getJSONArray("apps")
+        _apps.value = List(rows.length()) { rows.getJSONObject(it).toSandboxedApp() }
+        val global = JSONObject(sandbox("global"))
+        _global.value = global.getJSONObject("items").toModes()
         // A daemon older than the switch does not report it, and has it off.
         _autoIsolate.value = global.optBoolean("auto")
     }
 
-    override suspend fun getStatus(): SandboxStatus = parsing {
+    override suspend fun getStatus(): SandboxStatus = defaultDispatcher.parseBbdOutput {
         val status = JSONObject(sandbox("status"))
         val hook = status.optJSONObject("hook") ?: JSONObject()
         SandboxStatus(
@@ -139,10 +143,12 @@ internal class RootSandboxRepository @Inject constructor(
         refreshAfter("disable --all")
         // The daemon gives up on an app it cannot take out in time, and
         // names it rather than fail the whole command.
-        return try {
-            JSONObject(answer).optJSONArray("failed")?.length() ?: 0
-        } catch (e: JSONException) {
-            throw RecordsException.CommandFailed(e.message.orEmpty())
+        return withContext(defaultDispatcher) {
+            try {
+                JSONObject(answer).optJSONArray("failed")?.length() ?: 0
+            } catch (e: JSONException) {
+                throw RecordsException.CommandFailed(e.message.orEmpty())
+            }
         }
     }
 
@@ -204,12 +210,6 @@ internal class RootSandboxRepository @Inject constructor(
         val mode = SandboxMode.fromId(optString(key)) ?: return@mapNotNull null
         item to mode
     }.toMap()
-
-    private inline fun <T> parsing(block: () -> T): T = try {
-        block()
-    } catch (e: JSONException) {
-        throw RecordsException.CommandFailed("unexpected output from bbd: ${e.message}")
-    }
 
     private suspend fun sandbox(args: String): String = rootShell.bbd("sandbox", args)
 
