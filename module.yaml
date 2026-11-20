@@ -1,7 +1,9 @@
 schemaVersion: 1
 id: big_brother
 name: Big Brother
-summary: See which apps access your files, device identifiers, and other private data on rooted Android.
+summary: >-
+  Records which apps access shared files or request device identifiers and other private data.
+  Jail lets you isolate selected apps and control what they can access.
 description: README.md
 license: GPL-3.0-only
 support: https://github.com/lihenggui/bigbrother/issues
