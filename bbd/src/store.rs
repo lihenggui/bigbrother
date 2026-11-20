@@ -342,6 +342,8 @@ pub struct Counters {
     pub unresolved: u64,
     /// Events the kernel side lost because the ring buffer was full.
     pub dropped: u64,
+    /// Refused DNS lookups the resolver could not queue for recording.
+    pub dns_lookups_dropped: u64,
 }
 
 /// One period an app had a sensor on: a `sensor_session` row.
@@ -700,6 +702,7 @@ impl Writer {
                     "events_dropped",
                     counters.dropped.saturating_add(self.dropped) as i64,
                 ),
+                ("dns_lookups_dropped", counters.dns_lookups_dropped as i64),
                 ("last_flush", now),
             ] {
                 meta.execute(params![key, value])?;
@@ -1918,6 +1921,7 @@ mod tests {
                 kept: 5,
                 unresolved: 1,
                 dropped: 0,
+                ..Counters::default()
             },
             t + 10,
         )
@@ -1939,6 +1943,7 @@ mod tests {
                 kept: 6,
                 unresolved: 1,
                 dropped: 2,
+                dns_lookups_dropped: 3,
             },
             t + 30,
         )
@@ -2018,6 +2023,7 @@ mod tests {
         assert_eq!((stats.rows, stats.apps), (4, 2));
         assert_eq!(stats.meta["events_seen"], 10);
         assert_eq!(stats.meta["events_dropped"], 2);
+        assert_eq!(stats.meta["dns_lookups_dropped"], 3);
 
         assert_eq!(w.prune(1, t + 3 * 86_400).unwrap(), 4);
         std::fs::remove_dir_all(dir).unwrap();

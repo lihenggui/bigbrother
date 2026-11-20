@@ -486,6 +486,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     }
     tracer.drain(ring.get_mut());
     tracer.ingest_provider_events();
+    tracer.take_refused_lookups();
     tracer.settle_sensors(Duration::from_secs(2));
     tracer.counters.dropped = dropped_events();
     tracer.expire(i64::MAX);
@@ -609,7 +610,7 @@ fn start_sandbox(
     let network = sandbox::network::Network::start(ebpf, ruled);
     // The names apps look up, heard by standing between them and netd.
     let names = std::sync::Arc::new(sandbox::names::Names::default());
-    let (lookups_refused, refused_lookups) = std::sync::mpsc::channel();
+    let (lookups_refused, refused_lookups) = sandbox::names::RefusedLookups::channel();
     let refuses: sandbox::names::Refuses = {
         let (snapshot, book) = (sandbox.snapshot(), sandbox.book());
         std::sync::Arc::new(move |uid, host: Option<&str>| {
@@ -665,7 +666,7 @@ fn start_sandbox(
         .writer
         .set_meta("coverage_net_names", i64::from(relay.is_ok()));
     let names = relay.is_ok().then_some(names);
-    tracer.refused_lookups = Some(refused_lookups);
+    tracer.refused_lookups = relay.is_ok().then_some(refused_lookups);
     tracer.net = Some(sandbox::destinations::View {
         snapshot: sandbox.snapshot(),
         global: sandbox.global(),
@@ -1281,9 +1282,7 @@ struct Tracer {
     /// What the sandbox refuses of the network, for the connections
     /// recorded of its apps.
     net: Option<sandbox::destinations::View>,
-    /// The lookups refused since they were last taken in: the uid and the
-    /// name of each.
-    refused_lookups: Option<std::sync::mpsc::Receiver<(u32, String)>>,
+    refused_lookups: Option<sandbox::names::RefusedLookups>,
     /// The destinations each app has rows of in the hour (see `net_key`).
     net_listed: (i64, HashMap<u32, HashSet<NetDestination>>),
     /// Commands being looked for along `PATH`.
@@ -1882,15 +1881,13 @@ impl Tracer {
             .unwrap_or_default()
     }
 
-    /// Record the lookups refused since the last time: each an attempt at
-    /// a name that went to no address.
+    /// Record one batch of the refused lookups before returning to the loop.
     fn take_refused_lookups(&mut self) {
-        let Some(refused) = &self.refused_lookups else {
+        let Some(refused) = self.refused_lookups.take() else {
             return;
         };
         let ts = now();
-        let lookups: Vec<(u32, String)> = refused.try_iter().collect();
-        for (uid, host) in lookups {
+        for (uid, host) in refused.batch() {
             let key = self.net_key(uid, ts, host, String::new(), 0);
             self.writer.net_record(
                 key,
@@ -1901,6 +1898,8 @@ impl Tracer {
                 ts,
             );
         }
+        self.counters.dns_lookups_dropped = refused.dropped();
+        self.refused_lookups = Some(refused);
     }
 
     fn owner_uid(&mut self, uid: u32, pid: u32) -> (u32, Mode) {

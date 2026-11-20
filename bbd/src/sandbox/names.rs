@@ -65,8 +65,8 @@ use std::{
     },
     sync::{
         Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
-        mpsc::Sender,
+        atomic::{AtomicU64, AtomicUsize, Ordering},
+        mpsc::{Receiver, SyncSender, TrySendError, sync_channel},
     },
     time::{Duration, Instant},
 };
@@ -95,6 +95,10 @@ const INET_GID: libc::gid_t = 3003;
 /// is refused: the app's lookup fails, as it does when netd has too many.
 const MOST_AT_ONCE: usize = 64;
 const MOST_OF_ONE_APP: usize = 8;
+
+/// How many refusals can wait for the writer, and the most taken in one
+/// pass even when lookups keep arriving while it drains the queue.
+const REFUSED_LOOKUPS_CAPACITY: usize = 1024;
 
 /// The longest request read, and the longest answer held to be read for
 /// its addresses; a longer one is passed on unread.
@@ -207,13 +211,57 @@ pub type Refuses = Arc<dyn Fn(u32, Option<&str>) -> bool + Send + Sync>;
 /// daemon's socket.
 pub type Serves = Arc<dyn Fn(u32) -> bool + Send + Sync>;
 
+/// The resolver's end of the queue. Recording a refusal never waits for space.
+pub struct RefusalReporter {
+    pending: SyncSender<(u32, String)>,
+    dropped: Arc<AtomicU64>,
+}
+
+impl RefusalReporter {
+    fn record(&self, uid: u32, host: &str) {
+        if let Err(TrySendError::Full(_)) = self.pending.try_send((uid, host.to_owned())) {
+            self.dropped.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
+/// The daemon's end of the queue, with a count of records lost to overload.
+pub struct RefusedLookups {
+    pending: Receiver<(u32, String)>,
+    dropped: Arc<AtomicU64>,
+}
+
+impl RefusedLookups {
+    pub fn channel() -> (RefusalReporter, Self) {
+        let (sender, receiver) = sync_channel(REFUSED_LOOKUPS_CAPACITY);
+        let dropped = Arc::new(AtomicU64::new(0));
+        (
+            RefusalReporter {
+                pending: sender,
+                dropped: dropped.clone(),
+            },
+            Self {
+                pending: receiver,
+                dropped,
+            },
+        )
+    }
+
+    pub fn batch(&self) -> impl Iterator<Item = (u32, String)> + '_ {
+        self.pending.try_iter().take(REFUSED_LOOKUPS_CAPACITY)
+    }
+
+    pub fn dropped(&self) -> u64 {
+        self.dropped.load(Ordering::Relaxed)
+    }
+}
+
 /// What the threads that relay lookups share.
 struct Shared {
     names: Arc<Names>,
     serves: Serves,
     refuses: Refuses,
-    /// Told the uid and the name of each lookup refused.
-    refused: Mutex<Sender<(u32, String)>>,
+    refused: RefusalReporter,
     at_once: AtomicUsize,
     /// How many lookups of each uid are being relayed.
     of_each: Mutex<HashMap<u32, usize>>,
@@ -255,17 +303,17 @@ pub fn start(
     names: Arc<Names>,
     serves: Serves,
     refuses: Refuses,
-    refused: Sender<(u32, String)>,
+    refused: RefusalReporter,
 ) -> anyhow::Result<()> {
     let shared = Arc::new(Shared {
         names,
         serves,
         refuses,
-        refused: Mutex::new(refused),
+        refused,
         at_once: AtomicUsize::new(0),
         of_each: Mutex::default(),
     });
-    let (ready, started) = std::sync::mpsc::sync_channel(1);
+    let (ready, started) = sync_channel(1);
     std::thread::Builder::new()
         .name("names".into())
         .spawn(move || {
@@ -421,8 +469,7 @@ fn relay(mut client: UnixStream, uid: u32, shared: &Shared) -> io::Result<()> {
     if let Some(host) = asked.host()
         && (shared.refuses)(uid, Some(host))
     {
-        let refused = shared.refused.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = refused.send((uid, host.to_string()));
+        shared.refused.record(uid, host);
         // Closed without an answer: the lookup fails.
         return Ok(());
     }
@@ -778,12 +825,12 @@ mod tests {
 
     #[test]
     fn an_app_has_a_few_lookups_at_once_and_all_apps_some_more() {
-        let (refused, _) = std::sync::mpsc::channel();
+        let (refused, _) = RefusedLookups::channel();
         let shared = Shared {
             names: Arc::default(),
             serves: Arc::new(|_| true),
             refuses: Arc::new(|_, _| false),
-            refused: Mutex::new(refused),
+            refused,
             at_once: AtomicUsize::new(0),
             of_each: Mutex::default(),
         };
@@ -817,6 +864,70 @@ mod tests {
             }
         }
         assert_eq!(shared.at_once.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn a_full_refusal_queue_drops_the_record_and_still_refuses_the_lookup() {
+        let (refused, pending) = RefusedLookups::channel();
+        for _ in 0..REFUSED_LOOKUPS_CAPACITY {
+            refused.record(10001, "queued.example");
+        }
+        let shared = Shared {
+            names: Arc::default(),
+            serves: Arc::new(|_| true),
+            refuses: Arc::new(|_, host| host == Some("blocked.example")),
+            refused,
+            at_once: AtomicUsize::new(0),
+            of_each: Mutex::default(),
+        };
+        let (mut client, server) = UnixStream::pair().unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        client
+            .write_all(b"getaddrinfo blocked.example ^ 0 0 0 0 0\0")
+            .unwrap();
+
+        std::thread::scope(|scope| {
+            let task = scope.spawn(move || relay(server, 10002, &shared));
+            let Ok(closed) = client.read(&mut [0u8]) else {
+                drop(pending);
+                panic!("the refusal waited for space in the queue");
+            };
+            task.join().unwrap().unwrap();
+            assert_eq!(closed, 0);
+            assert_eq!(pending.dropped(), 1);
+            let queued: Vec<_> = pending.batch().collect();
+            assert_eq!(queued.len(), REFUSED_LOOKUPS_CAPACITY);
+            assert_eq!(pending.batch().count(), 0);
+            assert!(
+                queued
+                    .iter()
+                    .all(|(uid, host)| { *uid == 10001 && host == "queued.example" })
+            );
+        });
+    }
+
+    #[test]
+    fn a_batch_ends_even_when_new_refusals_keep_arriving() {
+        let (refused, pending) = RefusedLookups::channel();
+        for _ in 0..REFUSED_LOOKUPS_CAPACITY {
+            refused.record(10001, "queued.example");
+        }
+        let drained = pending
+            .batch()
+            .take(REFUSED_LOOKUPS_CAPACITY + 1)
+            .inspect(|_| refused.record(10002, "arriving.example"))
+            .count();
+        assert_eq!(drained, REFUSED_LOOKUPS_CAPACITY);
+        assert_eq!(pending.dropped(), 0);
+        let queued: Vec<_> = pending.batch().collect();
+        assert_eq!(queued.len(), REFUSED_LOOKUPS_CAPACITY);
+        assert!(
+            queued
+                .iter()
+                .all(|(uid, host)| { *uid == 10002 && host == "arriving.example" })
+        );
     }
 
     #[test]
