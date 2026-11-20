@@ -172,7 +172,7 @@ run_canary() {
         as_shell cmd location providers set-test-provider-location gps --location 52.52,13.405 --accuracy 5
     fi
     launch_and_wait_for_canary 90 --es ops "$ALL_OPS" --es net "${net:-$NET_TARGET}" || { echo "error: $canary_error" >&2; exit 2; }
-    view="$(sed -n 's/.*BigBrotherCanary: sandbox //p' <<<"$canary_log")"
+    view="$canary_view"
 }
 
 # Have the canary ask for a file and pick the marker for it in the system's
@@ -183,7 +183,7 @@ pick_marker() {
     local dump bounds i
     adb shell am force-stop "$PACKAGE"
     adb logcat -c
-    adb shell am start -W -n "$PACKAGE/.MainActivity" --ez pick true >/dev/null
+    start_canary --ez pick true || { echo "error: $canary_error" >&2; exit 2; }
     picked=""
     for ((i = 0; i < 10; i++)); do
         sleep 1
@@ -195,11 +195,8 @@ pick_marker() {
     [[ -n "$bounds" ]] || return 0
     set -- $bounds
     adb shell input tap $((($1 + $3) / 2)) $((($2 + $4) / 2))
-    for ((i = 0; i < 10; i++)); do
-        picked="$(adb logcat -d -s BigBrotherCanary:I | tr -d '\r' | sed -n 's/.*BigBrotherCanary: sandbox picked_file=//p')"
-        [[ -n "$picked" ]] && break
-        sleep 1
-    done
+    wait_for_canary_result 10 || { echo "error: $canary_error" >&2; exit 2; }
+    picked="$(seen "$canary_view" picked_file)"
 }
 
 # The canary's services that have the notifications, and those that have

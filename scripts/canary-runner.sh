@@ -41,38 +41,50 @@ save_canary_failure() {
 }
 
 # Callers force-stop the previous run before its completion file is cleared.
-# Sets canary_log on success and canary_error on failure.
-launch_and_wait_for_canary() {
-    local limit="$1" launch i status status_file=files/probe-status
-    shift
-    canary_log="" canary_error=""
+# The picker also uses this to discard any result before opening the UI.
+start_canary() {
+    canary_view="" canary_error=""
     clear_screen
-    if ! adb shell run-as "$PACKAGE" rm -f "$status_file"; then
-        canary_error="could not clear the previous canary status"
+    if ! adb shell run-as "$PACKAGE" rm -f files/probe-result; then
+        canary_error="could not clear the previous canary result"
         return 1
     fi
-    if ! launch="$(adb shell am start -W -n "$PACKAGE/.MainActivity" "$@" 2>&1)" ||
-        grep -qE '^(Error(:| type )|Exception occurred while executing)' <<<"$launch"; then
+    if ! canary_launch="$(adb shell am start -W -n "$PACKAGE/.MainActivity" "$@" 2>&1)" ||
+        grep -qE '^(Error(:| type )|Exception occurred while executing)' <<<"$canary_launch"; then
         canary_error="starting the canary failed"
-        printf '%s\n' "$launch" >&2
-    else
-        for ((i = 0; i < limit; i++)); do
-            if status="$(adb shell run-as "$PACKAGE" cat "$status_file" 2>/dev/null)"; then
-                case "$status" in
-                done)
-                    canary_log="$(adb logcat -d -s BigBrotherCanary:I | tr -d '\r')" && return 0
-                    canary_error="could not read the canary observations"
-                    ;;
-                "probe failed: "*) canary_error="${status#probe failed: }" ;;
-                *) canary_error="invalid canary status" ;;
-                esac
-                break
-            fi
-            if ((i % 5 == 4)) && focus_elsewhere; then clear_screen; fi
-            sleep 1
-        done
-        canary_error="${canary_error:-the canary did not report completion}"
+        printf '%s\n' "$canary_launch" >&2
+        save_canary_failure "$canary_launch"
+        return 1
     fi
-    save_canary_failure "$launch"
+}
+
+# The first line is the outcome. The sandbox and permission checks read
+# their observations from the same file so a partial report cannot pass.
+wait_for_canary_result() {
+    local limit="$1" i result status
+    for ((i = 0; i < limit; i++)); do
+        if result="$(adb shell -T run-as "$PACKAGE" cat files/probe-result 2>/dev/null)"; then
+            status="${result%%$'\n'*}"
+            case "$status" in
+            done)
+                if [[ "$result" == *$'\n'* ]]; then canary_view="${result#*$'\n'}"; fi
+                return 0
+                ;;
+            "probe failed: "*) canary_error="${status#probe failed: }" ;;
+            *) canary_error="invalid canary result" ;;
+            esac
+            break
+        fi
+        if ((i % 5 == 4)) && focus_elsewhere; then clear_screen; fi
+        sleep 1
+    done
+    canary_error="${canary_error:-the canary did not report completion}"
+    save_canary_failure "$canary_launch"
     return 1
+}
+
+launch_and_wait_for_canary() {
+    local limit="$1"
+    shift
+    start_canary "$@" && wait_for_canary_result "$limit"
 }

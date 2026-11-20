@@ -36,9 +36,13 @@ import android.net.LocalSocketAddress
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Bundle
+import android.os.Handler
 import android.os.IBinder
+import android.os.Message
+import android.os.Messenger
 import android.os.Parcel
 import android.os.Process
+import android.os.RemoteException
 import android.provider.CalendarContract
 import android.provider.CallLog
 import android.provider.ContactsContract
@@ -61,9 +65,11 @@ import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketTimeoutException
-import java.util.concurrent.CountDownLatch
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import kotlin.concurrent.thread
 import kotlin.math.roundToInt
 
@@ -83,6 +89,7 @@ class MainActivity : Activity() {
     private lateinit var output: TextView
 
     private var started = false
+    private val observations = mutableListOf<String>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -113,6 +120,7 @@ class MainActivity : Activity() {
         } else {
             report("not picked")
         }
+        publishResult("done")
         finish()
     }
 
@@ -312,27 +320,59 @@ class MainActivity : Activity() {
     }
 
     private fun completeAfterIsolatedProbe() {
-        val reported = CountDownLatch(1)
+        val result = CompletableFuture<Bundle>()
+        val receiver = Messenger(
+            Handler(mainLooper) { message ->
+                result.complete(message.data)
+                true
+            },
+        )
         val connection = object : ServiceConnection {
-            override fun onServiceConnected(name: ComponentName, service: IBinder) = reported.countDown()
-            override fun onServiceDisconnected(name: ComponentName) = Unit
+            override fun onServiceConnected(name: ComponentName, service: IBinder) {
+                try {
+                    Messenger(service).send(Message.obtain().apply { replyTo = receiver })
+                } catch (e: RemoteException) {
+                    result.completeExceptionally(IOException("could not request the isolated observations", e))
+                }
+            }
+
+            override fun onServiceDisconnected(name: ComponentName) {
+                result.completeExceptionally(IOException("the isolated probe disconnected before replying"))
+            }
+
+            override fun onBindingDied(name: ComponentName) = onServiceDisconnected(name)
+
+            override fun onNullBinding(name: ComponentName) {
+                result.completeExceptionally(IOException("the isolated probe returned no binder"))
+            }
         }
         val bound = bindService(Intent(this, IsolatedProbe::class.java), connection, BIND_AUTO_CREATE)
+        if (!bound) {
+            publishResult("probe failed: could not bind the isolated probe")
+            return
+        }
         try {
-            val status = when {
-                !bound -> "probe failed: could not bind the isolated probe"
-                !reported.await(ISOLATED_WAIT_S, TimeUnit.SECONDS) -> "probe failed: the isolated probe did not connect"
-                else -> "done"
+            val observed = result.get(ISOLATED_WAIT_S, TimeUnit.SECONDS)
+            for (key in observed.keySet()) {
+                observe(key, observed.getString(key).orEmpty())
             }
-            // Logcat can lose the last line. Publish only the outcome, atomically,
-            // after the observations and before synchronous service teardown.
-            val temp = File(filesDir, "probe-status.tmp")
-            temp.writeText(status)
-            Os.rename(temp.path, File(filesDir, "probe-status").path)
-            report(status)
+            publishResult("done")
+        } catch (e: ExecutionException) {
+            publishResult("probe failed: ${e.cause?.message}")
+        } catch (_: TimeoutException) {
+            publishResult("probe failed: the isolated probe did not reply")
         } finally {
             unbindService(connection)
         }
+    }
+
+    private fun publishResult(status: String) {
+        // The script needs the outcome and its observations together, including
+        // when logcat drops a line or Android takes time to unbind the service.
+        val temp = File(filesDir, "probe-result.tmp")
+        temp.writeText((listOf(status) + observations).joinToString("\n", postfix = "\n"))
+        Os.rename(temp.path, File(filesDir, "probe-result").path)
+        report(status)
     }
 
     /**
@@ -401,7 +441,13 @@ class MainActivity : Activity() {
         } catch (e: Throwable) {
             "refused:${e.javaClass.simpleName}"
         }
-        report("sandbox $key=$seen")
+        observe(key, seen)
+    }
+
+    private fun observe(key: String, value: String) {
+        val line = "$key=$value"
+        observations += line
+        report("sandbox $line")
     }
 
     /** Runs [action], reporting what came of it. A probe that fails has still probed. */
