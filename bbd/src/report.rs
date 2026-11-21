@@ -16,7 +16,7 @@
 
 use std::collections::HashMap;
 
-use rusqlite::params;
+use rusqlite::{Rows, Statement, params};
 use serde::Serialize;
 
 use crate::{
@@ -186,6 +186,13 @@ fn any_of(values: impl Iterator<Item = String>) -> Option<String> {
 
 /// One row per uid, most recently active first.
 pub fn apps(reader: &Reader, since: i64) -> anyhow::Result<Vec<AppRow>> {
+    let mut apps = app_rows(reader, since)?;
+    attach_folders(reader, since, &mut apps)?;
+    attach_topics(reader, since, &mut apps)?;
+    Ok(apps)
+}
+
+fn app_rows(reader: &Reader, since: i64) -> anyhow::Result<Vec<AppRow>> {
     let mut stmt = reader.connection().prepare(
         "SELECT uid, max(pkg),
                     count(DISTINCT CASE WHEN cat = 'storage' THEN path END),
@@ -229,8 +236,10 @@ pub fn apps(reader: &Reader, since: i64) -> anyhow::Result<Vec<AppRow>> {
             last_ts: r.get(15)?,
         })
     })?;
-    let mut apps: Vec<AppRow> = rows.collect::<Result<_, _>>()?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
 
+fn attach_folders(reader: &Reader, since: i64, apps: &mut [AppRow]) -> anyhow::Result<()> {
     // Which folders each app's files are in: distinct paths per top-level
     // folder, counted separately for files it read and for everything.
     let mut read: HashMap<u32, HashMap<String, u32>> = HashMap::new();
@@ -259,7 +268,7 @@ pub fn apps(reader: &Reader, since: i64) -> anyhow::Result<Vec<AppRow>> {
                 .or_default() += 1;
         }
     }
-    for app in &mut apps {
+    for app in apps {
         // Name the folders of what was read; for an app that read nothing,
         // the folders it tried.
         let Some(folders) = read.remove(&app.uid).or_else(|| touched.remove(&app.uid)) else {
@@ -276,6 +285,10 @@ pub fn apps(reader: &Reader, since: i64) -> anyhow::Result<Vec<AppRow>> {
             .collect();
     }
 
+    Ok(())
+}
+
+fn attach_topics(reader: &Reader, since: i64, apps: &mut [AppRow]) -> anyhow::Result<()> {
     // What kinds of information each app went after, besides user files.
     let mut topics: HashMap<u32, std::collections::BTreeSet<&'static str>> = HashMap::new();
     let mut stmt = reader.connection().prepare(
@@ -289,12 +302,12 @@ pub fn apps(reader: &Reader, since: i64) -> anyhow::Result<Vec<AppRow>> {
             topics.entry(uid).or_default().insert(topic);
         }
     }
-    for app in &mut apps {
+    for app in apps {
         if let Some(found) = topics.remove(&app.uid) {
             app.topics = found.into_iter().collect();
         }
     }
-    Ok(apps)
+    Ok(())
 }
 
 /// Paths, aggregated across hours, most recent first. `uids` and `cats`
@@ -381,102 +394,7 @@ pub fn timeline(
     )?;
     while end > floor {
         let start = (end - TIMELINE_WINDOW_HOURS).max(floor);
-        let mut found: HashMap<(i64, u32, String, Option<&'static str>), TimelineAcc> =
-            HashMap::new();
-        let mut rows = stmt.query(params![start, end, since])?;
-        while let Some(row) = rows.next()? {
-            let (hour, uid, pkg, cat, path): (i64, u32, String, String, String) = (
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-            );
-            let (mode, ok, fail, first_ts, last_ts, items): (Mode, i64, i64, i64, i64, i64) = (
-                row.get(5)?,
-                row.get(6)?,
-                row.get(7)?,
-                row.get(8)?,
-                row.get(9)?,
-                row.get(10)?,
-            );
-            let topic = rules::topic_of(&path);
-            let is_storage = cat == Category::Storage.as_str();
-            let acc = found
-                .entry((hour, uid, cat, topic))
-                .or_insert_with(|| TimelineAcc {
-                    first_ts,
-                    last_ts,
-                    ..TimelineAcc::default()
-                });
-            if acc.pkg.is_empty() {
-                acc.pkg = pkg;
-            }
-            if is_storage && ok > 0 && mode & NOT_FILE_OPEN == 0 && mode & FILE_OPEN != 0 {
-                acc.read.insert(path.clone());
-            }
-            if topic.is_some_and(|topic| SUBJECTS_LISTED.contains(&topic)) {
-                let counts = acc.subjects.entry(path.clone()).or_default();
-                counts.0 += ok;
-                counts.1 += fail;
-            }
-            acc.paths.insert(path);
-            acc.ok += ok;
-            acc.fail += fail;
-            acc.modes |= mode;
-            acc.items = acc.items.max(items);
-            acc.first_ts = acc.first_ts.min(first_ts);
-            acc.last_ts = acc.last_ts.max(last_ts);
-        }
-        let mut window: Vec<TimelineRow> = found
-            .into_iter()
-            .map(|((hour, uid, cat, topic), acc)| {
-                let folder = if cat == Category::Storage.as_str() {
-                    most_common_folder(if acc.read.is_empty() {
-                        &acc.paths
-                    } else {
-                        &acc.read
-                    })
-                } else {
-                    None
-                };
-                TimelineRow {
-                    hour_ts: hour * 3600,
-                    uid,
-                    pkg: acc.pkg,
-                    cat,
-                    topic,
-                    paths: acc.paths.len() as i64,
-                    files_read: acc.read.len() as i64,
-                    ok: acc.ok,
-                    fail: acc.fail,
-                    modes: acc.modes,
-                    items: acc.items,
-                    folder,
-                    first_ts: acc.first_ts,
-                    last_ts: acc.last_ts,
-                    subjects: topic
-                        .is_some_and(|topic| SUBJECTS_LISTED.contains(&topic))
-                        .then(|| {
-                            acc.subjects
-                                .into_iter()
-                                .map(|(path, (ok, fail))| SubjectCount { path, ok, fail })
-                                .collect()
-                        }),
-                }
-            })
-            .collect();
-        // Most recent hour first; within it, most recent activity first,
-        // with a fixed order for ties so pages are stable.
-        window.sort_by(|a, b| {
-            b.hour_ts
-                .cmp(&a.hour_ts)
-                .then_with(|| b.last_ts.cmp(&a.last_ts))
-                .then_with(|| a.uid.cmp(&b.uid))
-                .then_with(|| a.cat.cmp(&b.cat))
-                .then_with(|| a.topic.cmp(&b.topic))
-        });
-        entries.extend(window);
+        entries.extend(timeline_rows(&mut stmt, start, end, since)?);
         end = start;
         if entries.len() >= limit && end > floor {
             return Ok(Timeline {
@@ -489,6 +407,115 @@ pub fn timeline(
         entries,
         next_before: None,
     })
+}
+
+fn timeline_rows(
+    stmt: &mut Statement<'_>,
+    start: i64,
+    end: i64,
+    since: i64,
+) -> anyhow::Result<Vec<TimelineRow>> {
+    let mut rows = stmt.query(params![start, end, since])?;
+    let mut window: Vec<TimelineRow> = group_hours(&mut rows)?
+        .into_iter()
+        .map(|((hour, uid, cat, topic), acc)| {
+            let folder = if cat == Category::Storage.as_str() {
+                most_common_folder(if acc.read.is_empty() {
+                    &acc.paths
+                } else {
+                    &acc.read
+                })
+            } else {
+                None
+            };
+            TimelineRow {
+                hour_ts: hour * 3600,
+                uid,
+                pkg: acc.pkg,
+                cat,
+                topic,
+                paths: acc.paths.len() as i64,
+                files_read: acc.read.len() as i64,
+                ok: acc.ok,
+                fail: acc.fail,
+                modes: acc.modes,
+                items: acc.items,
+                folder,
+                first_ts: acc.first_ts,
+                last_ts: acc.last_ts,
+                subjects: topic
+                    .is_some_and(|topic| SUBJECTS_LISTED.contains(&topic))
+                    .then(|| {
+                        acc.subjects
+                            .into_iter()
+                            .map(|(path, (ok, fail))| SubjectCount { path, ok, fail })
+                            .collect()
+                    }),
+            }
+        })
+        .collect();
+    // Most recent hour first; within it, most recent activity first,
+    // with a fixed order for ties so pages are stable.
+    window.sort_by(|a, b| {
+        b.hour_ts
+            .cmp(&a.hour_ts)
+            .then_with(|| b.last_ts.cmp(&a.last_ts))
+            .then_with(|| a.uid.cmp(&b.uid))
+            .then_with(|| a.cat.cmp(&b.cat))
+            .then_with(|| a.topic.cmp(&b.topic))
+    });
+    Ok(window)
+}
+
+type HourGroups = HashMap<(i64, u32, String, Option<&'static str>), TimelineAcc>;
+
+fn group_hours(rows: &mut Rows<'_>) -> rusqlite::Result<HourGroups> {
+    let mut found: HourGroups = HashMap::new();
+    while let Some(row) = rows.next()? {
+        let (hour, uid, pkg, cat, path): (i64, u32, String, String, String) = (
+            row.get(0)?,
+            row.get(1)?,
+            row.get(2)?,
+            row.get(3)?,
+            row.get(4)?,
+        );
+        let (mode, ok, fail, first_ts, last_ts, items): (Mode, i64, i64, i64, i64, i64) = (
+            row.get(5)?,
+            row.get(6)?,
+            row.get(7)?,
+            row.get(8)?,
+            row.get(9)?,
+            row.get(10)?,
+        );
+        let topic = rules::topic_of(&path);
+        let is_storage = cat == Category::Storage.as_str();
+        let acc = found
+            .entry((hour, uid, cat, topic))
+            .or_insert_with(|| TimelineAcc {
+                first_ts,
+                last_ts,
+                ..TimelineAcc::default()
+            });
+        if acc.pkg.is_empty() {
+            acc.pkg = pkg;
+        }
+        if is_storage && ok > 0 && mode & NOT_FILE_OPEN == 0 && mode & FILE_OPEN != 0 {
+            acc.read.insert(path.clone());
+        }
+        if topic.is_some_and(|topic| SUBJECTS_LISTED.contains(&topic)) {
+            let counts = acc.subjects.entry(path.clone()).or_default();
+            counts.0 += ok;
+            counts.1 += fail;
+        }
+        acc.paths.insert(path);
+        acc.ok += ok;
+        acc.fail += fail;
+        acc.modes |= mode;
+        acc.items = acc.items.max(items);
+        acc.first_ts = acc.first_ts.min(first_ts);
+        acc.last_ts = acc.last_ts.max(last_ts);
+    }
+    Ok(found)
 }
 
 #[cfg(test)]
@@ -627,39 +654,7 @@ mod tests {
         let db = dir.join("bb.db");
         let mut w = Writer::open(&db).unwrap();
         let t = 1_000_000 * 3600;
-        let st = Category::Storage;
-        // Hour 0: two photos read, one Download file only probed, and a
-        // look at the MAC address.
-        for (path, mode, ts) in [
-            ("/storage/emulated/0/DCIM/a.jpg", MODE_READ, t + 10),
-            ("/storage/emulated/0/DCIM/b.jpg", MODE_READ, t + 20),
-            ("/storage/emulated/0/Download/c.pdf", MODE_PROBE, t + 30),
-        ] {
-            w.record(10100, "com.a", st, path.into(), mode, true, ts, 0);
-        }
-        let mac = "/sys/class/net/wlan0/address".to_string();
-        w.record(
-            10100,
-            "com.a",
-            Category::Device,
-            mac.clone(),
-            MODE_READ,
-            false,
-            t + 40,
-            0,
-        );
-        // Hour 1: another app's probe only.
-        w.record(
-            10200,
-            "com.b",
-            st,
-            "/storage/emulated/0/Music".into(),
-            MODE_PROBE,
-            true,
-            t + 3600 + 5,
-            0,
-        );
-        w.flush(&Counters::default(), t + 3700).unwrap();
+        record_timeline_window(&mut w, t);
         let r = Reader::open(&db).unwrap();
 
         let page = timeline(&r, 0, t + 7200, 100).unwrap();
@@ -708,7 +703,7 @@ mod tests {
         w.record(
             10100,
             "com.a",
-            st,
+            Category::Storage,
             "/storage/emulated/0/DCIM/old.jpg".into(),
             MODE_READ,
             true,
@@ -735,54 +730,72 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    fn record_timeline_window(w: &mut Writer, t: i64) {
+        let st = Category::Storage;
+        // Hour 0: two photos read, one Download file only probed, and a
+        // look at the MAC address.
+        for (path, mode, ts) in [
+            ("/storage/emulated/0/DCIM/a.jpg", MODE_READ, t + 10),
+            ("/storage/emulated/0/DCIM/b.jpg", MODE_READ, t + 20),
+            ("/storage/emulated/0/Download/c.pdf", MODE_PROBE, t + 30),
+        ] {
+            w.record(10100, "com.a", st, path.into(), mode, true, ts, 0);
+        }
+        let mac = "/sys/class/net/wlan0/address".to_string();
+        w.record(
+            10100,
+            "com.a",
+            Category::Device,
+            mac,
+            MODE_READ,
+            false,
+            t + 40,
+            0,
+        );
+        // Hour 1: another app's probe only.
+        w.record(
+            10200,
+            "com.b",
+            st,
+            "/storage/emulated/0/Music".into(),
+            MODE_PROBE,
+            true,
+            t + 3600 + 5,
+            0,
+        );
+        w.flush(&Counters::default(), t + 3700).unwrap();
+    }
+
     #[test]
     fn files_are_filtered_by_text_category_and_app() {
         let dir = std::env::temp_dir().join(format!("bbd-contains-{}", std::process::id()));
         let db = dir.join("bb.db");
         let mut w = Writer::open(&db).unwrap();
         let t = 1_000_000 * 3600;
-        let st = Category::Storage;
-        w.record(
-            10100,
-            "com.a",
-            st,
-            "/storage/emulated/0/DCIM/IMG_1.jpg".into(),
-            MODE_READ,
-            true,
-            t,
-            0,
-        );
-        w.record(
-            10200,
-            "com.b",
-            st,
-            "/storage/emulated/0/DCIM/IMG_1.jpg".into(),
-            MODE_READ,
-            true,
-            t,
-            0,
-        );
-        w.record(
-            10200,
-            "com.b",
-            st,
-            "/storage/emulated/0/Music/a.mp3".into(),
-            MODE_READ,
-            true,
-            t,
-            0,
-        );
+        for (uid, pkg, path) in [
+            (10100, "com.a", "/storage/emulated/0/DCIM/IMG_1.jpg"),
+            (10200, "com.b", "/storage/emulated/0/DCIM/IMG_1.jpg"),
+            (10200, "com.b", "/storage/emulated/0/Music/a.mp3"),
+        ] {
+            w.record(
+                uid,
+                pkg,
+                Category::Storage,
+                path.into(),
+                MODE_READ,
+                true,
+                t,
+                0,
+            );
+        }
         w.flush(&Counters::default(), t + 10).unwrap();
         let r = Reader::open(&db).unwrap();
         let found = files(&r, &[], &[], None, Some("img_1"), 0, 10, 0).unwrap();
         let mut uids: Vec<u32> = found.iter().map(|f| f.uid).collect();
         uids.sort_unstable();
         assert_eq!(uids, vec![10100, 10200]);
-        assert!(
-            files(&r, &[], &[], None, Some("nothing"), 0, 10, 0)
-                .unwrap()
-                .is_empty()
-        );
+        let absent = files(&r, &[], &[], None, Some("nothing"), 0, 10, 0).unwrap();
+        assert!(absent.is_empty());
 
         // Several categories at once, as the search asks for files and the
         // media library together.
@@ -826,11 +839,8 @@ mod tests {
         // Several apps at once, as the search asks for the apps it shows.
         let mine = files(&r, &[10100, 10300], &[], None, Some("img_1"), 0, 10, 0).unwrap();
         assert_eq!(mine.iter().map(|f| f.uid).collect::<Vec<_>>(), [10100]);
-        assert!(
-            files(&r, &[10300], &[], None, Some("img_1"), 0, 10, 0)
-                .unwrap()
-                .is_empty()
-        );
+        let other = files(&r, &[10300], &[], None, Some("img_1"), 0, 10, 0).unwrap();
+        assert!(other.is_empty());
         drop(r);
         std::fs::remove_dir_all(dir).unwrap();
     }

@@ -22,47 +22,6 @@ use rusqlite::{Transaction, params};
 
 use super::{Reader, Writer};
 
-/// The tables of this module, in a new database and as the step from the
-/// schema before them.
-///
-/// A `net_dest` row is one hour in which an app connected to a port of an
-/// address, under the name it had looked up for the address ('' where it
-/// had looked none up). `sent` and `recv` are the bytes of the connections
-/// that ended in the hour and were counted, `counted` how many those were:
-/// not every connection is. `refused` are the attempts the sandbox refused.
-///
-/// A `net_rule` row is a destination an app is kept from, as the user
-/// named it. `net_recording` says since when an app's
-/// connections are recorded.
-pub const NET_SCHEMA: &str = "
-CREATE TABLE net_dest (
-    uid      INTEGER NOT NULL,
-    hour     INTEGER NOT NULL,   -- unix time / 3600
-    host     TEXT    NOT NULL,
-    addr     TEXT    NOT NULL,
-    port     INTEGER NOT NULL,
-    conn     INTEGER NOT NULL,
-    refused  INTEGER NOT NULL,
-    sent     INTEGER NOT NULL,
-    recv     INTEGER NOT NULL,
-    counted  INTEGER NOT NULL,
-    first_ts INTEGER NOT NULL,
-    last_ts  INTEGER NOT NULL,
-    PRIMARY KEY (uid, hour, host, addr, port)
-) WITHOUT ROWID;
-CREATE TABLE net_rule (
-    uid     INTEGER NOT NULL,
-    target  TEXT    NOT NULL,
-    created INTEGER NOT NULL,
-    manual  INTEGER NOT NULL,
-    PRIMARY KEY (uid, target)
-) WITHOUT ROWID;
-CREATE TABLE net_recording (
-    uid   INTEGER PRIMARY KEY,
-    since INTEGER NOT NULL
-) WITHOUT ROWID;
-";
-
 /// What a `net_dest` row is about.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct NetKey {
@@ -298,18 +257,18 @@ fn net_rules(conn: &rusqlite::Connection, uid: Option<u32>) -> anyhow::Result<Ve
 impl Reader {
     /// The destinations `uid` is kept from, oldest first.
     pub fn net_rules(&self, uid: u32) -> anyhow::Result<Vec<NetRule>> {
-        net_rules(&self.conn, Some(uid))
+        net_rules(self.connection(), Some(uid))
     }
 
     /// Since when the connections of each uid are recorded.
     pub fn net_recording(&self) -> anyhow::Result<HashMap<u32, i64>> {
-        net_recording(&self.conn)
+        net_recording(self.connection())
     }
 
     /// What is recorded of the network of `uid` in the hours from `since`
     /// up to, not including, `until` (unix times).
     pub fn net_rows(&self, uid: u32, since: i64, until: i64) -> anyhow::Result<Vec<NetRow>> {
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.connection().prepare(
             "SELECT hour, host, addr, port, conn, refused, sent, recv, counted, first_ts, last_ts
              FROM net_dest WHERE uid = ?1 AND hour >= ?2 AND hour < ?3
              ORDER BY hour, host, addr, port",
@@ -335,5 +294,115 @@ impl Reader {
             },
         )?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc::{TryRecvError, channel};
+
+    use super::*;
+    use crate::store::Counters;
+
+    fn record_connection(writer: &mut Writer, uid: u32, hour: i64) {
+        writer.net_record(
+            NetKey {
+                uid,
+                hour,
+                host: String::new(),
+                addr: "203.0.113.1".into(),
+                port: 443,
+            },
+            NetSeen {
+                conn: 1,
+                ..NetSeen::default()
+            },
+            hour * 3600,
+        );
+    }
+
+    #[test]
+    fn clearing_network_drops_only_the_chosen_uids_written_and_buffered_rows() {
+        let dir = std::env::temp_dir().join(format!("bbd-net-clear-{}", std::process::id()));
+        let db = dir.join("bb.db");
+        let mut writer = Writer::open(&db).unwrap();
+        let reader = Reader::open(&db).unwrap();
+        let counters = Counters::default();
+        let (uid, other) = (10234, 10235);
+        writer
+            .change_net_rule(
+                uid,
+                "domain:example.com",
+                RuleChange::Block {
+                    created: 3600,
+                    manual: true,
+                },
+                || Ok(()),
+            )
+            .unwrap();
+        writer.set_net_recording(&[uid], 3600).unwrap();
+        for uid in [uid, other] {
+            record_connection(&mut writer, uid, 1);
+        }
+        writer.flush(&counters, 3600).unwrap();
+        for uid in [uid, other] {
+            record_connection(&mut writer, uid, 2);
+        }
+
+        assert_eq!(writer.net_clear(uid).unwrap(), 1);
+        writer.flush(&counters, 7200).unwrap();
+        assert!(reader.net_rows(uid, 0, 10_800).unwrap().is_empty());
+        assert_eq!(reader.net_rows(other, 0, 10_800).unwrap().len(), 2);
+        assert_eq!(reader.net_rules(uid).unwrap().len(), 1);
+        assert_eq!(reader.net_recording().unwrap().get(&uid), Some(&3600));
+        drop((reader, writer));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn tells_the_registered_receiver_which_uid_was_cleared() {
+        let dir = std::env::temp_dir().join(format!("bbd-net-notice-{}", std::process::id()));
+        let mut writer = Writer::open(&dir.join("bb.db")).unwrap();
+        let (cleared, told) = channel();
+        writer.tell_net_cleared(cleared);
+        record_connection(&mut writer, 10234, 1);
+        assert_eq!(told.try_recv(), Err(TryRecvError::Empty));
+
+        assert_eq!(writer.net_clear(10234).unwrap(), 0);
+        assert_eq!(told.try_recv().unwrap(), 10234);
+        assert_eq!(told.try_recv(), Err(TryRecvError::Empty));
+        drop(writer);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn network_cleared_on_another_connection_is_not_written_from_what_was_held() {
+        let dir = std::env::temp_dir().join(format!("bbd-net-cleared-{}", std::process::id()));
+        let db = dir.join("bb.db");
+        let mut recorder = Writer::open(&db).unwrap();
+        let mut sandbox = Writer::open(&db).unwrap();
+        let (cleared, told) = channel();
+        sandbox.tell_net_cleared(cleared);
+        record_connection(&mut recorder, 10234, 1);
+        record_connection(&mut recorder, 10235, 1);
+
+        sandbox.net_clear(10234).unwrap();
+        // As the event loop does before it writes.
+        for uid in told.try_iter() {
+            recorder.net_clear(uid).unwrap();
+        }
+        recorder.flush(&Counters::default(), 3600).unwrap();
+
+        let uids: Vec<u32> = recorder
+            .conn
+            .prepare("SELECT uid FROM net_dest")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(uids, [10235]);
+        drop((recorder, sandbox));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
