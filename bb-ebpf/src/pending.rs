@@ -13,8 +13,35 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use super::Pending;
 use aya_ebpf::{macros::map, maps::LruHashMap};
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(super) struct Pending {
+    pub(super) path_ptr: u64,
+    /// openat2 only: user pointer to `struct open_how`, else 0.
+    pub(super) how_ptr: u64,
+    pub(super) dfd: i32,
+    pub(super) flags: u32,
+    pub(super) abi: u32,
+    pub(super) op: u32,
+    /// Set by `file_open` once it has reported a file for this syscall.
+    pub(super) reported: u32,
+    /// Always 0. Fills what would be padding after `reported`, which no
+    /// store would write (see `assert_no_padding`).
+    pub(super) _pad: u32,
+}
+
+bb_common::assert_no_padding!(Pending {
+    path_ptr,
+    how_ptr,
+    dfd,
+    flags,
+    abi,
+    op,
+    reported,
+    _pad
+});
 
 /// Covers kernels without task storage and calls for which allocation failed.
 /// LRU bounds the state orphaned by a thread dying mid-syscall.
