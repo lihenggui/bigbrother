@@ -26,16 +26,15 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import li.mercury.bigbrother.core.common.di.AppPackageName
 import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.DEFAULT
 import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.data.repository.InstalledAppRepository
 import li.mercury.bigbrother.core.data.repository.SandboxRepository
-import li.mercury.bigbrother.core.data.repository.UserDataRepository
+import li.mercury.bigbrother.core.domain.AppVisibility
+import li.mercury.bigbrother.core.domain.GetAppVisibilityUseCase
 import li.mercury.bigbrother.core.model.InstalledApp
 import li.mercury.bigbrother.core.model.SandboxedApp
 import li.mercury.bigbrother.core.model.isNonCoreUid
@@ -57,28 +56,26 @@ data class AddAppsUiState(
 class AddAppsViewModel @Inject constructor(
     private val installedAppRepository: InstalledAppRepository,
     private val sandboxRepository: SandboxRepository,
-    userDataRepository: UserDataRepository,
+    getAppVisibility: GetAppVisibilityUseCase,
     savedStateHandle: SavedStateHandle,
-    @AppPackageName private val ownPackage: String,
     @Dispatcher(DEFAULT) defaultDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
     private val installed = MutableStateFlow<List<InstalledApp>?>(null)
     private val query = MutableStateFlow("")
     private val selected = savedStateHandle.getMutableStateFlow(SELECTED_PACKAGES, arrayListOf<String>())
 
-    private val showSystemApps = userDataRepository.userData
-        .map { it.showSystemApps }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    private val visibility = getAppVisibility()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, getAppVisibility.default)
 
     val uiState: StateFlow<AddAppsUiState> = combine(
         installed,
         sandboxRepository.apps,
-        showSystemApps,
+        visibility,
         query,
         selected,
-    ) { installed, sandboxed, showSystem, query, selected ->
+    ) { installed, sandboxed, visibility, query, selected ->
         // A restored draft must wait for the sandbox list so existing isolation is left alone.
-        val eligible = if (sandboxed == null) null else installed?.eligibleApps(sandboxed, showSystem)
+        val eligible = if (sandboxed == null) null else installed?.eligibleApps(sandboxed, visibility)
         val apps = eligible
             ?.filter { app ->
                 query.isBlank() || app.info.label.contains(query, ignoreCase = true) || app.packageName.contains(query, ignoreCase = true)
@@ -117,16 +114,13 @@ class AddAppsViewModel @Inject constructor(
         val packages = selected.value.toSet()
         return installed.value.orEmpty()
             .filter { it.packageName in packages }
-            .eligibleApps(sandboxed, showSystemApps.value)
+            .eligibleApps(sandboxed, visibility.value)
     }
 
-    private fun List<InstalledApp>.eligibleApps(sandboxed: List<SandboxedApp>, showSystem: Boolean): List<InstalledApp> {
+    private fun List<InstalledApp>.eligibleApps(sandboxed: List<SandboxedApp>, visibility: AppVisibility): List<InstalledApp> {
         val isolated = sandboxed.filter { it.enabled }.map { it.uid }.toSet()
         return filter { app ->
-            app.packageName != ownPackage &&
-                isNonCoreUid(app.uid) &&
-                app.uid !in isolated &&
-                (showSystem || !app.info.isSystem)
+            isNonCoreUid(app.uid) && app.uid !in isolated && visibility.isShown(app)
         }
     }
 

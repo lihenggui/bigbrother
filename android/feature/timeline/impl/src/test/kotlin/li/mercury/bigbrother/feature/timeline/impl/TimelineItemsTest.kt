@@ -32,11 +32,10 @@ class TimelineItemsTest {
         category: Category = Category.STORAGE,
         topic: String? = null,
         filesRead: Int = 1,
-        pkg: String = "com.example",
     ) = TimelineEntry(
         hourStart = hour,
         uid = uid,
-        packageName = pkg,
+        packageName = "com.example",
         category = category,
         topic = topic,
         paths = 1,
@@ -50,7 +49,7 @@ class TimelineItemsTest {
         lastSeen = hour + 10,
     )
 
-    private fun items(entries: List<TimelineEntry>, filter: TimelineFilter = TimelineFilter()) = timelineItems(entries, filter, emptyMap(), showSystemApps = false, ownPackage = "me") { it - it % day }
+    private fun items(entries: List<TimelineEntry>, filter: TimelineFilter = TimelineFilter()) = timelineItems(entries, filter) { it - it % day }
 
     @Test
     fun givenEntriesOverSeveralDays_whenListed_thenGroupedByDayThenHour() {
@@ -79,10 +78,9 @@ class TimelineItemsTest {
     }
 
     @Test
-    fun givenLookupsAndOwnRecords_whenListed_thenLookupsOnlyOnRequestAndOwnNever() {
+    fun givenLookups_whenListed_thenShownOnlyOnRequest() {
         val entries = listOf(
             entry(3600, filesRead = 0),
-            entry(3600, uid = 10200, pkg = "me"),
             entry(3600, uid = 10300, category = Category.DEVICE, topic = "android_id", filesRead = 0),
         )
         assertEquals(1, items(entries).count { it is TimelineItem.Row })

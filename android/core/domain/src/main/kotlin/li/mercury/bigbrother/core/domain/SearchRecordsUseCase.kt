@@ -14,14 +14,14 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-package li.mercury.bigbrother.core.data.repository
+package li.mercury.bigbrother.core.domain
 
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
-import li.mercury.bigbrother.core.common.di.AppPackageName
 import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.DEFAULT
 import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
+import li.mercury.bigbrother.core.data.repository.AccessRepository
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.Category
@@ -36,28 +36,19 @@ data class SearchResult(
     val visibleApps: List<AppSummary> = emptyList(),
 )
 
-interface SearchRepository {
-    /** Finds matching apps and files among the visible apps with records. */
-    suspend fun search(text: String): SearchResult
-}
-
-internal class RecordsSearchRepository @Inject constructor(
+class SearchRecordsUseCase @Inject constructor(
     private val accessRepository: AccessRepository,
-    private val appInfoRepository: AppInfoRepository,
-    private val userDataRepository: UserDataRepository,
-    @AppPackageName private val ownPackage: String,
+    private val getAppRecords: GetAppRecordsUseCase,
+    private val getAppVisibility: GetAppVisibilityUseCase,
     @Dispatcher(DEFAULT) private val defaultDispatcher: CoroutineDispatcher,
-) : SearchRepository {
-    override suspend fun search(text: String): SearchResult = withContext(defaultDispatcher) {
+) {
+    /** Finds matching apps and files among the visible apps with records. */
+    suspend operator fun invoke(text: String): SearchResult = withContext(defaultDispatcher) {
         if (text.isBlank()) return@withContext SearchResult()
 
-        val apps = accessRepository.getApps(TimeRange.ALL)
-        val appInfo = appInfoRepository.getAppInfo(apps.map { it.packageName }.filter { it.isNotEmpty() }.toSet())
-        val showSystemApps = userDataRepository.userData.first().showSystemApps
-        val visible = apps.filter { app ->
-            app.packageName != ownPackage &&
-                (showSystemApps || (appInfo[app.packageName]?.isSystem != true && !app.isUnattributedIsolated))
-        }
+        val records = getAppRecords(TimeRange.ALL)
+        val appInfo = records.appInfo
+        val visible = getAppVisibility().first().visibleApps(records).apps
         SearchResult(
             apps = visible.filter { app ->
                 app.packageName.contains(text, ignoreCase = true) ||

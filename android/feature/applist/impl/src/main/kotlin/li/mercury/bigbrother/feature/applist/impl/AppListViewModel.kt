@@ -30,11 +30,13 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import li.mercury.bigbrother.core.data.RecordsException
-import li.mercury.bigbrother.core.data.repository.AccessRepository
-import li.mercury.bigbrother.core.data.repository.AppInfoRepository
 import li.mercury.bigbrother.core.data.repository.UserDataRepository
 import li.mercury.bigbrother.core.data.repository.UserSettingsWriter
 import li.mercury.bigbrother.core.data.toLoadFailure
+import li.mercury.bigbrother.core.domain.AppRecords
+import li.mercury.bigbrother.core.domain.AppVisibility
+import li.mercury.bigbrother.core.domain.GetAppRecordsUseCase
+import li.mercury.bigbrother.core.domain.GetAppVisibilityUseCase
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.LoadFailure
@@ -51,12 +53,13 @@ data class AppListUiState(
     val failure: LoadFailure? = null,
     /** Whether apps that are part of the system image are listed. */
     val showSystemApps: Boolean = false,
+    val hiddenApps: Int = 0,
 )
 
 @HiltViewModel
 class AppListViewModel @Inject constructor(
-    private val accessRepository: AccessRepository,
-    private val appInfoRepository: AppInfoRepository,
+    private val getAppRecords: GetAppRecordsUseCase,
+    getAppVisibility: GetAppVisibilityUseCase,
     private val userDataRepository: UserDataRepository,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(AppListUiState())
@@ -66,14 +69,17 @@ class AppListViewModel @Inject constructor(
     val settingsWriteFailures = settingsWriter.failures
 
     private var loadJob: Job? = null
+    private var records: AppRecords? = null
+    private var visibility = getAppVisibility.default
 
     /** When the last load finished, on the elapsed realtime clock. */
     private var loadedAt = 0L
 
     init {
         viewModelScope.launch {
-            userDataRepository.userData.map { it.showSystemApps }.distinctUntilChanged().collect { show ->
-                _uiState.update { it.copy(showSystemApps = show) }
+            getAppVisibility().collect { updated ->
+                visibility = updated
+                _uiState.update { it.withVisibility(records, updated) }
             }
         }
         // A range chosen here or on the overview reloads the list.
@@ -102,18 +108,26 @@ class AppListViewModel @Inject constructor(
             _uiState.update { it.copy(refreshing = true) }
             try {
                 val range = userDataRepository.userData.first().timeRange
-                val apps = accessRepository.getApps(range)
-                val appInfo = appInfoRepository.getAppInfo(
-                    apps.map { it.packageName }.filter { it.isNotEmpty() }.toSet(),
-                )
+                val loaded = getAppRecords(range)
+                records = loaded
                 loadedAt = SystemClock.elapsedRealtime()
                 _uiState.update {
-                    it.copy(range = range, apps = apps, appInfo = appInfo, refreshing = false, failure = null)
+                    it.withVisibility(loaded, visibility).copy(range = range, refreshing = false, failure = null)
                 }
             } catch (e: RecordsException) {
                 _uiState.update { it.copy(refreshing = false, failure = e.toLoadFailure()) }
             }
         }
+    }
+
+    private fun AppListUiState.withVisibility(records: AppRecords?, visibility: AppVisibility): AppListUiState {
+        val shown = records?.let(visibility::visibleApps)
+        return copy(
+            apps = shown?.apps,
+            appInfo = records?.appInfo.orEmpty(),
+            showSystemApps = visibility.showSystemApps,
+            hiddenApps = shown?.hiddenCount ?: 0,
+        )
     }
 
     fun setRange(range: TimeRange) = settingsWriter.setTimeRange(range)

@@ -186,8 +186,8 @@ private fun Timeline(
 ) {
     val context = LocalContext.current
     val zone = remember { ZoneId.systemDefault() }
-    val items = remember(entries, filter, state.appInfo, state.showSystemApps) {
-        timelineItems(entries, filter, state.appInfo, state.showSystemApps, context.packageName) { ts ->
+    val items = remember(entries, filter) {
+        timelineItems(entries, filter) { ts ->
             Instant.ofEpochSecond(ts).atZone(zone).toLocalDate().atStartOfDay(zone).toEpochSecond()
         }
     }

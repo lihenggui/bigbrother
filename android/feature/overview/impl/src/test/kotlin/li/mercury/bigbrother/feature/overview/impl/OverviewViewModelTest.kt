@@ -23,6 +23,8 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.InstalledModule
+import li.mercury.bigbrother.core.domain.GetAppRecordsUseCase
+import li.mercury.bigbrother.core.domain.GetAppVisibilityUseCase
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.Category
@@ -62,10 +64,10 @@ class OverviewViewModelTest {
     private val userDataRepository = TestUserDataRepository()
 
     private fun viewModel() = OverviewViewModel(
-        ownPackage = OWN_PACKAGE,
         accessRepository = accessRepository,
         moduleRepository = moduleRepository,
-        appInfoRepository = appInfoRepository,
+        getAppRecords = GetAppRecordsUseCase(accessRepository, appInfoRepository),
+        getAppVisibility = GetAppVisibilityUseCase(userDataRepository, OWN_PACKAGE),
         userDataRepository = userDataRepository,
         defaultDispatcher = mainDispatcherRule.testDispatcher,
     )

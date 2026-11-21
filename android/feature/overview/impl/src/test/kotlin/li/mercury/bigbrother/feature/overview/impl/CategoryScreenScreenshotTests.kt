@@ -20,6 +20,8 @@ import androidx.activity.ComponentActivity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import li.mercury.bigbrother.core.domain.AppRecords
+import li.mercury.bigbrother.core.domain.AppVisibility
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.screenshottesting.DefaultTestDevices
 import li.mercury.bigbrother.core.screenshottesting.DemoApp
@@ -31,7 +33,6 @@ import li.mercury.bigbrother.core.screenshottesting.captureMultiDevice
 import li.mercury.bigbrother.core.screenshottesting.screenshotName
 import li.mercury.bigbrother.core.ui.DataCategory
 import li.mercury.bigbrother.core.ui.dataCategories
-import li.mercury.bigbrother.core.ui.isShown
 import li.mercury.bigbrother.core.ui.readFiles
 import org.junit.Rule
 import org.junit.Test
@@ -87,8 +88,8 @@ class CategoryScreenScreenshotTests {
     @Composable
     private fun Category(category: DataCategory, selected: DemoApp? = null) {
         val records = remember { DemoRecords(clock) }
-        val apps = records.apps
-            .filter { isShown(it, records.appInfo, showSystemApps = false, ownPackage = "") }
+        val apps = AppVisibility(showSystemApps = false, ownPackage = "li.mercury.bigbrother")
+            .visibleApps(AppRecords(records.apps, records.appInfo)).apps
             .filter { category in it.dataCategories() }
             .sortedWith(
                 compareByDescending<AppSummary> { category == DataCategory.FILES && it.readFiles }
