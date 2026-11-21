@@ -168,7 +168,7 @@ class AppDetailViewModel @AssistedInject constructor(
                 }
                 val canOpenJail = packageName != ownPackage &&
                     isNonCoreUid(uid) &&
-                    info?.packageInfo?.applicationInfo?.uid == uid
+                    info?.uid == uid
                 mutableUiState.update {
                     it.copy(appInfo = info, packageDetails = details, canOpenJail = canOpenJail && it.app.packageName == packageName)
                 }

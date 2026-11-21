@@ -16,18 +16,14 @@
 
 package li.mercury.bigbrother.core.ui.coil
 
-import android.content.pm.PackageInfo
 import coil3.key.Keyer
 import coil3.request.Options
-import me.zhanghai.android.appiconloader.AppIconLoader
+import li.mercury.bigbrother.core.model.AppIconSource
 
 /**
  * Caches an app's icon by its package, user and last update, so that an
  * update that changes the icon is not shown with the old one.
  */
-class AppIconKeyer : Keyer<PackageInfo> {
-    override fun key(data: PackageInfo, options: Options): String? {
-        if (data.applicationInfo == null) return null
-        return AppIconLoader.getIconKey(data, options.context)
-    }
+class AppIconKeyer : Keyer<AppIconSource> {
+    override fun key(data: AppIconSource, options: Options): String = "app-icon:${data.packageName}:${data.userId}:${data.lastUpdateTime}"
 }

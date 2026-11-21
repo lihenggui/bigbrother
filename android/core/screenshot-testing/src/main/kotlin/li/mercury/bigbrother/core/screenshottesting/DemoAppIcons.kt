@@ -18,7 +18,6 @@
 
 package li.mercury.bigbrother.core.screenshottesting
 
-import android.content.pm.PackageInfo
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.LinearGradient
@@ -33,11 +32,12 @@ import androidx.compose.ui.graphics.vector.toPath
 import coil3.annotation.ExperimentalCoilApi
 import coil3.asImage
 import coil3.compose.AsyncImagePreviewHandler
+import li.mercury.bigbrother.core.model.AppIconSource
 import android.graphics.Path as AndroidPath
 
 /**
  * Launcher icons for the demo apps, which are not installed: AppIcon asks
- * Coil for an app's icon by its PackageInfo, and in inspection mode Coil
+ * Coil for an app's icon by its [AppIconSource], and in inspection mode Coil
  * asks [previewHandler] instead of loading it.
  */
 internal object DemoAppIcons {
@@ -50,7 +50,7 @@ internal object DemoAppIcons {
     private val icons = HashMap<DemoApp, Bitmap>()
 
     val previewHandler = AsyncImagePreviewHandler { request ->
-        val packageName = (request.data as? PackageInfo)?.packageName
+        val packageName = (request.data as? AppIconSource)?.packageName
         val app = DemoApp.of(packageName.orEmpty()) ?: error("No demo app has the package $packageName")
         icon(app).asImage()
     }

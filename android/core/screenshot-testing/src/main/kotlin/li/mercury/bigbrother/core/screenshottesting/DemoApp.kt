@@ -16,8 +16,6 @@
 
 package li.mercury.bigbrother.core.screenshottesting
 
-import android.content.pm.ApplicationInfo
-import android.content.pm.PackageInfo
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.DirectionsRun
 import androidx.compose.material.icons.filled.AutoFixHigh
@@ -32,6 +30,7 @@ import androidx.compose.material.icons.filled.PermMedia
 import androidx.compose.material.icons.filled.ShoppingBag
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.ui.graphics.vector.ImageVector
+import li.mercury.bigbrother.core.model.AppIconSource
 import li.mercury.bigbrother.core.model.AppInfo
 import java.util.Locale
 
@@ -72,19 +71,9 @@ enum class DemoApp(
     /** The app as the package manager would describe it, labeled in [locale]'s language. */
     fun appInfo(locale: Locale): AppInfo = AppInfo(
         label = if (locale.language == Locale.CHINESE.language) chineseLabel else label,
-        packageInfo = packageInfo,
+        iconSource = AppIconSource(packageName, uid, lastUpdateTime = 0),
         isSystem = isSystem,
     )
-
-    /** What AppIcon loads the icon from, and [DemoAppIcons] tells the apps apart by. */
-    internal val packageInfo: PackageInfo
-        get() = PackageInfo().also { info ->
-            info.packageName = packageName
-            info.applicationInfo = ApplicationInfo().also {
-                it.packageName = packageName
-                it.uid = uid
-            }
-        }
 
     companion object {
         internal fun of(packageName: String): DemoApp? = entries.firstOrNull { it.packageName == packageName }
