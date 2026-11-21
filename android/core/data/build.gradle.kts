@@ -38,3 +38,8 @@ dependencies {
     // For org.json, which the daemon's answers are read with.
     testImplementation(libs.robolectric)
 }
+
+val bbdCliErrors = rootDir.resolve("../testdata/protocol/bbd-cli-errors.txt")
+tasks.withType<Test>().configureEach {
+    inputs.file(bbdCliErrors).withPropertyName("bbdCliErrors").withPathSensitivity(PathSensitivity.RELATIVE)
+}

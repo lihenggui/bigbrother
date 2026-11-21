@@ -23,8 +23,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.DEFAULT
 import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.data.RecordsException
+import li.mercury.bigbrother.core.data.root.BBD_MISSING_MARKER
 import li.mercury.bigbrother.core.data.root.ModulePaths.BBD
 import li.mercury.bigbrother.core.data.root.RootShell
+import li.mercury.bigbrother.core.data.root.bbdFailure
 import li.mercury.bigbrother.core.data.root.parseBbdOutput
 import li.mercury.bigbrother.core.data.root.shellQuoted
 import li.mercury.bigbrother.core.model.Access
@@ -275,29 +277,14 @@ internal class RootAccessRepository @Inject constructor(
 
     private suspend fun query(args: String): String {
         val result = rootShell.run(
-            "if [ -x $BBD ]; then $BBD $args; else echo $MISSING_MARKER >&2; false; fi",
+            "if [ -x $BBD ]; then $BBD $args; else echo $BBD_MISSING_MARKER >&2; false; fi",
             label = "bbd ${args.substringBefore(' ')}",
         )
-        if (!result.isSuccess) {
-            if (MISSING_MARKER in result.error) throw RecordsException.ModuleMissing()
-            // How the daemon's argument parser rejects a command or option
-            // it does not have, or an option repeated that it takes once:
-            // the module is older than this app.
-            if (UNKNOWN_ARGUMENT.any { it in result.error }) throw RecordsException.ModuleOutdated()
-            throw RecordsException.CommandFailed(
-                result.error.ifBlank { "bbd exited with ${result.code}" },
-            )
-        }
+        result.bbdFailure()?.let { throw it }
         return result.output
     }
 
     private companion object {
-        const val MISSING_MARKER = "bbd-not-installed"
-        val UNKNOWN_ARGUMENT = listOf(
-            "unrecognized subcommand",
-            "unexpected argument",
-            "cannot be used multiple times",
-        )
         const val COVERAGE_PREFIX = "coverage_"
     }
 }

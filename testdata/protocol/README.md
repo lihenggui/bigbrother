@@ -12,6 +12,7 @@ it reads that meaning from it and rejects the lines listed as bad.
 | `spool.txt` | `bbd/src/spool.rs` | `EventSpool.kt` (`:hook`) |
 | `sandbox-list.txt` | `bbd/src/sandbox/identity.rs` | `SandboxRules.kt` (`:hook`) |
 | `sandbox-status.txt` | `bbd/src/sandbox/identity.rs` | `SandboxRules.kt` (`:hook`) |
+| `bbd-cli-errors.txt` | `bbd/src/protocol_cases.rs` | `BbdFailureTest.kt` (`:core:data`) |
 
 A change to a format changes its file, and both sides with it.
 
