@@ -173,8 +173,11 @@ baseline being updated in the same pull request:
 | Permissions and other manifest facts | `android/app/release-badging.txt` | `./gradlew :app:updateReleaseBadging` |
 | Licenses of dependencies | allow-list in `build-logic/.../Licensee.kt` | edit the list |
 
-It also runs Android lint on the release app and checks that every Rust and
-shell file has a license header.
+CI runs `./gradlew :app:lintRelease` and `./gradlew lintDebug -PlintTestNamesOnly`
+from `android/`. The naming check uses the debug variant because it owns the
+test sources and runs in every Android module, including test-only libraries.
+It requires `givenState_whenAction_thenOutcome` for Kotlin tests, including
+screenshot tests. CI also checks that every Rust and shell file has a license header.
 
 ## Releasing
 

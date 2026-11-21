@@ -21,28 +21,34 @@ import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.kotlin.dsl.configure
 
-/** Android lint, as in Blocker: the app's run covers the modules it depends on. */
 class AndroidLintConventionPlugin : Plugin<Project> {
     override fun apply(target: Project) {
         with(target) {
+            val testNamesOnly = providers.gradleProperty("lintTestNamesOnly").isPresent
             when {
                 pluginManager.hasPlugin("com.android.application") ->
-                    configure<ApplicationExtension> { lint(Lint::configure) }
+                    configure<ApplicationExtension> { lint { configure(testNamesOnly) } }
 
                 pluginManager.hasPlugin("com.android.library") ->
-                    configure<LibraryExtension> { lint(Lint::configure) }
+                    configure<LibraryExtension> { lint { configure(testNamesOnly) } }
 
                 else -> {
                     pluginManager.apply("com.android.lint")
-                    configure<Lint>(Lint::configure)
+                    configure<Lint> { configure(testNamesOnly) }
                 }
             }
+            dependencies.add("lintChecks", project(":lint"))
         }
     }
 }
 
-private fun Lint.configure() {
-    checkDependencies = true
+private fun Lint.configure(testNamesOnly: Boolean) {
+    // The naming run selects each module directly, including test-only dependencies.
+    checkDependencies = !testNamesOnly
+    if (testNamesOnly) {
+        checkTestSources = true
+        checkOnly += "TestMethodName"
+    }
     // Dependabot proposes newer versions.
     disable += "GradleDependency"
 }
