@@ -24,6 +24,7 @@ mod btf;
 mod clock;
 mod commands;
 mod control;
+mod daemon;
 mod dir;
 mod helper;
 mod lifecycle;
@@ -52,7 +53,7 @@ mod syscalls;
 #[cfg(test)]
 mod test_sync;
 mod topic;
-mod trace;
+mod tracer;
 
 use std::path::PathBuf;
 
@@ -399,7 +400,7 @@ fn main() -> anyhow::Result<()> {
         } => tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?
-            .block_on(trace::run(trace::Options {
+            .block_on(daemon::run(daemon::Options {
                 db: &cli.db,
                 packages_list: &packages_list,
                 retention_days,
