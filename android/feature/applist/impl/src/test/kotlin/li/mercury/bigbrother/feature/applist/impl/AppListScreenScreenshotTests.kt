@@ -21,7 +21,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
-import kotlinx.coroutines.Dispatchers
 import li.mercury.bigbrother.core.domain.AppRecords
 import li.mercury.bigbrother.core.domain.AppVisibility
 import li.mercury.bigbrother.core.model.LoadFailure
@@ -34,9 +33,6 @@ import li.mercury.bigbrother.core.screenshottesting.assertSamplesCover
 import li.mercury.bigbrother.core.screenshottesting.captureForDevice
 import li.mercury.bigbrother.core.screenshottesting.captureMultiDevice
 import li.mercury.bigbrother.core.screenshottesting.screenshotName
-import li.mercury.bigbrother.core.testing.repository.testSearchRecordsUseCase
-import li.mercury.bigbrother.feature.search.impl.GlobalSearchBar
-import li.mercury.bigbrother.feature.search.impl.SearchViewModel
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -115,7 +111,7 @@ class AppListScreenScreenshotTests {
         val shown = remember(records, showSystemApps) {
             AppVisibility(showSystemApps, ownPackage = "li.mercury.bigbrother").visibleApps(AppRecords(records.apps, records.appInfo))
         }
-        SearchScaffold(topBar = { SearchBar() }) {
+        SearchScaffold {
             val uiState = state(AppListUiState(apps = shown.apps, appInfo = records.appInfo, hiddenApps = shown.hiddenCount, showSystemApps = showSystemApps))
             AppListScreen(
                 presentation = uiState.present(AppListFilter(), LocalResources.current),
@@ -129,19 +125,4 @@ class AppListScreenScreenshotTests {
             )
         }
     }
-}
-
-/** The search bar the top-level screens have as their top bar, idle. */
-@Composable
-private fun SearchBar() {
-    val viewModel = remember {
-        SearchViewModel(testSearchRecordsUseCase(Dispatchers.Unconfined), Dispatchers.Unconfined)
-    }
-    GlobalSearchBar(
-        onOpenApp = { _, _, _ -> },
-        onOpenCategory = {},
-        onOpenSettings = {},
-        settingsBadge = false,
-        viewModel = viewModel,
-    )
 }

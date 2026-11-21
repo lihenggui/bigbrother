@@ -20,7 +20,6 @@ import androidx.activity.ComponentActivity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
-import kotlinx.coroutines.Dispatchers
 import li.mercury.bigbrother.core.domain.AppVisibility
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.screenshottesting.DefaultTestDevices
@@ -33,9 +32,6 @@ import li.mercury.bigbrother.core.screenshottesting.captureForDevice
 import li.mercury.bigbrother.core.screenshottesting.captureMultiDevice
 import li.mercury.bigbrother.core.screenshottesting.captureStoreScreenshot
 import li.mercury.bigbrother.core.screenshottesting.screenshotName
-import li.mercury.bigbrother.core.testing.repository.testSearchRecordsUseCase
-import li.mercury.bigbrother.feature.search.impl.GlobalSearchBar
-import li.mercury.bigbrother.feature.search.impl.SearchViewModel
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -136,7 +132,7 @@ class TimelineScreenScreenshotTests {
         val records = remember { DemoRecords(clock) }
         val page = state(TimelineUiState(entries = records.timeline, appInfo = records.appInfo))
         val visibility = AppVisibility(showSystemApps, ownPackage = "li.mercury.bigbrother")
-        SearchScaffold(topBar = { SearchBar() }) {
+        SearchScaffold {
             val uiState = page.copy(entries = page.entries?.let { visibility.visibleEntries(it, page.appInfo) })
             TimelineScreen(
                 presentation = uiState.present(TimelineFilter(), ZoneId.systemDefault()),
@@ -154,19 +150,4 @@ class TimelineScreenScreenshotTests {
         /** Entries few enough for the end of the list to show on a phone. */
         const val FIRST_PAGE = 4
     }
-}
-
-/** The search bar the top-level screens have as their top bar, idle. */
-@Composable
-private fun SearchBar() {
-    val viewModel = remember {
-        SearchViewModel(testSearchRecordsUseCase(Dispatchers.Unconfined), Dispatchers.Unconfined)
-    }
-    GlobalSearchBar(
-        onOpenApp = { _, _, _ -> },
-        onOpenCategory = {},
-        onOpenSettings = {},
-        settingsBadge = false,
-        viewModel = viewModel,
-    )
 }

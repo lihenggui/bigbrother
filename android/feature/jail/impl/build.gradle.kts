@@ -37,6 +37,4 @@ dependencies {
     testImplementation(libs.robolectric)
     testImplementation(projects.core.screenshotTesting)
     testImplementation(projects.core.testing)
-    // The top bar the jail has in the app, in the screenshots.
-    testImplementation(projects.feature.search.impl)
 }

@@ -20,18 +20,17 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.RecordsException
-import li.mercury.bigbrother.core.model.Access
 import li.mercury.bigbrother.core.model.Action
 import li.mercury.bigbrother.core.model.AppIconSource
 import li.mercury.bigbrother.core.model.AppInfo
-import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.Category
 import li.mercury.bigbrother.core.model.PathMatch
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.model.UserData
+import li.mercury.bigbrother.core.testing.data.testAccess
+import li.mercury.bigbrother.core.testing.data.testAppSummary
 import li.mercury.bigbrother.core.testing.repository.TestAccessRepository
 import li.mercury.bigbrother.core.testing.repository.TestAppInfoRepository
-import li.mercury.bigbrother.core.testing.repository.TestSearchAccessRepository
 import li.mercury.bigbrother.core.testing.repository.TestUserDataRepository
 import li.mercury.bigbrother.core.testing.repository.testSearchRecordsUseCase
 import kotlin.test.Test
@@ -39,16 +38,14 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
 class SearchRecordsUseCaseTest {
-    private val access = TestSearchAccessRepository(
-        TestAccessRepository(
-            apps = listOf(
-                app(10001, "com.example.photos"),
-                app(10002, "com.example.camera"),
-                app(10003, "com.example.system"),
-                app(99001, ""),
-                app(10004, "com.example.recorder"),
-                app(10005, "com.example.reader"),
-            ),
+    private val access = TestAccessRepository(
+        apps = listOf(
+            testAppSummary(10001, "com.example.photos"),
+            testAppSummary(10002, "com.example.camera"),
+            testAppSummary(10003, "com.example.system"),
+            testAppSummary(99001, ""),
+            testAppSummary(10004, "com.example.recorder"),
+            testAppSummary(10005, "com.example.reader"),
         ),
     )
     private val info = TestAppInfoRepository(
@@ -63,20 +60,11 @@ class SearchRecordsUseCaseTest {
         val match = PathMatch(
             uid = 10001,
             packageName = "com.example.photos",
-            access = Access(
-                category = Category.STORAGE,
-                path = "/storage/emulated/0/DCIM/Camera/photo.jpg",
-                action = Action.READ,
-                viaProvider = false,
-                items = 0,
-                allowed = 1,
-                denied = 0,
-                lastSeen = 5,
-            ),
+            access = testAccess("/storage/emulated/0/DCIM/Camera/photo.jpg", lastSeen = 5),
         )
         access.paths = { query ->
             assertEquals(
-                TestSearchAccessRepository.PathQuery(
+                TestAccessRepository.PathQuery(
                     "cAmErA",
                     listOf(Category.STORAGE, Category.PROVIDER),
                     listOf(10001, 10002, 10005),
@@ -121,6 +109,4 @@ class SearchRecordsUseCaseTest {
         info,
         TestUserDataRepository(UserData(showSystemApps = showSystemApps)),
     )
-
-    private fun app(uid: Int, packageName: String) = AppSummary(uid, packageName, emptyMap(), lastSeen = 1)
 }

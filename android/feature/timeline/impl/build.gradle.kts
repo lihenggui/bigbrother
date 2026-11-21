@@ -37,6 +37,4 @@ dependencies {
     testImplementation(libs.robolectric)
     testImplementation(projects.core.screenshotTesting)
     testImplementation(projects.core.testing)
-    // The timeline's top bar, in the screenshots.
-    testImplementation(projects.feature.search.impl)
 }

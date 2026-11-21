@@ -27,6 +27,7 @@ import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.InstalledApp
 import li.mercury.bigbrother.core.model.TimeRange
+import li.mercury.bigbrother.core.testing.data.testAppSummary
 import li.mercury.bigbrother.core.testing.repository.TestAccessRepository
 import li.mercury.bigbrother.core.testing.repository.TestAppInfoRepository
 import li.mercury.bigbrother.core.testing.repository.TestUserDataRepository
@@ -34,11 +35,11 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class GetAppVisibilityUseCaseTest {
-    private val system = app(10100, "com.example.system")
-    private val user = app(10101, "com.example.user")
-    private val isolated = app(190_000, "")
-    private val unknown = app(10102, "com.example.uninstalled")
-    private val own = app(10103, OWN_PACKAGE)
+    private val system = testAppSummary(10100, "com.example.system")
+    private val user = testAppSummary(10101, "com.example.user")
+    private val isolated = testAppSummary(190_000, "")
+    private val unknown = testAppSummary(10102, "com.example.uninstalled")
+    private val own = testAppSummary(10103, OWN_PACKAGE)
 
     @Test
     fun givenLoadedRecords_whenSystemAppsAreEnabled_thenShowsThemInOrderWithoutReloading() = runTest {
@@ -77,8 +78,6 @@ class GetAppVisibilityUseCaseTest {
         userData.setShowSystemApps(true)
         assertEquals(apps.take(2), apps.filter(getAppVisibility().first()::isShown))
     }
-
-    private fun app(uid: Int, packageName: String) = AppSummary(uid, packageName, emptyMap(), lastSeen = 1)
 
     private fun AppSummary.info(isSystem: Boolean) = AppInfo("App", AppIconSource(packageName, uid, lastUpdateTime = 0), isSystem)
 

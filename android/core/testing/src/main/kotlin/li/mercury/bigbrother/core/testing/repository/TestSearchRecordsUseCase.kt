@@ -23,30 +23,6 @@ import li.mercury.bigbrother.core.data.repository.UserDataRepository
 import li.mercury.bigbrother.core.domain.GetAppRecordsUseCase
 import li.mercury.bigbrother.core.domain.GetAppVisibilityUseCase
 import li.mercury.bigbrother.core.domain.SearchRecordsUseCase
-import li.mercury.bigbrother.core.model.Category
-import li.mercury.bigbrother.core.model.PathMatch
-import li.mercury.bigbrother.core.model.TimeRange
-
-class TestSearchAccessRepository(
-    records: TestAccessRepository,
-    var paths: suspend (PathQuery) -> List<PathMatch> = { emptyList() },
-) : AccessRepository by records {
-    data class PathQuery(
-        val text: String,
-        val categories: Collection<Category>,
-        val uids: Collection<Int>,
-        val range: TimeRange,
-        val limit: Int,
-    )
-
-    override suspend fun searchPaths(
-        text: String,
-        categories: Collection<Category>,
-        uids: Collection<Int>,
-        range: TimeRange,
-        limit: Int,
-    ): List<PathMatch> = paths(PathQuery(text, categories, uids, range, limit))
-}
 
 fun testSearchRecordsUseCase(
     dispatcher: CoroutineDispatcher,

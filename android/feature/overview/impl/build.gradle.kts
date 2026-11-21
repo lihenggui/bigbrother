@@ -38,6 +38,4 @@ dependencies {
     testImplementation(libs.robolectric)
     testImplementation(projects.core.screenshotTesting)
     testImplementation(projects.core.testing)
-    // The overview's top bar, in the screenshots.
-    testImplementation(projects.feature.search.impl)
 }

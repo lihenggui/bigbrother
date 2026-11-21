@@ -16,36 +16,24 @@
 
 package li.mercury.bigbrother.feature.appdetail.impl
 
-import li.mercury.bigbrother.core.model.Access
 import li.mercury.bigbrother.core.model.Action
-import li.mercury.bigbrother.core.model.Category
+import li.mercury.bigbrother.core.testing.data.testAccess
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class FilesSummaryTest {
-    private fun access(path: String, action: Action = Action.READ, allowed: Int = 1, lastSeen: Long = 0) = Access(
-        category = Category.STORAGE,
-        path = path,
-        action = action,
-        viaProvider = false,
-        items = 0,
-        allowed = allowed,
-        denied = if (allowed == 0) 1 else 0,
-        lastSeen = lastSeen,
-    )
-
     @Test
     fun givenReadsInSeveralFolders_whenSummarised_thenRankedByFilesReadAndNamedBelowVolume() {
         val folders = topFolders(
             listOf(
-                access("/storage/emulated/0/DCIM/Camera/a.jpg"),
-                access("/storage/emulated/0/DCIM/Camera/b.jpg"),
+                testAccess("/storage/emulated/0/DCIM/Camera/a.jpg"),
+                testAccess("/storage/emulated/0/DCIM/Camera/b.jpg"),
                 // The same file read twice counts once.
-                access("/storage/emulated/0/DCIM/Camera/b.jpg", lastSeen = 5),
-                access("/storage/emulated/0/Download/c.pdf", lastSeen = 9),
+                testAccess("/storage/emulated/0/DCIM/Camera/b.jpg", lastSeen = 5),
+                testAccess("/storage/emulated/0/Download/c.pdf", lastSeen = 9),
                 // Probed or refused files were not read.
-                access("/storage/emulated/0/Music/d.mp3", action = Action.PROBE),
-                access("/storage/emulated/0/Documents/e.txt", allowed = 0),
+                testAccess("/storage/emulated/0/Music/d.mp3", action = Action.PROBE),
+                testAccess("/storage/emulated/0/Documents/e.txt", allowed = 0, denied = 1),
             ),
             limit = 3,
         )
@@ -57,10 +45,10 @@ class FilesSummaryTest {
     fun givenSeveralActionsOnOnePath_whenTotalled_thenPathCountsOnce() {
         val totals = fileTotals(
             listOf(
-                access("/storage/emulated/0/DCIM/a.jpg"),
-                access("/storage/emulated/0/DCIM/a.jpg", action = Action.PROBE),
-                access("/storage/emulated/0/Music", action = Action.LIST),
-                access("/storage/emulated/0/x", allowed = 0),
+                testAccess("/storage/emulated/0/DCIM/a.jpg"),
+                testAccess("/storage/emulated/0/DCIM/a.jpg", action = Action.PROBE),
+                testAccess("/storage/emulated/0/Music", action = Action.LIST),
+                testAccess("/storage/emulated/0/x", allowed = 0, denied = 1),
             ),
         )
         assertEquals(FileTotals(read = 1, lookedFor = 2), totals)

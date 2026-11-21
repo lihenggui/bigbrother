@@ -26,7 +26,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
-import kotlinx.coroutines.Dispatchers
 import li.mercury.bigbrother.core.designsystem.theme.BigBrotherTheme
 import li.mercury.bigbrother.core.model.InstalledApp
 import li.mercury.bigbrother.core.model.LoadFailure
@@ -44,9 +43,6 @@ import li.mercury.bigbrother.core.screenshottesting.assertSamplesCover
 import li.mercury.bigbrother.core.screenshottesting.captureForDevice
 import li.mercury.bigbrother.core.screenshottesting.captureMultiDevice
 import li.mercury.bigbrother.core.screenshottesting.screenshotName
-import li.mercury.bigbrother.core.testing.repository.testSearchRecordsUseCase
-import li.mercury.bigbrother.feature.search.impl.GlobalSearchBar
-import li.mercury.bigbrother.feature.search.impl.SearchViewModel
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -226,7 +222,7 @@ class JailScreenScreenshotTests {
     fun givenEachMessage_whenShown_thenSnackbarSaysWhatHappened() {
         for ((name, message) in messages()) {
             capturePhone("JailMessage$name") {
-                SearchScaffold(topBar = { SearchBar() }) {
+                SearchScaffold {
                     JailScreen(
                         state = JailUiState(apps = isolatedApps(), status = FULL_STATUS, message = message),
                         selectedUid = null,
@@ -454,7 +450,7 @@ class JailScreenScreenshotTests {
 
     @Composable
     private fun Jail(state: JailUiState) {
-        SearchScaffold(topBar = { SearchBar() }) {
+        SearchScaffold {
             JailScreen(
                 state = state,
                 selectedUid = null,
@@ -536,19 +532,4 @@ class JailScreenScreenshotTests {
         /** A phone tall enough for the whole of the global settings, down to the status at their end. */
         const val WHOLE_PAGE = "spec:shape=Normal,width=412,height=2600,unit=dp,dpi=480"
     }
-}
-
-/** The search bar the top-level screens have as their top bar, idle. */
-@Composable
-private fun SearchBar() {
-    val viewModel = remember {
-        SearchViewModel(testSearchRecordsUseCase(Dispatchers.Unconfined), Dispatchers.Unconfined)
-    }
-    GlobalSearchBar(
-        onOpenApp = { _, _, _ -> },
-        onOpenCategory = {},
-        onOpenSettings = {},
-        settingsBadge = false,
-        viewModel = viewModel,
-    )
 }
