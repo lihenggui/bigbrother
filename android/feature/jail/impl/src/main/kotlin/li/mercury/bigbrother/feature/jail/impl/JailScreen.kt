@@ -100,7 +100,6 @@ fun JailScreen(
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    val message by viewModel.message.collectAsStateWithLifecycle()
     LifecycleResumeEffect(Unit) {
         viewModel.refresh()
         onPauseOrDispose {}
@@ -108,7 +107,6 @@ fun JailScreen(
     var adding by rememberSaveable { mutableStateOf(false) }
     JailScreen(
         state = state,
-        message = message,
         selectedUid = selectedUid,
         settingsSelected = settingsSelected,
         onRefresh = viewModel::refresh,
@@ -121,7 +119,7 @@ fun JailScreen(
                 is JailMessage.NotIsolated, is JailMessage.NotReleased -> Unit
             }
         },
-        onMessageDismiss = viewModel::dismissMessage,
+        onMessageDismiss = viewModel::onMessageShown,
         modifier = modifier,
     )
     if (adding) {
@@ -139,7 +137,6 @@ fun JailScreen(
 @Composable
 internal fun JailScreen(
     state: JailUiState,
-    message: JailMessage?,
     selectedUid: Int?,
     settingsSelected: Boolean,
     onRefresh: () -> Unit,
@@ -147,11 +144,11 @@ internal fun JailScreen(
     onOpenSettings: () -> Unit,
     onAdd: () -> Unit,
     onUndo: (JailMessage) -> Unit,
-    onMessageDismiss: () -> Unit,
+    onMessageDismiss: (JailMessage) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val snackbar = remember { SnackbarHostState() }
-    MessageEffect(message, snackbar, onUndo, onMessageDismiss)
+    MessageEffect(state.message, snackbar, onUndo, onMessageDismiss)
     val listState = rememberLazyListState()
     // The button says what it does while the list is at its top, and gets
     // out of the way as it scrolls.
@@ -334,7 +331,7 @@ private fun MessageEffect(
     message: JailMessage?,
     snackbar: SnackbarHostState,
     onUndo: (JailMessage) -> Unit,
-    onDismiss: () -> Unit,
+    onDismiss: (JailMessage) -> Unit,
 ) {
     val text = message?.let { messageText(it) }
     val undo = stringResource(R.string.jail_undo)
@@ -347,7 +344,7 @@ private fun MessageEffect(
             duration = if (canUndo) SnackbarDuration.Long else SnackbarDuration.Short,
         )
         // Only now: taken away earlier, the message would end its own showing.
-        onDismiss()
+        onDismiss(message)
         if (result == SnackbarResult.ActionPerformed) onUndo(message)
     }
 }

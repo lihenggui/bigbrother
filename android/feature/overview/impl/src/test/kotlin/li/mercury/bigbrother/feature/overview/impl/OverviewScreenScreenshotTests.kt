@@ -21,6 +21,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import kotlinx.coroutines.Dispatchers
+import li.mercury.bigbrother.core.data.repository.ModuleUpdate
+import li.mercury.bigbrother.core.data.repository.installerError
 import li.mercury.bigbrother.core.domain.AppRecords
 import li.mercury.bigbrother.core.domain.AppVisibility
 import li.mercury.bigbrother.core.model.AppSummary
@@ -225,7 +227,7 @@ class OverviewScreenScreenshotTests {
             ModuleSetup.Idle,
             ModuleSetup.Installing,
             ModuleSetup.NeedsReboot,
-            ModuleSetup.Failed(INSTALLER_OUTPUT),
+            ModuleSetup.Failed(installerError(INSTALLER_OUTPUT)),
         )
 
         val START_FAILURES = listOf(
@@ -238,7 +240,7 @@ class OverviewScreenScreenshotTests {
             ModuleUpdate.Updating,
             ModuleUpdate.Disabled,
             ModuleUpdate.NotReporting,
-            ModuleUpdate.Failed(INSTALLER_OUTPUT),
+            ModuleUpdate.Failed(installerError(INSTALLER_OUTPUT)),
         )
     }
 }

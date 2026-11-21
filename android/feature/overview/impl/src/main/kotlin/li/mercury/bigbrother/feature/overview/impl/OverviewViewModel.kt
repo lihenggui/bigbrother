@@ -21,24 +21,29 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.DEFAULT
 import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.AccessRepository
-import li.mercury.bigbrother.core.data.repository.InstalledModule
 import li.mercury.bigbrother.core.data.repository.ModuleRepository
+import li.mercury.bigbrother.core.data.repository.ModuleUpdate
+import li.mercury.bigbrother.core.data.repository.ModuleUpdater
 import li.mercury.bigbrother.core.data.repository.UserDataRepository
-import li.mercury.bigbrother.core.data.repository.UserSettingsWriter
+import li.mercury.bigbrother.core.data.repository.installerError
 import li.mercury.bigbrother.core.data.toLoadFailure
 import li.mercury.bigbrother.core.domain.AppRecords
 import li.mercury.bigbrother.core.domain.GetAppRecordsUseCase
@@ -46,6 +51,7 @@ import li.mercury.bigbrother.core.domain.GetAppVisibilityUseCase
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.TimeRange
+import li.mercury.bigbrother.core.ui.UserSettingsWriter
 import timber.log.Timber
 import javax.inject.Inject
 
@@ -68,22 +74,7 @@ sealed interface ModuleSetup {
 
     /** Installed, but the manager could not apply it without a reboot. */
     data object NeedsReboot : ModuleSetup
-    data class Failed(val output: String) : ModuleSetup
-}
-
-/** Bringing the installed module up to date with the one this app carries. */
-sealed interface ModuleUpdate {
-    data object Idle : ModuleUpdate
-    data object Updating : ModuleUpdate
-
-    /** Disabled or marked for removal in the root manager, and left as it is. */
-    data object Disabled : ModuleUpdate
-
-    /** The files were replaced, but the new daemon did not report in. */
-    data object NotReporting : ModuleUpdate
-
-    /** Replacing the files failed, with the output saying why. */
-    data class Failed(val output: String) : ModuleUpdate
+    data class Failed(val reason: String?) : ModuleSetup
 }
 
 data class OverviewUiState(
@@ -106,176 +97,120 @@ data class OverviewUiState(
     val daemonStarting: Boolean = false,
     /** Why the last request to start the daemon failed, if it did. */
     val daemonStartError: StartFailure? = null,
+    val message: UserSettingsWriter.Failure? = null,
 )
 
 @HiltViewModel
 class OverviewViewModel @Inject constructor(
     private val accessRepository: AccessRepository,
     private val moduleRepository: ModuleRepository,
+    private val moduleUpdater: ModuleUpdater,
     private val getAppRecords: GetAppRecordsUseCase,
     private val getAppVisibility: GetAppVisibilityUseCase,
     private val userDataRepository: UserDataRepository,
     @Dispatcher(DEFAULT) private val defaultDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
-    private val _uiState = MutableStateFlow(OverviewUiState())
-    val uiState: StateFlow<OverviewUiState> = _uiState.asStateFlow()
+    private val settingsWriter = UserSettingsWriter(viewModelScope) { Timber.w(it) }
+    private val refreshes = MutableStateFlow(0L)
+    private val screenResumed = MutableStateFlow(false)
+    private val recorderBusy = MutableStateFlow(false)
+    private val load = MutableStateFlow(OverviewLoad())
+    private var completed: OverviewRequest? = null
 
-    private val settingsWriter = UserSettingsWriter(viewModelScope, userDataRepository)
-    val settingsWriteFailures = settingsWriter.failures
-
-    private var loadJob: Job? = null
-
-    private var loaded: AppRecords? = null
-
-    /** When the last load finished, on the elapsed realtime clock. */
+    /** When the last successful load finished, on the elapsed realtime clock. */
     private var loadedAt = 0L
 
-    /**
-     * Whether an outdated module has been updated automatically already.
-     * Once is enough: a failure is shown with a way to try again rather
-     * than retried on every load.
-     */
-    private var autoUpdated = false
+    private val ranges = userDataRepository.userData.map { it.timeRange }.distinctUntilChanged()
+    private val requests = combine(ranges, refreshes, screenResumed, recorderBusy) { range, refresh, resumed, busy ->
+        OverviewRequest(range, refresh).takeIf { resumed && !busy }
+    }.distinctUntilChanged()
 
-    /** The installed module was found to be the one this app carries. */
-    private var moduleCurrent = false
-
-    init {
-        // A range chosen here or on another screen reloads the overview.
-        viewModelScope.launch {
-            userDataRepository.userData.map { it.timeRange }.distinctUntilChanged().collect { range ->
-                _uiState.update { it.copy(range = range) }
-                refresh()
+    val uiState: StateFlow<OverviewUiState> = channelFlow {
+        launch {
+            requests.collectLatest { request ->
+                if (request != null && request != completed && screenResumed.value && !recorderBusy.value) {
+                    loadOverview(request)
+                }
             }
         }
-        // The system apps setting only changes which of the loaded apps count.
-        viewModelScope.launch {
-            getAppVisibility().collect { visibility ->
-                val loaded = loaded ?: return@collect
-                val (files, categories) = overviewOf(visibility.visibleApps(loaded).apps)
-                _uiState.update { it.copy(files = files, categories = categories) }
+        val content = combine(load, getAppVisibility()) { loaded, visibility ->
+            val records = loaded.records ?: return@combine loaded.ui
+            val (files, categories) = withContext(defaultDispatcher) {
+                overviewOf(visibility.visibleApps(records).apps)
             }
+            loaded.ui.copy(files = files, categories = categories, appInfo = records.appInfo)
         }
+        combine(content, moduleUpdater.state, settingsWriter.message) { state, update, message ->
+            state.copy(moduleUpdate = update, message = message)
+        }.collect { send(it) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), OverviewUiState())
+
+    /** Recheck stale records on return, without reading them in the background. */
+    fun onScreenResumed() {
+        if (completed?.refresh == refreshes.value && SystemClock.elapsedRealtime() - loadedAt >= STALE_AFTER_MS) refresh()
+        screenResumed.value = true
     }
 
-    /**
-     * Reload when the screen is shown again, unless a load is running or has
-     * just finished: at launch, the first load is still on its way.
-     */
-    fun refreshIfStale() {
-        if (loadJob?.isActive == true) return
-        if (SystemClock.elapsedRealtime() - loadedAt < STALE_AFTER_MS) return
-        refresh()
+    fun onScreenPaused() {
+        screenResumed.value = false
     }
 
-    /** Stop a load in progress, and with it the refresh indicator. */
-    private fun cancelLoad() {
-        loadJob?.cancel()
-        _uiState.update { it.copy(refreshing = false) }
-    }
-
-    /** Load, or reload, the overview. */
     fun refresh() {
-        loadJob?.cancel()
-        // Off the main thread: between its steps, the load would otherwise
-        // wait for the main thread, which is busy drawing the first screen.
-        loadJob = viewModelScope.launch(defaultDispatcher) {
-            val start = SystemClock.elapsedRealtime()
-            _uiState.update { it.copy(refreshing = true) }
-            try {
-                val userData = userDataRepository.userData.first()
-                val records = getAppRecords(userData.timeRange)
-                val status = accessRepository.getRecorderStatus()
-                val pending = moduleRepository.isUpdatePending()
-                loaded = records
-                loadedAt = SystemClock.elapsedRealtime()
-                // The setting as it is now: it may have changed during the load.
-                val visibility = getAppVisibility().first()
-                val (files, categories) = overviewOf(visibility.visibleApps(records).apps)
-                _uiState.update {
-                    it.copy(
-                        range = userData.timeRange,
-                        files = files,
-                        categories = categories,
-                        appInfo = records.appInfo,
-                        recording = status.recording,
-                        refreshing = false,
-                        failure = null,
-                        // An installation in progress is not over because the
-                        // records loaded meanwhile.
-                        moduleSetup = it.moduleSetup.takeIf { setup -> setup == ModuleSetup.Installing }
-                            ?: ModuleSetup.Idle,
-                        // Recording again means an earlier start problem is over.
-                        daemonStartError = it.daemonStartError.takeUnless { status.recording },
-                        modulePendingReboot = pending,
-                    )
-                }
-                Timber.i("Overview loaded in %d ms: %d apps", SystemClock.elapsedRealtime() - start, records.apps.size)
-            } catch (e: RecordsException) {
-                val failure = e.toLoadFailure()
-                Timber.w("Overview not loaded: %s", failure)
-                // A daemon too old for even these commands is updated too.
-                if (failure == LoadFailure.ModuleOutdated && !autoUpdated) {
-                    autoUpdated = true
-                    updateModule()
-                    return@launch
-                }
-                _uiState.update { it.copy(refreshing = false, failure = failure) }
-                return@launch
-            }
-            checkModule()
-        }
+        refreshes.update { it + 1 }
     }
 
-    /**
-     * Once the records are on screen, compares the installed module with the
-     * one this app carries: the module follows the app, so one older than it,
-     * or built differently, is replaced. A current module stays current for
-     * as long as this app runs, and is not compared again.
-     */
-    private suspend fun checkModule() {
-        if (autoUpdated || moduleCurrent) return
-        val installed = moduleRepository.compareWithBundled()
-        Timber.i("Installed module: %s", installed)
-        when (installed) {
-            InstalledModule.OUTDATED -> {
-                autoUpdated = true
+    private suspend fun loadOverview(request: OverviewRequest) {
+        val start = SystemClock.elapsedRealtime()
+        load.update { it.copy(ui = it.ui.copy(range = request.range, refreshing = true)) }
+        try {
+            val failure = readOverview(request, start)
+            currentCoroutineContext().ensureActive()
+            val shouldUpdate = moduleUpdater.shouldUpdate(failure)
+            completed = request
+            if (shouldUpdate) {
                 updateModule()
+            } else if (failure != null) {
+                updateState { it.copy(failure = failure) }
             }
-
-            InstalledModule.CURRENT -> moduleCurrent = true
-
-            InstalledModule.NEWER, InstalledModule.UNKNOWN -> Unit
+        } finally {
+            updateState { it.copy(refreshing = false) }
         }
     }
 
-    /**
-     * Replace the installed module's files with this app's and restart the
-     * daemon, without a reboot, then wait for the new daemon to report in.
-     */
+    private suspend fun readOverview(request: OverviewRequest, start: Long): LoadFailure? = try {
+        val (records, status, pending) = withContext(defaultDispatcher) {
+            Triple(getAppRecords(request.range), accessRepository.getRecorderStatus(), moduleRepository.isUpdatePending())
+        }
+        loadedAt = SystemClock.elapsedRealtime()
+        load.update {
+            OverviewLoad(
+                records = records,
+                ui = it.ui.copy(
+                    recording = status.recording,
+                    refreshing = false,
+                    failure = null,
+                    // An installation may still be in progress when the records arrive.
+                    moduleSetup = it.ui.moduleSetup.takeIf { setup -> setup == ModuleSetup.Installing } ?: ModuleSetup.Idle,
+                    daemonStartError = it.ui.daemonStartError.takeUnless { status.recording },
+                    modulePendingReboot = pending,
+                ),
+            )
+        }
+        Timber.i("Overview loaded in %d ms: %d apps", loadedAt - start, records.apps.size)
+        null
+    } catch (e: RecordsException) {
+        e.toLoadFailure().also { Timber.w("Overview not loaded: %s", it) }
+    }
+
     fun updateModule() {
-        if (_uiState.value.moduleUpdate == ModuleUpdate.Updating) return
-        cancelLoad()
-        _uiState.update { it.copy(moduleUpdate = ModuleUpdate.Updating) }
-        viewModelScope.launch {
-            val result = try {
-                when {
-                    !moduleRepository.updateInPlace() -> ModuleUpdate.Disabled
-                    awaitRecording() -> ModuleUpdate.Idle
-                    else -> ModuleUpdate.NotReporting
-                }
-            } catch (e: RecordsException) {
-                ModuleUpdate.Failed(e.message.orEmpty())
-            }
-            Timber.i("Module update: %s", result)
-            _uiState.update { it.copy(moduleUpdate = result) }
-            refresh()
-        }
+        runRecorderAction { moduleUpdater.updateInPlace() }
     }
 
-    fun setRange(range: TimeRange) = settingsWriter.setTimeRange(range)
+    fun setRange(range: TimeRange) = settingsWriter.save(UserSettingsWriter.Setting.TIME_RANGE) {
+        userDataRepository.setTimeRange(range)
+    }
 
-    fun resolveSettingsWrite(failure: UserSettingsWriter.Failure, retry: Boolean) = settingsWriter.resolve(failure, retry)
+    fun onMessageShown(failure: UserSettingsWriter.Failure, retry: Boolean) = settingsWriter.resolve(failure, retry)
 
     /**
      * Start the daemon when the module is installed but not running, then
@@ -283,63 +218,61 @@ class OverviewViewModel @Inject constructor(
      * written its first batch, a few seconds after starting.
      */
     fun startDaemon() {
-        if (_uiState.value.daemonStarting) return
-        cancelLoad()
-        _uiState.update { it.copy(daemonStarting = true, daemonStartError = null) }
-        viewModelScope.launch {
+        runRecorderAction {
+            updateState { it.copy(daemonStarting = true, daemonStartError = null) }
             val error = try {
                 when {
                     !moduleRepository.startDaemon() -> StartFailure.ModuleDisabled
-                    awaitRecording() -> null
+                    moduleUpdater.awaitRecording() -> null
                     else -> StartFailure.NotReporting
                 }
             } catch (e: RecordsException) {
                 StartFailure.Failed(e.message.orEmpty())
             }
-            _uiState.update { it.copy(daemonStarting = false, daemonStartError = error) }
-            refresh()
+            updateState { it.copy(daemonStarting = false, daemonStartError = error) }
         }
     }
 
-    /** Polls the daemon's status until it is recording, or gives up. */
-    private suspend fun awaitRecording(): Boolean {
-        repeat(START_POLLS) {
-            delay(START_POLL_INTERVAL_MS)
-            val recording = try {
-                accessRepository.getRecorderStatus().recording
-            } catch (_: RecordsException) {
-                false
+    private fun runRecorderAction(action: suspend () -> Unit) {
+        if (!recorderBusy.compareAndSet(expect = false, update = true)) return
+        viewModelScope.launch {
+            try {
+                action()
+            } finally {
+                refresh()
+                recorderBusy.value = false
             }
-            if (recording) return true
         }
-        return false
     }
 
     /** Flash the module bundled in this app's APK. */
     fun installModule() {
-        if (_uiState.value.moduleSetup == ModuleSetup.Installing) return
-        _uiState.update { it.copy(moduleSetup = ModuleSetup.Installing) }
+        if (load.value.ui.moduleSetup == ModuleSetup.Installing) return
+        updateState { it.copy(moduleSetup = ModuleSetup.Installing) }
         viewModelScope.launch {
             try {
                 moduleRepository.installBundled()
                 if (moduleRepository.isActive()) {
                     // Already installed: either applied on the spot, or
                     // staged until the next restart. refresh() tells which.
-                    _uiState.update { it.copy(moduleSetup = ModuleSetup.Idle) }
+                    updateState { it.copy(moduleSetup = ModuleSetup.Idle) }
                     refresh()
                 } else {
-                    _uiState.update { it.copy(moduleSetup = ModuleSetup.NeedsReboot) }
+                    updateState { it.copy(moduleSetup = ModuleSetup.NeedsReboot) }
                 }
             } catch (e: RecordsException) {
-                _uiState.update { it.copy(moduleSetup = ModuleSetup.Failed(e.message.orEmpty())) }
+                updateState { it.copy(moduleSetup = ModuleSetup.Failed(installerError(e.message.orEmpty()))) }
             }
         }
     }
+    private fun updateState(transform: (OverviewUiState) -> OverviewUiState) {
+        load.update { it.copy(ui = transform(it.ui)) }
+    }
+
+    private data class OverviewLoad(val records: AppRecords? = null, val ui: OverviewUiState = OverviewUiState())
+
+    private data class OverviewRequest(val range: TimeRange, val refresh: Long)
 }
 
 /** How soon after a load the screen being shown again reloads it. */
 private const val STALE_AFTER_MS = 10_000L
-
-/** How long to wait for a started daemon: its first write comes within seconds. */
-private const val START_POLLS = 20
-private const val START_POLL_INTERVAL_MS = 1_000L

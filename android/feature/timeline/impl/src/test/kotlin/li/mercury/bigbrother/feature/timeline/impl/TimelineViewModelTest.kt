@@ -18,6 +18,8 @@ package li.mercury.bigbrother.feature.timeline.impl
 
 import android.content.pm.PackageInfo
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.repository.AccessRepository
@@ -57,7 +59,7 @@ class TimelineViewModelTest {
         val settings = TestUserDataRepository()
         val viewModel = TimelineViewModel(access, info, GetAppVisibilityUseCase(settings, OWN_PACKAGE))
 
-        viewModel.refresh()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
         advanceUntilIdle()
         assertEquals(emptyList(), viewModel.uiState.value.entries)
         assertEquals(7200L, viewModel.uiState.value.nextBefore)

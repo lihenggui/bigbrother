@@ -18,6 +18,11 @@ package li.mercury.bigbrother.feature.appdetail.impl
 
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.model.AppInfo
@@ -36,6 +41,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class AppDetailViewModelTest {
     @get:Rule
     val mainDispatcherRule = MainDispatcherRule()
@@ -54,6 +60,7 @@ class AppDetailViewModelTest {
     fun givenUnisolatedApp_whenConfirmed_thenIsolatesAndOpensItsSettings() = runTest {
         val model = viewModel()
         model.requestJail()
+        runCurrent()
         assertEquals(JailAction.Confirm, model.uiState.value.jailAction)
         assertTrue(sandbox.isolated.isEmpty())
 
@@ -64,6 +71,7 @@ class AppDetailViewModelTest {
         model.requestJail()
         model.confirmIsolation()
         model.confirmIsolation()
+        runCurrent()
 
         assertEquals(listOf(PACKAGE), sandbox.isolated)
         assertEquals(JailAction.Open(PACKAGE), model.uiState.value.jailAction)
@@ -76,6 +84,7 @@ class AppDetailViewModelTest {
         val model = viewModel(repository)
 
         model.requestJail()
+        runCurrent()
 
         assertTrue(repository.isolated.isEmpty())
         assertEquals(JailAction.Open(PACKAGE), model.uiState.value.jailAction)
@@ -88,6 +97,7 @@ class AppDetailViewModelTest {
         installed.apps = listOf(InstalledApp(PACKAGE, APP_UID + 1, info))
 
         model.confirmIsolation()
+        runCurrent()
 
         assertTrue(sandbox.isolated.isEmpty())
         assertFalse(model.uiState.value.canOpenJail)
@@ -101,21 +111,28 @@ class AppDetailViewModelTest {
         model.requestJail()
 
         model.confirmIsolation()
+        runCurrent()
 
         assertEquals(JailAction.Failed(LoadFailure.NoRoot), model.uiState.value.jailAction)
     }
 
-    private fun viewModel(repository: TestSandboxRepository = sandbox) = AppDetailViewModel(
-        accessRepository = TestAccessRepository(),
-        appInfoRepository = TestAppInfoRepository(mapOf(PACKAGE to info)),
-        installedAppRepository = installed,
-        sandboxRepository = repository,
-        ownPackage = "li.mercury.bigbrother",
-        defaultDispatcher = mainDispatcherRule.testDispatcher,
-        uid = APP_UID,
-        packageName = PACKAGE,
-        range = TimeRange.DAY,
-    )
+    private fun TestScope.viewModel(repository: TestSandboxRepository = sandbox): AppDetailViewModel {
+        val model = AppDetailViewModel(
+            accessRepository = TestAccessRepository(),
+            appInfoRepository = TestAppInfoRepository(mapOf(PACKAGE to info)),
+            installedAppRepository = installed,
+            sandboxRepository = repository,
+            ownPackage = "li.mercury.bigbrother",
+            currentUserId = 0,
+            defaultDispatcher = mainDispatcherRule.testDispatcher,
+            uid = APP_UID,
+            packageName = PACKAGE,
+            range = TimeRange.DAY,
+        )
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { model.uiState.collect {} }
+        runCurrent()
+        return model
+    }
 
     private companion object {
         const val PACKAGE = "com.example.notes"

@@ -19,10 +19,17 @@ package li.mercury.bigbrother.feature.overview.impl
 import android.content.pm.PackageInfo
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.InstalledModule
+import li.mercury.bigbrother.core.data.repository.ModuleUpdate
+import li.mercury.bigbrother.core.data.repository.ModuleUpdater
 import li.mercury.bigbrother.core.domain.GetAppRecordsUseCase
 import li.mercury.bigbrother.core.domain.GetAppVisibilityUseCase
 import li.mercury.bigbrother.core.model.AppInfo
@@ -39,6 +46,7 @@ import org.junit.Rule
 import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -66,15 +74,53 @@ class OverviewViewModelTest {
     private fun viewModel() = OverviewViewModel(
         accessRepository = accessRepository,
         moduleRepository = moduleRepository,
+        moduleUpdater = ModuleUpdater(moduleRepository, accessRepository),
         getAppRecords = GetAppRecordsUseCase(accessRepository, appInfoRepository),
         getAppVisibility = GetAppVisibilityUseCase(userDataRepository, OWN_PACKAGE),
         userDataRepository = userDataRepository,
         defaultDispatcher = mainDispatcherRule.testDispatcher,
     )
 
+    private fun TestScope.collectedViewModel(): OverviewViewModel {
+        val viewModel = viewModel()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
+        viewModel.onScreenResumed()
+        return viewModel
+    }
+
+    @Test
+    fun givenOverviewHidden_whenRangeChanges_thenReadsOnlyOnReturn() = runTest {
+        val viewModel = viewModel()
+        viewModel.onScreenResumed()
+        runCurrent()
+        assertEquals(0, accessRepository.appReads)
+
+        val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
+        runCurrent()
+        assertEquals(1, accessRepository.appReads)
+
+        viewModel.onScreenPaused()
+        collector.cancel()
+        userDataRepository.setTimeRange(TimeRange.WEEK)
+        runCurrent()
+        assertEquals(1, accessRepository.appReads)
+
+        advanceTimeBy(5_001)
+        userDataRepository.setTimeRange(TimeRange.ALL)
+        runCurrent()
+        assertEquals(1, accessRepository.appReads)
+
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
+        viewModel.onScreenResumed()
+        runCurrent()
+
+        assertEquals(2, accessRepository.appReads)
+        assertEquals(TimeRange.ALL, viewModel.uiState.value.range)
+    }
+
     @Test
     fun givenUserSystemAndOwnApps_whenLoaded_thenOnlyUserAppsCount() = runTest {
-        val viewModel = viewModel()
+        val viewModel = collectedViewModel()
         advanceUntilIdle()
 
         val files = viewModel.uiState.value.files
@@ -84,7 +130,7 @@ class OverviewViewModelTest {
 
     @Test
     fun givenLoadedOverview_whenSystemAppsShown_thenRecountedWithoutReadingAgain() = runTest {
-        val viewModel = viewModel()
+        val viewModel = collectedViewModel()
         advanceUntilIdle()
         val reads = accessRepository.appReads
 
@@ -101,7 +147,7 @@ class OverviewViewModelTest {
     @Test
     fun givenOutdatedModule_whenLoaded_thenUpdatedAfterTheRecordsAreShown() = runTest {
         moduleRepository.installed = InstalledModule.OUTDATED
-        val viewModel = viewModel()
+        val viewModel = collectedViewModel()
         advanceUntilIdle()
 
         assertEquals(1, moduleRepository.updates)
@@ -111,7 +157,7 @@ class OverviewViewModelTest {
 
     @Test
     fun givenCurrentModule_whenRefreshed_thenComparedOnlyOnce() = runTest {
-        val viewModel = viewModel()
+        val viewModel = collectedViewModel()
         advanceUntilIdle()
 
         viewModel.refresh()
@@ -125,7 +171,7 @@ class OverviewViewModelTest {
     fun givenDaemonTooOldForTheQuery_whenLoaded_thenModuleUpdated() = runTest {
         accessRepository.failure = RecordsException.ModuleOutdated()
         moduleRepository.installed = InstalledModule.UNKNOWN
-        val viewModel = viewModel()
+        val viewModel = collectedViewModel()
         advanceUntilIdle()
 
         assertEquals(1, moduleRepository.updates)
@@ -135,7 +181,7 @@ class OverviewViewModelTest {
     @Test
     fun givenNoRoot_whenLoaded_thenFailureShownAndModuleLeftAlone() = runTest {
         accessRepository.failure = RecordsException.NoRoot()
-        val viewModel = viewModel()
+        val viewModel = collectedViewModel()
         advanceUntilIdle()
 
         assertEquals(LoadFailure.NoRoot, viewModel.uiState.value.failure)
@@ -145,48 +191,49 @@ class OverviewViewModelTest {
 
     @Test
     fun givenUnsavedRange_whenRetried_thenUpdatesAfterSaving() = runTest {
-        val viewModel = viewModel()
+        val viewModel = collectedViewModel()
         userDataRepository.writeFailure = IOException("Storage unavailable")
         viewModel.setRange(TimeRange.WEEK)
         advanceUntilIdle()
 
         assertEquals(TimeRange.DAY, viewModel.uiState.value.range)
-        val failure = viewModel.settingsWriteFailures.value.single()
+        val failure = assertNotNull(viewModel.uiState.value.message)
 
         userDataRepository.writeFailure = null
-        viewModel.resolveSettingsWrite(failure, retry = true)
+        viewModel.onMessageShown(failure, retry = true)
         advanceUntilIdle()
 
         assertEquals(TimeRange.WEEK, viewModel.uiState.value.range)
-        assertTrue(viewModel.settingsWriteFailures.value.isEmpty())
+        assertNull(viewModel.uiState.value.message)
     }
 
     @Test
     fun givenUnsavedRange_whenNewerRangeSaved_thenOldRetryCannotOverrideIt() = runTest {
-        val viewModel = viewModel()
+        val viewModel = collectedViewModel()
         userDataRepository.writeFailure = IOException("Storage unavailable")
         viewModel.setRange(TimeRange.WEEK)
-        val failure = viewModel.settingsWriteFailures.value.single()
+        runCurrent()
+        val failure = assertNotNull(viewModel.uiState.value.message)
 
         userDataRepository.writeFailure = null
         viewModel.setRange(TimeRange.ALL)
-        viewModel.resolveSettingsWrite(failure, retry = true)
+        viewModel.onMessageShown(failure, retry = true)
         advanceUntilIdle()
 
         assertEquals(TimeRange.ALL, viewModel.uiState.value.range)
-        assertTrue(viewModel.settingsWriteFailures.value.isEmpty())
+        assertNull(viewModel.uiState.value.message)
     }
 
     @Test
     fun givenCancelledWrite_whenRangeChanged_thenNoFailureIsShown() = runTest {
-        val viewModel = viewModel()
+        val viewModel = collectedViewModel()
         userDataRepository.writeFailure = CancellationException()
 
         viewModel.setRange(TimeRange.WEEK)
         advanceUntilIdle()
 
         assertEquals(TimeRange.DAY, viewModel.uiState.value.range)
-        assertTrue(viewModel.settingsWriteFailures.value.isEmpty())
+        assertNull(viewModel.uiState.value.message)
     }
 
     private companion object {

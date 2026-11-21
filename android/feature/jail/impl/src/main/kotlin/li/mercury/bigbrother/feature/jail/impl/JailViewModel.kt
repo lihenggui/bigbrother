@@ -22,7 +22,6 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -59,6 +58,7 @@ data class JailUiState(
     val status: SandboxStatus? = null,
     val refreshing: Boolean = false,
     val failure: LoadFailure? = null,
+    val message: JailMessage? = null,
 )
 
 /**
@@ -94,8 +94,6 @@ class JailViewModel @Inject constructor(
     @CurrentUserId private val currentUserId: Int,
 ) : ViewModel() {
     private val load = MutableStateFlow(JailUiState())
-    private val _message = MutableStateFlow<JailMessage?>(null)
-    val message: StateFlow<JailMessage?> = _message.asStateFlow()
 
     private val isolated = sandboxRepository.apps.map { apps ->
         val enabled = apps?.filter { it.enabled } ?: return@map null
@@ -129,10 +127,11 @@ class JailViewModel @Inject constructor(
     fun isolate(apps: List<InstalledApp>) {
         viewModelScope.launch {
             val (done, failed, failure) = eachApp(apps) { sandboxRepository.isolate(it.packageName, it.userId) }
-            _message.value = when {
+            val message = when {
                 done.isEmpty() -> failure?.let { JailMessage.NotIsolated(failed.names(), it) }
                 else -> JailMessage.Isolated(done.names(), done, notIsolated = failed.names())
             }
+            load.update { it.copy(message = message) }
         }
     }
 
@@ -140,13 +139,13 @@ class JailViewModel @Inject constructor(
     fun undoIsolate(apps: List<InstalledApp>) {
         viewModelScope.launch {
             val (_, failed, failure) = eachApp(apps) { sandboxRepository.release(it.packageName, it.userId) }
-            if (failure != null) _message.value = JailMessage.NotReleased(failed.names(), failure)
+            if (failure != null) load.update { it.copy(message = JailMessage.NotReleased(failed.names(), failure)) }
         }
     }
 
     /** The message was shown: it is not shown again. */
-    fun dismissMessage() {
-        _message.value = null
+    fun onMessageShown(message: JailMessage) {
+        load.update { if (it.message === message) it.copy(message = null) else it }
     }
 
     /**

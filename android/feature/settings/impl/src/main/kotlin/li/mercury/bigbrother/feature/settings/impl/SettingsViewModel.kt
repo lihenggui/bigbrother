@@ -30,9 +30,9 @@ import li.mercury.bigbrother.core.data.repository.AccessRepository
 import li.mercury.bigbrother.core.data.repository.DiagnosticsRepository
 import li.mercury.bigbrother.core.data.repository.ModuleRepository
 import li.mercury.bigbrother.core.data.repository.UserDataRepository
-import li.mercury.bigbrother.core.data.repository.UserSettingsWriter
 import li.mercury.bigbrother.core.model.RecorderStatus
 import li.mercury.bigbrother.core.model.UserData
+import li.mercury.bigbrother.core.ui.UserSettingsWriter
 import timber.log.Timber
 import java.io.File
 import java.io.IOException
@@ -55,27 +55,28 @@ data class SettingsUiState(
     /** The installed module's version, if known. */
     val moduleVersion: String? = null,
     val logExport: LogExport = LogExport.Idle,
+    val message: UserSettingsWriter.Failure? = null,
 )
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val accessRepository: AccessRepository,
     private val moduleRepository: ModuleRepository,
-    userDataRepository: UserDataRepository,
+    private val userDataRepository: UserDataRepository,
     private val diagnosticsRepository: DiagnosticsRepository,
 ) : ViewModel() {
     private val moduleVersion = MutableStateFlow<String?>(null)
     private val logExport = MutableStateFlow<LogExport>(LogExport.Idle)
 
-    private val settingsWriter = UserSettingsWriter(viewModelScope, userDataRepository)
-    val settingsWriteFailures = settingsWriter.failures
+    private val settingsWriter = UserSettingsWriter(viewModelScope) { Timber.w(it) }
 
     val uiState: StateFlow<SettingsUiState> = combine(
         userDataRepository.userData,
         accessRepository.recorderStatus,
         moduleVersion,
         logExport,
-    ) { userData, status, version, export -> SettingsUiState(userData, status, version, export) }
+        settingsWriter.message,
+    ) { userData, status, version, export, message -> SettingsUiState(userData, status, version, export, message) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
 
     fun refresh() {
@@ -107,9 +108,13 @@ class SettingsViewModel @Inject constructor(
         logExport.value = LogExport.Idle
     }
 
-    fun setShowSystemApps(show: Boolean) = settingsWriter.setShowSystemApps(show)
+    fun setShowSystemApps(show: Boolean) = settingsWriter.save(UserSettingsWriter.Setting.SHOW_SYSTEM_APPS) {
+        userDataRepository.setShowSystemApps(show)
+    }
 
-    fun setUseDynamicColor(use: Boolean) = settingsWriter.setUseDynamicColor(use)
+    fun setUseDynamicColor(use: Boolean) = settingsWriter.save(UserSettingsWriter.Setting.USE_DYNAMIC_COLOR) {
+        userDataRepository.setUseDynamicColor(use)
+    }
 
-    fun resolveSettingsWrite(failure: UserSettingsWriter.Failure, retry: Boolean) = settingsWriter.resolve(failure, retry)
+    fun onMessageShown(failure: UserSettingsWriter.Failure, retry: Boolean) = settingsWriter.resolve(failure, retry)
 }

@@ -18,6 +18,8 @@ package li.mercury.bigbrother.feature.applist.impl
 
 import android.content.pm.PackageInfo
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.domain.GetAppRecordsUseCase
@@ -34,6 +36,8 @@ import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -45,25 +49,27 @@ class AppListViewModelTest {
     fun givenUnsavedFilters_whenRangeRetriedAndOtherDismissed_thenOnlyRangeChanges() = runTest {
         val settings = TestUserDataRepository()
         val viewModel = AppListViewModel(GetAppRecordsUseCase(TestAccessRepository(), TestAppInfoRepository()), GetAppVisibilityUseCase(settings, OWN_PACKAGE), settings)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
         settings.writeFailure = IOException("Storage unavailable")
 
         viewModel.setRange(TimeRange.WEEK)
         viewModel.setShowSystemApps(true)
         advanceUntilIdle()
 
-        val failures = viewModel.settingsWriteFailures.value
-        assertEquals(2, failures.size)
+        val rangeFailure = assertNotNull(viewModel.uiState.value.message)
         assertEquals(TimeRange.DAY, viewModel.uiState.value.range)
         assertFalse(viewModel.uiState.value.showSystemApps)
 
         settings.writeFailure = null
-        viewModel.resolveSettingsWrite(failures[0], retry = true)
-        viewModel.resolveSettingsWrite(failures[1], retry = false)
+        viewModel.onMessageShown(rangeFailure, retry = true)
+        advanceUntilIdle()
+        val systemAppsFailure = assertNotNull(viewModel.uiState.value.message)
+        viewModel.onMessageShown(systemAppsFailure, retry = false)
         advanceUntilIdle()
 
         assertEquals(TimeRange.WEEK, viewModel.uiState.value.range)
         assertFalse(viewModel.uiState.value.showSystemApps)
-        assertTrue(viewModel.settingsWriteFailures.value.isEmpty())
+        assertNull(viewModel.uiState.value.message)
     }
 
     @Test
@@ -74,6 +80,7 @@ class AppListViewModelTest {
         val info = TestAppInfoRepository(mapOf(system.packageName to AppInfo("System", PackageInfo(), isSystem = true)))
         val settings = TestUserDataRepository()
         val viewModel = AppListViewModel(GetAppRecordsUseCase(access, info), GetAppVisibilityUseCase(settings, OWN_PACKAGE), settings)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
         advanceUntilIdle()
 
         assertEquals(emptyList(), viewModel.uiState.value.apps)

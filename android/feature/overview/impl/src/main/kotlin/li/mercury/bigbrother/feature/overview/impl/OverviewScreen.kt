@@ -70,7 +70,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import li.mercury.bigbrother.core.data.repository.UserSettingsWriter
+import li.mercury.bigbrother.core.data.repository.ModuleUpdate
 import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
 import li.mercury.bigbrother.core.designsystem.component.ShapedIcon
 import li.mercury.bigbrother.core.model.AppInfo
@@ -83,6 +83,7 @@ import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.TimeRangeButtonGroup
+import li.mercury.bigbrother.core.ui.UserSettingsWriter
 import li.mercury.bigbrother.core.ui.appDisplayName
 import li.mercury.bigbrother.core.ui.failureTitle
 import li.mercury.bigbrother.core.ui.namedList
@@ -96,14 +97,13 @@ fun OverviewScreen(
     viewModel: OverviewViewModel,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val settingsWriteFailures by viewModel.settingsWriteFailures.collectAsStateWithLifecycle()
     // The app counts as started once the overview shows records, or why it
     // can't (`am start -W`, startup benchmarks).
     ReportDrawnWhen { uiState.files != null || uiState.failure != null }
     // Records keep accumulating in the background, so reload on return.
     LifecycleResumeEffect(Unit) {
-        viewModel.refreshIfStale()
-        onPauseOrDispose {}
+        viewModel.onScreenResumed()
+        onPauseOrDispose { viewModel.onScreenPaused() }
     }
     OverviewScreen(
         state = uiState,
@@ -113,8 +113,7 @@ fun OverviewScreen(
         onInstallModule = viewModel::installModule,
         onUpdateModule = viewModel::updateModule,
         onStartDaemon = viewModel::startDaemon,
-        settingsWriteFailure = settingsWriteFailures.firstOrNull(),
-        onSettingsWriteResult = viewModel::resolveSettingsWrite,
+        onSettingsWriteResult = viewModel::onMessageShown,
     )
 }
 
@@ -128,10 +127,9 @@ internal fun OverviewScreen(
     onInstallModule: () -> Unit,
     onUpdateModule: () -> Unit,
     onStartDaemon: () -> Unit,
-    settingsWriteFailure: UserSettingsWriter.Failure? = null,
     onSettingsWriteResult: (UserSettingsWriter.Failure, Boolean) -> Unit = { _, _ -> },
 ) {
-    val snackbar = rememberSettingsWriteSnackbar(settingsWriteFailure, onSettingsWriteResult)
+    val snackbar = rememberSettingsWriteSnackbar(state.message, onSettingsWriteResult)
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
         snackbarHost = { SnackbarHost(snackbar) },
@@ -448,7 +446,7 @@ private fun ModuleUpdateCard(update: ModuleUpdate, onUpdateModule: () -> Unit, o
         is ModuleUpdate.Failed -> RecorderStatusCard(
             icon = Icons.Filled.ErrorOutline,
             title = stringResource(R.string.update_failed_title),
-            body = installerError(update.output),
+            body = update.reason,
             error = true,
             action = stringResource(UiR.string.retry),
             onAction = onUpdateModule,
@@ -507,17 +505,6 @@ private fun RecorderStatusCard(
     }
 }
 
-/**
- * Why an installation failed, from the installer's output: the lines
- * Magisk and KernelSU mark with "!" for errors, else the last line. The
- * rest is the installer's banner and progress.
- */
-internal fun installerError(output: String): String? {
-    val lines = output.lines().map { it.trim() }.filter { it.isNotEmpty() }
-    val errors = lines.filter { it.startsWith("!") }.map { it.removePrefix("!").trim() }
-    return errors.ifEmpty { listOfNotNull(lines.lastOrNull()) }.joinToString("\n").ifEmpty { null }
-}
-
 /** Shown when the module is absent: offers to flash the copy bundled in this APK. */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -548,7 +535,7 @@ private fun ModuleSetupMessage(setup: ModuleSetup, onInstall: () -> Unit, onRetr
 
         is ModuleSetup.Failed -> Message(
             title = stringResource(R.string.install_failed_title),
-            body = installerError(setup.output).orEmpty(),
+            body = setup.reason.orEmpty(),
             actionLabel = stringResource(UiR.string.retry),
             onAction = onInstall,
         )

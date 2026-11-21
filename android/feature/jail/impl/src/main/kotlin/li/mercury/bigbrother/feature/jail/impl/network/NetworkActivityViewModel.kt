@@ -23,16 +23,19 @@ import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.drop
-import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import li.mercury.bigbrother.core.common.di.CurrentUserId
 import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.DEFAULT
 import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
@@ -167,30 +170,41 @@ class NetworkActivityViewModel @AssistedInject constructor(
         NetworkActivityUiState(packageName = packageName, otherUser = userId.takeIf { it != currentUserId }),
     )
 
-    val uiState: StateFlow<NetworkActivityUiState> = load
-        .map { it.withShown() }
-        .flowOn(defaultDispatcher)
+    private val refreshes = MutableStateFlow(ReadRequest())
+    private var completed: Pair<ReadRequest, Int>? = null
+    private var infoLoaded = false
+
+    val uiState: StateFlow<NetworkActivityUiState> = channelFlow {
+        launch {
+            if (!infoLoaded) {
+                val info = appInfoRepository.getAppInfo(packageName)
+                ensureActive()
+                load.update { it.copy(info = info) }
+                infoLoaded = true
+            }
+        }
+        launch {
+            // A change made here or in a destination's detail also invalidates the read.
+            combine(refreshes, networkRepository.changes, ::Pair).collectLatest { request ->
+                if (request != completed) {
+                    val shown = load.value.activity.takeIf { request.first.reuseActivityAt == request.second }
+                    read(shown, request)
+                    completed = request
+                }
+            }
+        }
+        load.collect { send(it) }
+    }.map { withContext(defaultDispatcher) { it.withShown() } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), load.value)
 
-    private var reading: Job? = null
-
-    init {
-        viewModelScope.launch {
-            val info = appInfoRepository.getAppInfo(packageName)
-            load.update { it.copy(info = info) }
-        }
-        // A change made here or in a destination's detail: read again.
-        viewModelScope.launch { networkRepository.changes.drop(1).collect { read() } }
-    }
-
     fun refresh() {
-        read()
+        refreshes.update { ReadRequest(it.version + 1) }
     }
 
     fun setRange(range: TimeRange) {
         if (range == load.value.range) return
         load.update { it.copy(range = range, bucket = null, period = null, activity = null) }
-        read()
+        refresh()
     }
 
     /** Lists the destinations of the bar from [start], or with null of the whole range again. */
@@ -198,7 +212,9 @@ class NetworkActivityViewModel @AssistedInject constructor(
         val shown = load.value
         val chosen = start.takeIf { it != shown.bucket }
         load.update { it.copy(bucket = chosen, period = null) }
-        if (chosen != null) read(shown.activity)
+        if (chosen != null) {
+            refreshes.update { ReadRequest(it.version + 1, completed?.second) }
+        }
     }
 
     fun setBlockedOnly(on: Boolean) {
@@ -245,7 +261,7 @@ class NetworkActivityViewModel @AssistedInject constructor(
         viewModelScope.launch {
             try {
                 sandboxRepository.setItems(packageName, userId, mapOf(SandboxItem.NETWORK_RECORD to if (on) SandboxMode.ON else SandboxMode.OFF))
-                read()
+                refresh()
             } catch (e: RecordsException) {
                 load.update { it.copy(error = e.toLoadFailure()) }
             }
@@ -270,36 +286,40 @@ class NetworkActivityViewModel @AssistedInject constructor(
         load.update { it.copy(error = null) }
     }
 
-    private fun read(shown: NetworkActivity? = null) {
-        reading?.cancel()
-        reading = viewModelScope.launch {
-            val state = load.value
-            try {
-                val activity = shown ?: networkRepository.getActivity(packageName, userId, state.range.since(now()), bucket = state.range.bucketSize)
-                val index = activity.buckets.indexOfFirst { it.start == state.bucket }
-                val period = if (index == -1) {
-                    null
-                } else {
-                    val since = maxOf(activity.since, activity.buckets[index].start)
-                    val until = activity.buckets.getOrNull(index + 1)?.start ?: activity.until
-                    networkRepository.getActivity(packageName, userId, since, until, state.range.bucketSize, activity.zone)
-                }
-                load.update { current ->
-                    val bucket = current.bucket.takeIf { it == state.bucket && period != null }
-                    current.copy(
-                        activity = activity,
-                        bucket = bucket,
-                        period = period.takeIf { bucket != null },
-                        failure = null,
-                        // Rules added elsewhere join those the filter lists.
-                        blockedShown = if (current.blockedOnly) current.blockedShown + activity.rules.map { it.target } else emptySet(),
-                    )
-                }
-            } catch (e: RecordsException) {
+    private suspend fun read(shown: NetworkActivity?, request: Pair<ReadRequest, Int>) {
+        val state = load.value
+        try {
+            val activity = shown ?: networkRepository.getActivity(packageName, userId, state.range.since(now()), bucket = state.range.bucketSize)
+            val index = activity.buckets.indexOfFirst { it.start == state.bucket }
+            val period = if (index == -1) {
+                null
+            } else {
+                val since = maxOf(activity.since, activity.buckets[index].start)
+                val until = activity.buckets.getOrNull(index + 1)?.start ?: activity.until
+                networkRepository.getActivity(packageName, userId, since, until, state.range.bucketSize, activity.zone)
+            }
+            currentCoroutineContext().ensureActive()
+            if (refreshes.value != request.first || networkRepository.changes.value != request.second) return
+            load.update { current ->
+                val bucket = current.bucket.takeIf { it == state.bucket && period != null }
+                current.copy(
+                    activity = activity,
+                    bucket = bucket,
+                    period = period.takeIf { bucket != null },
+                    failure = null,
+                    // Rules added elsewhere join those the filter lists.
+                    blockedShown = if (current.blockedOnly) current.blockedShown + activity.rules.map { it.target } else emptySet(),
+                )
+            }
+        } catch (e: RecordsException) {
+            currentCoroutineContext().ensureActive()
+            if (refreshes.value == request.first && networkRepository.changes.value == request.second) {
                 load.update { it.copy(failure = e.toLoadFailure()) }
             }
         }
     }
+
+    private data class ReadRequest(val version: Long = 0, val reuseActivityAt: Int? = null)
 
     /**
      * Blocks or unblocks [target], shown as done at once. If the daemon

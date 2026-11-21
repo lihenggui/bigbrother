@@ -222,8 +222,7 @@ class JailScreenScreenshotTests {
             capturePhone("JailMessage$name") {
                 SearchScaffold(topBar = { SearchBar() }) {
                     JailScreen(
-                        state = JailUiState(apps = isolatedApps(), status = FULL_STATUS),
-                        message = message,
+                        state = JailUiState(apps = isolatedApps(), status = FULL_STATUS, message = message),
                         selectedUid = null,
                         settingsSelected = false,
                         onRefresh = {},
@@ -451,7 +450,6 @@ class JailScreenScreenshotTests {
         SearchScaffold(topBar = { SearchBar() }) {
             JailScreen(
                 state = state,
-                message = null,
                 selectedUid = null,
                 settingsSelected = false,
                 onRefresh = {},

@@ -32,8 +32,6 @@ class GetAppVisibilityUseCase @Inject constructor(
     private val userDataRepository: UserDataRepository,
     @AppPackageName private val ownPackage: String,
 ) {
-    val default = AppVisibility(showSystemApps = false, ownPackage = ownPackage)
-
     operator fun invoke(): Flow<AppVisibility> = userDataRepository.userData
         .map { it.showSystemApps }
         .distinctUntilChanged()

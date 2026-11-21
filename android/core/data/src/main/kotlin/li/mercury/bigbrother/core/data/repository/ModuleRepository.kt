@@ -160,7 +160,9 @@ internal class RootModuleRepository @Inject constructor(
         return true
     }
 
-    private fun bundledVersionCode(): Long = context.packageManager.getPackageInfo(context.packageName, 0).longVersionCode
+    private suspend fun bundledVersionCode(): Long = withContext(ioDispatcher) {
+        context.packageManager.getPackageInfo(context.packageName, 0).longVersionCode
+    }
 
     /** The daemon this app carries for this device, as its path inside the APK. */
     private val daemonEntry: String? =

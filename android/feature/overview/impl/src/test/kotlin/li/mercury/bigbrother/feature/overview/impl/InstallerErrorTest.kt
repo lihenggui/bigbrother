@@ -16,6 +16,7 @@
 
 package li.mercury.bigbrother.feature.overview.impl
 
+import li.mercury.bigbrother.core.data.repository.installerError
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull

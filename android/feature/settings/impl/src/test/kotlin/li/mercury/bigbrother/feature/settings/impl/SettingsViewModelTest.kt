@@ -31,7 +31,8 @@ import org.junit.Rule
 import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SettingsViewModelTest {
@@ -56,21 +57,20 @@ class SettingsViewModelTest {
         viewModel.setUseDynamicColor(false)
         advanceUntilIdle()
 
-        val failures = viewModel.settingsWriteFailures.value
-        assertEquals(2, failures.size)
+        val systemAppsFailure = assertNotNull(viewModel.uiState.value.message)
         assertEquals(UserData(), viewModel.uiState.value.userData)
 
         settings.writeFailure = null
-        viewModel.resolveSettingsWrite(failures[0], retry = true)
+        viewModel.onMessageShown(systemAppsFailure, retry = true)
         advanceUntilIdle()
 
         assertEquals(UserData(showSystemApps = true), viewModel.uiState.value.userData)
-        assertEquals(listOf(failures[1]), viewModel.settingsWriteFailures.value)
+        val dynamicColorFailure = assertNotNull(viewModel.uiState.value.message)
 
-        viewModel.resolveSettingsWrite(failures[1], retry = true)
+        viewModel.onMessageShown(dynamicColorFailure, retry = true)
         advanceUntilIdle()
 
         assertEquals(UserData(showSystemApps = true, useDynamicColor = false), viewModel.uiState.value.userData)
-        assertTrue(viewModel.settingsWriteFailures.value.isEmpty())
+        assertNull(viewModel.uiState.value.message)
     }
 }

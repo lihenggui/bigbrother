@@ -20,7 +20,9 @@ import androidx.lifecycle.SavedStateHandle
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import li.mercury.bigbrother.core.data.repository.InstalledAppRepository
 import li.mercury.bigbrother.core.domain.GetAppVisibilityUseCase
 import li.mercury.bigbrother.core.model.UserData
 import li.mercury.bigbrother.core.testing.MainDispatcherRule
@@ -30,6 +32,7 @@ import li.mercury.bigbrother.core.testing.repository.TestUserDataRepository
 import org.junit.Rule
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -68,6 +71,34 @@ class AddAppsViewModelTest {
             savedStateHandle = savedStateHandle,
             defaultDispatcher = mainDispatcherRule.testDispatcher,
         )
+    }
+
+    @Test
+    fun givenUncollectedPicker_whenCleared_thenReadsInstalledAppsOnlyOnCollection() = runTest {
+        var reads = 0
+        val repository = object : InstalledAppRepository by installedAppRepository {
+            override suspend fun getInstalledApps() = installedAppRepository.getInstalledApps().also { reads++ }
+        }
+        sandboxRepository.refresh()
+        val viewModel = AddAppsViewModel(
+            installedAppRepository = repository,
+            sandboxRepository = sandboxRepository,
+            getAppVisibility = GetAppVisibilityUseCase(TestUserDataRepository(), OWN_PACKAGE),
+            savedStateHandle = SavedStateHandle(),
+            defaultDispatcher = mainDispatcherRule.testDispatcher,
+        )
+
+        viewModel.clear()
+        runCurrent()
+
+        assertEquals(0, reads)
+        assertNull(viewModel.uiState.value.apps)
+
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
+        runCurrent()
+
+        assertEquals(1, reads)
+        assertEquals(listOf("Notes", "Weather"), viewModel.uiState.value.apps?.map { it.info.label })
     }
 
     @Test

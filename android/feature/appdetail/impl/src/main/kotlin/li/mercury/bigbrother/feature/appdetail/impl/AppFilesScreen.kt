@@ -34,9 +34,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -44,7 +44,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlinx.coroutines.launch
 import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
@@ -65,7 +64,22 @@ fun AppFilesScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
+    val fileAccessResult = uiState.fileAccessResult
+    LaunchedEffect(fileAccessResult) {
+        val result = when (fileAccessResult) {
+            is FileAccessResult.Granted -> openFile(context, fileAccessResult.path)
+            FileAccessResult.Denied -> OpenFileResult.NO_ACCESS
+            null -> return@LaunchedEffect
+        }
+        val message = when (result) {
+            OpenFileResult.OPENED -> null
+            OpenFileResult.MISSING -> R.string.open_file_missing
+            OpenFileResult.NO_VIEWER -> R.string.open_file_no_viewer
+            OpenFileResult.NO_ACCESS -> R.string.open_file_no_access
+        }
+        if (message != null) Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        viewModel.onFileAccessHandled(fileAccessResult)
+    }
     AppFilesScreen(
         state = uiState,
         uid = uid,
@@ -78,18 +92,7 @@ fun AppFilesScreen(
         onReadOnly = viewModel::showReadOnly,
         onFileDetails = viewModel::showFileDetails,
         onDismissFileDetails = viewModel::dismissFileDetails,
-        onOpenFile = { path ->
-            scope.launch {
-                val result = if (viewModel.ensureFileAccess()) openFile(context, path) else OpenFileResult.NO_ACCESS
-                val message = when (result) {
-                    OpenFileResult.OPENED -> null
-                    OpenFileResult.MISSING -> R.string.open_file_missing
-                    OpenFileResult.NO_VIEWER -> R.string.open_file_no_viewer
-                    OpenFileResult.NO_ACCESS -> R.string.open_file_no_access
-                }
-                if (message != null) Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-            }
-        },
+        onOpenFile = viewModel::ensureFileAccess,
     )
 }
 

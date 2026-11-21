@@ -14,74 +14,61 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-package li.mercury.bigbrother.core.data.repository
+package li.mercury.bigbrother.core.ui
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import li.mercury.bigbrother.core.model.TimeRange
-import timber.log.Timber
 import java.io.IOException
 
 /** Saves settings from a screen and keeps failed writes available for retry. */
 class UserSettingsWriter(
     private val scope: CoroutineScope,
-    private val repository: UserDataRepository,
+    private val warn: (String) -> Unit,
 ) {
     class Failure internal constructor(
         internal val setting: Setting,
         internal val write: suspend () -> Unit,
     )
 
-    internal enum class Setting {
+    enum class Setting {
         TIME_RANGE,
         SHOW_SYSTEM_APPS,
         USE_DYNAMIC_COLOR,
     }
 
     private val mutex = Mutex()
-    private val _failures = MutableStateFlow<List<Failure>>(emptyList())
-    val failures = _failures.asStateFlow()
-
-    fun setTimeRange(range: TimeRange) {
-        save(Setting.TIME_RANGE) { repository.setTimeRange(range) }
-    }
-
-    fun setShowSystemApps(show: Boolean) {
-        save(Setting.SHOW_SYSTEM_APPS) { repository.setShowSystemApps(show) }
-    }
-
-    fun setUseDynamicColor(use: Boolean) {
-        save(Setting.USE_DYNAMIC_COLOR) { repository.setUseDynamicColor(use) }
-    }
+    private val pendingFailures = MutableStateFlow<List<Failure>>(emptyList())
+    val message = pendingFailures.map { it.firstOrNull() }.distinctUntilChanged()
 
     fun resolve(failure: Failure, retry: Boolean) {
         scope.launch {
             mutex.withLock {
                 // A newer choice may have replaced the write while its message was shown.
-                if (failure !in _failures.value) return@withLock
-                if (retry) persist(failure.setting, failure.write) else _failures.value -= failure
+                if (failure !in pendingFailures.value) return@withLock
+                if (retry) persist(failure.setting, failure.write) else pendingFailures.value -= failure
             }
         }
     }
 
-    private fun save(setting: Setting, write: suspend () -> Unit) {
+    fun save(setting: Setting, write: suspend () -> Unit) {
         scope.launch { mutex.withLock { persist(setting, write) } }
     }
 
     private suspend fun persist(setting: Setting, write: suspend () -> Unit) {
-        _failures.value = _failures.value.filterNot { it.setting == setting }
+        pendingFailures.value = pendingFailures.value.filterNot { it.setting == setting }
         try {
             write()
         } catch (_: IOException) {
             currentCoroutineContext().ensureActive()
-            Timber.w("Could not save setting %s", setting)
-            _failures.value += Failure(setting, write)
+            warn("Could not save setting $setting")
+            pendingFailures.value += Failure(setting, write)
         }
     }
 }

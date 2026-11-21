@@ -21,14 +21,16 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.mapLatest
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.DEFAULT
 import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.data.repository.InstalledAppRepository
@@ -52,6 +54,7 @@ data class AddAppsUiState(
  * not this app, and, unless the settings show them, not the system's. They
  * are listed by name; nothing here suggests one over another.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class AddAppsViewModel @Inject constructor(
     private val installedAppRepository: InstalledAppRepository,
@@ -60,34 +63,27 @@ class AddAppsViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     @Dispatcher(DEFAULT) defaultDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
-    private val installed = MutableStateFlow<List<InstalledApp>?>(null)
+    private val refreshes = MutableStateFlow(0L)
+    private val installed = refreshes.mapLatest { installedAppRepository.getInstalledApps() }
     private val query = MutableStateFlow("")
     private val selected = savedStateHandle.getMutableStateFlow(SELECTED_PACKAGES, arrayListOf<String>())
 
-    private val visibility = getAppVisibility()
-        .stateIn(viewModelScope, SharingStarted.Eagerly, getAppVisibility.default)
+    private var available: Pair<List<InstalledApp>, AppVisibility>? = null
+    private val appChoices = combine(installed, getAppVisibility(), ::Pair).onEach { available = it }
 
-    val uiState: StateFlow<AddAppsUiState> = combine(
-        installed,
-        sandboxRepository.apps,
-        visibility,
-        query,
-        selected,
-    ) { installed, sandboxed, visibility, query, selected ->
-        // A restored draft must wait for the sandbox list so existing isolation is left alone.
-        val eligible = if (sandboxed == null) null else installed?.eligibleApps(sandboxed, visibility)
-        val apps = eligible
-            ?.filter { app ->
-                query.isBlank() || app.info.label.contains(query, ignoreCase = true) || app.packageName.contains(query, ignoreCase = true)
-            }
-            ?.sortedByName { it.info.label }
-        val packages = selected.toSet()
-        AddAppsUiState(apps = apps, selected = eligible.orEmpty().mapNotNullTo(mutableSetOf()) { it.packageName.takeIf(packages::contains) })
-    }.flowOn(defaultDispatcher).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AddAppsUiState())
-
-    init {
-        viewModelScope.launch { installed.value = installedAppRepository.getInstalledApps() }
-    }
+    val uiState: StateFlow<AddAppsUiState> = combine(appChoices, sandboxRepository.apps, query, selected) { (installed, visibility), sandboxed, query, selected ->
+        withContext(defaultDispatcher) {
+            // A restored draft must wait for the sandbox list so existing isolation is left alone.
+            val eligible = sandboxed?.let { installed.eligibleApps(it, visibility) }
+            val apps = eligible
+                ?.filter { app ->
+                    query.isBlank() || app.info.label.contains(query, ignoreCase = true) || app.packageName.contains(query, ignoreCase = true)
+                }
+                ?.sortedByName { it.info.label }
+            val packages = selected.toSet()
+            AddAppsUiState(apps = apps, selected = eligible.orEmpty().mapNotNullTo(mutableSetOf()) { it.packageName.takeIf(packages::contains) })
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AddAppsUiState())
 
     /**
      * Lists the apps that match [text]. The search field keeps the text
@@ -105,16 +101,15 @@ class AddAppsViewModel @Inject constructor(
     fun clear() {
         query.value = ""
         selected.value = arrayListOf()
-        viewModelScope.launch { installed.value = installedAppRepository.getInstalledApps() }
+        refreshes.update { it + 1 }
     }
 
     /** Resolves the draft against current apps, including choices hidden by the search. */
     fun chosen(): List<InstalledApp> {
         val sandboxed = sandboxRepository.apps.value ?: return emptyList()
+        val (installed, visibility) = available ?: return emptyList()
         val packages = selected.value.toSet()
-        return installed.value.orEmpty()
-            .filter { it.packageName in packages }
-            .eligibleApps(sandboxed, visibility.value)
+        return installed.filter { it.packageName in packages }.eligibleApps(sandboxed, visibility)
     }
 
     private fun List<InstalledApp>.eligibleApps(sandboxed: List<SandboxedApp>, visibility: AppVisibility): List<InstalledApp> {
