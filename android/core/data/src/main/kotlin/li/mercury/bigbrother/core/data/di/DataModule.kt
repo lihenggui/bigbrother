@@ -20,6 +20,8 @@ import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import li.mercury.bigbrother.core.data.bbd.BbdDataSource
+import li.mercury.bigbrother.core.data.bbd.RootShellBbdDataSource
 import li.mercury.bigbrother.core.data.repository.AccessRepository
 import li.mercury.bigbrother.core.data.repository.AppInfoRepository
 import li.mercury.bigbrother.core.data.repository.DataStoreUserDataRepository
@@ -46,6 +48,9 @@ import li.mercury.bigbrother.core.data.repository.ZipDiagnosticsRepository
 @Module
 @InstallIn(SingletonComponent::class)
 internal abstract class DataModule {
+    @Binds
+    abstract fun bindsBbdDataSource(dataSource: RootShellBbdDataSource): BbdDataSource
+
     @Binds
     abstract fun bindsAccessRepository(repository: RootAccessRepository): AccessRepository
 

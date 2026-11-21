@@ -21,26 +21,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withContext
 import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.DEFAULT
 import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
-import li.mercury.bigbrother.core.data.RecordsException
-import li.mercury.bigbrother.core.data.root.RootShell
-import li.mercury.bigbrother.core.data.root.bbd
-import li.mercury.bigbrother.core.data.root.parseBbdOutput
-import li.mercury.bigbrother.core.data.root.shellQuoted
-import li.mercury.bigbrother.core.model.ActivityBucket
+import li.mercury.bigbrother.core.data.bbd.BbdDataSource
+import li.mercury.bigbrother.core.data.bbd.asExternalModel
 import li.mercury.bigbrother.core.model.BucketSize
-import li.mercury.bigbrother.core.model.DestinationActivity
 import li.mercury.bigbrother.core.model.DestinationDetail
-import li.mercury.bigbrother.core.model.HostActivity
 import li.mercury.bigbrother.core.model.NetworkActivity
-import li.mercury.bigbrother.core.model.NetworkRecording
-import li.mercury.bigbrother.core.model.NetworkRule
 import li.mercury.bigbrother.core.model.NetworkTarget
-import li.mercury.bigbrother.core.model.PortActivity
-import org.json.JSONArray
-import org.json.JSONObject
-import java.time.Instant
 import java.time.ZoneId
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -87,156 +76,33 @@ interface NetworkRepository {
     suspend fun clear(packageName: String, userId: Int): Int
 }
 
-/** Runs `bbd net ... --json` as root. */
 @Singleton
 internal class RootNetworkRepository @Inject constructor(
-    private val rootShell: RootShell,
+    private val bbd: BbdDataSource,
     @Dispatcher(DEFAULT) private val defaultDispatcher: CoroutineDispatcher,
 ) : NetworkRepository {
     private val _changes = MutableStateFlow(0)
     override val changes: StateFlow<Int> = _changes.asStateFlow()
 
-    // Package names come from the package manager and targets from the
-    // daemon or the user: all are quoted. Everything else is a number or a
-    // constant.
-    override suspend fun getActivity(packageName: String, userId: Int, since: Long, until: Long?, bucket: BucketSize, zone: ZoneId): NetworkActivity {
-        val range = chartRange(since, until, bucket, zone)
-        return net("activity ${packageName.shellQuoted()} $range --user $userId") { toActivity(zone) }
+    override suspend fun getActivity(packageName: String, userId: Int, since: Long, until: Long?, bucket: BucketSize, zone: ZoneId): NetworkActivity = withContext(defaultDispatcher) {
+        bbd.getNetworkActivity(packageName, userId, since, until, bucket, zone).asExternalModel(zone)
     }
 
-    override suspend fun getDestination(packageName: String, userId: Int, target: NetworkTarget, since: Long, bucket: BucketSize, zone: ZoneId): DestinationDetail {
-        val range = chartRange(since, null, bucket, zone)
-        val args = "destination ${packageName.shellQuoted()} ${target.id.shellQuoted()} $range --user $userId"
-        return net(args) {
-            DestinationDetail(toDestination(), optJSONArray("buckets").toBuckets(), optInt("bucket", BucketSize.HOUR.seconds), zone)
-        }
+    override suspend fun getDestination(packageName: String, userId: Int, target: NetworkTarget, since: Long, bucket: BucketSize, zone: ZoneId): DestinationDetail = withContext(defaultDispatcher) {
+        bbd.getNetworkDestination(packageName, userId, target, since, bucket, zone).asExternalModel(zone)
     }
 
-    /**
-     * The app and daemon need the same end of the range to agree on its
-     * last day. Only the app has the device's time zone rules.
-     */
-    private fun chartRange(since: Long, until: Long?, bucket: BucketSize, zone: ZoneId): String {
-        if (bucket == BucketSize.HOUR) {
-            return "--since $since" + (until?.let { " --until $it" } ?: "") + " --bucket ${bucket.id}"
-        }
-        val end = until ?: Instant.now().epochSecond
-        if (since >= end) throw RecordsException.CommandFailed("the period is empty")
-        val firstDay = Instant.ofEpochSecond(since).atZone(zone).toLocalDate()
-        val starts = generateSequence(firstDay) { it.plusDays(1) }
-            .map { it.atStartOfDay(zone).toEpochSecond() }
-            .takeWhile { it < end }
-            .distinct() // A skipped date has the same start as the following date.
-            .take(MOST_BUCKETS + 1)
-            .toList()
-        if (starts.size > MOST_BUCKETS) throw RecordsException.CommandFailed("the period has more than $MOST_BUCKETS buckets")
-        return "--since $since --until $end --bucket ${bucket.id} --day-starts=${starts.joinToString(",")}"
-    }
-
-    override suspend fun block(packageName: String, userId: Int, target: NetworkTarget, manual: Boolean) {
-        net("block ${packageName.shellQuoted()} ${target.id.shellQuoted()}" + (if (manual) " --manual" else "") + " --user $userId") {
-            _changes.update { it + 1 }
-        }
-    }
-
-    override suspend fun unblock(packageName: String, userId: Int, target: NetworkTarget) {
-        net("unblock ${packageName.shellQuoted()} ${target.id.shellQuoted()} --user $userId") {
-            _changes.update { it + 1 }
-        }
-    }
-
-    override suspend fun clear(packageName: String, userId: Int): Int = net("clear ${packageName.shellQuoted()} --user $userId") {
+    override suspend fun block(packageName: String, userId: Int, target: NetworkTarget, manual: Boolean) = withContext(defaultDispatcher) {
+        bbd.blockNetwork(packageName, userId, target, manual)
         _changes.update { it + 1 }
-        optInt("deleted")
     }
 
-    /** Checks and maps one decoded answer; the daemon can refuse a command even when it exits successfully. */
-    private suspend fun <T> net(args: String, map: JSONObject.() -> T): T = defaultDispatcher.parseBbdOutput {
-        val answer = JSONObject(rootShell.bbd("net", args))
-        if (!answer.optBoolean("ok", true)) {
-            throw RecordsException.CommandFailed(answer.optString("error").ifBlank { "bbd refused the command" })
-        }
-        answer.map()
+    override suspend fun unblock(packageName: String, userId: Int, target: NetworkTarget) = withContext(defaultDispatcher) {
+        bbd.unblockNetwork(packageName, userId, target)
+        _changes.update { it + 1 }
     }
 
-    private fun JSONObject.toActivity(zone: ZoneId): NetworkActivity {
-        val destinations = optJSONArray("destinations").objects().map { it.toDestination() }
-        val recording = optJSONObject("recording")
-        return NetworkActivity(
-            since = getLong("since"),
-            until = getLong("until"),
-            bucketSeconds = optInt("bucket", BucketSize.HOUR.seconds),
-            recording = NetworkRecording(
-                on = recording?.optBoolean("on") == true,
-                since = recording?.optLongOrNull("since"),
-            ),
-            networkAllowed = optString("network") != "blocked",
-            traffic = optBoolean("traffic"),
-            names = optBoolean("names"),
-            buckets = optJSONArray("buckets").toBuckets(),
-            domains = destinations.filter { it.target is NetworkTarget.Domain },
-            addresses = destinations.filter { it.target is NetworkTarget.Address },
-            // A rule of a kind this build does not know is left out.
-            rules = optJSONArray("rules").objects().mapNotNull { rule ->
-                NetworkTarget.fromId(rule.getString("target"))?.let { NetworkRule(it, rule.optLong("created"), rule.optBoolean("manual")) }
-            },
-            zone = zone,
-        )
-    }
-
-    private fun JSONObject.toDestination(): DestinationActivity {
-        val site = optString("site")
-        val target = if (site.isNotEmpty()) {
-            NetworkTarget.Domain(site)
-        } else {
-            val addr = getString("addr")
-            NetworkTarget.Address(if (addr.contains(':')) addr.lowercase() else addr)
-        }
-        return DestinationActivity(
-            target = target,
-            hosts = optJSONArray("hosts").objects().map { host ->
-                HostActivity(
-                    name = host.getString("name"),
-                    connections = host.optInt("conn"),
-                    refused = host.optInt("refused"),
-                    sent = host.optLongOrNull("sent"),
-                    received = host.optLongOrNull("recv"),
-                    rule = host.rule(),
-                )
-            },
-            addresses = optJSONArray("addrs").strings(),
-            addressCount = optInt("addr_count", optJSONArray("addrs")?.length() ?: 0),
-            ports = optJSONArray("ports").objects().map { port ->
-                PortActivity(
-                    port = port.getInt("port"),
-                    connections = port.optInt("conn"),
-                    refused = port.optInt("refused"),
-                    sent = port.optLongOrNull("sent"),
-                    received = port.optLongOrNull("recv"),
-                    rule = port.rule(),
-                )
-            },
-            connections = optInt("conn"),
-            refused = optInt("refused"),
-            sent = optLongOrNull("sent"),
-            received = optLongOrNull("recv"),
-            first = optLong("first"),
-            last = optLong("last"),
-            rule = rule(),
-        )
-    }
-
-    private fun JSONObject.rule(): NetworkTarget? = if (isNull("rule")) null else NetworkTarget.fromId(getString("rule"))
-
-    private fun JSONObject.optLongOrNull(name: String): Long? = if (isNull(name)) null else getLong(name)
-
-    private fun JSONArray?.toBuckets(): List<ActivityBucket> = objects().map { ActivityBucket(it.getLong("t"), it.optInt("conn"), it.optInt("refused")) }
-
-    private fun JSONArray?.objects(): List<JSONObject> = if (this == null) emptyList() else List(length()) { getJSONObject(it) }
-
-    private fun JSONArray?.strings(): List<String> = if (this == null) emptyList() else List(length()) { getString(it) }
-
-    private companion object {
-        const val MOST_BUCKETS = 1000
+    override suspend fun clear(packageName: String, userId: Int): Int = withContext(defaultDispatcher) {
+        bbd.clearNetwork(packageName, userId).deleted.also { _changes.update { it + 1 } }
     }
 }

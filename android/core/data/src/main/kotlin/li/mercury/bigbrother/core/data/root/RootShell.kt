@@ -32,7 +32,7 @@ class CommandResult(val isSuccess: Boolean, val code: Int, val output: String, v
 
 /**
  * Runs commands in a root shell. The single place the app touches root;
- * open so that the repositories' tests can answer in its place.
+ * open so data source tests can answer in its place.
  */
 @Singleton
 open class RootShell @Inject constructor(

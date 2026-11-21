@@ -1,0 +1,2 @@
+{"ok":true,"addr":"198.51.100.53","ports":[{"port":8443,"conn":41,"refused":0}],"conn":41,"refused":0,
+"first":1,"last":2,"rule":null,"bucket":3600,"buckets":[{"t":3600,"conn":4,"refused":1}]}

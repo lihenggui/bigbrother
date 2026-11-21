@@ -40,6 +40,8 @@ dependencies {
 }
 
 val bbdCliErrors = rootDir.resolve("../testdata/protocol/bbd-cli-errors.txt")
+val bbdResponses = rootDir.resolve("../testdata/protocol/bbd")
 tasks.withType<Test>().configureEach {
+    inputs.dir(bbdResponses).withPropertyName("bbdResponses").withPathSensitivity(PathSensitivity.RELATIVE)
     inputs.file(bbdCliErrors).withPropertyName("bbdCliErrors").withPathSensitivity(PathSensitivity.RELATIVE)
 }

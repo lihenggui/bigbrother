@@ -1,0 +1,14 @@
+{"ok":true,"uid":10234,"since":1763393520,"until":1763479920,"bucket":3600,
+ "recording":{"on":true,"since":1763277120},"network":"allowed","traffic":true,"names":true,
+ "buckets":[{"t":1763393520,"conn":28,"refused":9}],
+ "destinations":[
+  {"site":"example-shop.com","hosts":[{"name":"api.example-shop.com","conn":300,"refused":0,"sent":1000,"recv":2000,"rule":null},
+    {"name":"img.example-shop.com","conn":212,"refused":0,"sent":153434,"recv":19081878,"rule":"host:img.example-shop.com"}],
+   "addrs":["203.0.113.10","2001:db8::10"],
+   "ports":[{"port":443,"conn":512,"refused":0,"sent":1153434,"recv":19083878}],
+   "conn":512,"refused":0,"sent":1153434,"recv":19083878,"first":1763277300,"last":1763479860,"rule":null},
+  {"addr":"2001:DB8::53","ports":[{"port":8443,"conn":41,"refused":0,"rule":"ip:[2001:db8::53]:8443"}],
+   "conn":41,"refused":0,"first":1763393600,"last":1763479800,"rule":null}],
+ "rules":[{"target":"domain:adnet.example","created":1763400000,"manual":false},
+          {"target":"cidr:203.0.113.0/24","created":1763460000,"manual":true},
+          {"target":"ip:203.0.113.81:8080","created":1763420001,"manual":true}]}

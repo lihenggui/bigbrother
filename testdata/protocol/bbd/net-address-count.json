@@ -1,0 +1,2 @@
+{"ok":true,"since":0,"until":1,"destinations":[{"site":"cdn.example","addrs":["203.0.113.1"],"addr_count":40,
+"conn":1,"refused":0,"first":1,"last":2,"rule":null}]}

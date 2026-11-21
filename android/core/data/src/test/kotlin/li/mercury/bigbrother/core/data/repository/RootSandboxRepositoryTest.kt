@@ -16,126 +16,142 @@
 
 package li.mercury.bigbrother.core.data.repository
 
-import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.RecordsException
-import li.mercury.bigbrother.core.data.root.CommandResult
-import li.mercury.bigbrother.core.data.root.RootShell
+import li.mercury.bigbrother.core.data.bbd.BbdSandboxGlobal
+import li.mercury.bigbrother.core.data.bbd.BbdSandboxReleaseResult
+import li.mercury.bigbrother.core.data.bbd.BbdSandboxedApp
+import li.mercury.bigbrother.core.data.bbd.TestBbdDataSource
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
-import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
-import kotlin.test.assertTrue
 
-@RunWith(RobolectricTestRunner::class)
 class RootSandboxRepositoryTest {
-    private val shell = TestRootShell(failing = setOf("list"), outputs = mapOf("disable" to """{"disabled":1,"failed":[]}"""))
-    private val repository = RootSandboxRepository(shell, Dispatchers.Unconfined)
-
     @Test
-    fun givenSandboxState_whenRefreshed_thenMapsListAndGlobalOnDefaultDispatcher() = runTest {
-        val shell = TestRootShell(
-            failing = emptySet(),
-            outputs = mapOf(
-                "list" to """{"apps":[{"uid":10234,"package":"com.example.notes","enabled":true,"created":1,"settings":{},"items":{},"network_rules":2}]}""",
-                "global" to """{"items":{"camera":"off"},"auto":true}""",
-            ),
-        )
-        val repository = RootSandboxRepository(shell, StandardTestDispatcher(testScheduler))
-        val read = async(start = CoroutineStart.UNDISPATCHED) { repository.refresh() }
+    fun givenSandboxState_whenRefreshed_thenPublishesListAndGlobal() = runTest {
+        val dataSource = SandboxDataSource(failing = emptySet())
+        val repository = RootSandboxRepository(dataSource, StandardTestDispatcher(testScheduler))
 
-        assertNull(repository.apps.value)
-        read.await()
+        repository.refresh()
 
         assertEquals("com.example.notes", repository.apps.value?.single()?.packageName)
         assertEquals(2, repository.apps.value?.single()?.networkRules)
         assertEquals(SandboxMode.OFF, repository.global.value?.get(SandboxItem.CAMERA))
         assertEquals(true, repository.autoIsolate.value)
+        assertEquals(listOf("list", "get global"), dataSource.calls)
     }
 
     @Test
-    fun givenListUnreadable_whenIsolated_thenNotFailedAndListKept() = runTest {
+    fun givenGlobalUnreadable_whenRefreshed_thenKeepsPublishedAppList() = runTest {
+        val repository = RootSandboxRepository(SandboxDataSource(setOf("get global")), StandardTestDispatcher(testScheduler))
+
+        assertFailsWith<RecordsException.CommandFailed> { repository.refresh() }
+
+        assertEquals("com.example.notes", repository.apps.value?.single()?.packageName)
+        assertNull(repository.global.value)
+        assertNull(repository.autoIsolate.value)
+    }
+
+    @Test
+    fun givenListUnreadable_whenIsolated_thenChangeSucceedsAndListIsKept() = runTest {
+        val dataSource = SandboxDataSource()
+        val repository = RootSandboxRepository(dataSource, StandardTestDispatcher(testScheduler))
+
         repository.isolate("com.example.notes", userId = 0)
 
-        assertEquals(listOf("enable", "list"), shell.commands)
+        assertEquals(listOf("enable", "list"), dataSource.calls)
         assertNull(repository.apps.value)
     }
 
     @Test
-    fun givenListUnreadable_whenReleasedOrChanged_thenNotFailed() = runTest {
+    fun givenListUnreadable_whenReleasedOrChanged_thenRefreshFailureIsTolerated() = runTest {
+        val dataSource = SandboxDataSource()
+        val repository = RootSandboxRepository(dataSource, StandardTestDispatcher(testScheduler))
+
         repository.release("com.example.notes", userId = 0)
         repository.setItems("com.example.notes", userId = 0, mapOf(SandboxItem.CAMERA to SandboxMode.OFF))
         repository.setGlobal(mapOf(SandboxItem.LOCATION to SandboxMode.COARSE))
 
-        assertEquals(listOf("disable", "list", "set", "list", "global", "list"), shell.commands)
+        assertEquals(listOf("disable", "list", "set", "list", "set global", "list"), dataSource.calls)
     }
 
     @Test
-    fun givenListUnreadable_whenAllReleased_thenNoneLeftReported() = runTest {
+    fun givenListUnreadable_whenAllReleased_thenReturnsTheRemainingCount() = runTest {
+        val repository = RootSandboxRepository(SandboxDataSource(), StandardTestDispatcher(testScheduler))
+
         assertEquals(0, repository.releaseAll())
     }
 
     @Test
+    fun givenMalformedReleaseCount_whenAllReleased_thenRefreshesBeforeReportingFailure() = runTest {
+        val failure = RecordsException.CommandFailed("bad count")
+        val dataSource = SandboxDataSource(failing = emptySet(), releaseCount = Result.failure(failure))
+        val repository = RootSandboxRepository(dataSource, StandardTestDispatcher(testScheduler))
+
+        assertEquals(failure, assertFailsWith<RecordsException.CommandFailed> { repository.releaseAll() })
+        assertEquals(listOf("disable all", "list", "get global"), dataSource.calls)
+    }
+
+    @Test
     fun givenCommandFailing_whenIsolated_thenFailsWithoutReadingList() = runTest {
-        val shell = TestRootShell(failing = setOf("enable"))
-        val repository = RootSandboxRepository(shell, Dispatchers.Unconfined)
+        val dataSource = SandboxDataSource(failing = setOf("enable"))
+        val repository = RootSandboxRepository(dataSource, StandardTestDispatcher(testScheduler))
 
         assertFailsWith<RecordsException.CommandFailed> { repository.isolate("com.example.notes", userId = 0) }
-        assertEquals(listOf("enable"), shell.commands)
+        assertEquals(listOf("enable"), dataSource.calls)
     }
 
     @Test
     fun givenListUnreadable_whenAutoIsolateChanged_thenSwitchReflectsSuccessfulCommand() = runTest {
+        val dataSource = SandboxDataSource()
+        val repository = RootSandboxRepository(dataSource, StandardTestDispatcher(testScheduler))
+
         repository.setAutoIsolate(on = true)
         assertEquals(true, repository.autoIsolate.value)
         repository.setAutoIsolate(on = false)
         assertEquals(false, repository.autoIsolate.value)
 
-        assertEquals(listOf("auto", "list", "auto", "list"), shell.commands)
-        assertTrue("sandbox auto on --json" in shell.lines[0])
-        assertTrue("sandbox auto off --json" in shell.lines[2])
+        assertEquals(listOf("auto true", "list", "auto false", "list"), dataSource.calls)
     }
 
-    @Test
-    fun givenModuleWithoutTheSwitch_whenAutoIsolateTurnedOn_thenModuleOutdated() = runTest {
-        val shell = TestRootShell(failing = setOf("auto"), error = "error: unrecognized subcommand 'auto'")
-        val repository = RootSandboxRepository(shell, Dispatchers.Unconfined)
+    private class SandboxDataSource(
+        private val failing: Set<String> = setOf("list"),
+        private val releaseCount: Result<BbdSandboxReleaseResult> = Result.success(BbdSandboxReleaseResult(0)),
+    ) : TestBbdDataSource() {
+        val calls = mutableListOf<String>()
 
-        assertFailsWith<RecordsException.ModuleOutdated> { repository.setAutoIsolate(on = true) }
-        assertEquals(listOf("auto"), shell.commands)
-    }
+        override suspend fun listSandboxApps(): List<BbdSandboxedApp> {
+            record("list")
+            return listOf(BbdSandboxedApp(10234, "com.example.notes", true, 1, emptyMap(), emptyMap(), emptyMap(), false, 2, null))
+        }
 
-    /**
-     * Answers `bbd sandbox` as the daemon would, failing the subcommands in
-     * [failing] with [error].
-     */
-    private class TestRootShell(
-        private val failing: Set<String>,
-        private val error: String = "Error: cannot read the sandbox",
-        private val outputs: Map<String, String> = emptyMap(),
-    ) : RootShell(Dispatchers.Unconfined) {
-        /** The subcommands run, in order. */
-        val commands = mutableListOf<String>()
+        override suspend fun getSandboxGlobal(): BbdSandboxGlobal {
+            record("get global")
+            return BbdSandboxGlobal(mapOf(SandboxItem.CAMERA to SandboxMode.OFF), true)
+        }
 
-        /** The command lines run, in order. */
-        val lines = mutableListOf<String>()
+        override suspend fun enableSandbox(packageName: String, userId: Int) = record("enable")
 
-        override suspend fun run(command: String, label: String): CommandResult {
-            val subcommand = label.removePrefix("bbd sandbox ")
-            commands += subcommand
-            lines += command
-            return if (subcommand in failing) {
-                CommandResult(isSuccess = false, code = 1, output = "", error = error)
-            } else {
-                CommandResult(isSuccess = true, code = 0, output = outputs[subcommand] ?: "{}", error = "")
-            }
+        override suspend fun disableSandbox(packageName: String, userId: Int) = record("disable")
+
+        override suspend fun disableAllSandboxes(): Result<BbdSandboxReleaseResult> {
+            record("disable all")
+            return releaseCount
+        }
+
+        override suspend fun setSandboxItems(packageName: String, userId: Int, changes: Map<SandboxItem, SandboxMode?>) = record("set")
+
+        override suspend fun setSandboxGlobal(changes: Map<SandboxItem, SandboxMode>) = record("set global")
+
+        override suspend fun setSandboxAuto(on: Boolean) = record("auto $on")
+
+        private fun record(call: String) {
+            calls += call
+            if (call in failing) throw RecordsException.CommandFailed("cannot read the sandbox")
         }
     }
 }
