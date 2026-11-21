@@ -30,7 +30,7 @@
 
 use std::collections::HashMap;
 
-use crate::rules::topic;
+use crate::topic;
 
 /// Prefix of a stored record.
 pub const SCHEME: &str = "appop:";

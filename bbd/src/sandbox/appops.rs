@@ -1329,8 +1329,8 @@ mod tests {
     const FINE: &str = super::super::items::PRECISE_LOCATION;
 
     /// Every item off, but those `on` names, at their modes.
-    fn only(on: &[(super::super::items::Item, super::super::items::Mode)]) -> Settings {
-        use super::super::items::{Item, Mode};
+    fn only(on: &[(crate::sandbox_item::Item, crate::sandbox_item::Mode)]) -> Settings {
+        use crate::sandbox_item::{Item, Mode};
         let mut own = Settings::default();
         for item in Item::ALL {
             own.set(item, Some(Mode::Off)).unwrap();
@@ -1355,8 +1355,8 @@ mod tests {
         assert!(!appops.shared.state().wanted);
         // An app with no item that holds an op does not need it.
         let mut off = Settings::default();
-        for item in super::super::items::Item::ALL {
-            off.set(item, Some(super::super::items::Mode::Off)).unwrap();
+        for item in crate::sandbox_item::Item::ALL {
+            off.set(item, Some(crate::sandbox_item::Mode::Off)).unwrap();
         }
         appops.resume(&[app(10101, off.over(&Settings::default()))]);
         assert!(!appops.shared.state().wanted);
@@ -1455,7 +1455,7 @@ mod tests {
 
     #[test]
     fn the_helper_is_told_the_ops_of_the_items_on() {
-        use super::super::items::{Item, Mode};
+        use crate::sandbox_item::{Item, Mode};
         let items = only(&[(Item::Camera, Mode::On), (Item::Contacts, Mode::On)]);
         assert_eq!(
             targets_of(&items),
@@ -1494,7 +1494,7 @@ mod tests {
 
     #[test]
     fn location_made_coarse_takes_the_precise_permission_and_no_location_op() {
-        use super::super::items::{Item, Mode};
+        use crate::sandbox_item::{Item, Mode};
         assert_eq!(
             targets_of(&only(&[
                 (Item::Location, Mode::Coarse),
@@ -1521,7 +1521,7 @@ mod tests {
 
     #[test]
     fn an_item_left_to_the_foreground_holds_its_ops_at_foreground() {
-        use super::super::items::{Item, Mode};
+        use crate::sandbox_item::{Item, Mode};
         let mut appops = AppOps {
             shared: Arc::new(Shared::default()),
         };
@@ -1571,7 +1571,7 @@ mod tests {
 
     #[test]
     fn a_permission_is_named_before_it_is_taken_and_its_first_state_kept() {
-        use super::super::items::{Item, Mode};
+        use crate::sandbox_item::{Item, Mode};
         let coarse = only(&[(Item::Location, Mode::Coarse)]);
         let named = naming_taken(&sandboxed(10100), &coarse);
         assert_eq!(named.saved_permissions, format!("{FINE}=default"));
@@ -1750,7 +1750,7 @@ mod tests {
     /// The camera and the microphone on, as `camera` says, and every other
     /// item off.
     fn camera_and_microphone(camera: bool) -> Settings {
-        use super::super::items::{Item, Mode};
+        use crate::sandbox_item::{Item, Mode};
         let mut own = Settings::default();
         for item in Item::ALL {
             own.set(item, Some(Mode::Off)).unwrap();
@@ -1865,7 +1865,7 @@ mod tests {
 
     #[test]
     fn location_made_coarse_and_back_saves_and_gives_back_the_permission() {
-        use super::super::items::{Item, Mode};
+        use crate::sandbox_item::{Item, Mode};
         let mut appops = AppOps {
             shared: Arc::new(Shared::default()),
         };
@@ -1906,7 +1906,7 @@ mod tests {
 
     #[test]
     fn a_permission_named_is_given_back_whatever_the_items_say() {
-        use super::super::items::{Item, Mode};
+        use crate::sandbox_item::{Item, Mode};
         let mut appops = AppOps {
             shared: Arc::new(Shared::default()),
         };
@@ -1949,7 +1949,7 @@ mod tests {
 
     #[test]
     fn an_app_is_given_back_the_ops_it_is_held_to_at_their_saved_modes() {
-        use super::super::items::{Item, Mode};
+        use crate::sandbox_item::{Item, Mode};
         let entry = Entry {
             saved_ops: "android:camera=4,android:read_sms=1".into(),
             ..sandboxed(10100)
@@ -1984,7 +1984,7 @@ mod tests {
 
     #[test]
     fn ops_saved_with_their_grants_go_back_with_them() {
-        use super::super::items::{Item, Mode};
+        use crate::sandbox_item::{Item, Mode};
         let (ops, permissions) = split_saved(&format!(
             "android:read_contacts=1/1,android:camera=default/4,{FINE}=granted"
         ));
@@ -2068,7 +2068,7 @@ mod tests {
 
     #[test]
     fn a_permission_granted_again_while_held_is_given_back_granted() {
-        use super::super::items::{Item, Mode};
+        use crate::sandbox_item::{Item, Mode};
         let mut appops = AppOps {
             shared: Arc::new(Shared::default()),
         };

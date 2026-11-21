@@ -16,8 +16,8 @@
 //!
 //! An app does not look names up itself: it asks netd, over a socket
 //! (`/dev/socket/dnsproxyd`), and netd sends the query on a socket of its
-//! own, which the packet filter's rule for the app's uid does not match
-//! ([`super::network`]). A name of the app's choosing would still leave
+//! own, which the packet filter's rule for the app's uid does not match.
+//! A name of the app's choosing would still leave
 //! the device, and with it whatever the app wrote into the name.
 //!
 //! So the socket is covered in the app's mount namespaces: `/dev/null` is
@@ -29,14 +29,13 @@
 //! ended: the socket is covered in the processes the app has when the
 //! network is taken from it, and uncovered in them when it is given back.
 //! A process that starts in between is given the cover at the gate
-//! ([`super::gate`]), with the mounts of the sandbox: the gate is told
+//! with the mounts of the sandbox: the gate is told
 //! first, either way, and the processes the app has are gone through
 //! after.
 //!
 //! An app whose connections are recorded, or that is kept from names, is
-//! given the daemon's own socket in place of netd's, in the same way
-//! ([`super::names`]): its lookups go through the daemon, which passes
-//! them on.
+//! given the daemon's own socket in place of netd's. The daemon passes
+//! its lookups on.
 //!
 //! A connection the app opened before and kept is not closed by this.
 //!
@@ -59,10 +58,16 @@ use std::{
 
 use anyhow::Context as _;
 
-use super::{Entry, dirs, gate::Process};
+use super::{Entry, dirs};
+use crate::proc::Process;
 
 /// Where netd listens for the lookups of apps.
 pub const SOCKET: &str = "/dev/socket/dnsproxyd";
+
+/// Where the daemon listens for lookups. Beside netd's, in the filesystem
+/// every mount namespace has; the name says nothing of the sandbox, as an
+/// app can read its own mounts.
+pub(super) const RELAY_SOCKET: &str = "/dev/socket/dnsproxyd_relay";
 
 /// What is mounted over the socket: there in every namespace, of the same
 /// filesystem as the socket, and nothing can be connected to it.
@@ -102,7 +107,7 @@ impl Cover {
         match self {
             Cover::None => None,
             Cover::Null => Some(STAND_IN),
-            Cover::Relay => Some(super::names::SOCKET),
+            Cover::Relay => Some(RELAY_SOCKET),
         }
     }
 }

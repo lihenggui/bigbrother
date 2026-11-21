@@ -42,7 +42,66 @@ use bb_common::{
     BINDER_MIN_NAME, BINDER_UNNAMED_KEY, BINDER_VALUE_WORDS, BINDER_WAKE, BinderKey, BinderValue,
 };
 
-use crate::{rules::topic, sensors};
+use crate::topic;
+
+/// The sensor connection's interface.
+pub const CONNECTION: &str = "android.gui.SensorEventConnection";
+/// `enableDisable(handle, enabled, samplingPeriodNs, maxBatchReportLatencyNs, reservedFlags)`.
+pub const ENABLE_DISABLE: &str = "enableDisable";
+/// `setEventRate(handle, samplingPeriodNs)`.
+const SET_EVENT_RATE: &str = "setEventRate";
+/// `destroy()`, sent when the app lets go of the connection.
+const DESTROY: &str = "destroy";
+
+/// Put before the sensor's type in a stored call.
+pub const SENSOR_MARK: char = '@';
+
+/// What a call to a sensor connection asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SensorRequest {
+    /// Turn a sensor on, with one sample every `period_ns` (0: as fast as
+    /// the sensor goes).
+    Enable {
+        handle: i32,
+        period_ns: i64,
+    },
+    Disable {
+        handle: i32,
+    },
+    /// Change the rate of a sensor that is on.
+    Rate {
+        handle: i32,
+        period_ns: i64,
+    },
+    /// The connection closes, and every sensor on it with it.
+    Close,
+}
+
+/// The request in a call to `method`, from its arguments: 32-bit and 64-bit
+/// little-endian integers, one after the other. `None` if they can't be
+/// read.
+fn decode_sensor_request(method: &str, args: &[u8]) -> Option<SensorRequest> {
+    let int = |at: usize| Some(i32::from_le_bytes(args.get(at..at + 4)?.try_into().ok()?));
+    let long = |at: usize| Some(i64::from_le_bytes(args.get(at..at + 8)?.try_into().ok()?));
+    match method {
+        ENABLE_DISABLE => {
+            let handle = int(0)?;
+            if int(4)? == 0 {
+                return Some(SensorRequest::Disable { handle });
+            }
+            Some(SensorRequest::Enable {
+                handle,
+                period_ns: long(8)?.max(0),
+            })
+        }
+        SET_EVENT_RATE => Some(SensorRequest::Rate {
+            handle: int(0)?,
+            period_ns: long(4)?.max(0),
+        }),
+        DESTROY => Some(SensorRequest::Close),
+        _ => None,
+    }
+}
 
 /// Prefix of a stored call.
 pub const SCHEME: &str = "binder:";
@@ -208,10 +267,7 @@ const WATCHED: &[(&str, &[TopicMethods])] = &[
     // Never stored as it is; see `sensors`. Only turning a sensor on is
     // stored as a call; turning it off and the connection's other methods
     // end what `sensors` keeps of it.
-    (
-        sensors::CONNECTION,
-        &[(topic::SENSORS, &[sensors::ENABLE_DISABLE])],
-    ),
+    (CONNECTION, &[(topic::SENSORS, &[ENABLE_DISABLE])]),
     // Never stored under this name; see `CONTENT_PROVIDER`.
     (CONTENT_PROVIDER, &[(topic::ANDROID_ID, &["CALL"])]),
     (
@@ -235,15 +291,15 @@ const FIXED: &[(&str, &str, u32)] = &[
     ("android.gui.SensorServer", "createSensorEventConnection", 2),
     // frameworks/native/libs/sensor/ISensorEventConnection.cpp, the same
     // from Android 11 to 16.
-    (sensors::CONNECTION, sensors::ENABLE_DISABLE, 2),
-    (sensors::CONNECTION, sensors::SET_EVENT_RATE, 3),
+    (CONNECTION, ENABLE_DISABLE, 2),
+    (CONNECTION, SET_EVENT_RATE, 3),
 ];
 
 /// The one call watched although it carries no interface name: closing a
 /// sensor connection sends an empty parcel. The kernel side reports such
 /// calls by code alone (`BINDER_UNNAMED_KEY`), and `sensors` keeps only
 /// those that went to a connection it knows.
-const UNNAMED: (&str, &str, u32) = (sensors::CONNECTION, sensors::DESTROY, 6);
+const UNNAMED: (&str, &str, u32) = (CONNECTION, DESTROY, 6);
 
 /// Every content provider is called through this one interface; what is
 /// wanted from it is the reads of system settings, which go to the settings
@@ -380,9 +436,7 @@ pub fn topic_of(subject: &str) -> Option<&'static str> {
     let (call, package) = call
         .split_once('#')
         .map_or((call, None), |(call, package)| (call, Some(package)));
-    let call = call
-        .split_once(sensors::SENSOR_MARK)
-        .map_or(call, |(call, _)| call);
+    let call = call.split_once(SENSOR_MARK).map_or(call, |(call, _)| call);
     let (interface, method) = call.rsplit_once('/')?;
     let topic = topic_of_method(interface, method)?;
     let Some(package) = package.filter(|_| topic == topic::INSTALLED_APPS) else {
@@ -514,17 +568,12 @@ impl Catalog {
     /// A call to a sensor connection, which `sensors` keeps track of rather
     /// than it being stored as it is. `None` for any other call, or one whose
     /// arguments can't be read.
-    pub fn sensor_request(
-        &self,
-        interface: u32,
-        code: u32,
-        args: &[u8],
-    ) -> Option<sensors::Request> {
+    pub fn sensor_request(&self, interface: u32, code: u32, args: &[u8]) -> Option<SensorRequest> {
         let method = self.methods.get(&(interface, code))?;
-        if WATCHED.get(interface as usize)?.0 != sensors::CONNECTION {
+        if WATCHED.get(interface as usize)?.0 != CONNECTION {
             return None;
         }
-        sensors::request(method, args)
+        decode_sensor_request(method, args)
     }
 
     /// What to store for a call reported by the kernel side. `args` is the
@@ -545,7 +594,7 @@ impl Catalog {
         if name == CONTENT_PROVIDER {
             return setting_read(args);
         }
-        if name == sensors::CONNECTION {
+        if name == CONNECTION {
             return None;
         }
         let mut subject = format!("{SCHEME}{name}/{method}");
@@ -573,7 +622,7 @@ impl Catalog {
 fn wakes(id: u32) -> bool {
     WATCHED
         .get(id as usize)
-        .is_some_and(|(name, _)| *name == sensors::CONNECTION)
+        .is_some_and(|(name, _)| *name == CONNECTION)
 }
 
 /// Calls to the sensor connection wake the daemon at once (`BINDER_WAKE`):
@@ -748,7 +797,7 @@ mod tests {
         assert_eq!(unnamed.len(), 1);
         let connection = WATCHED
             .iter()
-            .position(|(name, _)| *name == sensors::CONNECTION)
+            .position(|(name, _)| *name == CONNECTION)
             .unwrap() as u64;
         assert_eq!(unnamed[0].1[0], connection);
         assert_eq!(unnamed[0].1[1], 1 << 6);
@@ -830,7 +879,7 @@ mod tests {
         let catalog = Catalog::parse("");
         let connection = WATCHED
             .iter()
-            .position(|(name, _)| *name == sensors::CONNECTION)
+            .position(|(name, _)| *name == CONNECTION)
             .unwrap() as u32;
         let mut enable = 3i32.to_le_bytes().to_vec();
         enable.extend(1i32.to_le_bytes());
@@ -838,14 +887,14 @@ mod tests {
         enable.extend([0; 12]);
         assert_eq!(
             catalog.sensor_request(connection, 2, &enable),
-            Some(sensors::Request::Enable {
+            Some(SensorRequest::Enable {
                 handle: 3,
                 period_ns: 5_000_000
             })
         );
         assert_eq!(
             catalog.sensor_request(connection, 6, &[]),
-            Some(sensors::Request::Close)
+            Some(SensorRequest::Close)
         );
         // Never stored as calls of their own, and not watched otherwise.
         assert_eq!(catalog.subject(connection, 2, &enable, &[10100], &[]), None);
@@ -964,5 +1013,44 @@ mod tests {
                 assert!(topic_of(&format!("{SCHEME}{interface}/{method}")).is_some());
             }
         }
+    }
+
+    #[test]
+    fn calls_are_read_from_their_arguments() {
+        let args = |values: &[&[u8]]| values.concat();
+        let enable = args(&[
+            &7i32.to_le_bytes(),
+            &1i32.to_le_bytes(),
+            &20_000_000i64.to_le_bytes(),
+            &0i64.to_le_bytes(),
+            &0i32.to_le_bytes(),
+        ]);
+        assert_eq!(
+            decode_sensor_request(ENABLE_DISABLE, &enable),
+            Some(SensorRequest::Enable {
+                handle: 7,
+                period_ns: 20_000_000
+            })
+        );
+        let disable = args(&[&7i32.to_le_bytes(), &0i32.to_le_bytes(), &[0; 20]]);
+        assert_eq!(
+            decode_sensor_request(ENABLE_DISABLE, &disable),
+            Some(SensorRequest::Disable { handle: 7 })
+        );
+        let rate = args(&[&(-2i32).to_le_bytes(), &5_000_000i64.to_le_bytes()]);
+        assert_eq!(
+            decode_sensor_request(SET_EVENT_RATE, &rate),
+            Some(SensorRequest::Rate {
+                handle: -2,
+                period_ns: 5_000_000
+            })
+        );
+        assert_eq!(
+            decode_sensor_request(DESTROY, &[]),
+            Some(SensorRequest::Close)
+        );
+        // Too short to hold the period.
+        assert_eq!(decode_sensor_request(ENABLE_DISABLE, &enable[..12]), None);
+        assert_eq!(decode_sensor_request("flush", &enable), None);
     }
 }

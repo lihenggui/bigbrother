@@ -37,7 +37,7 @@ use bb_common::{
     },
 };
 
-use crate::rules::topic;
+use crate::topic;
 
 /// Prefix of a stored destination.
 pub const SCHEME: &str = "net://";

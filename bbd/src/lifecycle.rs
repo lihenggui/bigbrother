@@ -18,7 +18,7 @@ use std::{fs, io, io::Read as _, os::unix::fs::MetadataExt as _, path::Path};
 
 use anyhow::{Context as _, ensure};
 
-use crate::sandbox::gate::Process;
+use crate::proc::Process;
 
 pub fn stop(module: &Path) -> anyhow::Result<()> {
     stop_in(module, Path::new("/data/adb/big_brother"))

@@ -46,9 +46,12 @@ use std::{fs, os::unix::fs::MetadataExt as _, path::Path};
 
 use super::{
     Effect, Entry, Resumed, dirs,
-    gate::Process,
-    items::{Item, Mode, Mounts, Settings},
+    items::{Mounts, Settings},
     mounts,
+};
+use crate::{
+    proc::Process,
+    sandbox_item::{Item, Mode},
 };
 
 /// Ends an app's processes as it enters or leaves the sandbox. The last of

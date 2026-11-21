@@ -49,7 +49,7 @@
 //! The rules are about the app's own sockets. A name it looks up through
 //! the system's resolver is looked up by netd, on a socket of netd's own
 //! uid, which they do not match: the resolver is taken from the app with
-//! the network, and given back with it ([`super::resolver`]).
+//! the network, and given back with it.
 
 use std::{
     collections::BTreeSet,
@@ -264,8 +264,8 @@ pub struct Network {
     /// few this one has listed so far, or removed, they would let the
     /// others through.
     resumed: bool,
-    /// Whether an app is kept from single destinations
-    /// ([`super::destinations`]): the rules are needed for those too.
+    /// Destination rules need the packet filter even when every app has
+    /// the network item off.
     destinations: Arc<AtomicBool>,
 }
 
@@ -541,7 +541,7 @@ mod tests {
     use crate::test_sync::{Rc, RefCell};
 
     use super::*;
-    use crate::sandbox::items::{Item, Mode};
+    use crate::sandbox_item::{Item, Mode};
 
     /// The kernel: the uids listed, and the tables of both families.
     #[derive(Default)]

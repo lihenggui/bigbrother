@@ -1881,8 +1881,8 @@ mod tests {
         f.install(0, "com.example.new");
         sandbox.isolate_new(&f.writer, &mut f.packages);
         let camera_off = BTreeMap::from([(
-            crate::sandbox::items::Item::Camera,
-            Some(crate::sandbox::items::Mode::Off),
+            crate::sandbox_item::Item::Camera,
+            Some(crate::sandbox_item::Mode::Off),
         )]);
         sandbox
             .configure(
@@ -1993,8 +1993,8 @@ mod tests {
         f.install(0, "com.example.new");
         sandbox.isolate_new(&f.writer, &mut f.packages);
         let camera_off = BTreeMap::from([(
-            crate::sandbox::items::Item::Camera,
-            Some(crate::sandbox::items::Mode::Off),
+            crate::sandbox_item::Item::Camera,
+            Some(crate::sandbox_item::Mode::Off),
         )]);
         sandbox
             .configure(

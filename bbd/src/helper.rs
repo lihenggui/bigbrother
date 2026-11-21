@@ -119,7 +119,7 @@ mod tests {
         let mut command = Command::new("sleep");
         command.arg("60");
         let child = spawn_for_output(command).unwrap();
-        let process = crate::sandbox::gate::Process::open(child.id().unwrap() as i32).unwrap();
+        let process = crate::proc::Process::open(child.id().unwrap() as i32).unwrap();
         let (started, waiting) = tokio::sync::oneshot::channel();
         let task = tokio::spawn(async move {
             started.send(()).unwrap();

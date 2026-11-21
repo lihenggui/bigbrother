@@ -50,11 +50,13 @@ use std::{
 use anyhow::Context as _;
 
 use super::{
-    Effect, Entry, Global, HookStatus, Resumed, Snapshot, Status,
-    items::{Item, Mode, Settings},
-    items_of,
+    Effect, Entry, Global, HookStatus, Resumed, Snapshot, Status, items::Settings, items_of,
 };
-use crate::sync::read;
+use crate::{
+    dir::Dir,
+    sandbox_item::{Item, Mode},
+    sync::read,
+};
 
 /// Keep in sync with `SandboxHook.kt`.
 const LIST: &str = "/data/system/big_brother_sandbox";
@@ -67,7 +69,7 @@ const SYSTEM_UID: u32 = 1000;
 
 pub struct Identity {
     user_data: Option<PathBuf>,
-    pins: std::cell::RefCell<Vec<super::dirs::Dir>>,
+    pins: std::cell::RefCell<Vec<Dir>>,
     revision: String,
     /// What the list says, or is to say once written: the line of each uid
     /// the hook answers for.
@@ -422,7 +424,6 @@ mod tests {
 
     #[test]
     fn only_the_hooks_items_that_are_on_are_listed() {
-        use super::super::items::{Item, Mode};
         let dir = test_dir("identity-items");
         let mut identity = Identity::new(&Snapshot::default(), &Global::default()).at(&dir);
         let list = || {

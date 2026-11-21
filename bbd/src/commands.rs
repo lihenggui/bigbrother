@@ -24,10 +24,9 @@
 //! without its directory: an app looking for `su` tries a dozen directories,
 //! and that is one finding, not twelve.
 
-use crate::store::Mode;
 use std::collections::HashMap;
 
-use crate::rules::topic;
+use crate::{record::Mode, topic};
 
 /// Prefix of a stored command.
 pub const SCHEME: &str = "exec:";
@@ -164,7 +163,7 @@ pub struct Searches {
 }
 
 /// A command that was looked for and could not be run: (uid, origin bits
-/// such as [`crate::store::MODE_ISOLATED`], command, time).
+/// such as [`crate::record::MODE_ISOLATED`], command, time).
 pub type NotFound = (u32, Mode, String, i64);
 
 impl Searches {

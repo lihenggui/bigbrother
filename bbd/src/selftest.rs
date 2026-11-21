@@ -40,8 +40,7 @@ use std::{
 };
 
 use anyhow::Context as _;
-use aya::maps::RingBuf;
-use aya::maps::{MapData, PerCpuArray};
+use aya::maps::{PerCpuArray, RingBuf};
 use bb_common::{
     EV_CONNECT, EV_EXEC, EV_FILE, EV_NETLINK, EV_PATH, EV_PROCESS, EventHeader, OP_PROBE,
     PathEvent, read_event,
@@ -49,8 +48,8 @@ use bb_common::{
 
 use crate::{
     packages::{FIRST_ISOLATED_APP_ID, app_id_of},
+    probes::{self, Plan, dropped_events},
     syscalls::Feature,
-    trace,
 };
 
 /// The uid the child takes: app id 70000 of user 0. The kernel side traces
@@ -200,9 +199,6 @@ impl State {
         matches!(self, Self::Fires | Self::Unchecked(_))
     }
 }
-
-/// (program, kernel function) pairs a feature is attached to.
-pub type Plan = Vec<(&'static str, &'static str)>;
 
 /// What each feature's probes did, given what they are attached to, what
 /// the child made and what arrived from it. A feature without checks is
@@ -463,7 +459,7 @@ impl Calls {
 /// Returns whether every feature fires.
 pub fn command() -> anyhow::Result<bool> {
     let started = Instant::now();
-    let mut probes = trace::load_probes()?;
+    let mut probes = probes::load_probes()?;
     let mut ring = RingBuf::try_from(
         probes
             .ebpf
@@ -515,12 +511,6 @@ pub fn command() -> anyhow::Result<bool> {
         started.elapsed().as_millis()
     );
     Ok(passed)
-}
-
-/// Events the kernel side has dropped so far, over every CPU.
-pub fn dropped_events(map: &PerCpuArray<MapData, u64>) -> u64 {
-    map.get(&0, 0)
-        .map_or(0, |per_cpu| per_cpu.iter().sum::<u64>())
 }
 
 fn kernel_release() -> String {

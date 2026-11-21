@@ -74,11 +74,11 @@ pub mod names;
 pub mod network;
 pub mod resolver;
 pub mod sweep;
+pub mod target;
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
-    fs::File,
-    io::{Read as _, Write as _},
+    io::Write as _,
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
 };
@@ -90,14 +90,15 @@ use serde::{Deserialize, Serialize};
 use crate::{
     control::{self, Request},
     packages::{Packages, app_id_of, user_of},
+    sandbox_item::{Item, Mode},
     store::{Writer, net::RuleChange},
     sync::{lock, read, write},
 };
 
 pub use crate::store::SandboxEntry as Entry;
-use items::{InPlace, Item, Mode, Part, Settings};
+use items::{InPlace, Part, Settings};
 
-use crate::netctl::Target;
+use target::Target;
 
 /// Packages that are never sandboxed: the app, whose own reads of the
 /// device would be cut off from what it reports on. The canary test app
@@ -1502,15 +1503,8 @@ fn uid_of(packages: &mut Packages, package: &str, user: u32) -> anyhow::Result<u
 /// A new ANDROID_ID: 64 random bits as 16 lowercase hex digits, the form
 /// Android gives it.
 fn new_android_id() -> anyhow::Result<String> {
-    let bytes = random_bytes::<8>().context("reading /dev/urandom")?;
+    let bytes = dirs::random_bytes::<8>().context("reading /dev/urandom")?;
     Ok(format!("{:016x}", u64::from_ne_bytes(bytes)))
-}
-
-/// `N` random bytes, from the kernel's generator.
-fn random_bytes<const N: usize>() -> std::io::Result<[u8; N]> {
-    let mut bytes = [0; N];
-    File::open("/dev/urandom")?.read_exact(&mut bytes)?;
-    Ok(bytes)
 }
 
 /// The app ops helper's lines that give every app in the sandbox its app
