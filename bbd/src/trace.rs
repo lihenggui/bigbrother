@@ -319,7 +319,6 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     prune_tick.tick().await; // first tick fires immediately; already pruned above
     let mut sigint = signal(SignalKind::interrupt())?;
     let mut sigterm = signal(SignalKind::terminate())?;
-    let mut write_errors = RecurringLog::default();
     let mut sensor_check = SensorCheck::default();
 
     loop {
@@ -381,9 +380,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
             // A reading at all shows the records can be read here. Written
             // when that changes, not with every reading.
             let covered = i64::from(reading.is_some());
-            if covered != appops_coverage
-                && tracer.writer.set_meta("coverage_appops", covered).is_ok()
-            {
+            if covered != appops_coverage && tracer.write_coverage("coverage_appops", covered) {
                 appops_coverage = covered;
             }
             if let Some(entries) = reading {
@@ -395,7 +392,9 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         // what was held of it.
         while let Ok(uid) = net_cleared.try_recv() {
             if let Err(e) = tracer.writer.net_clear(uid) {
-                write_errors.log(format!("bbd: could not clear network records: {e:#}"));
+                tracer
+                    .write_errors
+                    .log(format!("bbd: could not clear network records: {e:#}"));
             }
         }
         // A failed write (disk full, database busy) keeps the batch for the
@@ -405,7 +404,9 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
             None => tracer.writer.flush(&tracer.counters, now()),
         };
         if let Err(e) = written {
-            write_errors.log(format!("bbd: could not write records: {e:#}"));
+            tracer
+                .write_errors
+                .log(format!("bbd: could not write records: {e:#}"));
         }
         if let Some(stream) = request {
             control::answer(&stream);
@@ -414,7 +415,11 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
 
     if let Some(loader) = catalog_loader {
         loader.abort();
-        let _ = loader.await;
+        if let Err(e) = loader.await
+            && e.is_panic()
+        {
+            eprintln!("bbd: service catalog loader panicked");
+        }
     }
     control::unlisten(opts.db);
     // Ends with what it has learned kept, and takes no more commands.
@@ -533,7 +538,7 @@ fn start_sandbox(
     // (`sweep`): no start falls between the two.
     let storage = attach_feature(ebpf, &syscalls::GATE, symbols, selinux, offsets)
         .and_then(|_| sandbox::gate::Storage::start(ebpf, &db.with_file_name("scratch")));
-    let _ = tracer.writer.set_meta(
+    tracer.write_coverage(
         &format!("coverage_{}", syscalls::GATE.name),
         i64::from(storage.is_ok()),
     );
@@ -599,9 +604,7 @@ fn start_sandbox(
     if let Err(e) = &relay {
         eprintln!("bbd: warning: the names apps look up are not known: {e:#}");
     }
-    let _ = tracer
-        .writer
-        .set_meta("coverage_net_names", i64::from(relay.is_ok()));
+    tracer.write_coverage("coverage_net_names", i64::from(relay.is_ok()));
     let names = relay.is_ok().then_some(names);
     tracer.refused_lookups = relay.is_ok().then_some(refused_lookups);
     tracer.net = Some(sandbox::destinations::View {
@@ -653,9 +656,7 @@ fn start_sandbox(
     if let Err(e) = &traffic {
         eprintln!("bbd: warning: the bytes of connections are not counted: {e:#}");
     }
-    let _ = tracer
-        .writer
-        .set_meta("coverage_net_traffic", i64::from(traffic.is_ok()));
+    tracer.write_coverage("coverage_net_traffic", i64::from(traffic.is_ok()));
     match destinations {
         Ok(mut destinations) => {
             destinations.with_traffic(traffic.is_ok());
@@ -721,9 +722,10 @@ impl SandboxThread {
             .name("sandbox".into())
             .spawn(move || runtime.block_on(run_sandbox(parts, stopped, listening)))
             .context("starting the sandbox's thread")?;
-        // Sent once the command socket is bound or could not be; a thread
-        // that ended first drops the sender.
-        let _ = listened.recv();
+        // Sent once the command socket is bound or could not be.
+        if listened.recv().is_err() {
+            eprintln!("bbd: sandbox: thread ended before reporting command listener status");
+        }
         Ok(Self { stop, thread })
     }
 
@@ -770,6 +772,7 @@ async fn run_sandbox(
     writer.tell_net_cleared(net_cleared);
     let mut packages = Packages::new(&packages_list);
     let mut command_reads = tokio::task::JoinSet::new();
+    let mut command_read_errors = RecurringLog::default();
     // The package list, watched while newly installed apps are sandboxed.
     let mut package_watch = sandbox::auto::Watch::default();
     let mut tick = interval(FLUSH_INTERVAL);
@@ -801,9 +804,17 @@ async fn run_sandbox(
                 continue;
             }
             Some(read) = command_reads.join_next(), if !command_reads.is_empty() => {
-                if let Ok(Some((stream, line))) = read {
-                    let answer = sandbox.answer(&line, &writer, &mut packages);
-                    control::send_answer(stream, answer);
+                match read {
+                    Ok(Some((stream, line))) => {
+                        let answer = sandbox.answer(&line, &writer, &mut packages);
+                        control::send_answer(stream, answer);
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        // Panic payloads can include command data.
+                        let outcome = if e.is_panic() { "panicked" } else { "was cancelled" };
+                        command_read_errors.log(format!("bbd: sandbox: command read task {outcome}"));
+                    }
                 }
             }
             // An app was installed, updated or removed.
@@ -998,8 +1009,10 @@ fn attach_feature(
     })();
     if let Err(e) = attached {
         for (name, link) in links {
-            if let Some(Ok(program)) = ebpf.program_mut(name).map(<&mut KProbe>::try_from) {
-                let _ = program.detach(link);
+            if let Some(Ok(program)) = ebpf.program_mut(name).map(<&mut KProbe>::try_from)
+                && let Err(e) = program.detach(link)
+            {
+                eprintln!("bbd: probes: could not detach {name} after an attach failure: {e}");
             }
         }
         return Err(e);
@@ -1221,6 +1234,7 @@ fn stream_appops(
         }
         *read_once = true;
         if sender.send(Some(appops::parse(&reading))).is_err() {
+            // Closing the helper's input on return also tells it to exit.
             let _ = helper.kill();
             let _ = helper.wait();
             return StreamEnd::DaemonGone;
@@ -1407,6 +1421,7 @@ struct Tracer {
     sensors_dropped: u64,
     sensors_dropped_log: RecurringLog,
     writer: Writer,
+    write_errors: RecurringLog,
     counters: Counters,
     /// Keyed by thread id.
     awaiting_result: HashMap<u32, Vec<Held>>,
@@ -1436,6 +1451,7 @@ impl Tracer {
             sensors_dropped: 0,
             sensors_dropped_log: RecurringLog::default(),
             writer,
+            write_errors: RecurringLog::default(),
             counters: Counters::default(),
             awaiting_result: HashMap::new(),
             isolated_owners: HashMap::new(),
@@ -1462,7 +1478,18 @@ impl Tracer {
             eprintln!("bbd: watching {} service methods", catalog.len());
             self.catalog = Some(catalog);
         }
-        self.writer.set_meta("coverage_binder", covered).ok();
+        self.write_coverage("coverage_binder", covered);
+    }
+
+    fn write_coverage(&mut self, key: &str, covered: i64) -> bool {
+        match self.writer.set_meta(key, covered) {
+            Ok(()) => true,
+            Err(e) => {
+                self.write_errors
+                    .log(format!("bbd: could not write {key}: {e:#}"));
+                false
+            }
+        }
     }
 
     /// Yield to control requests even when the kernel keeps producing.
@@ -1961,11 +1988,6 @@ impl Tracer {
         self.store(uid, cat, path, opened.mode | origin, ok, opened.ts, 0);
     }
 
-    /// The app a process should be attributed to, and [`MODE_ISOLATED`] if
-    /// it was traced from one of the app's isolated processes (0 otherwise).
-    /// Isolated processes run under a uid of their own. Best effort: when
-    /// the process is gone and its uid was not seen recently, the record
-    /// stays under the isolated uid, without the flag.
     /// What a row of the network records is about. An app has so many
     /// destinations of its own in an hour; what it connects to past them
     /// is counted together, of no destination: an app that goes through
@@ -2028,6 +2050,11 @@ impl Tracer {
         self.refused_lookups = Some(refused);
     }
 
+    /// The app a process should be attributed to, and [`MODE_ISOLATED`] if
+    /// it was traced from one of the app's isolated processes (0 otherwise).
+    /// Isolated processes run under a uid of their own. Best effort: when
+    /// the process is gone and its uid was not seen recently, the record
+    /// stays under the isolated uid, without the flag.
     fn owner_uid(&mut self, uid: u32, pid: u32) -> (u32, Mode) {
         if uid % PER_USER_RANGE < FIRST_ISOLATED_APP_ID {
             return (uid, 0);
@@ -2466,6 +2493,52 @@ mod tests {
         assert_eq!(log.line("a".into(), at(3690)).as_deref(), Some("a"));
         // One that recurs no more than hourly is logged each time, as is.
         assert_eq!(log.line("a".into(), at(7290)).as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn a_failed_coverage_write_is_logged_and_can_be_retried() {
+        let dir = std::env::temp_dir().join(format!("bbd-trace-coverage-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("bb.db");
+        let list = dir.join("packages.list");
+        fs::write(&list, "").unwrap();
+        let opts = Options {
+            db: &db,
+            packages_list: list.to_str().unwrap(),
+            retention_days: 30,
+            verbose: false,
+            profile: false,
+            explain_discards: false,
+            ingest_provider_events: false,
+            sandbox: false,
+        };
+        let mut tracer = Tracer::new(
+            &opts,
+            Writer::open(&db).unwrap(),
+            sensors::Sensors::new(sensors::dumpsys),
+        );
+        let key = "coverage_appops";
+        assert!(tracer.write_coverage(key, COVERAGE_PENDING));
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER reject_coverage BEFORE INSERT ON meta
+             BEGIN SELECT RAISE(ABORT, 'injected write failure'); END;",
+        )
+        .unwrap();
+
+        assert!(!tracer.write_coverage(key, 1));
+        assert_eq!(tracer.writer.meta(key).unwrap(), Some(COVERAGE_PENDING));
+        assert!(tracer.write_errors.last.as_ref().is_some_and(|(line, _)| {
+            line.starts_with("bbd: could not write coverage_appops:")
+                && line.contains("injected write failure")
+        }));
+
+        conn.execute_batch("DROP TRIGGER reject_coverage").unwrap();
+        assert!(tracer.write_coverage(key, 1));
+        assert_eq!(tracer.writer.meta(key).unwrap(), Some(1));
+        drop(conn);
+        drop(tracer);
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

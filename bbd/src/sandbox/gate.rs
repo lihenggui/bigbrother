@@ -55,7 +55,7 @@ use std::{
 };
 
 use anyhow::Context as _;
-use aya::maps::{Array, HashMap as BpfHashMap, MapData, RingBuf};
+use aya::maps::{Array, HashMap as BpfHashMap, MapData, MapError, RingBuf};
 use bb_common::{GATE_CLOSED, GateEvent, read_event};
 
 use super::{
@@ -75,8 +75,7 @@ const STOP_WAIT: Duration = Duration::from_secs(2);
 /// Hold times kept for the 95th percentile `bbd sandbox status` reports.
 const HOLDS_KEPT: usize = 256;
 
-/// Least time between two log lines about starts that failed. An app the
-/// system keeps trying to start would otherwise fill the log.
+/// Least time between log lines for a recurring sandbox failure.
 const FAILURE_LOG_INTERVAL: Duration = Duration::from_secs(60);
 
 /// A process held by a descriptor, so that a signal meant for it cannot
@@ -255,6 +254,7 @@ impl Stats {
 /// mount for each.
 pub struct Storage {
     uids: BpfHashMap<MapData, u32, u32>,
+    release_errors: FailureLog,
     shared: Arc<Shared>,
     /// Whether apps can be kept from the network on this device. Where
     /// they cannot, the resolver is left to them too.
@@ -294,6 +294,7 @@ impl Storage {
             ring,
             closing: Closing {
                 waiting,
+                reset_errors: FailureLog::default(),
                 shared: shared.clone(),
             },
             keeper: Keeper::new(shared.clone(), scratch),
@@ -307,6 +308,7 @@ impl Storage {
             .context("the gate thread ended as it started")??;
         Ok(Self {
             uids,
+            release_errors: FailureLog::default(),
             shared,
             network: false,
             names: None,
@@ -364,7 +366,12 @@ impl Storage {
 
     /// Stop holding starts of `uid`, if they were held.
     fn release(&mut self, uid: u32) {
-        let _ = self.uids.remove(&uid);
+        if let Err(e) = self.uids.remove(&uid)
+            && !missing_gate_key(&e)
+        {
+            self.release_errors
+                .log(format_args!("cannot remove uid {uid} from the gate: {e:?}"));
+        }
         write(&self.shared.apps).remove(&uid);
     }
 
@@ -409,6 +416,12 @@ impl Storage {
         apps.insert(uid, gated);
         Ok(())
     }
+}
+
+fn missing_gate_key(error: &MapError) -> bool {
+    // Aya's hash-map delete passes the kernel's ENOENT through as a syscall error.
+    matches!(error, MapError::KeyNotFound)
+        || matches!(error, MapError::SyscallError(e) if e.io_error.raw_os_error() == Some(libc::ENOENT))
 }
 
 impl Storage {
@@ -653,13 +666,16 @@ struct Keeper {
 /// then kills the starts it would have held for nobody.
 struct Closing {
     waiting: Array<MapData, u64>,
+    reset_errors: FailureLog,
     shared: Arc<Shared>,
 }
 
 impl Drop for Closing {
     fn drop(&mut self) {
         self.shared.open.store(false, Ordering::Relaxed);
-        let _ = self.waiting.set(0, &GATE_CLOSED, 0);
+        if let Err(e) = self.waiting.set(0, &GATE_CLOSED, 0) {
+            eprintln!("bbd: sandbox: cannot mark the gate closed in the kernel: {e:?}");
+        }
         eprintln!("bbd: sandbox: the gate has stopped; sandboxed apps cannot start");
     }
 }
@@ -720,7 +736,11 @@ impl Thread {
             for event in events.drain(..) {
                 let lost = self.keeper.admit(&event, &home, &cpuinfo).is_err();
                 // Nothing waits any more: a later start is timed anew.
-                let _ = self.closing.waiting.set(0, &0, 0);
+                if let Err(e) = self.closing.waiting.set(0, &0, 0) {
+                    self.closing.reset_errors.log(format_args!(
+                        "cannot reset the gate wait in the kernel: {e:?}"
+                    ));
+                }
                 if lost {
                     return;
                 }
@@ -756,7 +776,7 @@ impl Keeper {
                     return Ok(());
                 }
                 Err(e) => {
-                    self.failures.log(event.uid, &e.into());
+                    self.failures.log_start(event.uid, &e.into());
                     // The kernel closes subsequent starts while the reader is
                     // unable to acquire a process descriptor.
                     self.shared.open.store(false, Ordering::Relaxed);
@@ -772,13 +792,13 @@ impl Keeper {
                 Ok(()) => match crate::sensors::process_start(event.pid) {
                     Some(actual) if actual == ticks => break,
                     Some(_) => return Ok(()),
-                    None => self.failures.log(
+                    None => self.failures.log_start(
                         event.uid,
                         &anyhow::anyhow!("process generation unavailable"),
                     ),
                 },
                 Err(e) if e.raw_os_error() == Some(libc::ESRCH) => return Ok(()),
-                Err(e) => self.failures.log(event.uid, &e.into()),
+                Err(e) => self.failures.log_start(event.uid, &e.into()),
             }
             self.shared.open.store(false, Ordering::Relaxed);
             std::thread::sleep(Duration::from_millis(100));
@@ -816,7 +836,7 @@ impl Keeper {
                     Ok(_) => lock(&shared.stats).failed += 1,
                     Err(e) => {
                         lock(&shared.stats).failed += 1;
-                        self.failures.log(event.uid, &e);
+                        self.failures.log_start(event.uid, &e);
                     }
                 }
                 // Keep the descriptor until termination is confirmed or the
@@ -826,7 +846,7 @@ impl Keeper {
                         break;
                     }
                     shared.open.store(false, Ordering::Relaxed);
-                    self.failures.log(event.uid, &e.into());
+                    self.failures.log_start(event.uid, &e.into());
                     std::thread::sleep(Duration::from_millis(100));
                 }
                 if rescan {
@@ -1030,35 +1050,66 @@ fn monotonic_ns() -> u64 {
     now.tv_sec as u64 * 1_000_000_000 + now.tv_nsec as u64
 }
 
-/// Logs starts that failed, at most one line per interval.
+/// Logs a recurring sandbox failure at most once per interval.
 #[derive(Default)]
-struct FailureLog {
+pub(super) struct FailureLog {
     logged: Option<Instant>,
     unlogged: u32,
 }
 
 impl FailureLog {
-    fn log(&mut self, uid: u32, e: &anyhow::Error) {
+    fn log_start(&mut self, uid: u32, e: &anyhow::Error) {
+        self.log(format_args!("a start of uid {uid} was stopped: {e:#}"));
+    }
+
+    pub(super) fn log(&mut self, message: std::fmt::Arguments<'_>) {
+        match self.record(Instant::now()) {
+            Some(0) => eprintln!("bbd: sandbox: {message}"),
+            Some(n) => eprintln!("bbd: sandbox: {message} ({n} more since the last)"),
+            None => {}
+        }
+    }
+
+    fn record(&mut self, now: Instant) -> Option<u32> {
         if self
             .logged
-            .is_some_and(|at| at.elapsed() < FAILURE_LOG_INTERVAL)
+            .is_some_and(|at| now.duration_since(at) < FAILURE_LOG_INTERVAL)
         {
-            self.unlogged += 1;
-            return;
+            self.unlogged = self.unlogged.saturating_add(1);
+            return None;
         }
-        let more = match self.unlogged {
-            0 => String::new(),
-            n => format!(" ({n} more since the last)"),
-        };
-        eprintln!("bbd: sandbox: a start of uid {uid} was stopped: {e:#}{more}");
-        self.logged = Some(Instant::now());
-        self.unlogged = 0;
+        self.logged = Some(now);
+        Some(std::mem::take(&mut self.unlogged))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_missing_gate_key_is_ignored() {
+        let delete_error = |errno| {
+            MapError::from(aya::sys::SyscallError {
+                call: "bpf_map_delete_elem",
+                io_error: io::Error::from_raw_os_error(errno),
+            })
+        };
+        assert!(missing_gate_key(&MapError::KeyNotFound));
+        assert!(missing_gate_key(&delete_error(libc::ENOENT)));
+        assert!(!missing_gate_key(&delete_error(libc::EPERM)));
+        assert!(!missing_gate_key(&delete_error(libc::EINVAL)));
+    }
+
+    #[test]
+    fn sandbox_failures_are_counted_between_log_lines() {
+        let mut log = FailureLog::default();
+        let start = Instant::now();
+        assert_eq!(log.record(start), Some(0));
+        assert_eq!(log.record(start + Duration::from_secs(1)), None);
+        assert_eq!(log.record(start + Duration::from_secs(59)), None);
+        assert_eq!(log.record(start + FAILURE_LOG_INTERVAL), Some(2));
+    }
 
     #[test]
     fn the_state_and_parent_are_read_past_any_process_name() {

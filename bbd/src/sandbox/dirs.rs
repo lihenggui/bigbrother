@@ -403,7 +403,13 @@ fn sandboxes(
 /// first by name, so that it is always the same one.
 fn find_marked(media: &Path, top: &Dir, keeper: u32) -> io::Result<Option<(String, Dir)>> {
     let mut names: Vec<String> = fs::read_dir(media)?
-        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+        .filter_map(|entry| match entry {
+            Ok(entry) => entry.file_name().into_string().ok(),
+            Err(e) => {
+                eprintln!("bbd: sandbox: cannot read a sandbox directory entry: {e}");
+                None
+            }
+        })
         .filter(|name| name.starts_with('.'))
         .collect();
     names.sort();

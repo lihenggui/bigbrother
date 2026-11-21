@@ -196,7 +196,14 @@ impl Spool {
 
     pub fn collect(&mut self) -> Vec<ProviderEvent> {
         if self.lookup.as_ref().is_some_and(JoinHandle::is_finished) {
-            self.trusted = self.lookup.take().unwrap().join().unwrap_or_default();
+            self.trusted = match self.lookup.take().unwrap().join() {
+                Ok(hosts) => hosts,
+                Err(_) => {
+                    // The retry interval below also bounds how often this can be logged.
+                    eprintln!("bbd: provider spool: trusted host lookup panicked");
+                    Vec::new()
+                }
+            };
         }
         if self.trusted.is_empty()
             && self.lookup.is_none()
