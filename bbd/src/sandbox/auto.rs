@@ -62,13 +62,15 @@ use std::{
 
 use anyhow::Context as _;
 use aya::maps::{Array, HashMap as BpfHashMap, MapData};
-use bb_common::{KNOWN_APP_WORDS, known_app_bit};
+use bb_common::{KNOWN_APP_WORDS, PER_USER_RANGE, known_app_bit};
 use serde::{Deserialize, Serialize};
 use tokio::io::{Interest, unix::AsyncFd};
 
 use super::{DISABLE_ALL_WAIT, LAST_USER, OWN_PACKAGES, Sandbox};
 use crate::{
-    packages::{PER_USER_RANGE, Packages},
+    backoff::Backoff,
+    log::{Limited, Policy, SANDBOX_INTERVAL},
+    packages::{Packages, app_id_of, user_of},
     store::{KnownApp, Writer},
 };
 
@@ -79,14 +81,14 @@ pub const PACKAGE_DIR: &str = "/data/system";
 /// The package list's name in [`PACKAGE_DIR`].
 const PACKAGE_LIST: &[u8] = b"packages.list";
 
-/// Least time between two log lines about apps that could not be put in.
-const FAILURE_LOG_INTERVAL: Duration = Duration::from_secs(60);
-
 /// How long after an app could not be put in it is tried again, at first
 /// and at most. The gate holds its starts meanwhile, and each try can hold
 /// up the main loop for as long as the app ops helper is waited for.
-const RETRY_FIRST: Duration = Duration::from_secs(10);
-const RETRY_MAX: Duration = Duration::from_secs(300);
+const RETRY_BACKOFF: Backoff = Backoff {
+    first: Duration::from_secs(10),
+    max: Duration::from_secs(300),
+    healthy: None,
+};
 
 /// How soon an app a look had no time for is tried.
 const LOOK_AGAIN: Duration = Duration::from_secs(2);
@@ -122,8 +124,8 @@ pub struct Auto {
     told_apps: BTreeSet<(u32, String)>,
     /// How long into a look apps are still put in.
     look_wait: Duration,
-    failures: FailureLog,
-    switch_errors: super::gate::FailureLog,
+    failures: Limited,
+    switch_errors: Limited,
     #[cfg(test)]
     user_data_fixture: Option<PathBuf>,
 }
@@ -149,19 +151,17 @@ pub trait Libraries: Send {
 #[derive(Clone, Copy, Debug)]
 struct Retry {
     at: Instant,
-    /// How long was waited since the last try.
-    waited: Duration,
+    /// Deferring an attempt leaves the failure streak alone.
+    failures: u32,
 }
 
 impl Retry {
     /// After a try that failed, the one before having been `last`.
     fn after(last: Option<Retry>) -> Self {
-        let waited = last.map_or(RETRY_FIRST, |last| {
-            (last.waited * 2).clamp(RETRY_FIRST, RETRY_MAX)
-        });
+        let failures = last.map_or(1, |last| last.failures.saturating_add(1));
         Self {
-            at: Instant::now() + waited,
-            waited,
+            at: Instant::now() + RETRY_BACKOFF.delay(failures),
+            failures,
         }
     }
 
@@ -170,7 +170,7 @@ impl Retry {
     fn soon(last: Option<Retry>) -> Self {
         Self {
             at: Instant::now() + LOOK_AGAIN,
-            waited: last.map_or(Duration::ZERO, |last| last.waited),
+            failures: last.map_or(0, |last| last.failures),
         }
     }
 }
@@ -191,8 +191,8 @@ impl Auto {
             libraries: None,
             told_apps: BTreeSet::new(),
             look_wait: DISABLE_ALL_WAIT,
-            failures: FailureLog::default(),
-            switch_errors: super::gate::FailureLog::default(),
+            failures: Limited::new(SANDBOX_INTERVAL, Policy::Shared),
+            switch_errors: Limited::new(SANDBOX_INTERVAL, Policy::Shared),
             #[cfg(test)]
             user_data_fixture: None,
         })
@@ -213,7 +213,7 @@ impl Auto {
                 match kernel.switch.set(0, &0, 0) {
                     Ok(()) => eprintln!("bbd: sandbox: starts of new apps are not held: {e:#}"),
                     Err(switch) => self.switch_errors.log(format_args!(
-                        "cannot stop holding starts of new apps after a map sync failure: {switch:?} ({e:#})"
+                        "bbd: sandbox: cannot stop holding starts of new apps after a map sync failure: {switch:?} ({e:#})"
                     )),
                 }
                 false
@@ -224,7 +224,7 @@ impl Auto {
     /// Whether `package`, one of `uid`'s, is a library, as the package
     /// manager says by `until`; `None` if it does not.
     fn kind_of(&mut self, uid: u32, package: &str, until: Instant) -> Option<bool> {
-        let key = (uid % PER_USER_RANGE, package.to_string());
+        let key = (app_id_of(uid), package.to_string());
         if self.told_apps.contains(&key) {
             return Some(false);
         }
@@ -259,7 +259,7 @@ impl Auto {
         self.rescan = Some(Retry::after(self.rescan));
         let now = Instant::now();
         for retry in self.retries.values_mut().filter(|retry| retry.at <= now) {
-            retry.at = now + retry.waited.max(RETRY_FIRST);
+            retry.at = now + RETRY_BACKOFF.delay(retry.failures);
         }
     }
 
@@ -268,7 +268,7 @@ impl Auto {
             self.known_dirty = true;
             self.rescan = Some(Retry {
                 at: Instant::now(),
-                waited: Duration::ZERO,
+                failures: 0,
             });
         }
     }
@@ -399,8 +399,8 @@ impl Known {
             .apps
             .iter()
             .flat_map(|(app_id, names)| names.iter().map(|name| row(*app_id, None, name, false)));
-        let uids = self.uids.iter().flat_map(|(uid, names)| {
-            let (user, app_id) = (uid / PER_USER_RANGE, uid % PER_USER_RANGE);
+        let uids = self.uids.iter().flat_map(|(&uid, names)| {
+            let (user, app_id) = (user_of(uid), app_id_of(uid));
             names
                 .iter()
                 .map(move |name| row(app_id, Some(user), name, false))
@@ -459,12 +459,12 @@ fn plan(
             next.apps.insert(*app_id, now);
         }
     }
-    for (uid, was) in &known.uids {
-        let user = uid / PER_USER_RANGE;
-        let mut now = names_of(uid % PER_USER_RANGE);
+    for (&uid, was) in &known.uids {
+        let user = user_of(uid);
+        let mut now = names_of(app_id_of(uid));
         now.retain(|name| installed(user, name));
         if !now.is_disjoint(was) {
-            next.uids.insert(*uid, now);
+            next.uids.insert(uid, now);
         }
     }
     // A library is left alone for as long as that package is installed.
@@ -506,7 +506,7 @@ fn plan(
     // An app id the system took over (an app the user installed that a
     // system update then brought) needs no uids of its own.
     next.uids
-        .retain(|uid, _| !next.apps.contains_key(&(uid % PER_USER_RANGE)));
+        .retain(|&uid, _| !next.apps.contains_key(&app_id_of(uid)));
     Plan {
         isolate,
         known: next,
@@ -605,7 +605,7 @@ impl Sandbox {
         let mut retries = BTreeMap::new();
         let mut asked = false;
         for (uid, names) in plan.isolate {
-            let app_id = uid % PER_USER_RANGE;
+            let app_id = app_id_of(uid);
             let retry = self.auto.retries.get(&uid).copied();
             if !put_in || retry.is_some_and(|retry| retry.at > Instant::now()) {
                 let later = match retry {
@@ -613,7 +613,7 @@ impl Sandbox {
                     // Left by a look that puts nothing in: due at once.
                     _ => Retry {
                         at: Instant::now(),
-                        waited: retry.map_or(Duration::ZERO, |retry| retry.waited),
+                        failures: retry.map_or(0, |retry| retry.failures),
                     },
                 };
                 retries.insert(uid, later);
@@ -659,12 +659,12 @@ impl Sandbox {
                 continue;
             };
             let result = (|| {
-                let current = super::uid_of(packages, &package, uid / PER_USER_RANGE)?;
+                let current = super::uid_of(packages, &package, user_of(uid))?;
                 anyhow::ensure!(
                     current == uid && !packages.is_system(app_id),
                     "the package changed during the scan"
                 );
-                self.enable_uid(writer, packages, &package, uid, crate::now())
+                self.enable_uid(writer, packages, &package, uid, crate::clock::now())
             })();
             match result {
                 // Only an app in the sandbox under its own entry is known.
@@ -677,7 +677,9 @@ impl Sandbox {
                     left += 1;
                     // Package names are not logged; the error may name it.
                     let e = format!("{e:#}").replace(package.as_str(), "the app");
-                    self.auto.failures.log(uid, &e);
+                    self.auto.failures.log(format_args!(
+                        "bbd: sandbox: uid {uid}, newly installed, is not in the sandbox: {e}"
+                    ));
                 }
             }
         }
@@ -781,32 +783,6 @@ pub fn print(out: &mut impl io::Write, on: bool) -> io::Result<()> {
         writeln!(out, "Newly installed apps are put in the sandbox.")
     } else {
         writeln!(out, "Newly installed apps are not put in the sandbox.")
-    }
-}
-
-/// Logs apps that could not be put in, at most one line per interval.
-#[derive(Default)]
-struct FailureLog {
-    logged: Option<Instant>,
-    unlogged: u32,
-}
-
-impl FailureLog {
-    fn log(&mut self, uid: u32, e: &str) {
-        if self
-            .logged
-            .is_some_and(|at| at.elapsed() < FAILURE_LOG_INTERVAL)
-        {
-            self.unlogged += 1;
-            return;
-        }
-        let more = match self.unlogged {
-            0 => String::new(),
-            n => format!(" ({n} more since the last)"),
-        };
-        eprintln!("bbd: sandbox: uid {uid}, newly installed, is not in the sandbox: {e}{more}");
-        self.logged = Some(Instant::now());
-        self.unlogged = 0;
     }
 }
 
@@ -1676,7 +1652,7 @@ mod tests {
         // Its time come, it is tried again.
         refusing.set(false);
         let retry = sandbox.auto.retries.get_mut(&10230).unwrap();
-        assert_eq!(retry.waited, RETRY_FIRST);
+        assert_eq!(RETRY_BACKOFF.delay(retry.failures), Duration::from_secs(10));
         retry.at = Instant::now();
         sandbox.isolate_new(&f.writer, &mut f.packages);
         assert_eq!(tries.get(), 2);
@@ -1685,12 +1661,16 @@ mod tests {
         assert!(sandbox.auto.retries.is_empty());
         // Later tries wait longer, up to a bound.
         let first = Retry::after(None);
-        assert_eq!(Retry::after(Some(first)).waited, RETRY_FIRST * 2);
+        let second = Retry::after(Some(first));
+        assert_eq!(
+            RETRY_BACKOFF.delay(second.failures),
+            Duration::from_secs(20)
+        );
         let mut last = first;
         for _ in 0..20 {
             last = Retry::after(Some(last));
         }
-        assert_eq!(last.waited, RETRY_MAX);
+        assert_eq!(RETRY_BACKOFF.delay(last.failures), Duration::from_secs(300));
     }
 
     #[test]
@@ -2109,7 +2089,7 @@ mod tests {
         sandbox.auto.retries.get_mut(&10230).unwrap().at = Instant::now();
         let mut absent = Packages::new(f.dir.join("absent.list").to_str().unwrap());
         sandbox.isolate_new(&f.writer, &mut absent);
-        assert!(sandbox.auto_next_look().unwrap() >= Instant::now() + RETRY_FIRST / 2);
+        assert!(sandbox.auto_next_look().unwrap() >= Instant::now() + Duration::from_secs(5));
         // Nothing left: no look is due.
         refusing.set(false);
         sandbox.auto.retries.get_mut(&10230).unwrap().at = Instant::now();

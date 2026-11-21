@@ -84,22 +84,20 @@ use std::{
 };
 
 use anyhow::Context as _;
+use bb_common::{FIRST_APPLICATION_UID, PER_USER_RANGE};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     control::{self, Request},
-    packages::{PER_USER_RANGE, Packages},
+    packages::{Packages, app_id_of, user_of},
     store::{Writer, net::RuleChange},
+    sync::{lock, read, write},
 };
 
 pub use crate::store::SandboxEntry as Entry;
 use items::{InPlace, Item, Mode, Part, Settings};
 
 use crate::netctl::Target;
-
-/// App ids from here up belong to installed apps. Below are the system's
-/// own uids, which are shared by many components and cannot be sandboxed.
-const FIRST_APPLICATION_UID: u32 = 10_000;
 
 /// Packages that are never sandboxed: the app, whose own reads of the
 /// device would be cut off from what it reports on. The canary test app
@@ -433,7 +431,7 @@ impl Sandbox {
         {
             // A rule this build cannot read was written by a later one,
             // and is left where it is.
-            let mut targets = book.lock().unwrap_or_else(|e| e.into_inner());
+            let mut targets = lock(&book);
             for rule in writer.net_rules()? {
                 if let Some(target) = Target::parse(&rule.target) {
                     targets.entry(rule.uid).or_default().insert(target);
@@ -471,7 +469,7 @@ impl Sandbox {
     }
 
     fn global_read(&self) -> std::sync::RwLockReadGuard<'_, Settings> {
-        self.global.read().unwrap_or_else(|e| e.into_inner())
+        read(&self.global)
     }
 
     /// What applies to `entry`.
@@ -583,7 +581,7 @@ impl Sandbox {
                 break;
             }
             let uid = entry.uid;
-            let current = packages.packages_of(uid % PER_USER_RANGE);
+            let current = packages.packages_of(app_id_of(uid));
             let recorded = match writer.sandbox_packages(uid) {
                 Ok(recorded) => recorded,
                 Err(e) => {
@@ -622,10 +620,7 @@ impl Sandbox {
                         effect.forget(uid);
                     }
                     // Nor what it was kept from, or what was recorded of it.
-                    self.book
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .remove(&uid);
+                    lock(&self.book).remove(&uid);
                 }
                 Err(_) => {
                     // A directory may be unavailable while the user starts.
@@ -708,11 +703,11 @@ impl Sandbox {
 
     fn snapshot_read(&self) -> std::sync::RwLockReadGuard<'_, HashMap<u32, Entry>> {
         // A reader that panicked cannot have left the map half changed.
-        self.snapshot.read().unwrap_or_else(|e| e.into_inner())
+        read(&self.snapshot)
     }
 
     fn snapshot_write(&self) -> std::sync::RwLockWriteGuard<'_, HashMap<u32, Entry>> {
-        self.snapshot.write().unwrap_or_else(|e| e.into_inner())
+        write(&self.snapshot)
     }
 
     /// Keep in the entries, and write, what the effects found changed by
@@ -721,7 +716,7 @@ impl Sandbox {
     /// may give back what the entries hold.
     pub fn keep_found(&mut self, writer: &Writer) {
         let snapshot = self.snapshot.clone();
-        let mut entries = snapshot.write().unwrap_or_else(|e| e.into_inner());
+        let mut entries = write(&snapshot);
         let mut changed = BTreeSet::new();
         for effect in &mut self.effects {
             changed.extend(effect.found(&mut entries));
@@ -751,7 +746,7 @@ impl Sandbox {
         }
         let answer = match request {
             Request::SandboxEnable { package, user } => self
-                .enable(writer, packages, &package, user, crate::now())
+                .enable(writer, packages, &package, user, crate::clock::now())
                 .map(control::success),
             Request::SandboxDisable { package, user } => self
                 .disable(writer, packages, &package, user)
@@ -808,7 +803,7 @@ impl Sandbox {
                 .map(|entry| entry.uid)
                 .collect()
         };
-        if let Err(e) = writer.set_net_recording(&recorded, crate::now()) {
+        if let Err(e) = writer.set_net_recording(&recorded, crate::clock::now()) {
             eprintln!("bbd: could not write which apps are recorded: {e:#}");
         }
     }
@@ -838,12 +833,7 @@ impl Sandbox {
                 "the names apps look up cannot be refused on this device"
             ),
         }
-        if let Some(targets) = self
-            .book
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&uid)
-        {
+        if let Some(targets) = lock(&self.book).get(&uid) {
             anyhow::ensure!(
                 targets.len() < RULES_PER_APP || targets.contains(&parsed),
                 "an app can be kept from {RULES_PER_APP} destinations at most"
@@ -854,7 +844,7 @@ impl Sandbox {
             uid,
             &parsed,
             RuleChange::Block {
-                created: crate::now(),
+                created: crate::clock::now(),
                 manual,
             },
         )?;
@@ -910,7 +900,7 @@ impl Sandbox {
 
     /// Update the book and return whether the target was blocked before.
     fn set_net_rule(&self, uid: u32, target: &Target, blocked: bool) -> bool {
-        let mut book = self.book.lock().unwrap_or_else(|e| e.into_inner());
+        let mut book = lock(&self.book);
         if blocked {
             !book.entry(uid).or_default().insert(target.clone())
         } else {
@@ -941,8 +931,8 @@ impl Sandbox {
         uid: u32,
         now: i64,
     ) -> anyhow::Result<Enabled> {
-        let user = uid / PER_USER_RANGE;
-        let sharing = packages.packages_of(uid % PER_USER_RANGE).to_vec();
+        let user = user_of(uid);
+        let sharing = packages.packages_of(app_id_of(uid)).to_vec();
         anyhow::ensure!(
             !sharing.iter().any(|p| OWN_PACKAGES.contains(&p.as_str())),
             "Big Brother cannot sandbox itself"
@@ -1270,7 +1260,7 @@ impl Sandbox {
             None => writer.sandbox_entry(uid)?,
         };
         let mut entry = entry.with_context(|| format!("{package} is not in the sandbox"))?;
-        let current = packages.packages_of(uid % PER_USER_RANGE);
+        let current = packages.packages_of(app_id_of(uid));
         let recorded = writer.sandbox_packages(uid)?;
         let owner = self
             .existing_owner(&entry, current, &recorded)?
@@ -1381,7 +1371,7 @@ impl Sandbox {
         }
         let mut uids: Vec<u32> = self.snapshot_read().keys().copied().collect();
         uids.sort_unstable();
-        *self.global.write().unwrap_or_else(|e| e.into_inner()) = new.clone();
+        *write(&self.global) = new.clone();
 
         // Each app may wait for the app ops helper, on the loop that also
         // records: as with taking every app out, the rest are not waited
@@ -1444,7 +1434,7 @@ impl Sandbox {
             _ => failure,
         };
         if let Some(e) = failure {
-            *self.global.write().unwrap_or_else(|e| e.into_inner()) = old.clone();
+            *write(&self.global) = old.clone();
             for (mut entry, sharing, before, after) in changed.into_iter().rev() {
                 let uid = entry.uid;
                 let forward = entry.clone();
@@ -1485,7 +1475,7 @@ impl Sandbox {
             Err(e) => writer
                 .sandbox_entries()?
                 .into_iter()
-                .find(|entry| entry.package == package && entry.uid / PER_USER_RANGE == user)
+                .find(|entry| entry.package == package && user_of(entry.uid) == user)
                 .map(|entry| entry.uid)
                 .ok_or(e),
         }

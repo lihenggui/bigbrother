@@ -47,7 +47,11 @@ use bb_common::{
     PathEvent, read_event,
 };
 
-use crate::{syscalls::Feature, trace};
+use crate::{
+    packages::{FIRST_ISOLATED_APP_ID, app_id_of},
+    syscalls::Feature,
+    trace,
+};
 
 /// The uid the child takes: app id 70000 of user 0. The kernel side traces
 /// every uid whose app id is 10000 or more (`should_trace`); Android gives
@@ -58,10 +62,7 @@ pub const UID: u32 = 70_000;
 
 // Above the ranges Android hands out below the isolated processes', and so
 // traced (from 10000 up), and below those.
-const _: () = assert!(
-    UID % crate::packages::PER_USER_RANGE >= 60_000
-        && UID % crate::packages::PER_USER_RANGE < crate::packages::FIRST_ISOLATED_APP_ID
-);
+const _: () = assert!(app_id_of(UID) >= 60_000 && app_id_of(UID) < FIRST_ISOLATED_APP_ID);
 
 /// How long the child may take; it makes a handful of system calls that
 /// do not wait for anything.

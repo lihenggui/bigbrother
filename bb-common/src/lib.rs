@@ -512,24 +512,27 @@ pub const GATE_STALE_NS: u64 = 3_000_000_000;
 /// start of a sandboxed app is killed from then on.
 pub const GATE_CLOSED: u64 = 1;
 
-/// App ids of installed apps: from Android's `FIRST_APPLICATION_UID` to
-/// below this (`LAST_APPLICATION_UID` is 19999). Above are the SDK sandboxes
-/// of apps and isolated processes, which are not packages.
-pub const FIRST_APP_ID: u32 = 10_000;
+/// Android multi-user layout: uid = user_id * PER_USER_RANGE + app_id.
+pub const PER_USER_RANGE: u32 = 100_000;
+
+/// App ids below this belong to the system.
+pub const FIRST_APPLICATION_UID: u32 = 10_000;
+/// Exclusive end of the installed app range (`LAST_APPLICATION_UID` is 19999).
+/// Above it are SDK sandboxes and isolated processes, which are not packages.
 pub const APP_ID_END: u32 = 20_000;
 
 /// Words in the bitmap of known app ids, one bit per app id from
-/// `FIRST_APP_ID` (see `known_app_bit`).
-pub const KNOWN_APP_WORDS: u32 = (APP_ID_END - FIRST_APP_ID).div_ceil(64);
+/// `FIRST_APPLICATION_UID` (see `known_app_bit`).
+pub const KNOWN_APP_WORDS: u32 = (APP_ID_END - FIRST_APPLICATION_UID).div_ceil(64);
 
 /// Where `app_id` is in the bitmap of known app ids: the word, and the bit
 /// in it. `None` for an app id that is not an installed app's.
 #[inline(always)]
 pub const fn known_app_bit(app_id: u32) -> Option<(u32, u64)> {
-    if app_id < FIRST_APP_ID || app_id >= APP_ID_END {
+    if app_id < FIRST_APPLICATION_UID || app_id >= APP_ID_END {
         return None;
     }
-    let index = app_id - FIRST_APP_ID;
+    let index = app_id - FIRST_APPLICATION_UID;
     Some((index / 64, 1 << (index % 64)))
 }
 

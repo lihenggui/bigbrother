@@ -25,10 +25,19 @@ use std::{
     time::{Duration, Instant},
 };
 
+use bb_common::PER_USER_RANGE;
+
 pub const PACKAGES_LIST: &str = "/data/system/packages.list";
 
-/// Android multi-user layout: uid = user_id * 100_000 + app_id.
-pub const PER_USER_RANGE: u32 = 100_000;
+#[inline]
+pub const fn app_id_of(uid: u32) -> u32 {
+    uid % PER_USER_RANGE
+}
+
+#[inline]
+pub const fn user_of(uid: u32) -> u32 {
+    uid / PER_USER_RANGE
+}
 
 /// How often an unknown uid may trigger a re-read of the list.
 const RELOAD_INTERVAL: Duration = Duration::from_secs(10);
@@ -95,7 +104,7 @@ impl Packages {
     /// installed apps (isolated processes, or an app installed after the last
     /// load and still inside the reload interval).
     pub fn for_uid(&mut self, uid: u32) -> &[String] {
-        let app_id = uid % PER_USER_RANGE;
+        let app_id = app_id_of(uid);
         if !self.by_app_id.contains_key(&app_id)
             && self
                 .loaded_at
@@ -155,7 +164,7 @@ impl Packages {
     pub fn owner_of_isolated(&self, isolated_uid: u32, process_name: &str) -> Option<u32> {
         let package = process_name.split(':').next()?;
         let app_id = self.app_id_by_name.get(package)?;
-        Some(isolated_uid / PER_USER_RANGE * PER_USER_RANGE + app_id)
+        Some(user_of(isolated_uid) * PER_USER_RANGE + app_id)
     }
 }
 

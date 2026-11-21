@@ -19,7 +19,7 @@ use std::{
     fs,
     path::Path,
     sync::Arc,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 
 use anyhow::Context as _;
@@ -31,9 +31,9 @@ use aya::{
 use bb_common::{
     BinderEvent, BinderKey, BinderValue, ConnectEvent, EV_BINDER, EV_CONNECT, EV_EXEC, EV_FILE,
     EV_NETLINK, EV_PATH, EV_PROCESS, EV_RESULT, EV_TRAFFIC, EXEC_ARGS, EventHeader, ExecEvent,
-    FUSE_SUPER_MAGIC, FileEvent, NetlinkEvent, OFF_COUNT, OFF_MISSING, OP_PROBE, OP_WATCH,
-    PROC_SUPER_MAGIC, PROCESS_READ, PROCESS_WRITE, PathEvent, ProcessEvent, ResultEvent,
-    SELINUX_MAGIC, SYSFS_MAGIC, read_event,
+    FIRST_APPLICATION_UID, FUSE_SUPER_MAGIC, FileEvent, NetlinkEvent, OFF_COUNT, OFF_MISSING,
+    OP_PROBE, OP_WATCH, PROC_SUPER_MAGIC, PROCESS_READ, PROCESS_WRITE, PathEvent, ProcessEvent,
+    ResultEvent, SELINUX_MAGIC, SYSFS_MAGIC, read_event,
 };
 use tokio::{
     io::{Interest, unix::AsyncFd},
@@ -45,13 +45,18 @@ use tokio::{
 
 use crate::{
     appops,
+    backoff::Backoff,
     binder::{self, Catalog},
     btf::Btf,
+    clock::{clock_ns, now},
     commands, control, helper,
+    log::{Limited, Policy, RECURRING_INTERVAL},
     mounts::Mounts,
     net::{self, Destination, Listeners},
-    packages::{FIRST_ISOLATED_APP_ID, PER_USER_RANGE, Packages},
-    paths, personal, rules,
+    packages::{FIRST_ISOLATED_APP_ID, Packages, app_id_of, user_of},
+    paths, personal,
+    proc::{parent_pid, process_alive, process_start, real_uid, uid_of_pid},
+    rules,
     sandbox::{self, Sandbox},
     selftest, sensors,
     spool::{self, Spool},
@@ -60,6 +65,7 @@ use crate::{
         Category, Counters, MODE_CALL, MODE_CONNECT, MODE_DIR, MODE_EXEC, MODE_ISOLATED,
         MODE_PROBE, MODE_QUERY, MODE_READ, MODE_VIA_PROVIDER, MODE_WATCH, MODE_WRITE, Mode, Writer,
     },
+    sync::{lock, read},
     syscalls,
 };
 
@@ -68,13 +74,6 @@ type NetDestination = (String, String, u16);
 
 /// The most destinations an app has rows of its own for in an hour.
 const NET_DESTINATIONS_PER_HOUR: usize = 512;
-
-const AT_FDCWD: i32 = -100;
-/// File type bits of an inode's mode.
-const S_IFMT: u32 = 0o170000;
-const S_IFDIR: u32 = 0o040000;
-/// Uids from this app id up belong to installed apps (and isolated processes).
-const FIRST_APPLICATION_UID: u32 = 10_000;
 
 /// How long the owner found for an isolated process is remembered after it
 /// was last seen, for events handled after it has exited. Short, because an
@@ -147,11 +146,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         .unwrap_or(0);
     sensors.adopt(
         writer.open_sensor_sessions()?,
-        |pid, start| {
-            sensors::process_alive(pid, start)
-                .then(|| uid_of_pid(pid))
-                .flatten()
-        },
+        |pid, start| process_alive(pid, start).then(|| uid_of_pid(pid)).flatten(),
         last_up,
         Instant::now(),
         now(),
@@ -334,7 +329,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
             // second for them) are taken in first.
             _ = sensor_check.tick(), if sensor_check.armed() => {
                 tracer.drain_pending(ring.get_mut());
-                tracer.sensors.check_processes(now(), sensors::process_alive);
+                tracer.sensors.check_processes(now(), process_alive);
                 continue;
             }
             // The device's transaction codes are known: watch the services
@@ -394,7 +389,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
             if let Err(e) = tracer.writer.net_clear(uid) {
                 tracer
                     .write_errors
-                    .log(format!("bbd: could not clear network records: {e:#}"));
+                    .log(format_args!("bbd: could not clear network records: {e:#}"));
             }
         }
         // A failed write (disk full, database busy) keeps the batch for the
@@ -406,7 +401,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         if let Err(e) = written {
             tracer
                 .write_errors
-                .log(format!("bbd: could not write records: {e:#}"));
+                .log(format_args!("bbd: could not write records: {e:#}"));
         }
         if let Some(stream) = request {
             control::answer(&stream);
@@ -558,22 +553,15 @@ fn start_sandbox(
         std::sync::Arc::new(move |uid, host: Option<&str>| {
             // Only of an app in the sandbox: taken out, it is kept from
             // nothing.
-            snapshot
-                .read()
-                .unwrap_or_else(|e| e.into_inner())
-                .contains_key(&uid)
-                && book
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .get(&uid)
-                    .is_some_and(|targets| {
-                        targets.iter().any(|target| match host {
-                            Some(host) => target.covers_name(host),
-                            // A name that could not be read: refused to
-                            // an app kept from any name.
-                            None => !matches!(target, crate::netctl::Target::Ip(..)),
-                        })
+            read(&snapshot).contains_key(&uid)
+                && lock(&book).get(&uid).is_some_and(|targets| {
+                    targets.iter().any(|target| match host {
+                        Some(host) => target.covers_name(host),
+                        // A name that could not be read: refused to
+                        // an app kept from any name.
+                        None => !matches!(target, crate::netctl::Target::Ip(..)),
                     })
+                })
         })
     };
     let serves: sandbox::names::Serves = {
@@ -582,22 +570,18 @@ fn start_sandbox(
             // The apps given the daemon's socket, and no other: the socket
             // can be found by any process, and an app kept from the
             // network is to have no resolver at all.
-            let snapshot = snapshot.read().unwrap_or_else(|e| e.into_inner());
+            let snapshot = read(&snapshot);
             let Some(entry) = snapshot.get(&uid) else {
                 return false;
             };
-            let items = sandbox::items_of(entry, &global.read().unwrap_or_else(|e| e.into_inner()));
+            let items = sandbox::items_of(entry, &read(&global));
             !items.network_refused()
                 && (items.network_recorded()
-                    || book
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .get(&uid)
-                        .is_some_and(|targets| {
-                            targets
-                                .iter()
-                                .any(|target| !matches!(target, crate::netctl::Target::Ip(..)))
-                        }))
+                    || lock(&book).get(&uid).is_some_and(|targets| {
+                        targets
+                            .iter()
+                            .any(|target| !matches!(target, crate::netctl::Target::Ip(..)))
+                    }))
         })
     };
     let relay = sandbox::names::start(names.clone(), serves, refuses, lookups_refused);
@@ -772,7 +756,7 @@ async fn run_sandbox(
     writer.tell_net_cleared(net_cleared);
     let mut packages = Packages::new(&packages_list);
     let mut command_reads = tokio::task::JoinSet::new();
-    let mut command_read_errors = RecurringLog::default();
+    let mut command_read_errors = Limited::new(RECURRING_INTERVAL, Policy::ResetOnChange);
     // The package list, watched while newly installed apps are sandboxed.
     let mut package_watch = sandbox::auto::Watch::default();
     let mut tick = interval(FLUSH_INTERVAL);
@@ -813,7 +797,7 @@ async fn run_sandbox(
                     Err(e) => {
                         // Panic payloads can include command data.
                         let outcome = if e.is_panic() { "panicked" } else { "was cancelled" };
-                        command_read_errors.log(format!("bbd: sandbox: command read task {outcome}"));
+                        command_read_errors.log(format_args!("bbd: sandbox: command read task {outcome}"));
                     }
                 }
             }
@@ -1088,26 +1072,17 @@ fn watch(map: &mut BinderWatch, catalog: &Catalog) -> anyhow::Result<()> {
 /// feature works on this device: neither 1 (recording) nor 0 (can't).
 const COVERAGE_PENDING: i64 = -1;
 
-/// How soon the program that reads the permission usage records is started
-/// again after it ends: `APPOPS_RETRY` after the first failure, twice as long
-/// after each further one, up to `APPOPS_RETRY_MAX`; each start costs a Java
-/// runtime's start-up. A run of `APPOPS_HEALTHY` or longer starts the count
-/// again. After `APPOPS_GIVE_UP` failures without a single reading the
-/// records are reported as unavailable (the attempts go on regardless). The
-/// helper itself waits for the system service at boot, so these are for a
-/// helper that fails or ends later.
-const APPOPS_RETRY: Duration = Duration::from_secs(30);
-const APPOPS_RETRY_MAX: Duration = Duration::from_secs(3600);
-const APPOPS_HEALTHY: Duration = Duration::from_secs(600);
-const APPOPS_GIVE_UP: u32 = 5;
+/// Each restart costs a Java runtime's start-up. The helper itself waits
+/// for the system service at boot, so this covers failures after that.
+const APPOPS_BACKOFF: Backoff = Backoff {
+    first: Duration::from_secs(30),
+    max: Duration::from_secs(3600),
+    healthy: Some(Duration::from_secs(600)),
+};
 
-/// How long to wait before the next start, after `failures` in a row.
-fn appops_retry_delay(failures: u32) -> Duration {
-    let doublings = failures.saturating_sub(1).min(16);
-    APPOPS_RETRY
-        .saturating_mul(1 << doublings)
-        .min(APPOPS_RETRY_MAX)
-}
+/// Failures without a single reading before reporting the records as
+/// unavailable. Attempts go on regardless.
+const APPOPS_GIVE_UP: u32 = 5;
 
 /// How often the system's permission usage records are read. The records
 /// carry their own times, so the interval costs precision only when an app
@@ -1124,7 +1099,7 @@ fn spawn_appops_reader() -> std::sync::mpsc::Receiver<Option<Vec<appops::Entry>>
     std::thread::spawn(move || {
         let mut failures = 0;
         let mut read_once = false;
-        let mut log = RecurringLog::default();
+        let mut log = Limited::new(RECURRING_INTERVAL, Policy::ResetOnChange);
         loop {
             let started = Instant::now();
             // Returns when the helper has ended, which it is not meant to.
@@ -1132,11 +1107,8 @@ fn spawn_appops_reader() -> std::sync::mpsc::Receiver<Option<Vec<appops::Entry>>
                 StreamEnd::Helper(e) => e,
                 StreamEnd::DaemonGone => return,
             };
-            if started.elapsed() >= APPOPS_HEALTHY {
-                failures = 0;
-            }
-            failures += 1;
-            log.log(format!("bbd: reading permission use: {e:#}"));
+            failures = APPOPS_BACKOFF.failures_after_run(failures, started.elapsed());
+            log.log(format_args!("bbd: reading permission use: {e:#}"));
             // Reported once, when it stops looking like a system that is
             // still starting.
             if failures == APPOPS_GIVE_UP && !read_once {
@@ -1145,50 +1117,10 @@ fn spawn_appops_reader() -> std::sync::mpsc::Receiver<Option<Vec<appops::Entry>>
                     return;
                 }
             }
-            std::thread::sleep(appops_retry_delay(failures));
+            std::thread::sleep(APPOPS_BACKOFF.delay(failures));
         }
     });
     receiver
-}
-
-/// How often a message that keeps recurring is logged again.
-const RECURRING_LOG_INTERVAL: Duration = Duration::from_secs(3600);
-
-/// Logs a message that keeps recurring once, rather than each time: again
-/// when it changes, or once an hour has passed, with how often it recurred.
-/// The log is only rotated at boot.
-#[derive(Default)]
-struct RecurringLog {
-    last: Option<(String, Instant)>,
-    /// Times `last` recurred without being logged.
-    unlogged: u32,
-}
-
-impl RecurringLog {
-    fn log(&mut self, message: String) {
-        if let Some(line) = self.line(message, Instant::now()) {
-            eprintln!("{line}");
-        }
-    }
-
-    /// What to log for `message` at `now`, if anything.
-    fn line(&mut self, message: String, now: Instant) -> Option<String> {
-        let mut line = message.clone();
-        if let Some((last, logged)) = &self.last
-            && *last == message
-        {
-            if now.duration_since(*logged) < RECURRING_LOG_INTERVAL {
-                self.unlogged += 1;
-                return None;
-            }
-            if self.unlogged > 0 {
-                line = format!("{message} ({} more since)", self.unlogged);
-            }
-        }
-        self.last = Some((message, now));
-        self.unlogged = 0;
-        Some(line)
-    }
 }
 
 /// Why [`stream_appops`] returned.
@@ -1204,8 +1136,6 @@ fn stream_appops(
     sender: &std::sync::mpsc::Sender<Option<Vec<appops::Entry>>>,
     read_once: &mut bool,
 ) -> StreamEnd {
-    use std::io::BufRead as _;
-
     let interval = APPOPS_INTERVAL.as_secs().to_string();
     let mut args: Vec<&str> = vec!["--every", &interval];
     for op in appops::ops() {
@@ -1213,10 +1143,20 @@ fn stream_appops(
     }
     // Its stdin is held open for as long as `helper` lives; the helper
     // leaves when it closes, so it does not outlive the daemon.
-    let mut helper = match helper::spawn(appops::HELPER_CLASS, args.into_iter()) {
+    let helper = match helper::spawn(appops::HELPER_CLASS, args.into_iter()) {
         Ok(helper) => helper,
         Err(e) => return StreamEnd::Helper(e),
     };
+    read_appops(helper, sender, read_once)
+}
+
+fn read_appops(
+    mut helper: std::process::Child,
+    sender: &std::sync::mpsc::Sender<Option<Vec<appops::Entry>>>,
+    read_once: &mut bool,
+) -> StreamEnd {
+    use std::io::BufRead as _;
+
     let output = helper.stdout.take().expect("spawned with a piped stdout");
     // What it says when it fails, for the message; read as it comes, so
     // that the helper never waits for room in the pipe.
@@ -1319,12 +1259,6 @@ fn print_profile(ebpf: &aya::Ebpf) {
     );
 }
 
-fn now() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64)
-}
-
 /// Turns the times the kernel gives events, nanoseconds since boot, into
 /// unix time.
 struct EventClock {
@@ -1344,16 +1278,6 @@ impl EventClock {
     fn unix_secs(&self, boot_ns: u64) -> i64 {
         (self.boot_unix_ns + boot_ns as i64).div_euclid(1_000_000_000)
     }
-}
-
-fn clock_ns(clock: libc::clockid_t) -> i64 {
-    let mut ts = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    // Cannot fail for these clocks and a valid pointer.
-    unsafe { libc::clock_gettime(clock, &mut ts) };
-    ts.tv_sec * 1_000_000_000 + ts.tv_nsec
 }
 
 /// A file the kernel opened, held until the syscall's return value arrives.
@@ -1419,9 +1343,9 @@ struct Tracer {
     /// Sensor sessions not kept for being over the limits, as last written
     /// (`sensor_sessions_dropped` in `bbd stats`), and its log.
     sensors_dropped: u64,
-    sensors_dropped_log: RecurringLog,
+    sensors_dropped_log: Limited,
     writer: Writer,
-    write_errors: RecurringLog,
+    write_errors: Limited,
     counters: Counters,
     /// Keyed by thread id.
     awaiting_result: HashMap<u32, Vec<Held>>,
@@ -1449,9 +1373,9 @@ impl Tracer {
             catalog: None,
             sensors,
             sensors_dropped: 0,
-            sensors_dropped_log: RecurringLog::default(),
+            sensors_dropped_log: Limited::new(RECURRING_INTERVAL, Policy::ResetOnChange),
             writer,
-            write_errors: RecurringLog::default(),
+            write_errors: Limited::new(RECURRING_INTERVAL, Policy::ResetOnChange),
             counters: Counters::default(),
             awaiting_result: HashMap::new(),
             isolated_owners: HashMap::new(),
@@ -1486,7 +1410,7 @@ impl Tracer {
             Ok(()) => true,
             Err(e) => {
                 self.write_errors
-                    .log(format!("bbd: could not write {key}: {e:#}"));
+                    .log(format_args!("bbd: could not write {key}: {e:#}"));
                 false
             }
         }
@@ -1703,9 +1627,7 @@ impl Tracer {
                                 hdr.pid, ev.target
                             );
                         }
-                        let known =
-                            self.sensors
-                                .on_call(call, sensors::process_start, Instant::now());
+                        let known = self.sensors.on_call(call, process_start, Instant::now());
                         if let Some((uid, mode, subject, ts)) = known {
                             self.store(uid, Category::Service, subject, mode, true, ts, 0);
                         }
@@ -1845,7 +1767,7 @@ impl Tracer {
     /// sensor list is held for at most `wait`.
     fn settle_sensors(&mut self, wait: Duration) {
         if self.sensors.any_on() {
-            self.sensors.check_processes(now(), sensors::process_alive);
+            self.sensors.check_processes(now(), process_alive);
         }
         let settled = self.sensors.settle(Instant::now(), now(), wait);
         for (uid, mode, subject, ts) in settled.calls {
@@ -1862,8 +1784,9 @@ impl Tracer {
                 .set_meta("sensor_sessions_dropped", dropped as i64)
                 .is_ok()
         {
-            self.sensors_dropped_log
-                .log("bbd: sensor sessions not kept: an app has too many open".into());
+            self.sensors_dropped_log.log(format_args!(
+                "bbd: sensor sessions not kept: an app has too many open"
+            ));
             self.sensors_dropped = dropped;
         }
     }
@@ -1882,7 +1805,7 @@ impl Tracer {
     fn record_permission_uses(&mut self, uses: Vec<appops::Use>) {
         for used in uses {
             self.counters.seen += 1;
-            if used.uid % PER_USER_RANGE < FIRST_APPLICATION_UID {
+            if app_id_of(used.uid) < FIRST_APPLICATION_UID {
                 continue;
             }
             self.store(
@@ -1968,7 +1891,7 @@ impl Tracer {
         };
         let (uid, origin) = self.owner_uid(opened.uid, opened.pid);
         let pkgs = self.packages.for_uid(uid);
-        let (cat, path) = match paths::canonicalize(&opened.path, uid / PER_USER_RANGE) {
+        let (cat, path) = match paths::canonicalize(&opened.path, user_of(uid)) {
             Some(path) if paths::is_own_dir(&path, pkgs) => {
                 self.explain(source);
                 return;
@@ -2056,7 +1979,7 @@ impl Tracer {
     /// the process is gone and its uid was not seen recently, the record
     /// stays under the isolated uid, without the flag.
     fn owner_uid(&mut self, uid: u32, pid: u32) -> (u32, Mode) {
-        if uid % PER_USER_RANGE < FIRST_ISOLATED_APP_ID {
+        if app_id_of(uid) < FIRST_ISOLATED_APP_ID {
             return (uid, 0);
         }
         let now = Instant::now();
@@ -2095,7 +2018,7 @@ impl Tracer {
         for ev in self.spool.collect() {
             self.counters.seen += 1;
             // Calls between system components are not app behaviour.
-            if ev.uid % PER_USER_RANGE < FIRST_APPLICATION_UID {
+            if app_id_of(ev.uid) < FIRST_APPLICATION_UID {
                 continue;
             }
             if let Some(collection) = personal::collection(&ev.uri) {
@@ -2137,7 +2060,7 @@ impl Tracer {
                     }
                     // Prefer the real file; fall back to the URI when the
                     // provider served something that isn't on shared storage.
-                    match paths::canonicalize(&ev.path, ev.uid / PER_USER_RANGE) {
+                    match paths::canonicalize(&ev.path, user_of(ev.uid)) {
                         Some(path) if paths::is_own_dir(&path, self.packages.for_uid(ev.uid)) => {
                             continue;
                         }
@@ -2232,7 +2155,7 @@ fn join_components(data: &[u8]) -> String {
 /// process's cwd, or the directory `dfd` refers to. Best effort — the process
 /// may have exited or closed the fd by the time we look.
 fn resolve_relative(pid: u32, dfd: i32, relative: &str) -> Option<String> {
-    let link = if dfd == AT_FDCWD {
+    let link = if dfd == libc::AT_FDCWD {
         format!("/proc/{pid}/cwd")
     } else {
         format!("/proc/{pid}/fd/{dfd}")
@@ -2249,42 +2172,19 @@ fn resolve_relative(pid: u32, dfd: i32, relative: &str) -> Option<String> {
 /// `uid`.
 fn isolated_owner(packages: &Packages, uid: u32, pid: u32) -> Option<u32> {
     let status = fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
-    if parse_status_uid(&status) != Some(uid) {
+    if real_uid(status.as_bytes()) != Some(uid) {
         return None;
     }
-    let parent = parse_status_field(&status, "PPid:").and_then(uid_of_pid);
+    let parent = parent_pid(status.as_bytes()).and_then(uid_of_pid);
     if let Some(parent) = parent
-        && parent / PER_USER_RANGE == uid / PER_USER_RANGE
-        && (FIRST_APPLICATION_UID..FIRST_ISOLATED_APP_ID).contains(&(parent % PER_USER_RANGE))
+        && user_of(parent) == user_of(uid)
+        && (FIRST_APPLICATION_UID..FIRST_ISOLATED_APP_ID).contains(&app_id_of(parent))
     {
         return Some(parent);
     }
     let cmdline = fs::read(format!("/proc/{pid}/cmdline")).ok()?;
     let name = cmdline.split(|&b| b == 0).next()?;
     packages.owner_of_isolated(uid, std::str::from_utf8(name).ok()?)
-}
-
-/// The real uid that owns `pid`, or None if the process is gone. Read from
-/// `status` rather than from the directory's owner: /proc/<pid> is owned by
-/// root for non-dumpable processes, which most Android apps are.
-fn uid_of_pid(pid: u32) -> Option<u32> {
-    let status = fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
-    parse_status_uid(&status)
-}
-
-fn parse_status_uid(status: &str) -> Option<u32> {
-    parse_status_field(status, "Uid:")
-}
-
-/// The first number of a `/proc/<pid>/status` line such as `PPid:\t123`.
-fn parse_status_field(status: &str, field: &str) -> Option<u32> {
-    status
-        .lines()
-        .find_map(|line| line.strip_prefix(field))?
-        .split_ascii_whitespace()
-        .next()?
-        .parse()
-        .ok()
 }
 
 /// Access mode bits from open flags and, where known, the inode's mode
@@ -2296,7 +2196,7 @@ fn access_mode(flags: u32, inode_mode: u32) -> Mode {
         libc::O_WRONLY => MODE_WRITE,
         _ => MODE_READ | MODE_WRITE,
     };
-    let is_dir = inode_mode & S_IFMT == S_IFDIR;
+    let is_dir = inode_mode & libc::S_IFMT == libc::S_IFDIR;
     if flags & libc::O_DIRECTORY != 0 || is_dir {
         mode |= MODE_DIR;
     }
@@ -2382,7 +2282,7 @@ mod tests {
             },
             op: bb_common::OP_OPEN,
             ret: 3,
-            dfd: AT_FDCWD,
+            dfd: libc::AT_FDCWD,
             flags: libc::O_RDONLY as u32,
             abi: bb_common::ABI_NATIVE,
             path_len: path.len() as u32,
@@ -2433,7 +2333,7 @@ mod tests {
         );
         // A directory opened without O_DIRECTORY is still a directory.
         assert_eq!(
-            access_mode(libc::O_RDONLY as u32, S_IFDIR | 0o755),
+            access_mode(libc::O_RDONLY as u32, libc::S_IFDIR | 0o755),
             MODE_READ | MODE_DIR
         );
         assert_eq!(access_mode(libc::O_RDONLY as u32, 0o100644), MODE_READ);
@@ -2469,30 +2369,10 @@ mod tests {
     #[test]
     fn a_failing_helper_is_restarted_less_and_less_often() {
         let delays: Vec<u64> = (1..=10)
-            .map(|failures| appops_retry_delay(failures).as_secs())
+            .map(|failures| APPOPS_BACKOFF.delay(failures).as_secs())
             .collect();
         assert_eq!(delays, [30, 60, 120, 240, 480, 960, 1920, 3600, 3600, 3600]);
-        assert_eq!(appops_retry_delay(u32::MAX), APPOPS_RETRY_MAX);
-    }
-
-    #[test]
-    fn a_recurring_message_is_logged_once_an_hour() {
-        let mut log = RecurringLog::default();
-        let start = Instant::now();
-        let at = |secs| start + Duration::from_secs(secs);
-        assert_eq!(log.line("a".into(), at(0)).as_deref(), Some("a"));
-        assert_eq!(log.line("a".into(), at(30)), None);
-        assert_eq!(log.line("a".into(), at(90)), None);
-        assert_eq!(
-            log.line("a".into(), at(3600)).as_deref(),
-            Some("a (2 more since)")
-        );
-        assert_eq!(log.line("a".into(), at(3630)), None);
-        // A different message is logged at once.
-        assert_eq!(log.line("b".into(), at(3660)).as_deref(), Some("b"));
-        assert_eq!(log.line("a".into(), at(3690)).as_deref(), Some("a"));
-        // One that recurs no more than hourly is logged each time, as is.
-        assert_eq!(log.line("a".into(), at(7290)).as_deref(), Some("a"));
+        assert_eq!(APPOPS_BACKOFF.delay(u32::MAX), Duration::from_secs(3600));
     }
 
     #[test]
@@ -2528,7 +2408,7 @@ mod tests {
 
         assert!(!tracer.write_coverage(key, 1));
         assert_eq!(tracer.writer.meta(key).unwrap(), Some(COVERAGE_PENDING));
-        assert!(tracer.write_errors.last.as_ref().is_some_and(|(line, _)| {
+        assert!(tracer.write_errors.last_message().is_some_and(|line| {
             line.starts_with("bbd: could not write coverage_appops:")
                 && line.contains("injected write failure")
         }));
@@ -2581,14 +2461,5 @@ mod tests {
         let boot_ns = clock_ns(libc::CLOCK_BOOTTIME) as u64 - 20_000_000_000;
         let ts = EventClock::now().unix_secs(boot_ns);
         assert!((now() - 21..=now() - 19).contains(&ts), "{ts}");
-    }
-
-    #[test]
-    fn status_uid_is_the_real_uid() {
-        let status =
-            "Name:\tcom.x\nPid:\t500\nPPid:\t7870\nUid:\t10100\t10101\t10102\t10103\nGid:\t10100\n";
-        assert_eq!(parse_status_uid(status), Some(10100));
-        assert_eq!(parse_status_uid("Name:\tx\n"), None);
-        assert_eq!(parse_status_field(status, "PPid:"), Some(7870));
     }
 }
