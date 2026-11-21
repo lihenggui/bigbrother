@@ -28,6 +28,7 @@ import li.mercury.bigbrother.core.screenshottesting.DefaultTestDevices
 import li.mercury.bigbrother.core.screenshottesting.DemoClockRule
 import li.mercury.bigbrother.core.screenshottesting.DemoLoadFailure
 import li.mercury.bigbrother.core.screenshottesting.DemoRecords
+import li.mercury.bigbrother.core.screenshottesting.SearchScaffold
 import li.mercury.bigbrother.core.screenshottesting.StoreScreenshotType
 import li.mercury.bigbrother.core.screenshottesting.assertSamplesCover
 import li.mercury.bigbrother.core.screenshottesting.captureForDevice
@@ -40,7 +41,6 @@ import li.mercury.bigbrother.core.testing.repository.TestUserDataRepository
 import li.mercury.bigbrother.core.ui.isShown
 import li.mercury.bigbrother.core.ui.readFiles
 import li.mercury.bigbrother.feature.search.impl.GlobalSearchBar
-import li.mercury.bigbrother.feature.search.impl.SearchScaffold
 import li.mercury.bigbrother.feature.search.impl.SearchViewModel
 import org.junit.Rule
 import org.junit.Test

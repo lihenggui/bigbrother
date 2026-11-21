@@ -30,10 +30,8 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
@@ -67,26 +65,19 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.layout
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInWindow
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import androidx.navigation3.runtime.EntryProviderScope
+import androidx.navigation3.runtime.NavEntry
 import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.scene.NavigationBackHandler
@@ -114,7 +105,6 @@ import li.mercury.bigbrother.feature.overview.api.navigation.OverviewNavKey
 import li.mercury.bigbrother.feature.overview.api.navigation.navigateToCategory
 import li.mercury.bigbrother.feature.overview.impl.navigation.overviewEntries
 import li.mercury.bigbrother.feature.search.impl.GlobalSearchBar
-import li.mercury.bigbrother.feature.search.impl.SearchScaffold
 import li.mercury.bigbrother.feature.settings.api.navigation.SettingsNavKey
 import li.mercury.bigbrother.feature.settings.impl.navigation.settingsEntry
 import li.mercury.bigbrother.feature.timeline.api.navigation.TimelineNavKey
@@ -175,7 +165,7 @@ fun BigBrotherApp(recordingStopped: Boolean, modifier: Modifier = Modifier) {
             appDetailEntries(navigator, navigator::navigateToJailApp)
             settingsEntry(navigator)
         },
-        searchBar = { navigator, barModifier ->
+        searchBar = { navigator ->
             GlobalSearchBar(
                 onOpenApp = { app, range, category ->
                     navigator.navigateToAppDetail(app.uid, app.packageName, range, category?.name)
@@ -183,7 +173,6 @@ fun BigBrotherApp(recordingStopped: Boolean, modifier: Modifier = Modifier) {
                 onOpenCategory = { navigator.navigateToCategory(it.name) },
                 onOpenSettings = { navigator.navigate(SettingsNavKey) },
                 settingsBadge = recordingStopped,
-                modifier = barModifier,
             )
         },
     )
@@ -195,7 +184,7 @@ internal fun BigBrotherNavigation(
     recordingStopped: Boolean,
     registerEntries: EntryProviderScope<NavKey>.(Navigator) -> Unit,
     modifier: Modifier = Modifier,
-    searchBar: @Composable (Navigator, Modifier) -> Unit,
+    searchBar: @Composable (Navigator) -> Unit,
 ) {
     val topLevelKeys = remember { TOP_LEVEL_DESTINATIONS.map { it.key }.toSet() }
     val navigationState = rememberNavigationState(startKey = OverviewNavKey, topLevelKeys = topLevelKeys)
@@ -209,7 +198,21 @@ internal fun BigBrotherNavigation(
     // show a record as a pane instead.
     val bottomSheetStrategy = remember(singlePane) { BottomSheetSceneStrategy<NavKey>(enabled = singlePane) }
 
-    val entryProvider = remember(navigator, registerEntries) { entryProvider { registerEntries(navigator) } }
+    val entryProvider = remember(navigator, registerEntries, singlePane) {
+        val entries = entryProvider<NavKey> { registerEntries(navigator) }
+        val withSearchInset: (NavKey) -> NavEntry<NavKey> = { key ->
+            val entry = entries(key)
+            if (key in topLevelKeys) {
+                NavEntry(navEntry = entry) {
+                    val anchorSearch = !singlePane && key in LIST_PANE_KEYS && key == navigationState.currentTopLevelKey
+                    SearchPaneContent(anchorSearch = anchorSearch) { entry.Content() }
+                }
+            } else {
+                entry
+            }
+        }
+        withSearchInset
+    }
 
     val sceneState = rememberSceneState(
         entries = navigationState.toEntries(entryProvider),
@@ -281,19 +284,17 @@ internal fun BigBrotherNavigation(
                 slideOutHorizontally(slide) { it * direction } + fadeOut(fade)
             val switch: ContentTransform = fadeIn(fade) togetherWith fadeOut(motion.fastEffectsSpec())
 
-            SearchScaffold(
+            SearchPaneLayout(
+                directive = directive,
+                showSearch = showSearch || previousShowsSearch == true || searchVisibility.value > 0f,
                 topBar = {
-                    if (showSearch || previousShowsSearch == true || searchVisibility.value > 0f) {
-                        // Reserve system space outside the clipped reveal.
-                        Box(
-                            Modifier
-                                .windowInsetsPadding(SearchBarDefaults.windowInsets.only(WindowInsetsSides.Top))
-                                .revealBar(searchVisibility, top = true),
-                        ) {
-                            SearchBarBeforeHinge(directive.excludedBounds) { barModifier ->
-                                searchBar(navigator, barModifier)
-                            }
-                        }
+                    // Reserve system space outside the clipped reveal.
+                    Box(
+                        Modifier
+                            .windowInsetsPadding(SearchBarDefaults.windowInsets.only(WindowInsetsSides.Top))
+                            .revealBar(searchVisibility, top = true),
+                    ) {
+                        searchBar(navigator)
                     }
                 },
             ) {
@@ -375,28 +376,6 @@ private fun Modifier.revealBar(visibility: State<Float>, top: Boolean): Modifier
     val height = (bar.height * visibility.value).roundToInt()
     layout(bar.width, height) {
         bar.placeRelative(0, if (top) height - bar.height else 0)
-    }
-}
-
-/** Keeps the shared bar in the leading panel of a window with a vertical hinge. */
-@Composable
-private fun SearchBarBeforeHinge(excludedBounds: List<Rect>, content: @Composable (Modifier) -> Unit) {
-    val hinge = excludedBounds.firstOrNull { it.height > it.width }
-    val density = LocalDensity.current
-    val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
-    var maxWidth by remember(hinge, isLtr, density) { mutableStateOf<Dp?>(null) }
-    val hingePosition = if (hinge != null) {
-        Modifier.onGloballyPositioned { coordinates ->
-            val left = coordinates.positionInWindow().x
-            val right = left + coordinates.size.width
-            val width = if (isLtr) hinge.left - left else right - hinge.right
-            maxWidth = width.takeIf { it > 0 && it < coordinates.size.width }?.let { with(density) { it.toDp() } }
-        }
-    } else {
-        Modifier
-    }
-    Box(Modifier.fillMaxWidth().then(hingePosition)) {
-        content(Modifier.widthIn(max = maxWidth ?: Dp.Unspecified))
     }
 }
 

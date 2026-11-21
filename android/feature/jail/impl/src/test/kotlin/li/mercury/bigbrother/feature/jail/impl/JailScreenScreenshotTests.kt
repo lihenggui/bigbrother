@@ -39,6 +39,7 @@ import li.mercury.bigbrother.core.screenshottesting.DefaultTestDevices
 import li.mercury.bigbrother.core.screenshottesting.DemoApp
 import li.mercury.bigbrother.core.screenshottesting.DemoClockRule
 import li.mercury.bigbrother.core.screenshottesting.DemoLoadFailure
+import li.mercury.bigbrother.core.screenshottesting.SearchScaffold
 import li.mercury.bigbrother.core.screenshottesting.assertSamplesCover
 import li.mercury.bigbrother.core.screenshottesting.captureForDevice
 import li.mercury.bigbrother.core.screenshottesting.captureMultiDevice
@@ -47,7 +48,6 @@ import li.mercury.bigbrother.core.testing.repository.TestAccessRepository
 import li.mercury.bigbrother.core.testing.repository.TestAppInfoRepository
 import li.mercury.bigbrother.core.testing.repository.TestUserDataRepository
 import li.mercury.bigbrother.feature.search.impl.GlobalSearchBar
-import li.mercury.bigbrother.feature.search.impl.SearchScaffold
 import li.mercury.bigbrother.feature.search.impl.SearchViewModel
 import org.junit.Assert.assertEquals
 import org.junit.Rule

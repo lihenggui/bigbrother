@@ -41,9 +41,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.isDialog
@@ -52,6 +56,7 @@ import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.Dispatchers
 import li.mercury.bigbrother.core.data.repository.AppInfoRepository
@@ -80,10 +85,10 @@ import li.mercury.bigbrother.feature.applist.impl.AppListViewModel
 import li.mercury.bigbrother.feature.jail.api.navigation.JailNavKey
 import li.mercury.bigbrother.feature.overview.api.navigation.OverviewNavKey
 import li.mercury.bigbrother.feature.search.impl.GlobalSearchBar
-import li.mercury.bigbrother.feature.search.impl.SearchScaffold
 import li.mercury.bigbrother.feature.search.impl.SearchViewModel
 import li.mercury.bigbrother.feature.timeline.api.navigation.TimelineNavKey
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.ExternalResource
@@ -145,16 +150,36 @@ class ListDetailScreenshotTests {
 
     @Test
     @Config(qualifiers = "en-rUS-w412dp-h880dp")
-    fun givenGlobalSearch_whenSwitchingTabs_thenOneSearchBarStaysInPlaceDuringTransitions() {
+    fun givenPhoneGlobalSearch_whenSwitchingTabs_thenOneSearchBarStaysInPlaceDuringTransitions() {
+        assertSearchStaysInPlace()
+    }
+
+    @Test
+    @Config(qualifiers = "en-rUS-w1000dp-h800dp")
+    fun givenTabletGlobalSearch_whenSwitchingTabs_thenOneSearchBarStaysInPlaceDuringTransitions() {
+        assertSearchStaysInPlace()
+    }
+
+    private fun assertSearchStaysInPlace() {
         showNavigation()
         val searchBar = composeTestRule.onNodeWithContentDescription("Search apps and files")
-        val bounds = searchBar.fetchSemanticsNode().boundsInRoot
+        val header = searchBar.fetchSemanticsNode()
+        val bounds = header.boundsInRoot
+        val searchPixels = searchBar.captureToImage().asAndroidBitmap()
+        val settings = composeTestRule.onNodeWithContentDescription("Settings")
+        val settingsBounds = settings.fetchSemanticsNode().boundsInRoot
+        val settingsPixels = settings.captureToImage().asAndroidBitmap()
         for ((tab, content) in listOf("Apps" to "Open app", "Timeline" to "Timeline content", "Jail" to "Jail content", "Overview" to "Overview content")) {
             composeTestRule.mainClock.autoAdvance = false
             composeTestRule.onNodeWithText(tab).performClick()
             repeat(4) { composeTestRule.mainClock.advanceTimeByFrame() }
             composeTestRule.onAllNodesWithContentDescription("Search apps and files").assertCountEquals(1)
-            assertEquals(bounds, searchBar.fetchSemanticsNode().boundsInRoot)
+            val duringTransition = searchBar.fetchSemanticsNode()
+            assertEquals(header.id, duringTransition.id)
+            assertEquals(bounds, duringTransition.boundsInRoot)
+            assertEquals(settingsBounds, settings.fetchSemanticsNode().boundsInRoot)
+            assertTrue(searchPixels.sameAs(searchBar.captureToImage().asAndroidBitmap()))
+            assertTrue(settingsPixels.sameAs(settings.captureToImage().asAndroidBitmap()))
             composeTestRule.mainClock.autoAdvance = true
             composeTestRule.onNodeWithText(content).assertIsDisplayed()
         }
@@ -231,8 +256,29 @@ class ListDetailScreenshotTests {
     fun givenTabletAppList_whenOpeningDetailBesideIt_thenSearchStaysVisible() {
         showNavigation()
         openApp()
-        composeTestRule.onNodeWithContentDescription("Search apps and files").assertIsDisplayed()
+        val search = composeTestRule.onNodeWithContentDescription("Search apps and files").fetchSemanticsNode().boundsInRoot
+        val settings = composeTestRule.onNodeWithContentDescription("Settings").fetchSemanticsNode().boundsInRoot
+        val detail = composeTestRule.onNodeWithText("App detail").fetchSemanticsNode().boundsInRoot
+        assertTrue(search.right < detail.left)
+        assertTrue(settings.right <= detail.left)
+        assertTrue(detail.top < search.bottom)
         composeTestRule.onNodeWithText("Open app").assertIsDisplayed()
+    }
+
+    @Test
+    @Config(qualifiers = "en-rUS-w1000dp-h800dp-mdpi")
+    fun givenSeparatingHinge_whenShowingTwoPanes_thenSearchFollowsTheListWidth() {
+        composeTestRule.setContent {
+            BigBrotherTheme {
+                val hinge = with(LocalDensity.current) { Rect(500.dp.toPx(), 0f, 520.dp.toPx(), 800.dp.toPx()) }
+                ListDetail(fitWindow = true, hinge = hinge)
+            }
+        }
+
+        val settings = composeTestRule.onNodeWithContentDescription("Settings").fetchSemanticsNode().boundsInRoot
+        assertTrue("Settings is at the end of the pane before the hinge", settings.right in 460f..500f)
+        val detail = composeTestRule.onNodeWithText("DCIM/Camera").fetchSemanticsNode().boundsInRoot
+        assertTrue("The detail pane begins after the hinge", detail.left >= 520f)
     }
 
     private fun openApp() {
@@ -258,11 +304,11 @@ class ListDetailScreenshotTests {
                                 },
                             )
                         }
-                        entry<TimelineNavKey> { Text("Timeline content") }
-                        entry<JailNavKey> { Text("Jail content") }
+                        entry<TimelineNavKey>(metadata = ListDetailSceneStrategy.listPane()) { Text("Timeline content") }
+                        entry<JailNavKey>(metadata = ListDetailSceneStrategy.listPane()) { Text("Jail content") }
                         entry<AppDetailNavKey>(metadata = ListDetailSceneStrategy.detailPane()) { Text("App detail") }
                     },
-                    searchBar = { _, modifier -> SearchBar(appInfoRepository, modifier) },
+                    searchBar = { SearchBar(appInfoRepository) },
                 )
             }
         }
@@ -275,7 +321,7 @@ class ListDetailScreenshotTests {
      */
     @OptIn(ExperimentalMaterial3AdaptiveApi::class)
     @Composable
-    private fun ListDetail(fitWindow: Boolean = false) {
+    private fun ListDetail(fitWindow: Boolean = false, hinge: Rect? = null) {
         val records = remember { DemoRecords(clock) }
         val appInfoRepository = remember { DemoAppInfoRepository(records) }
         val listViewModel = remember {
@@ -295,7 +341,7 @@ class ListDetailScreenshotTests {
             )
         }
         val adaptiveInfo = currentWindowAdaptiveInfoV2()
-        val directive = paneDirective(adaptiveInfo)
+        val directive = paneDirective(adaptiveInfo).let { if (hinge == null) it else it.copy(excludedBounds = listOf(hinge)) }
         val beside = !fitWindow || directive.maxHorizontalPartitions > 1
         NavigationSuiteScaffold(
             navigationItems = {
@@ -316,7 +362,7 @@ class ListDetailScreenshotTests {
             containerColor = MaterialTheme.colorScheme.surfaceContainer,
         ) {
             CompositionLocalProvider(LocalShowsDetailBesideList provides beside) {
-                SearchScaffold(topBar = { SearchBar(appInfoRepository) }) {
+                SearchPaneLayout(directive, showSearch = true, topBar = { SearchBar(appInfoRepository) }) {
                     ListDetailPaneScaffold(
                         directive = directive,
                         value = if (fitWindow) {
@@ -334,11 +380,13 @@ class ListDetailScreenshotTests {
                         },
                         listPane = {
                             AnimatedPane {
-                                AppListScreen(
-                                    selectedUid = DemoApp.WEATHER.uid.takeIf { beside },
-                                    onOpenApp = { _, _, _ -> },
-                                    viewModel = listViewModel,
-                                )
+                                SearchPaneContent(anchorSearch = beside) {
+                                    AppListScreen(
+                                        selectedUid = DemoApp.WEATHER.uid.takeIf { beside },
+                                        onOpenApp = { _, _, _ -> },
+                                        viewModel = listViewModel,
+                                    )
+                                }
                             }
                         },
                         detailPane = {
@@ -363,7 +411,7 @@ class ListDetailScreenshotTests {
 
 /** The search bar the top-level screens have as their top bar, idle. */
 @Composable
-private fun SearchBar(appInfoRepository: AppInfoRepository, modifier: Modifier = Modifier) {
+private fun SearchBar(appInfoRepository: AppInfoRepository) {
     val viewModel = remember {
         SearchViewModel(
             context = ApplicationProvider.getApplicationContext(),
@@ -377,7 +425,6 @@ private fun SearchBar(appInfoRepository: AppInfoRepository, modifier: Modifier =
         onOpenCategory = {},
         onOpenSettings = {},
         settingsBadge = false,
-        modifier = modifier,
         viewModel = viewModel,
     )
 }
