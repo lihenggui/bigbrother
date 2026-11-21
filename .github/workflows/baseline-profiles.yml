@@ -1,0 +1,105 @@
+name: Baseline Profiles
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "43 4 * * 1"
+
+concurrency:
+  group: baseline-profiles
+
+jobs:
+  generate:
+    if: github.repository == 'lihenggui/bigbrother' && github.ref == 'refs/heads/main'
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      SYSTEM_IMAGE: system-images;android-36;default;x86_64
+      PROFILE_DEVICE: Pixel 6, API 36, AOSP x86_64 (pixel6Api36)
+      PROFILE_DIR: android/app/src/release/generated/baselineProfiles
+      PROFILE_BRANCH: ci/baseline-profiles
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+            sudo tee /etc/udev/rules.d/99-kvm.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install the emulator and system image
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$sdkmanager" --licenses >/dev/null || true
+          "$sdkmanager" --install platform-tools emulator "$SYSTEM_IMAGE"
+
+      - name: Build the module
+        run: ./scripts/build.sh
+
+      - name: Generate the profiles
+        working-directory: android
+        run: |
+          ./gradlew :app:generateReleaseBaselineProfile \
+            -Pandroid.testoptions.manageddevices.emulator.gpu=swiftshader_indirect
+
+      - name: Propose the generated profiles
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git add -- "$PROFILE_DIR"
+          if git diff --cached --quiet -- "$PROFILE_DIR"; then
+            echo 'The generated profiles match the checked-in files.'
+            exit 0
+          fi
+
+          title='Regenerate the baseline and startup profiles'
+          source_commit=$(git rev-parse HEAD)
+          checks='CI and Device are dispatched after each push to the profile branch.'
+
+          gh auth setup-git --hostname github.com
+          profile_ref="refs/heads/$PROFILE_BRANCH"
+          remote_tip=$(git ls-remote origin "$profile_ref" | cut -f1)
+          if [[ -n "$remote_tip" ]]; then
+            git fetch --depth=2 --no-tags origin "$profile_ref"
+            remote_tip=$(git rev-parse FETCH_HEAD)
+          fi
+
+          # Keep the existing pull request checks on identical reruns.
+          if [[ -z "$remote_tip" ]] || [[ "$(git show -s --format=%P "$remote_tip")" != "$source_commit" ]] ||
+            ! git diff --cached --quiet "$remote_tip"; then
+            git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -m "$title" -m 'Keep release startup and navigation optimized for the current code.' -- "$PROFILE_DIR"
+            git push --force-with-lease="$profile_ref:$remote_tip" origin "HEAD:$profile_ref"
+            gh workflow run ci.yml --ref "$PROFILE_BRANCH"
+            gh workflow run device.yml --ref "$PROFILE_BRANCH"
+            checks="CI and Device were started for commit \`$(git rev-parse HEAD)\`."
+          fi
+
+          body=$(cat <<EOF
+          Generated from commit \`$source_commit\` on the Gradle Managed Device $PROFILE_DEVICE.
+
+          $checks
+          EOF
+          )
+
+          pr=$(gh api --method GET "repos/$GITHUB_REPOSITORY/pulls" \
+            -f head="${GITHUB_REPOSITORY_OWNER}:$PROFILE_BRANCH" -f base=main -f state=open \
+            --jq '.[0].number // empty')
+          if [[ -n "$pr" ]]; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/pulls/$pr" \
+              -f title="$title" -f body="$body" --jq '.html_url'
+          else
+            gh pr create --repo "$GITHUB_REPOSITORY" --head "$PROFILE_BRANCH" --base main \
+              --title "$title" --body "$body"
+          fi
