@@ -208,16 +208,33 @@ SCREEN="$PACKAGE/$PACKAGE.ScreenProbe "
 
 # Whether every process of the canary has its sandbox directory mounted as
 # shared storage (the entry of /proc/<pid>/mountinfo for it). One that ended
-# since it was listed, as the last start's does, is not looked at.
+# since it was listed, as the last start's does, is not looked at. The pid
+# that lacks it is left in $unmounted_pid.
 has_sandbox() {
     local pid mounts looked=0
+    unmounted_pid=
     for pid in $(adb shell pidof "$PACKAGE" | tr -d '\r'); do
         mounts="$(as_root "cat /proc/$pid/mountinfo 2>/dev/null")"
         [[ -n "$mounts" ]] || continue
         looked=$((looked + 1))
-        grep -qE " /[^ ]+/$uid-[0-9a-f]{32} /storage/emulated/0 " <<<"$mounts" || return 1
+        grep -qE " /[^ ]+/$uid-[0-9a-f]{32} /storage/emulated/0 " <<<"$mounts" || {
+            unmounted_pid=$pid
+            return 1
+        }
     done
     ((looked > 0))
+}
+
+# has_sandbox, once more after a second when it fails: another process of the
+# canary (one of its services) can be listed while it is still being started,
+# before the gate has mounted its sandbox. A start the gate missed stays
+# without it.
+has_sandbox_settled() {
+    has_sandbox && return 0
+    sleep 1
+    has_sandbox && return 0
+    echo "  note    pid $unmounted_pid has no sandbox mount"
+    return 1
 }
 
 # Whether the mounts of the canary's processes leave the project unnamed: an
@@ -437,7 +454,7 @@ check "app ops are kept" [ "$(status_field appops)" = true ]
 echo "in the sandbox:"
 run_canary
 inside="$view"
-check "the process has the sandbox mounted over shared storage" has_sandbox
+check "the process has the sandbox mounted over shared storage" has_sandbox_settled
 check "no mount names the project" names_nothing
 
 # Layers 1 and 2: storage and kernel information.
@@ -527,7 +544,7 @@ if ((stress > 0)); then
     for ((i = 0; i < stress; i++)); do
         adb shell am force-stop "$PACKAGE"
         adb shell am start -W -n "$PACKAGE/.MainActivity" >/dev/null
-        has_sandbox || unsandboxed=$((unsandboxed + 1))
+        has_sandbox_settled || unsandboxed=$((unsandboxed + 1))
     done
     status="$(as_root "$BBD sandbox status --json")"
     echo "  status  $status"
