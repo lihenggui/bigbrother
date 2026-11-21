@@ -8,7 +8,8 @@ it reads that meaning from it and rejects the lines listed as bad.
 
 | File | Daemon | App |
 | --- | --- | --- |
-| `appops.txt` | `bbd/src/sandbox/appops.rs` | `AppOpsGuardProtocol.kt` (`:app`) |
+| `appops.txt` | `bbd/src/sandbox/appops.rs` | `AppOpsGuardProtocol.kt` (`:helper`) |
+| `appops-bound.txt` | | `AppOpsGuardProtocol.kt` (`:helper`, binding parser cases) |
 | `spool.txt` | `bbd/src/spool.rs` | `EventSpool.kt` (`:hook`) |
 | `sandbox-list.txt` | `bbd/src/sandbox/identity.rs` | `SandboxRules.kt` (`:hook`) |
 | `sandbox-status.txt` | `bbd/src/sandbox/identity.rs` | `SandboxRules.kt` (`:hook`) |
@@ -28,4 +29,4 @@ file says at the top what its types and words are; a case of another type,
 or a word with another key, fails the tests.
 
 The readers are `bbd/src/protocol_cases.rs` and `ProtocolCase.kt` in the
-tests of `:app` and `:hook`.
+tests of `:helper` and `:hook`.
