@@ -31,17 +31,27 @@ import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.model.TimelinePage
 
 /**
- * Records a test sets, in place of the daemon. [failure], when set, is
+ * Serves records set by a test in place of the daemon. [failure], when set, is
  * thrown by every read, as the daemon's errors are. Reads are counted.
  */
 class TestAccessRepository(
     var apps: List<AppSummary> = emptyList(),
     var accesses: List<Access> = emptyList(),
     var history: List<AccessPeriod> = emptyList(),
-    var timeline: TimelinePage = TimelinePage(emptyList(), nextBefore = null),
+    var timelinePages: Map<Long?, TimelinePage> = emptyMap(),
     var status: RecorderStatus = RecorderStatus(recording = true),
     var sensorSessions: List<SensorSession> = emptyList(),
+    var paths: suspend (PathQuery) -> List<PathMatch> = { emptyList() },
 ) : AccessRepository {
+    data class PathQuery(
+        val text: String,
+        val categories: Collection<Category>,
+        val uids: Collection<Int>,
+        val range: TimeRange,
+        val limit: Int,
+    )
+
+    val timelineCursors = mutableListOf<Long?>()
     var failure: RecordsException? = null
 
     /** Thrown by [getSensorSessions] alone, as by a module that does not keep sensor sessions. */
@@ -88,7 +98,8 @@ class TestAccessRepository(
 
     override suspend fun getTimeline(range: TimeRange, before: Long?, limit: Int): TimelinePage {
         check()
-        return timeline
+        timelineCursors += before
+        return timelinePages[before] ?: TimelinePage(emptyList(), nextBefore = null)
     }
 
     override suspend fun searchPaths(
@@ -99,6 +110,6 @@ class TestAccessRepository(
         limit: Int,
     ): List<PathMatch> {
         check()
-        return emptyList()
+        return paths(PathQuery(text, categories, uids, range, limit))
     }
 }

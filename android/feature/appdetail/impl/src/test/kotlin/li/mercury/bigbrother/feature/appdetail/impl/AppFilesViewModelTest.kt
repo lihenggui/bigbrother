@@ -26,15 +26,16 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.RecordsException
-import li.mercury.bigbrother.core.data.repository.FileAccessRepository
 import li.mercury.bigbrother.core.model.Access
 import li.mercury.bigbrother.core.model.Action
 import li.mercury.bigbrother.core.model.Category
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.testing.MainDispatcherRule
+import li.mercury.bigbrother.core.testing.data.testAccess
 import li.mercury.bigbrother.core.testing.repository.TestAccessRepository
 import li.mercury.bigbrother.core.testing.repository.TestAppInfoRepository
+import li.mercury.bigbrother.core.testing.repository.TestFileAccessRepository
 import org.junit.Rule
 import kotlin.coroutines.CoroutineContext
 import kotlin.test.Test
@@ -54,8 +55,8 @@ class AppFilesViewModelTest {
     fun givenFullRecordBatch_whenFilesAreBuilt_thenWorkerPreparesTreeAndKeepsTruncation() = runTest {
         val worker = QueuedDispatcher()
         val viewModel = viewModel(
-            List(MAX_ACCESSES - 2) { access("$FOLDER/probed-$it.txt", Action.PROBE) } +
-                access("$FOLDER/favorite.txt") + access("media:images", Action.QUERY, Category.PROVIDER),
+            List(MAX_ACCESSES - 2) { testAccess("$FOLDER/probed-$it.txt", Action.PROBE, lastSeen = 2000) } +
+                testAccess("$FOLDER/favorite.txt", lastSeen = 2000) + testAccess("media:images", Action.QUERY, Category.PROVIDER, lastSeen = 2000),
             worker,
         )
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
@@ -88,7 +89,7 @@ class AppFilesViewModelTest {
     fun givenPendingFilters_whenChanged_thenOnlyTheLatestTreeIsPublished() = runTest {
         val worker = QueuedDispatcher()
         val viewModel = viewModel(
-            listOf(access("$FOLDER/read.txt"), access("$FOLDER/favorite.txt", Action.PROBE)),
+            listOf(testAccess("$FOLDER/read.txt", lastSeen = 2000), testAccess("$FOLDER/favorite.txt", Action.PROBE, lastSeen = 2000)),
             worker,
         )
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
@@ -164,25 +165,12 @@ class AppFilesViewModelTest {
     ) = AppFilesViewModel(
         accessRepository = TestAccessRepository(accesses = accesses),
         appInfoRepository = TestAppInfoRepository(),
-        fileAccessRepository = object : FileAccessRepository {
-            override suspend fun ensureAllFilesAccess() = ensureAccess()
-        },
+        fileAccessRepository = TestFileAccessRepository(ensureAccess),
         savedState = SavedStateHandle(),
         defaultDispatcher = worker,
         uid = 10100,
         packageName = "com.example.reader",
         range = TimeRange.DAY,
-    )
-
-    private fun access(path: String, action: Action = Action.READ, category: Category = Category.STORAGE) = Access(
-        category = category,
-        path = path,
-        action = action,
-        viaProvider = false,
-        items = 0,
-        allowed = 1,
-        denied = 0,
-        lastSeen = 2000,
     )
 
     private class QueuedDispatcher : CoroutineDispatcher() {

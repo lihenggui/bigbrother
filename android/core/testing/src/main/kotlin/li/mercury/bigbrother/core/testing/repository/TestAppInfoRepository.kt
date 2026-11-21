@@ -21,10 +21,13 @@ import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.PackageDetails
 
 /** Installed apps by package name; any other package is not installed. */
-class TestAppInfoRepository(var apps: Map<String, AppInfo> = emptyMap()) : AppInfoRepository {
+class TestAppInfoRepository(
+    var apps: Map<String, AppInfo> = emptyMap(),
+    var details: Map<String, PackageDetails> = emptyMap(),
+) : AppInfoRepository {
     override suspend fun getAppInfo(packageName: String): AppInfo? = apps[packageName]
 
     override suspend fun getAppInfo(packageNames: Collection<String>): Map<String, AppInfo> = apps.filterKeys { it in packageNames }
 
-    override suspend fun getPackageDetails(packageName: String): PackageDetails? = null
+    override suspend fun getPackageDetails(packageName: String): PackageDetails? = details[packageName]
 }
