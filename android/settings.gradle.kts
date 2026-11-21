@@ -51,6 +51,7 @@ dependencyResolutionManagement {
 
 rootProject.name = "big-brother"
 include(":app")
+include(":benchmarks")
 include(":core:common")
 include(":core:data")
 include(":core:datastore")

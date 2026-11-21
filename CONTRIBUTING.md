@@ -115,6 +115,33 @@ again:
 (cd android && ./gradlew recordRoborazziDebug)
 ```
 
+## Baseline and startup profiles
+
+Build the daemons with `./scripts/build.sh`, then connect an Android 13
+(API 33) or newer emulator or device. The generator launches the app,
+skips the first-launch guide if shown, visits the four main destinations,
+and scrolls the Apps list when records are available. It also scrolls
+Settings on a fresh install without root or the module.
+
+```sh
+cd android
+./gradlew :app:generateReleaseBaselineProfile
+```
+
+Review and commit the generated `baseline-prof.txt` and `startup-prof.txt`
+under `app/src/release/generated/baselineProfiles/`. The release build
+packages the baseline profile and uses the startup profile for DEX
+layout. Profile generation is a separate task from CI and release builds.
+
+To compare cold startup with and without baseline profile compilation,
+run the startup benchmark on a physical device from `android/`. The
+plugin supplies a debug-signed benchmark variant of the release build.
+
+```sh
+./gradlew :benchmarks:connectedBenchmarkReleaseAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.class=li.mercury.bigbrother.benchmarks.StartupBenchmark
+```
+
 ## Conventions
 
 - Code, comments, commit messages and documentation are in English. User
