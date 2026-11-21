@@ -16,18 +16,24 @@
 
 package li.mercury.bigbrother.core.model
 
-import android.content.pm.PackageInfo
-
-/**
- * Display name of an installed app, and its package, from which its icon is
- * loaded where it is shown.
- */
+/** Display name and icon source of an installed app. */
 class AppInfo(
     val label: String,
-    val packageInfo: PackageInfo,
+    val iconSource: AppIconSource,
     /** Part of the system image, as opposed to installed by the user. */
     val isSystem: Boolean,
-)
+) {
+    val uid: Int get() = iconSource.uid
+}
+
+/** Identifies the installation and version from which to load an app's icon. */
+data class AppIconSource(
+    val packageName: String,
+    val uid: Int,
+    val lastUpdateTime: Long,
+) {
+    val userId: Int get() = userIdOf(uid)
+}
 
 /** Show the package name when the package manager cannot supply the app label. */
 fun AppInfo?.labelOrPackageName(packageName: String): String = this?.label ?: packageName

@@ -16,7 +16,6 @@
 
 package li.mercury.bigbrother.feature.overview.impl
 
-import android.content.pm.PackageInfo
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
@@ -32,6 +31,7 @@ import li.mercury.bigbrother.core.data.repository.ModuleUpdate
 import li.mercury.bigbrother.core.data.repository.ModuleUpdater
 import li.mercury.bigbrother.core.domain.GetAppRecordsUseCase
 import li.mercury.bigbrother.core.domain.GetAppVisibilityUseCase
+import li.mercury.bigbrother.core.model.AppIconSource
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.Category
@@ -64,8 +64,8 @@ class OverviewViewModelTest {
     )
     private val appInfoRepository = TestAppInfoRepository(
         apps = mapOf(
-            "com.example.notes" to AppInfo("Notes", PackageInfo(), isSystem = false),
-            "com.android.gallery" to AppInfo("Gallery", PackageInfo(), isSystem = true),
+            "com.example.notes" to AppInfo("Notes", AppIconSource("com.example.notes", 10100, 0), isSystem = false),
+            "com.android.gallery" to AppInfo("Gallery", AppIconSource("com.android.gallery", 10200, 0), isSystem = true),
         ),
     )
     private val moduleRepository = TestModuleRepository()

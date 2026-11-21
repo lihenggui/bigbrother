@@ -16,8 +16,6 @@
 
 package li.mercury.bigbrother.feature.appdetail.impl
 
-import android.content.pm.ApplicationInfo
-import android.content.pm.PackageInfo
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
@@ -25,6 +23,7 @@ import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.RecordsException
+import li.mercury.bigbrother.core.model.AppIconSource
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.InstalledApp
 import li.mercury.bigbrother.core.model.LoadFailure
@@ -48,9 +47,7 @@ class AppDetailViewModelTest {
 
     private val info = AppInfo(
         label = "Notes",
-        packageInfo = PackageInfo().apply {
-            applicationInfo = ApplicationInfo().apply { uid = APP_UID }
-        },
+        iconSource = AppIconSource(PACKAGE, APP_UID, lastUpdateTime = 0),
         isSystem = false,
     )
     private val installed = TestInstalledAppRepository(apps = listOf(InstalledApp(PACKAGE, APP_UID, info)))

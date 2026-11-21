@@ -16,11 +16,11 @@
 
 package li.mercury.bigbrother.feature.jail.impl
 
-import android.content.pm.PackageInfo
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.RecordsException
+import li.mercury.bigbrother.core.model.AppIconSource
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.InstalledApp
 import li.mercury.bigbrother.core.model.LoadFailure
@@ -48,8 +48,8 @@ class JailViewModelTest {
     )
     private val appInfoRepository = TestAppInfoRepository(
         apps = mapOf(
-            "com.example.notes" to AppInfo("Notes", PackageInfo(), isSystem = false),
-            "com.example.weather" to AppInfo("Arctic Weather", PackageInfo(), isSystem = false),
+            "com.example.notes" to AppInfo("Notes", AppIconSource("com.example.notes", 10156, 0), isSystem = false),
+            "com.example.weather" to AppInfo("Arctic Weather", AppIconSource("com.example.weather", 10187, 0), isSystem = false),
         ),
     )
 
@@ -243,4 +243,8 @@ class JailViewModelTest {
 
 internal fun sandboxed(uid: Int, packageName: String, enabled: Boolean) = SandboxedApp(uid, packageName, enabled, created = 0, settings = emptyMap(), items = emptyMap())
 
-internal fun installed(uid: Int, packageName: String, label: String, isSystem: Boolean = false) = InstalledApp(packageName, uid, AppInfo(label, PackageInfo(), isSystem))
+internal fun installed(uid: Int, packageName: String, label: String, isSystem: Boolean = false) = InstalledApp(
+    packageName,
+    uid,
+    AppInfo(label, AppIconSource(packageName, uid, 0), isSystem),
+)

@@ -18,12 +18,14 @@ package li.mercury.bigbrother.core.data.repository
 
 import android.content.Context
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.IO
 import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
+import li.mercury.bigbrother.core.model.AppIconSource
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.PackageDetails
 import java.util.concurrent.ConcurrentHashMap
@@ -69,11 +71,7 @@ internal class PackageManagerAppInfoRepository @Inject constructor(
     private fun load(packageName: String): AppInfo? = try {
         val packageInfo = packageManager.getPackageInfo(packageName, 0)
         val info = packageInfo.applicationInfo ?: return null
-        AppInfo(
-            label = packageManager.getApplicationLabel(info).toString(),
-            packageInfo = packageInfo,
-            isSystem = info.flags and ApplicationInfo.FLAG_SYSTEM != 0,
-        ).also { cache[packageName] = it }
+        packageManager.toAppInfo(packageInfo, info).also { cache[packageName] = it }
     } catch (_: PackageManager.NameNotFoundException) {
         null
     }
@@ -94,3 +92,9 @@ internal class PackageManagerAppInfoRepository @Inject constructor(
         }
     }
 }
+
+internal fun PackageManager.toAppInfo(packageInfo: PackageInfo, applicationInfo: ApplicationInfo): AppInfo = AppInfo(
+    label = getApplicationLabel(applicationInfo).toString(),
+    iconSource = AppIconSource(packageInfo.packageName, applicationInfo.uid, packageInfo.lastUpdateTime),
+    isSystem = applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM != 0,
+)

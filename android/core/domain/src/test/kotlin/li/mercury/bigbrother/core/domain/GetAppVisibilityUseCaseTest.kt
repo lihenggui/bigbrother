@@ -16,13 +16,13 @@
 
 package li.mercury.bigbrother.core.domain
 
-import android.content.pm.PackageInfo
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import li.mercury.bigbrother.core.model.AppIconSource
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.InstalledApp
@@ -44,7 +44,7 @@ class GetAppVisibilityUseCaseTest {
     fun givenLoadedRecords_whenSystemAppsAreEnabled_thenShowsThemInOrderWithoutReloading() = runTest {
         val access = TestAccessRepository(apps = listOf(system, user, isolated, own, unknown))
         val appInfo = TestAppInfoRepository(
-            mapOf(system.packageName to info(isSystem = true), user.packageName to info(isSystem = false)),
+            mapOf(system.packageName to system.info(isSystem = true), user.packageName to user.info(isSystem = false)),
         )
         val userData = TestUserDataRepository()
         val records = GetAppRecordsUseCase(access, appInfo)(TimeRange.DAY)
@@ -66,9 +66,9 @@ class GetAppVisibilityUseCaseTest {
     @Test
     fun givenInstalledApps_whenSystemAppsAreEnabled_thenOwnAppStaysHidden() = runTest {
         val apps = listOf(
-            InstalledApp(system.packageName, system.uid, info(isSystem = true)),
-            InstalledApp(user.packageName, user.uid, info(isSystem = false)),
-            InstalledApp(own.packageName, own.uid, info(isSystem = false)),
+            InstalledApp(system.packageName, system.uid, system.info(isSystem = true)),
+            InstalledApp(user.packageName, user.uid, user.info(isSystem = false)),
+            InstalledApp(own.packageName, own.uid, own.info(isSystem = false)),
         )
         val userData = TestUserDataRepository()
         val getAppVisibility = GetAppVisibilityUseCase(userData, OWN_PACKAGE)
@@ -80,7 +80,7 @@ class GetAppVisibilityUseCaseTest {
 
     private fun app(uid: Int, packageName: String) = AppSummary(uid, packageName, emptyMap(), lastSeen = 1)
 
-    private fun info(isSystem: Boolean) = AppInfo("App", PackageInfo(), isSystem)
+    private fun AppSummary.info(isSystem: Boolean) = AppInfo("App", AppIconSource(packageName, uid, lastUpdateTime = 0), isSystem)
 
     private companion object {
         const val OWN_PACKAGE = "com.example.recorder"
