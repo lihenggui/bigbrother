@@ -47,9 +47,9 @@ must keep dependencies acyclic.
 - Fail closed. A start that cannot be given its sandbox is killed, never let
   through, and the kernel side does the same when the gate thread is stuck
   or gone.
-- The gate thread (`sandbox/gate.rs`) is what a starting app waits for. It
-  never waits for the main loop, the database or a helper program, and has
-  no timer: it blocks until a sandboxed app starts.
+- A starting app waits for the gate thread (`sandbox/gate/admission.rs`).
+  The thread never waits for the main loop, the database or a helper program,
+  and has no timer. It blocks until a sandboxed app starts.
 - A sandbox directory belongs to the sandboxed app. As root, use the layout
   in `src/sandbox/dirs.rs` and reach into it only through the directory
   descriptors in `src/dir.rs`, one name at a time without following symbolic
@@ -60,7 +60,7 @@ must keep dependencies acyclic.
   what an effect waits for bounded (`appops::ANSWER_WAIT`).
 - Helper programs cost a Java runtime each. The app ops helper runs only
   while an app is sandboxed, or for a moment to say whether a newly
-  installed package is a library (`sandbox/auto.rs`).
+  installed package is a library (`sandbox/auto/scan.rs`).
 - The packet filter (`sandbox/network.rs`) has rules only while an app is
   kept from the network; with none, the chains and the jump to them are
   removed. A packet costs one rule and one map lookup whatever the number
@@ -96,7 +96,7 @@ The daemon runs on every device all the time; its cost is the product's cost.
 - While a sensor session is open, the processes of open sessions are checked
   every 5 seconds (`SENSOR_PROCESS_CHECK`), so that a killed app's session ends
   close to when it did. With no session open that timer does not exist.
-- While newly installed apps are put in the sandbox (`sandbox/auto.rs`),
+- While newly installed apps are put in the sandbox (`sandbox/auto/watch.rs`),
   `/data/system` is watched with inotify for the package list being
   replaced, and `/data/user_de` and each user's directory in it for new
   directories; while a new app waits to be tried again, a timer runs until

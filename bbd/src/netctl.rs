@@ -623,7 +623,31 @@ mod tests {
             traffic: true,
             names: true,
         };
-        let activity = query.activity();
+        assert_grouped_activity(&query.activity());
+
+        let one = query
+            .destination(&Target::parse("domain:example.com").unwrap())
+            .unwrap();
+        assert_eq!(one["site"], "example.com");
+        assert_eq!(
+            one["buckets"],
+            json!([
+                {"t": 360_000, "conn": 3, "refused": 0},
+                {"t": 363_600, "conn": 3, "refused": 0},
+            ])
+        );
+        let address = query
+            .destination(&Target::parse("ip:198.51.100.53").unwrap())
+            .unwrap();
+        assert_eq!(address["buckets"][1]["refused"], 2);
+        assert!(
+            query
+                .destination(&Target::parse("domain:absent.example").unwrap())
+                .is_none()
+        );
+    }
+
+    fn assert_grouped_activity(activity: &Value) {
         assert_eq!(activity["recording"], json!({"on": true, "since": 42}));
         assert_eq!(activity["network"], "allowed");
         assert_eq!(
@@ -671,27 +695,6 @@ mod tests {
         assert_eq!(destinations[2]["hosts"][0]["rule"], "domain:adnet.example");
         assert_eq!(destinations[2]["refused"], 7);
         assert_eq!(activity["rules"].as_array().unwrap().len(), 3);
-
-        let one = query
-            .destination(&Target::parse("domain:example.com").unwrap())
-            .unwrap();
-        assert_eq!(one["site"], "example.com");
-        assert_eq!(
-            one["buckets"],
-            json!([
-                {"t": 360_000, "conn": 3, "refused": 0},
-                {"t": 363_600, "conn": 3, "refused": 0},
-            ])
-        );
-        let address = query
-            .destination(&Target::parse("ip:198.51.100.53").unwrap())
-            .unwrap();
-        assert_eq!(address["buckets"][1]["refused"], 2);
-        assert!(
-            query
-                .destination(&Target::parse("domain:absent.example").unwrap())
-                .is_none()
-        );
     }
 
     #[test]

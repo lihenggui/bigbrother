@@ -540,6 +540,31 @@ mod tests {
         (sandbox, kernel)
     }
 
+    fn record_connection(writer: &mut Writer, ip: IpAddr, uid: u32, host: &str) {
+        writer.net_record(
+            NetKey {
+                uid,
+                hour: 0,
+                host: host.into(),
+                addr: ip.to_string(),
+                port: 443,
+            },
+            NetSeen {
+                conn: 1,
+                ..NetSeen::default()
+            },
+            1000,
+        );
+    }
+
+    fn seed_network_history(writer: &mut Writer, ip: IpAddr) {
+        record_connection(writer, ip, 10100, "saved.example");
+        record_connection(writer, ip, 10200, "other.example");
+        writer.flush(&Counters::default(), 1000).unwrap();
+        writer.set_net_recording(&[10100, 10200], 1000).unwrap();
+        record_connection(writer, ip, 10100, "buffered.example");
+    }
+
     #[test]
     fn a_failed_network_cleanup_keeps_uid_retirement_retryable() {
         let mut f = SandboxFixture::new("sandbox-retire-net");
@@ -554,27 +579,7 @@ mod tests {
             .unwrap();
         let rule = f.writer.net_rules().unwrap();
         let original = f.writer.sandbox_entry(10100).unwrap().unwrap();
-        let record = |writer: &mut Writer, uid, host: &str| {
-            writer.net_record(
-                NetKey {
-                    uid,
-                    hour: 0,
-                    host: host.into(),
-                    addr: ip.to_string(),
-                    port: 443,
-                },
-                NetSeen {
-                    conn: 1,
-                    ..NetSeen::default()
-                },
-                1000,
-            );
-        };
-        record(&mut f.writer, 10100, "saved.example");
-        record(&mut f.writer, 10200, "other.example");
-        f.writer.flush(&Counters::default(), 1000).unwrap();
-        f.writer.set_net_recording(&[10100, 10200], 1000).unwrap();
-        record(&mut f.writer, 10100, "buffered.example");
+        seed_network_history(&mut f.writer, ip);
 
         let db = f.dir.join("bb.db");
         let connection = rusqlite::Connection::open(&db).unwrap();
@@ -603,7 +608,7 @@ mod tests {
         assert_eq!(reader.net_rows(10100, 0, 3600).unwrap().len(), 1);
         f.writer.flush(&Counters::default(), 1001).unwrap();
         assert_eq!(reader.net_rows(10100, 0, 3600).unwrap().len(), 2);
-        record(&mut f.writer, 10100, "pending.example");
+        record_connection(&mut f.writer, ip, 10100, "pending.example");
 
         connection
             .execute_batch("DROP TRIGGER fail_retired_rule_delete")

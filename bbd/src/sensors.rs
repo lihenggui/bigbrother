@@ -69,8 +69,7 @@
 //! connection closes or the process ends.
 
 use std::{
-    collections::{HashMap, HashSet},
-    sync::mpsc::{Receiver, RecvTimeoutError},
+    collections::HashMap,
     time::{Duration, Instant},
 };
 
@@ -78,6 +77,10 @@ use crate::{
     binder::{self, CONNECTION, ENABLE_DISABLE, SENSOR_MARK, SensorRequest},
     record::{self, is_high_rate},
 };
+
+mod handles;
+
+use handles::{Lookup, SensorList};
 
 /// Put after the type when the rate asked for is high.
 const FAST: &str = ":fast";
@@ -110,135 +113,6 @@ pub struct Sensor {
     pub continuous: bool,
 }
 
-/// Heading of the list of sensors in the sensor service's dump.
-const LIST_HEADING: &str = "Sensor List:";
-
-/// The sensors in the output of `dumpsys sensorservice`, by handle: the
-/// `Sensor List:` section, in which each sensor has a line such as
-///
-/// ```text
-/// 0x00000001) BMI160 Accelerometer | Bosch | ver: 1 | type: android.sensor.accelerometer(1) | perm: n/a | flags: 0x00000050
-/// ```
-///
-/// (without `flags` before Android 9; handle 0 is printed `0000000000`),
-/// followed by lines that start with a tab, the first with its reporting
-/// mode: `continuous | minRate=...`. The section ends at the next heading.
-/// Nothing after it is read: later sections hold the names apps gave their
-/// connections, which an app could make look like a sensor's line. Android 6
-/// printed the list differently; it is not read.
-pub fn parse_list(dump: &str) -> HashMap<i32, Sensor> {
-    let mut sensors = HashMap::new();
-    let mut lines = dump
-        .lines()
-        .skip_while(|line| line.trim_end() != LIST_HEADING)
-        .skip(1)
-        .peekable();
-    while let Some(line) = lines.next() {
-        if line.starts_with(char::is_whitespace) {
-            continue;
-        }
-        // The next section's heading, such as `Fusion States:`.
-        if line.trim_end().ends_with(':') {
-            break;
-        }
-        let Some((handle, kind)) = sensor_line(line) else {
-            continue;
-        };
-        let continuous = lines.peek().is_some_and(|next| {
-            next.starts_with(char::is_whitespace)
-                && next.trim_start().split(" | ").next() == Some("continuous")
-        });
-        sensors.insert(handle, Sensor { kind, continuous });
-    }
-    sensors
-}
-
-/// The handle and type of a sensor's line in the list.
-fn sensor_line(line: &str) -> Option<(i32, String)> {
-    let (handle, rest) = line.split_once(") ")?;
-    let handle = handle.trim();
-    let digits = handle.strip_prefix("0x").unwrap_or(handle);
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return None;
-    }
-    // The bits as printed; handles are signed in the calls.
-    let handle = u32::from_str_radix(digits, 16).ok()? as i32;
-    // The name and vendor come first and could hold anything, so the type
-    // is looked for by its label.
-    let field = rest
-        .split(" | ")
-        .find_map(|field| field.trim().strip_prefix("type:"))?;
-    let (name, number) = field.trim().strip_suffix(')')?.rsplit_once('(')?;
-    let number: i32 = number.parse().ok()?;
-    let name: String = name
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
-        .collect();
-    Some((
-        handle,
-        if name.is_empty() {
-            number.to_string()
-        } else {
-            name
-        },
-    ))
-}
-
-/// Fields the sensor service writes after a connection's package: four, and
-/// `has sensor access` from Android 16.
-const CONNECTION_FIELDS: usize = 5;
-
-/// The sensors each app has on, by the sensor service's own account, as
-/// (uid, handle). In the dump, each connection has a line with its package
-/// and uid, `\t <package> | WakeLockRefCount 0 | uid 10123 | cache size 0 |
-/// max cache size 0`, then one per sensor on:
-/// `\t <sensor name> 0x00000001 | status: active | ...`
-/// (`| first flush pending: false |` from Android 16). The uid is that of
-/// the process, which for an isolated one is not its app's.
-///
-/// The package is whatever the app passed when it connected, so the uid is
-/// taken from the fields the service writes after it. A package that holds
-/// a line break can still add lines of its own; at worst they keep a session
-/// taken over from a previous run on (see [`Sensors::watching`]) until it is
-/// turned off or its process ends.
-pub fn parse_active(dump: &str) -> HashSet<(u32, i32)> {
-    let mut active = HashSet::new();
-    let mut uid = None;
-    for line in dump.lines() {
-        // The fields the service writes after the package, last first: the
-        // uid follows the wake lock count. A line break in the package does
-        // not keep this part from being found.
-        let trailing: Vec<&str> = line
-            .rsplit(" | ")
-            .take(CONNECTION_FIELDS)
-            .map(str::trim)
-            .collect();
-        if let Some(at) = trailing.iter().position(|field| field.starts_with("uid "))
-            && trailing
-                .get(at + 1)
-                .is_some_and(|field| field.starts_with("WakeLockRefCount "))
-        {
-            uid = trailing[at]["uid ".len()..].trim().parse().ok();
-            continue;
-        }
-        // The sensors on are listed on lines that start with a tab.
-        if !line.starts_with('\t') {
-            uid = None;
-            continue;
-        }
-        let first = line.split(" | ").next().unwrap_or_default().trim();
-        let handle = first
-            .rsplit(' ')
-            .next()
-            .and_then(|last| last.strip_prefix("0x"))
-            .and_then(|digits| u32::from_str_radix(digits, 16).ok());
-        if let (Some(uid), Some(handle)) = (uid, handle) {
-            active.insert((uid, handle as i32));
-        }
-    }
-    active
-}
-
 /// Read the sensor service's dump. Run as root.
 pub fn dumpsys() -> anyhow::Result<String> {
     let output = std::process::Command::new("/system/bin/dumpsys")
@@ -254,177 +128,6 @@ pub fn dumpsys() -> anyhow::Result<String> {
     );
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
-
-/// How soon the list is read again for a sensor it does not have. After a
-/// reading fails, the wait doubles with each failure, up to
-/// `READ_AGAIN_MAX`.
-const READ_AGAIN: Duration = Duration::from_secs(60);
-const READ_AGAIN_MAX: Duration = Duration::from_secs(3600);
-/// A reading that has taken this long is given up on.
-const READING_TIMEOUT: Duration = Duration::from_secs(30);
-/// Most handles remembered as not on the device. Beyond them, a handle
-/// asked for again is looked up again, as often as the list may be read.
-const MAX_MISSING: usize = 256;
-
-/// The sensors by handle, and those on (see [`parse_active`]).
-type Reading = anyhow::Result<(HashMap<i32, Sensor>, HashSet<(u32, i32)>)>;
-
-/// What is known of a handle.
-#[derive(Debug, PartialEq, Eq)]
-enum Lookup {
-    Found(Sensor),
-    /// The list was read after the handle was seen and does not have it:
-    /// there is no such sensor, and the sensor service turned nothing on.
-    NotFound,
-    /// The list can't be read.
-    Unreadable,
-    /// A reading is under way or due.
-    Wait,
-}
-
-/// The device's sensors by handle, read when needed.
-struct SensorList {
-    sensors: HashMap<i32, Sensor>,
-    /// Handles a reading did not have. Turning one of these on again does
-    /// not have the list read again, as an app going through handles that
-    /// do not exist would otherwise have it read once a minute for good.
-    missing: HashSet<i32>,
-    read: fn() -> anyhow::Result<String>,
-    /// A reading under way, and when it started (also as unix time).
-    reading: Option<(Receiver<Reading>, Instant, i64)>,
-    /// When the latest reading started.
-    started: Option<Instant>,
-    /// When the latest reading that has ended, well or not, started (also
-    /// as unix time).
-    ended: Option<(Instant, i64)>,
-    /// The sensors on at that reading; `None` if it failed.
-    active: Option<HashSet<(u32, i32)>>,
-    /// Readings that failed in a row.
-    failures: u32,
-}
-
-impl SensorList {
-    fn new(read: fn() -> anyhow::Result<String>) -> Self {
-        Self {
-            sensors: HashMap::new(),
-            missing: HashSet::new(),
-            read,
-            reading: None,
-            started: None,
-            ended: None,
-            active: None,
-            failures: 0,
-        }
-    }
-
-    /// What is already known of `handle`, without reading the list:
-    /// `Found`, `NotFound`, or `Wait` for a handle not known either way.
-    fn known(&self, handle: i32) -> Lookup {
-        if let Some(sensor) = self.sensors.get(&handle) {
-            Lookup::Found(sensor.clone())
-        } else if self.missing.contains(&handle) {
-            Lookup::NotFound
-        } else {
-            Lookup::Wait
-        }
-    }
-
-    /// The sensor `handle` stands for, for a call that arrived at `seen`.
-    fn lookup(&mut self, handle: i32, seen: Instant, now: Instant, ts: i64) -> Lookup {
-        let known = self.known(handle);
-        if known != Lookup::Wait {
-            return known;
-        }
-        if self.reading.is_some() {
-            return Lookup::Wait;
-        }
-        if self.read_since(seen) {
-            if self.failures > 0 {
-                return Lookup::Unreadable;
-            }
-            if self.missing.len() < MAX_MISSING {
-                self.missing.insert(handle);
-            }
-            return Lookup::NotFound;
-        }
-        if self.may_read(now) {
-            self.start(now, ts);
-            return Lookup::Wait;
-        }
-        // Waiting out failures would hold records back for long.
-        if self.failures > 0 {
-            Lookup::Unreadable
-        } else {
-            Lookup::Wait
-        }
-    }
-
-    fn may_read(&self, now: Instant) -> bool {
-        let wait = READ_AGAIN
-            .saturating_mul(1 << self.failures.saturating_sub(1).min(16))
-            .min(READ_AGAIN_MAX);
-        self.started
-            .is_none_or(|started| now.duration_since(started) >= wait)
-    }
-
-    /// Whether a reading that started at `since` or later has ended.
-    fn read_since(&self, since: Instant) -> bool {
-        self.ended.is_some_and(|(started, _)| started >= since)
-    }
-
-    fn start(&mut self, now: Instant, ts: i64) {
-        let (sender, receiver) = std::sync::mpsc::channel();
-        let read = self.read;
-        std::thread::spawn(move || {
-            let reading = read().and_then(|dump| {
-                let sensors = parse_list(&dump);
-                anyhow::ensure!(
-                    !sensors.is_empty(),
-                    "no sensors in the sensor service's dump"
-                );
-                Ok((sensors, parse_active(&dump)))
-            });
-            let _ = sender.send(reading);
-        });
-        self.reading = Some((receiver, now, ts));
-        self.started = Some(now);
-    }
-
-    /// Take in a reading under way, waiting for it at most `wait`.
-    fn poll(&mut self, wait: Duration, now: Instant) {
-        let Some((receiver, started, started_ts)) = &self.reading else {
-            return;
-        };
-        let (started, started_ts) = (*started, *started_ts);
-        let reading = match receiver.recv_timeout(wait) {
-            Ok(reading) => reading,
-            Err(RecvTimeoutError::Timeout) if now.duration_since(started) < READING_TIMEOUT => {
-                return;
-            }
-            Err(RecvTimeoutError::Timeout) => Err(anyhow::anyhow!("dumpsys did not answer")),
-            Err(RecvTimeoutError::Disconnected) => Err(anyhow::anyhow!("the reader ended")),
-        };
-        self.reading = None;
-        self.ended = Some((started, started_ts));
-        match reading {
-            Ok((sensors, active)) => {
-                // A sensor connected since is no longer missing.
-                self.missing.retain(|handle| !sensors.contains_key(handle));
-                self.sensors = sensors;
-                self.active = Some(active);
-                self.failures = 0;
-            }
-            Err(e) => {
-                // Logged at most once a minute: readings are that far apart.
-                eprintln!("bbd: could not read the sensor list: {e:#}");
-                self.active = None;
-                self.failures += 1;
-            }
-        }
-    }
-}
-
-// ---- sessions ---------------------------------------------------------------
 
 /// A call to a sensor connection, as reported by the kernel side.
 #[derive(Clone, Copy, Debug)]
@@ -614,9 +317,6 @@ impl Sensors {
         proc_start: impl Fn(u32) -> Option<u64>,
         now: Instant,
     ) -> Option<CallRecord> {
-        // Read at most once per call, and only when needed.
-        let mut started = None;
-        let mut start_of = |pid| *started.get_or_insert_with(|| proc_start(pid));
         let key = |handle| Key {
             pid: call.pid,
             connection: call.connection,
@@ -624,88 +324,109 @@ impl Sensors {
         };
         match call.request {
             SensorRequest::Enable { handle, period_ns } => {
-                let record = self.turned_on(&call, handle, period_ns, now);
-                let key = key(handle);
-                let start = start_of(call.pid);
-                self.end_if_other_process(key, start);
-                if let Some(session) = self.open.get_mut(&key) {
-                    // Turning on a sensor that is on sets its rate.
-                    session.on_at = session.on_at.max(call.ts);
-                    session.taken_over = false;
-                    self.set_rate(key, period_ns, call.ts, now);
-                    return record;
-                }
-                if self.list.known(handle) == Lookup::NotFound {
-                    return record;
-                }
-                let per_app = self.open_per_app.get(&call.uid).copied().unwrap_or(0);
-                if per_app >= MAX_OPEN_PER_APP || self.open.len() >= MAX_OPEN {
-                    self.dropped += 1;
-                    return record;
-                }
-                self.insert(
-                    key,
-                    Session {
-                        row: record::SensorSession {
-                            uid: call.uid,
-                            pid: call.pid,
-                            // A process gone already has 0, which no
-                            // process has: its sessions end at the next
-                            // check, when it was last known on.
-                            proc_start: start.unwrap_or(0),
-                            connection: call.connection,
-                            handle,
-                            sensor: String::new(),
-                            continuous: false,
-                            period_ns,
-                            start_ts: call.ts,
-                            end_ts: None,
-                        },
-                        process_uid: call.process_uid,
-                        seen: now,
-                        on_at: call.ts,
-                        sensor: None,
-                        no_sensor: false,
-                        dirty: true,
-                        taken_over: false,
-                    },
-                );
-                record
+                return self.on_enable(&call, key(handle), period_ns, proc_start, now);
             }
-            SensorRequest::Disable { handle } => {
-                let key = key(handle);
-                if self.open.contains_key(&key)
-                    && !self.end_if_other_process(key, start_of(call.pid))
-                {
-                    self.end(key, call.ts);
-                }
-                None
-            }
+            SensorRequest::Disable { handle } => self.on_disable(&call, key(handle), proc_start),
             SensorRequest::Rate { handle, period_ns } => {
-                let key = key(handle);
-                if self.open.contains_key(&key)
-                    && !self.end_if_other_process(key, start_of(call.pid))
-                {
-                    if let Some(session) = self.open.get_mut(&key) {
-                        session.on_at = session.on_at.max(call.ts);
-                    }
-                    self.set_rate(key, period_ns, call.ts, now);
-                }
-                None
+                self.on_rate(&call, key(handle), period_ns, proc_start, now);
             }
-            SensorRequest::Close => {
-                let closed: Vec<Key> = self
-                    .open
-                    .keys()
-                    .filter(|k| k.pid == call.pid && k.connection == call.connection)
-                    .copied()
-                    .collect();
-                for key in closed {
-                    if !self.end_if_other_process(key, start_of(call.pid)) {
-                        self.end(key, call.ts);
-                    }
-                }
-                None
+            SensorRequest::Close => self.on_close(&call, proc_start),
+        }
+        None
+    }
+
+    fn on_enable(
+        &mut self,
+        call: &Call,
+        key: Key,
+        period_ns: i64,
+        proc_start: impl Fn(u32) -> Option<u64>,
+        now: Instant,
+    ) -> Option<CallRecord> {
+        let handle = key.handle;
+        let record = self.turned_on(call, handle, period_ns, now);
+        let start = proc_start(call.pid);
+        self.end_if_other_process(key, start);
+        if let Some(session) = self.open.get_mut(&key) {
+            // Turning on a sensor that is on sets its rate.
+            session.on_at = session.on_at.max(call.ts);
+            session.taken_over = false;
+            self.set_rate(key, period_ns, call.ts, now);
+            return record;
+        }
+        if self.list.known(handle) == Lookup::NotFound {
+            return record;
+        }
+        let per_app = self.open_per_app.get(&call.uid).copied().unwrap_or(0);
+        if per_app >= MAX_OPEN_PER_APP || self.open.len() >= MAX_OPEN {
+            self.dropped += 1;
+            return record;
+        }
+        self.insert(
+            key,
+            Session {
+                row: record::SensorSession {
+                    uid: call.uid,
+                    pid: call.pid,
+                    // A process gone already has 0, which no
+                    // process has: its sessions end at the next
+                    // check, when it was last known on.
+                    proc_start: start.unwrap_or(0),
+                    connection: call.connection,
+                    handle,
+                    sensor: String::new(),
+                    continuous: false,
+                    period_ns,
+                    start_ts: call.ts,
+                    end_ts: None,
+                },
+                process_uid: call.process_uid,
+                seen: now,
+                on_at: call.ts,
+                sensor: None,
+                no_sensor: false,
+                dirty: true,
+                taken_over: false,
+            },
+        );
+        record
+    }
+
+    fn on_disable(&mut self, call: &Call, key: Key, proc_start: impl Fn(u32) -> Option<u64>) {
+        if self.open.contains_key(&key) && !self.end_if_other_process(key, proc_start(call.pid)) {
+            self.end(key, call.ts);
+        }
+    }
+
+    fn on_rate(
+        &mut self,
+        call: &Call,
+        key: Key,
+        period_ns: i64,
+        proc_start: impl Fn(u32) -> Option<u64>,
+        now: Instant,
+    ) {
+        if self.open.contains_key(&key) && !self.end_if_other_process(key, proc_start(call.pid)) {
+            if let Some(session) = self.open.get_mut(&key) {
+                session.on_at = session.on_at.max(call.ts);
+            }
+            self.set_rate(key, period_ns, call.ts, now);
+        }
+    }
+
+    fn on_close(&mut self, call: &Call, proc_start: impl Fn(u32) -> Option<u64>) {
+        let closed: Vec<Key> = self
+            .open
+            .keys()
+            .filter(|k| k.pid == call.pid && k.connection == call.connection)
+            .copied()
+            .collect();
+        // Read the process start once, and only if there is a session to end.
+        let mut started = None;
+        for key in closed {
+            let start = *started.get_or_insert_with(|| proc_start(call.pid));
+            if !self.end_if_other_process(key, start) {
+                self.end(key, call.ts);
             }
         }
     }
@@ -846,12 +567,21 @@ impl Sensors {
     /// list under way is waited for at most `wait`; what still waits for it
     /// is handed out next time.
     pub fn settle(&mut self, now: Instant, ts: i64, wait: Duration) -> Settled {
+        self.wait_for_handles(now, ts, wait);
+        self.end_taken_over();
+        Settled {
+            calls: self.settle_calls(now, ts),
+            sessions: self.settle_sessions(now, ts),
+        }
+    }
+
+    fn wait_for_handles(&mut self, now: Instant, ts: i64, wait: Duration) {
         let mut waiting = false;
         if let Some(since) = self.check_taken_over
             && !self.list.read_since(since)
         {
             // Once per run, so not held back by how often the list is read.
-            if self.list.reading.is_none() {
+            if !self.list.is_reading() {
                 self.list.start(now, ts);
             }
             waiting = true;
@@ -874,9 +604,10 @@ impl Sensors {
         if waiting {
             self.list.poll(wait, now);
         }
-        self.end_taken_over();
+    }
 
-        let mut settled = Settled::default();
+    fn settle_calls(&mut self, now: Instant, ts: i64) -> Vec<CallRecord> {
+        let mut calls = Vec::new();
         let list = &mut self.list;
         let waiting_per_app = &mut self.waiting_per_app;
         let mut lookup = |handle: i32, seen: Instant| list.lookup(handle, seen, now, ts);
@@ -886,18 +617,20 @@ impl Sensors {
                 Lookup::NotFound | Lookup::Unreadable => None,
                 Lookup::Wait => return true,
             };
-            settled
-                .calls
-                .push((t.uid, t.mode, subject(sensor.as_ref(), t.period_ns), t.ts));
+            calls.push((t.uid, t.mode, subject(sensor.as_ref(), t.period_ns), t.ts));
             if let Some(count) = waiting_per_app.get_mut(&t.uid) {
                 *count = count.saturating_sub(1);
             }
             false
         });
         waiting_per_app.retain(|_, count| *count > 0);
+        calls
+    }
+
+    fn settle_sessions(&mut self, now: Instant, ts: i64) -> Vec<record::SensorSession> {
         for session in self.open.values_mut().chain(self.ended.iter_mut()) {
             if session.sensor.is_none() {
-                match lookup(session.row.handle, session.seen) {
+                match self.list.lookup(session.row.handle, session.seen, now, ts) {
                     Lookup::Found(sensor) => session.sensor = Some(Some(sensor)),
                     Lookup::Unreadable => session.sensor = Some(None),
                     Lookup::NotFound => session.no_sensor = true,
@@ -916,21 +649,22 @@ impl Sensors {
             self.remove(key);
         }
         self.ended.retain(|session| !session.no_sensor);
+        let mut sessions = Vec::new();
         // Ended sessions first: one turned off and on again within a second
         // is the same row, and must be written as on.
         self.ended.retain_mut(|session| match session.ready() {
             Some(row) => {
-                settled.sessions.push(row);
+                sessions.push(row);
                 false
             }
             None => true,
         });
         for session in self.open.values_mut() {
             if let Some(row) = session.ready() {
-                settled.sessions.push(row);
+                sessions.push(row);
             }
         }
-        settled
+        sessions
     }
 
     /// Once the sensor service has been read since calls are seen: end the
@@ -940,7 +674,7 @@ impl Sensors {
         let Some(since) = self.check_taken_over else {
             return;
         };
-        let Some((_, read_at)) = self.list.ended.filter(|_| self.list.read_since(since)) else {
+        let Some(read_at) = self.list.ended_since(since) else {
             return;
         };
         self.check_taken_over = None;
@@ -984,615 +718,4 @@ impl Session {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The list of an emulator running Android 15.
-    const ANDROID_15: &str = "Captured at: 15:30:06.721
-Sensor Device:
-Total 11 h/w sensors, 11 running 0 disabled clients:
-0x00000000) active-count = 2; sampling_period(ms) = {200.0, 66.7}, selected = 66.67 ms; batching_period(ms) = {2000.0, 100.0}, selected = 100.00 ms
-Sensor List:
-0000000000) Goldfish 3-axis Accelerometer | The Android Open Source Project | ver: 1 | type: android.sensor.accelerometer(1) | perm: n/a | flags: 0x00000050
-\tcontinuous | minRate=2.00Hz | maxRate=100.00Hz | no batching | non-wakeUp | data-injection, has-additional-info,
-0x00000001) Goldfish 3-axis Gyroscope | The Android Open Source Project | ver: 1 | type: android.sensor.gyroscope(4) | perm: n/a | flags: 0x00000050
-\tcontinuous | minRate=2.00Hz | maxRate=100.00Hz | no batching | non-wakeUp | data-injection, has-additional-info,
-0x00000005) Goldfish Proximity sensor | The Android Open Source Project | ver: 1 | type: android.sensor.proximity(8) | perm: n/a | flags: 0x00000013
-\ton-change | maxDelay=0us | minDelay=0us | no batching | wakeUp | data-injection,
-0x5f636779) Corrected Gyroscope Sensor | AOSP            | ver: 1 | type: android.sensor.gyroscope(4) | perm: n/a | flags: 0x00000000
-\tcontinuous | maxDelay=0us | maxRate=100.00Hz | no batching | non-wakeUp |
-Fusion States:
-9-axis fusion disabled (0 clients), gyro-rate= 200.00Hz, q=< 0.677207, 2.60163e-06, 2.57113e-05, 0.735793 > (1), b=< 7.43013e-15, 2.06122e-14, 1.13625e-14 >
-Recent Sensor events:
-Linear Acceleration Sensor: last 10 events
-\t 1 (ts=7617.261443600, wall=05:59:36.262) 0.00, 0.00, 0.00,
-Active sensors:
-Goldfish 3-axis Accelerometer (handle=0x00000000, connections=2)
-2 active connections
-Connection Number: 0
-\tOperating Mode: NORMAL
-\t com.android.server.power.FaceDownDetector | WakeLockRefCount 0 | uid 1000 | cache size 0 | max cache size 0
-\t Goldfish 3-axis Accelerometer 0x00000000 | status: active | pending flush events 0
-Connection Number: 1
-\tOperating Mode: NORMAL
-\t com.example.a.Listener | WakeLockRefCount 0 | uid 10100 | cache size 0 | max cache size 984
-\t Goldfish 3-axis Gyroscope 0x00000001 | status: active | pending flush events 0
-0 direct connections
-Previous Registrations:
-15:19:59 + 0x5f726f76 pid= 8866 uid=10134 package=com.example.a samplingPeriod=20000us batchingPeriod=0us
-";
-
-    /// Android 7 and 8 print no flags.
-    const ANDROID_8: &str = "Sensor List:
-0x00000001) BMI160 accelerometer      | Bosch           | ver: 1 | type: android.sensor.accelerometer(1) | perm: n/a
-\tcontinuous | minRate=1.00Hz | maxRate=200.00Hz | FIFO (max,reserved) = (5000, 3000) events | non-wakeUp |
-0x00000013) Step Counter            | Google          | ver: 1 | type: android.sensor.step_counter(19) | perm: android.permission.ACTIVITY_RECOGNITION
-\ton-change | maxDelay=0us | minDelay=0us | FIFO (max,reserved) = (0, 0) events | wakeUp |
-0x00010001) Pocket sensor | Vendor | ver: 1 | type: com.vendor.sensor.pocket mode!(65537) | perm: n/a
-\tspecial-trigger | maxDelay=0us | minDelay=0us | no batching | wakeUp |
-0x00010002) Unnamed | Vendor | ver: 1 | type:                     (65538) | perm: n/a
-\tcontinuous | minRate=1.00Hz | maxRate=50.00Hz | no batching | non-wakeUp |
-";
-
-    /// Android 6, which listed sensors in another layout.
-    const ANDROID_6: &str = "Sensor List:
-BMI160 accelerometer| Bosch     | version=1 |android.sensor.accelerometer| 0x00000001 | \"\" | type=1 | continuous | minRate=1.00Hz | maxRate=200.00Hz | FifoMax=5000 events | non-wakeUp |
-";
-
-    fn sensor(kind: &str, continuous: bool) -> Sensor {
-        Sensor {
-            kind: kind.into(),
-            continuous,
-        }
-    }
-
-    #[test]
-    fn the_list_gives_each_handles_type_and_reporting_mode() {
-        let sensors = parse_list(ANDROID_15);
-        assert_eq!(sensors.len(), 4, "{sensors:?}");
-        assert_eq!(sensors[&0], sensor("android.sensor.accelerometer", true));
-        assert_eq!(sensors[&1], sensor("android.sensor.gyroscope", true));
-        assert_eq!(sensors[&5], sensor("android.sensor.proximity", false));
-        // Handles of virtual sensors use all 32 bits.
-        assert_eq!(
-            sensors[&0x5f63_6779],
-            sensor("android.sensor.gyroscope", true)
-        );
-    }
-
-    #[test]
-    fn older_lists_without_flags_are_read_too() {
-        let sensors = parse_list(ANDROID_8);
-        assert_eq!(sensors[&1], sensor("android.sensor.accelerometer", true));
-        assert_eq!(sensors[&0x13], sensor("android.sensor.step_counter", false));
-        // Odd characters are dropped; a type without a name is its number.
-        assert_eq!(
-            sensors[&0x10001],
-            sensor("com.vendor.sensor.pocketmode", false)
-        );
-        assert_eq!(sensors[&0x10002], sensor("65538", true));
-        assert!(parse_list(ANDROID_6).is_empty());
-        assert!(parse_list("Permission Denial: can't dump SensorService").is_empty());
-    }
-
-    #[test]
-    fn subjects_name_the_type_and_mark_a_high_rate() {
-        let accelerometer = sensor("android.sensor.accelerometer", true);
-        let light = sensor("android.sensor.light", false);
-        let base = "binder:android.gui.SensorEventConnection/enableDisable";
-        // SENSOR_DELAY_NORMAL, _GAME, 200 Hz, _FASTEST.
-        assert_eq!(
-            subject(Some(&accelerometer), 200_000_000),
-            format!("{base}@android.sensor.accelerometer")
-        );
-        assert_eq!(
-            subject(Some(&accelerometer), 20_000_000),
-            format!("{base}@android.sensor.accelerometer")
-        );
-        assert_eq!(
-            subject(Some(&accelerometer), 5_000_000),
-            format!("{base}@android.sensor.accelerometer:fast")
-        );
-        assert_eq!(
-            subject(Some(&accelerometer), 0),
-            format!("{base}@android.sensor.accelerometer:fast")
-        );
-        // A sensor that reports on change has no rate to speak of.
-        assert_eq!(
-            subject(Some(&light), 0),
-            format!("{base}@android.sensor.light")
-        );
-        assert_eq!(subject(None, 0), base);
-        // Recorded under sensors, and not taken for a package asked about.
-        for subject in [
-            format!("{base}@android.sensor.accelerometer:fast"),
-            base.to_string(),
-        ] {
-            assert_eq!(binder::topic_of(&subject), Some(crate::topic::SENSORS));
-            assert_eq!(binder::asked_package(&subject), None);
-        }
-    }
-
-    // ---- sessions ----
-
-    const UID: u32 = 10_100;
-    const PID: u32 = 4242;
-    const START: u64 = 777;
-
-    fn list() -> anyhow::Result<String> {
-        Ok(ANDROID_15.to_string())
-    }
-
-    fn failing_list() -> anyhow::Result<String> {
-        anyhow::bail!("no dumpsys")
-    }
-
-    /// The same, with the gyroscope's connection that of an isolated process.
-    fn isolated_list() -> anyhow::Result<String> {
-        Ok(ANDROID_15.replace("uid 10100", "uid 99012"))
-    }
-
-    fn call(connection: u32, request: SensorRequest, ts: i64) -> Call {
-        Call {
-            uid: UID,
-            process_uid: UID,
-            mode: record::MODE_CALL,
-            pid: PID,
-            connection,
-            request,
-            ts,
-        }
-    }
-
-    fn on(handle: i32, period_ns: i64) -> SensorRequest {
-        SensorRequest::Enable { handle, period_ns }
-    }
-
-    fn running(_pid: u32) -> Option<u64> {
-        Some(START)
-    }
-
-    /// (sensor, period, start, end) of each session handed out.
-    fn spans(settled: &Settled) -> Vec<(String, i64, i64, Option<i64>)> {
-        let mut spans: Vec<_> = settled
-            .sessions
-            .iter()
-            .map(|s| (s.sensor.clone(), s.period_ns, s.start_ts, s.end_ts))
-            .collect();
-        spans.sort();
-        spans
-    }
-
-    /// What the table holds after the rows are written in order, by its key.
-    fn stored(settled: &Settled) -> HashMap<(u32, u32, u32, i32, i64), Option<i64>> {
-        settled
-            .sessions
-            .iter()
-            .map(|s| ((s.uid, s.pid, s.connection, s.handle, s.start_ts), s.end_ts))
-            .collect()
-    }
-
-    const WAIT: Duration = Duration::from_secs(5);
-    const GYROSCOPE_FAST: &str =
-        "binder:android.gui.SensorEventConnection/enableDisable@android.sensor.gyroscope:fast";
-
-    #[test]
-    fn a_sensor_turned_on_and_off_is_one_session() {
-        let mut sensors = Sensors::new(list);
-        let now = Instant::now();
-        // The list is read for the first sensor; the call waits for it.
-        assert_eq!(sensors.on_call(call(9, on(1, 0), 1000), running, now), None);
-        let settled = sensors.settle(now, 5000, WAIT);
-        assert_eq!(
-            settled.calls,
-            [(UID, record::MODE_CALL, GYROSCOPE_FAST.to_string(), 1000)]
-        );
-        // Written while it is on, then again when it ends.
-        assert_eq!(
-            spans(&settled),
-            [("android.sensor.gyroscope".into(), 0, 1000, None)]
-        );
-        assert!(settled.sessions[0].continuous);
-        assert_eq!(sensors.settle(now, 5000, WAIT), Settled::default());
-        sensors.on_call(
-            call(9, SensorRequest::Disable { handle: 1 }, 1060),
-            running,
-            now,
-        );
-        assert_eq!(
-            spans(&sensors.settle(now, 5000, WAIT)),
-            [("android.sensor.gyroscope".into(), 0, 1000, Some(1060))]
-        );
-        assert!(!sensors.any_on());
-        // Turning off what is not on changes nothing.
-        sensors.on_call(
-            call(9, SensorRequest::Disable { handle: 1 }, 1070),
-            running,
-            now,
-        );
-        assert_eq!(sensors.settle(now, 5000, WAIT), Settled::default());
-        // A sensor the list has is recorded at once.
-        assert_eq!(
-            sensors.on_call(call(9, on(1, 0), 1080), running, now),
-            Some((UID, record::MODE_CALL, GYROSCOPE_FAST.to_string(), 1080))
-        );
-    }
-
-    #[test]
-    fn turned_off_and_on_within_a_second_is_stored_as_on() {
-        let mut sensors = Sensors::new(list);
-        let now = Instant::now();
-        sensors.on_call(call(9, on(1, 0), 1000), running, now);
-        sensors.on_call(
-            call(9, SensorRequest::Disable { handle: 1 }, 1000),
-            running,
-            now,
-        );
-        sensors.on_call(call(9, on(1, 0), 1000), running, now);
-        let settled = sensors.settle(now, 5000, WAIT);
-        // Both rows have the same key; the one written last is on.
-        assert_eq!(stored(&settled).into_values().collect::<Vec<_>>(), [None]);
-        assert!(sensors.any_on());
-    }
-
-    #[test]
-    fn closing_a_connection_ends_its_sessions_only() {
-        let mut sensors = Sensors::new(list);
-        let now = Instant::now();
-        for (connection, handle) in [(9, 0), (9, 1), (12, 0)] {
-            sensors.on_call(
-                call(connection, on(handle, 200_000_000), 1000),
-                running,
-                now,
-            );
-        }
-        assert_eq!(sensors.settle(now, 5000, WAIT).sessions.len(), 3);
-        sensors.on_call(call(9, SensorRequest::Close, 1100), running, now);
-        let ended = sensors.settle(now, 5000, WAIT);
-        assert_eq!(
-            spans(&ended),
-            [
-                (
-                    "android.sensor.accelerometer".into(),
-                    200_000_000,
-                    1000,
-                    Some(1100)
-                ),
-                (
-                    "android.sensor.gyroscope".into(),
-                    200_000_000,
-                    1000,
-                    Some(1100)
-                ),
-            ]
-        );
-        // The other connection's accelerometer is still on.
-        assert!(sensors.any_on());
-        // A closing call to a connection not known is someone else's.
-        sensors.on_call(call(33, SensorRequest::Close, 1200), running, now);
-        assert_eq!(sensors.settle(now, 5000, WAIT), Settled::default());
-    }
-
-    #[test]
-    fn a_new_rate_starts_a_new_session() {
-        let mut sensors = Sensors::new(list);
-        let now = Instant::now();
-        sensors.on_call(call(9, on(0, 200_000_000), 1000), running, now);
-        // Within the first second, the rate is updated in place.
-        sensors.on_call(call(9, on(0, 20_000_000), 1000), running, now);
-        sensors.on_call(call(9, on(0, 20_000_000), 1010), running, now);
-        let rate = SensorRequest::Rate {
-            handle: 0,
-            period_ns: 66_667_000,
-        };
-        sensors.on_call(call(9, rate, 1030), running, now);
-        sensors.on_call(
-            call(9, SensorRequest::Disable { handle: 0 }, 1090),
-            running,
-            now,
-        );
-        let settled = sensors.settle(now, 5000, WAIT);
-        let accelerometer = || "android.sensor.accelerometer".to_string();
-        assert_eq!(
-            spans(&settled),
-            [
-                (accelerometer(), 20_000_000, 1000, Some(1030)),
-                (accelerometer(), 66_667_000, 1030, Some(1090)),
-            ]
-        );
-        // Each call that turned it on is recorded.
-        assert_eq!(settled.calls.len(), 3);
-    }
-
-    #[test]
-    fn sessions_end_when_their_process_was_last_seen_running() {
-        let mut sensors = Sensors::new(list);
-        let now = Instant::now();
-        sensors.on_call(call(9, on(0, 20_000_000), 1000), running, now);
-        // Gone by the time the call is taken in: it was on when it called.
-        let other = Call {
-            pid: 5555,
-            ..call(4, on(0, 20_000_000), 1001)
-        };
-        sensors.on_call(other, |_| None, now);
-        sensors.settle(now, 5000, WAIT);
-        let alive = |pid, start| pid == PID && start == START;
-        sensors.check_processes(1030, alive);
-        assert_eq!(
-            spans(&sensors.settle(now, 5000, WAIT)),
-            [(
-                "android.sensor.accelerometer".into(),
-                20_000_000,
-                1001,
-                Some(1001)
-            )]
-        );
-        // Found running at 1060; found gone after the device slept for
-        // seven hours. It ended when it was last seen running, not when
-        // that was noticed.
-        sensors.check_processes(1060, alive);
-        sensors.check_processes(1060 + 7 * 3600, |_, _| false);
-        assert_eq!(
-            spans(&sensors.settle(now, 5000, WAIT)),
-            [(
-                "android.sensor.accelerometer".into(),
-                20_000_000,
-                1000,
-                Some(1060)
-            )]
-        );
-        assert!(!sensors.any_on());
-    }
-
-    #[test]
-    fn an_app_killed_seconds_after_turning_a_sensor_on_keeps_those_seconds() {
-        let mut sensors = Sensors::new(list);
-        let now = Instant::now();
-        sensors.on_call(call(9, on(1, 0), 1000), running, now);
-        // Checked every 5 s while it is on; the process dies at 1012.
-        for at in [1005, 1010, 1015] {
-            sensors.check_processes(at, |_, _| at < 1012);
-        }
-        assert_eq!(
-            spans(&sensors.settle(now, 5000, WAIT)),
-            [("android.sensor.gyroscope".into(), 0, 1000, Some(1010))]
-        );
-    }
-
-    #[test]
-    fn a_reused_pid_does_not_take_over_a_session() {
-        let mut sensors = Sensors::new(list);
-        let now = Instant::now();
-        sensors.on_call(call(9, on(0, 20_000_000), 1000), running, now);
-        sensors.settle(now, 5000, WAIT);
-        // Another process with the same pid, and the same handle for its
-        // own connection, turns the sensor off: not the first one's.
-        let reused = |_pid| Some(START + 1);
-        sensors.on_call(
-            call(9, SensorRequest::Disable { handle: 0 }, 2000),
-            reused,
-            now,
-        );
-        assert_eq!(
-            spans(&sensors.settle(now, 5000, WAIT)),
-            [(
-                "android.sensor.accelerometer".into(),
-                20_000_000,
-                1000,
-                Some(1000)
-            )]
-        );
-        // Turning it on starts a session of its own.
-        sensors.on_call(call(9, on(0, 20_000_000), 2100), reused, now);
-        let settled = sensors.settle(now, 5000, WAIT);
-        assert_eq!(settled.sessions.len(), 1);
-        assert_eq!(
-            (settled.sessions[0].proc_start, settled.sessions[0].start_ts),
-            (START + 1, 2100)
-        );
-    }
-
-    #[test]
-    fn sessions_left_open_go_on_while_their_process_runs() {
-        let mut sensors = Sensors::new(list);
-        let now = Instant::now();
-        let row = |pid, start_ts| record::SensorSession {
-            uid: UID,
-            pid,
-            proc_start: START,
-            connection: 9,
-            handle: 1,
-            sensor: "android.sensor.gyroscope".into(),
-            continuous: true,
-            period_ns: 0,
-            start_ts,
-            end_ts: None,
-        };
-        // The accelerometer was turned off while no calls were seen: the
-        // sensor service has only the gyroscope on for this app.
-        let accelerometer = record::SensorSession {
-            connection: 12,
-            handle: 0,
-            sensor: "android.sensor.accelerometer".into(),
-            ..row(PID, 1000)
-        };
-        sensors.adopt(
-            vec![
-                row(PID, 1000),
-                accelerometer,
-                row(5555, 1000),
-                row(6666, 3000),
-            ],
-            |pid, _| (pid == PID).then_some(UID),
-            2000,
-            now,
-            4000,
-        );
-        // Ended when the previous run was last up, and not before they began.
-        assert_eq!(
-            spans(&sensors.settle(now, 5000, WAIT)),
-            [
-                ("android.sensor.gyroscope".into(), 0, 1000, Some(2000)),
-                ("android.sensor.gyroscope".into(), 0, 3000, Some(3000)),
-            ]
-        );
-        // Once calls are seen again, the service is asked which are still on.
-        sensors.watching(now);
-        assert_eq!(
-            spans(&sensors.settle(now, 5100, WAIT)),
-            [("android.sensor.accelerometer".into(), 0, 1000, Some(5100))]
-        );
-        sensors.on_call(
-            call(9, SensorRequest::Disable { handle: 1 }, 6000),
-            running,
-            now,
-        );
-        assert_eq!(
-            spans(&sensors.settle(now, 6000, WAIT)),
-            [("android.sensor.gyroscope".into(), 0, 1000, Some(6000))]
-        );
-    }
-
-    #[test]
-    fn an_isolated_process_is_checked_under_its_own_uid() {
-        // Recorded under its app, known to the sensor service by its own.
-        let mut sensors = Sensors::new(isolated_list);
-        let now = Instant::now();
-        let row = record::SensorSession {
-            uid: UID,
-            pid: PID,
-            proc_start: START,
-            connection: 9,
-            handle: 1,
-            sensor: "android.sensor.gyroscope".into(),
-            continuous: true,
-            period_ns: 0,
-            start_ts: 1000,
-            end_ts: None,
-        };
-        sensors.adopt(vec![row], |_, _| Some(99_012), 2000, now, 4000);
-        sensors.watching(now);
-        assert_eq!(sensors.settle(now, 5000, WAIT), Settled::default());
-        assert!(sensors.any_on());
-    }
-
-    #[test]
-    fn the_dump_says_which_sensors_each_app_has_on() {
-        assert_eq!(
-            parse_active(ANDROID_15),
-            HashSet::from([(1000, 0), (UID, 1)])
-        );
-        // Android 16 says whether the first flush is pending instead.
-        let android_16 = "2 active connections
-Connection Number: 0
-\tOperating Mode: NORMAL
-\t com.example.b.Listener | WakeLockRefCount 0 | uid 10200 | cache size 0 | max cache size 0 | has sensor access: true
-\t Pressure Sensor 0x0000000b | first flush pending: false | pending flush events 0
-\t Step Counter 0x5f737463 | first flush pending: false | pending flush events 0
-0 direct connections
-";
-        assert_eq!(
-            parse_active(android_16),
-            HashSet::from([(10200, 0xb), (10200, 0x5f73_7463)])
-        );
-        assert!(parse_active(ANDROID_8).is_empty());
-    }
-
-    /// A package name an app chose for its connection, made to look like
-    /// a sensor of the list and another app's uid.
-    const HOSTILE: &str =
-        "x | uid 1000\n0x00000001) Fake | x | ver: 1 | type: android.sensor.light(5) | perm: n/a";
-
-    #[test]
-    fn what_apps_call_themselves_does_not_change_the_list_or_the_uid() {
-        let dump = ANDROID_15
-            .replace("com.example.a.Listener", HOSTILE)
-            .replace("package=com.example.a", &format!("package={HOSTILE}"));
-        let sensors = parse_list(&dump);
-        assert_eq!(sensors, parse_list(ANDROID_15));
-        assert_eq!(sensors[&1], sensor("android.sensor.gyroscope", true));
-        // The gyroscope is still this app's, not uid 1000's.
-        assert!(parse_active(&dump).contains(&(UID, 1)));
-        assert!(!parse_active(&dump).contains(&(1000, 1)));
-    }
-
-    #[test]
-    fn a_handle_the_list_lacks_is_a_call_without_a_type_and_no_session() {
-        let mut sensors = Sensors::new(list);
-        let now = Instant::now();
-        sensors.on_call(call(9, on(99, 0), 1000), running, now);
-        let settled = sensors.settle(now, 5000, WAIT);
-        let untyped = "binder:android.gui.SensorEventConnection/enableDisable";
-        assert_eq!(settled.calls[0].2, untyped);
-        // The sensor service turns on no sensor it does not have.
-        assert!(settled.sessions.is_empty());
-        assert!(!sensors.any_on());
-        // Another unknown one soon after waits for the list to be read
-        // again, which is not done more than once a minute.
-        let later = now + Duration::from_secs(10);
-        sensors.on_call(call(9, on(98, 0), 1010), running, later);
-        assert!(sensors.settle(later, 5000, WAIT).calls.is_empty());
-        let minute = now + READ_AGAIN;
-        assert_eq!(sensors.settle(minute, 5000, WAIT).calls.len(), 1);
-        // Asked for again much later, a missing handle is not looked up again.
-        let read = sensors.list.started;
-        let hour = now + Duration::from_secs(3600);
-        assert_eq!(
-            sensors.on_call(call(9, on(99, 0), 4600), running, hour),
-            Some((UID, record::MODE_CALL, untyped.to_string(), 4600))
-        );
-        assert_eq!(sensors.settle(hour, 5000, WAIT), Settled::default());
-        assert_eq!(sensors.list.started, read);
-        assert!(!sensors.any_on());
-    }
-
-    #[test]
-    fn a_list_that_cannot_be_read_does_not_hold_records_back() {
-        let mut sensors = Sensors::new(failing_list);
-        let now = Instant::now();
-        sensors.on_call(call(9, on(0, 0), 1000), running, now);
-        let settled = sensors.settle(now, 5000, WAIT);
-        assert_eq!(settled.calls.len(), 1);
-        assert_eq!(spans(&settled), [(String::new(), 0, 1000, None)]);
-        // And it is not tried again at once.
-        sensors.on_call(call(9, on(1, 0), 1001), running, now);
-        assert_eq!(sensors.settle(now, 5000, WAIT).calls.len(), 1);
-        assert!(sensors.list.reading.is_none());
-    }
-
-    #[test]
-    fn one_app_going_through_handles_does_not_crowd_out_others() {
-        let mut sensors = Sensors::new(failing_list);
-        let now = Instant::now();
-        let mut at_once = 0;
-        for handle in 0..10_000 {
-            at_once += usize::from(
-                sensors
-                    .on_call(call(9, on(handle, 0), 1000), running, now)
-                    .is_some(),
-            );
-        }
-        // Calls beyond its share are stored at once, without the sensor;
-        // sessions beyond it are counted, not kept.
-        assert_eq!(sensors.open.len(), MAX_OPEN_PER_APP);
-        assert_eq!(sensors.turned_on.len(), MAX_WAITING_PER_APP);
-        assert_eq!(at_once, 10_000 - MAX_WAITING_PER_APP);
-        assert_eq!(sensors.dropped(), (10_000 - MAX_OPEN_PER_APP) as u64);
-        // Another app's sensor still has its session and its call.
-        let other = Call {
-            uid: 10_200,
-            process_uid: 10_200,
-            pid: 5555,
-            ..call(3, on(0, 0), 1000)
-        };
-        sensors.on_call(other, running, now);
-        assert_eq!(sensors.open.len(), MAX_OPEN_PER_APP + 1);
-        let settled = sensors.settle(now, 5000, WAIT);
-        assert_eq!(settled.calls.len(), MAX_WAITING_PER_APP + 1);
-        assert!(sensors.waiting_per_app.is_empty());
-        // Ending the sessions frees the app's share.
-        sensors.on_call(call(9, SensorRequest::Close, 1100), running, now);
-        assert_eq!(sensors.open_per_app.get(&UID), None);
-        assert_eq!(sensors.open_per_app.get(&10_200), Some(&1));
-    }
-}
+mod tests;

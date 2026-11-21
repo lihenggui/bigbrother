@@ -401,22 +401,8 @@ impl Calls {
                 envp.as_ptr(),
             );
 
-            let udp = libc::syscall(
-                libc::SYS_socket,
-                libc::AF_INET,
-                libc::SOCK_DGRAM | libc::SOCK_CLOEXEC,
-                0,
-            );
-            if udp < 0 {
+            if !self.connect_loopback() {
                 missed |= 1 << 3;
-            } else {
-                libc::syscall(
-                    libc::SYS_connect,
-                    udp,
-                    &raw const self.loopback,
-                    size_of::<libc::sockaddr_in>(),
-                );
-                libc::close(udp as i32);
             }
 
             libc::syscall(
@@ -429,6 +415,40 @@ impl Calls {
                 0,
             );
 
+            if !self.request_network_links() {
+                missed |= 1 << 5;
+            }
+
+            libc::_exit(missed)
+        }
+    }
+
+    // Called by the forked child, where only system calls are safe.
+    unsafe fn connect_loopback(&self) -> bool {
+        unsafe {
+            let udp = libc::syscall(
+                libc::SYS_socket,
+                libc::AF_INET,
+                libc::SOCK_DGRAM | libc::SOCK_CLOEXEC,
+                0,
+            );
+            if udp < 0 {
+                return false;
+            }
+            libc::syscall(
+                libc::SYS_connect,
+                udp,
+                &raw const self.loopback,
+                size_of::<libc::sockaddr_in>(),
+            );
+            libc::close(udp as i32);
+            true
+        }
+    }
+
+    // Called by the forked child, where only system calls are safe.
+    unsafe fn request_network_links(&self) -> bool {
+        unsafe {
             let netlink = libc::syscall(
                 libc::SYS_socket,
                 libc::AF_NETLINK,
@@ -436,21 +456,19 @@ impl Calls {
                 libc::NETLINK_ROUTE,
             );
             if netlink < 0 {
-                missed |= 1 << 5;
-            } else {
-                libc::syscall(
-                    libc::SYS_sendto,
-                    netlink,
-                    &raw const self.link_request,
-                    size_of::<LinkRequest>(),
-                    0,
-                    std::ptr::null::<libc::sockaddr>(),
-                    0,
-                );
-                libc::close(netlink as i32);
+                return false;
             }
-
-            libc::_exit(missed)
+            libc::syscall(
+                libc::SYS_sendto,
+                netlink,
+                &raw const self.link_request,
+                size_of::<LinkRequest>(),
+                0,
+                std::ptr::null::<libc::sockaddr>(),
+                0,
+            );
+            libc::close(netlink as i32);
+            true
         }
     }
 }
