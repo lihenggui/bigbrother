@@ -81,7 +81,7 @@ must keep dependencies acyclic.
 ## Database
 
 - SQLite at `/data/adb/big_brother/bb.db`, records kept 30 days.
-- The schema is in `src/store.rs`, at `SCHEMA_VERSION`. Change both when
+- The schema is in `src/store/schema.rs`, at `SCHEMA_VERSION`. Change both when
   the layout changes. The daemon creates the current schema in an empty
   database. The daemon and query commands reject incompatible versions so
   the database and its saved grants stay on disk. Add a migration when a

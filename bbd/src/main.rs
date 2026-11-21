@@ -55,7 +55,7 @@ mod test_sync;
 mod topic;
 mod tracer;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 use clock::now;
@@ -373,20 +373,25 @@ fn print_json(value: &impl Serialize) -> anyhow::Result<()> {
     Ok(())
 }
 
+impl Command {
+    fn needs_flush(&self) -> bool {
+        // Queries need the records the daemon may still have buffered.
+        !matches!(
+            self,
+            Command::Run { .. }
+                | Command::Sandbox { .. }
+                | Command::ModuleCheckDb
+                | Command::ModuleStop { .. }
+                | Command::ModuleExchange { .. }
+                | Command::SandboxRestoreLines
+                | Command::Selftest
+        )
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    // Every other command reads the records, which the daemon writes only
-    // now and then. The sandbox commands do not read them.
-    if !matches!(
-        cli.command,
-        Command::Run { .. }
-            | Command::Sandbox { .. }
-            | Command::ModuleCheckDb
-            | Command::ModuleStop { .. }
-            | Command::ModuleExchange { .. }
-            | Command::SandboxRestoreLines
-            | Command::Selftest
-    ) {
+    if cli.command.needs_flush() {
         control::request_flush(&cli.db);
     }
     match cli.command {
@@ -397,19 +402,16 @@ fn main() -> anyhow::Result<()> {
             explain_discards,
             no_provider_events,
             packages_list,
-        } => tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?
-            .block_on(daemon::run(daemon::Options {
-                db: &cli.db,
-                packages_list: &packages_list,
-                retention_days,
-                verbose,
-                profile,
-                explain_discards,
-                ingest_provider_events: !no_provider_events,
-                sandbox: !no_provider_events,
-            })),
+        } => run_daemon(daemon::Options {
+            db: &cli.db,
+            packages_list: &packages_list,
+            retention_days,
+            verbose,
+            profile,
+            explain_discards,
+            ingest_provider_events: !no_provider_events,
+            sandbox: !no_provider_events,
+        }),
         Command::Apps { hours } => {
             print_json(&report::apps(&store::Reader::open(&cli.db)?, since(hours))?)
         }
@@ -452,82 +454,174 @@ fn main() -> anyhow::Result<()> {
             stats: store::Reader::open(&cli.db)?.stats()?,
             daemon_running: control::daemon_running(&cli.db),
         }),
-        Command::Selftest => {
-            if !selftest::command()? {
-                std::process::exit(1);
-            }
-            Ok(())
-        }
+        Command::Selftest => run_selftest(),
         Command::ModuleCheckDb => store::check_module_database(&cli.db),
         Command::Sandbox { json, command } => sandbox::command(&cli.db, command.into(), json),
-        Command::Net { json, command } => match command {
-            NetCommand::Activity {
+        Command::Net { json, command } => net_command(&cli.db, command, json),
+        Command::ModuleStop { module } => lifecycle::stop(&module),
+        Command::ModuleExchange { staged, installed } => exchange_module(&staged, &installed),
+        Command::SandboxRestoreLines => print_restore_lines(&cli.db),
+    }
+}
+
+fn run_daemon(options: daemon::Options<'_>) -> anyhow::Result<()> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(daemon::run(options))
+}
+
+fn run_selftest() -> anyhow::Result<()> {
+    if !selftest::command()? {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+fn print_restore_lines(db: &Path) -> anyhow::Result<()> {
+    for line in sandbox::restore_lines(db)? {
+        println!("{line}");
+    }
+    Ok(())
+}
+
+fn net_command(db: &Path, command: NetCommand, json: bool) -> anyhow::Result<()> {
+    match command {
+        NetCommand::Activity {
+            package,
+            chart,
+            user,
+        } => netctl::activity(db, &package, user, chart),
+        NetCommand::Destination {
+            package,
+            target,
+            chart,
+            user,
+        } => netctl::destination(db, &package, user, &target, chart),
+        NetCommand::Block {
+            package,
+            target,
+            manual,
+            user,
+        } => sandbox::command(
+            db,
+            control::Request::NetBlock {
                 package,
-                chart,
                 user,
-            } => netctl::activity(&cli.db, &package, user, chart),
-            NetCommand::Destination {
-                package,
-                target,
-                chart,
-                user,
-            } => netctl::destination(&cli.db, &package, user, &target, chart),
-            NetCommand::Block {
-                package,
                 target,
                 manual,
-                user,
-            } => sandbox::command(
-                &cli.db,
-                control::Request::NetBlock {
-                    package,
-                    user,
-                    target,
-                    manual,
-                },
-                json,
-            ),
-            NetCommand::Unblock {
+            },
+            json,
+        ),
+        NetCommand::Unblock {
+            package,
+            target,
+            user,
+        } => sandbox::command(
+            db,
+            control::Request::NetUnblock {
                 package,
-                target,
                 user,
-            } => sandbox::command(
-                &cli.db,
-                control::Request::NetUnblock {
-                    package,
-                    user,
-                    target,
-                },
-                json,
-            ),
-            NetCommand::Clear { package, user } => {
-                sandbox::command(&cli.db, control::Request::NetClear { package, user }, json)
-            }
-        },
-        Command::ModuleStop { module } => lifecycle::stop(&module),
-        Command::ModuleExchange { staged, installed } => {
-            let staged = std::ffi::CString::new(staged.as_os_str().as_encoded_bytes())?;
-            let installed = std::ffi::CString::new(installed.as_os_str().as_encoded_bytes())?;
-            if unsafe {
-                libc::syscall(
-                    libc::SYS_renameat2,
-                    libc::AT_FDCWD,
-                    staged.as_ptr(),
-                    libc::AT_FDCWD,
-                    installed.as_ptr(),
-                    2, /* RENAME_EXCHANGE */
-                )
-            } != 0
-            {
-                return Err(std::io::Error::last_os_error().into());
-            }
-            Ok(())
+                target,
+            },
+            json,
+        ),
+        NetCommand::Clear { package, user } => {
+            sandbox::command(db, control::Request::NetClear { package, user }, json)
         }
-        Command::SandboxRestoreLines => {
-            for line in sandbox::restore_lines(&cli.db)? {
-                println!("{line}");
-            }
-            Ok(())
+    }
+}
+
+fn exchange_module(staged: &Path, installed: &Path) -> anyhow::Result<()> {
+    let staged = std::ffi::CString::new(staged.as_os_str().as_encoded_bytes())?;
+    let installed = std::ffi::CString::new(installed.as_os_str().as_encoded_bytes())?;
+    if unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            staged.as_ptr(),
+            libc::AT_FDCWD,
+            installed.as_ptr(),
+            2, /* RENAME_EXCHANGE */
+        )
+    } != 0
+    {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_commands_that_can_use_records_request_a_flush() {
+        let needs_flush = |args: &[&str]| {
+            Cli::try_parse_from(std::iter::once("bbd").chain(args.iter().copied()))
+                .unwrap()
+                .command
+                .needs_flush()
+        };
+        for args in [
+            &["run"][..],
+            &["sandbox", "list"],
+            &["module-check-db"],
+            &["module-stop", "module"],
+            &["module-exchange", "staged", "installed"],
+            &["sandbox-restore-lines"],
+            &["selftest"],
+        ] {
+            assert!(!needs_flush(args), "{args:?}");
+        }
+        for args in [
+            &["apps"][..],
+            &["files"],
+            &["history", "--uid", "10100", "--path", "path"],
+            &["timeline"],
+            &["sensors", "--uid", "10100"],
+            &["stats"],
+            &["net", "activity", "--since", "0", "com.example"],
+            &[
+                "net",
+                "destination",
+                "--since",
+                "0",
+                "com.example",
+                "domain:example.com",
+            ],
+            &["net", "block", "com.example", "domain:example.com"],
+            &["net", "unblock", "com.example", "domain:example.com"],
+            &["net", "clear", "com.example"],
+        ] {
+            assert!(needs_flush(args), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn parses_an_explicit_global_mode() {
+        assert_eq!(
+            parse_global_setting("camera=off"),
+            Ok((Item::Camera, Mode::Off))
+        );
+        assert_eq!(
+            parse_global_setting("location=coarse"),
+            Ok((Item::Location, Mode::Coarse))
+        );
+    }
+
+    #[test]
+    fn rejects_inherited_and_malformed_global_modes() {
+        for (text, error) in [
+            (
+                "camera=global",
+                "camera=global: the global settings need a mode",
+            ),
+            ("camera", "camera: not ITEM=MODE"),
+            ("unknown=on", "unknown: no such item"),
+            ("camera=unknown", "unknown: no such mode"),
+        ] {
+            assert_eq!(parse_global_setting(text).unwrap_err(), error);
         }
     }
 }
