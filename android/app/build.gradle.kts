@@ -21,6 +21,7 @@ plugins {
     alias(libs.plugins.bigbrother.android.application.compose)
     alias(libs.plugins.bigbrother.android.hilt)
     alias(libs.plugins.bigbrother.flashable.module)
+    alias(libs.plugins.baselineprofile)
     alias(libs.plugins.dependencyGuard)
     alias(libs.plugins.roborazzi)
 }
@@ -60,6 +61,14 @@ android {
             // Without a release key the build is signed with the debug key,
             // which is enough to install it but differs between machines.
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
+        }
+        // Keep the release key out of the plugin's profiling builds.
+        create("benchmarkRelease") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
+        }
+        create("nonMinifiedRelease") {
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
@@ -111,6 +120,15 @@ dependencies {
     testImplementation(libs.robolectric)
     testImplementation(projects.core.screenshotTesting)
     testImplementation(projects.core.testing)
+
+    baselineProfile(projects.benchmarks)
+}
+
+baselineProfile {
+    automaticGenerationDuringBuild = false
+    mergeIntoMain = false
+    saveInSrc = true
+    dexLayoutOptimization = true
 }
 
 // Every library in the release APK, checked in (app/dependencies/): a new

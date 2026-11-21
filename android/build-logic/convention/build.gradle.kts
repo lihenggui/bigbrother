@@ -63,6 +63,10 @@ gradlePlugin {
             id = libs.plugins.bigbrother.android.library.compose.get().pluginId
             implementationClass = "AndroidLibraryComposeConventionPlugin"
         }
+        register("androidTest") {
+            id = libs.plugins.bigbrother.android.test.get().pluginId
+            implementationClass = "AndroidTestConventionPlugin"
+        }
         register("androidFeatureApi") {
             id = libs.plugins.bigbrother.android.feature.api.get().pluginId
             implementationClass = "AndroidFeatureApiConventionPlugin"

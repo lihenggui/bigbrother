@@ -1,6 +1,7 @@
 [versions]
 androidGradlePlugin = "9.5.1"
 androidxActivity = "1.13.0"
+androidxBenchmark = "1.5.0"
 androidxComposeBom = "2026.09.00"
 # The Compose BOM still maps Material 3 to 1.4.0, where the Material 3
 # Expressive APIs are experimental. 1.5.0 is the release that stabilizes them.
@@ -17,6 +18,8 @@ androidxNavigationEvent = "1.1.1"
 androidxProfileinstaller = "1.4.1"
 androidxSavedStateCompose = "1.5.0"
 androidxTestEspresso = "3.7.0"
+androidxTestRunner = "1.7.0"
+androidxUiAutomator = "2.4.0"
 appiconloader = "1.5.0"
 coil = "3.6.3"
 dependencyGuard = "0.5.0"
@@ -40,6 +43,7 @@ androidx-compose-ui-test = ["androidx-compose-ui-test", "androidx-compose-ui-tes
 
 [libraries]
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "androidxActivity" }
+androidx-benchmark-macro = { group = "androidx.benchmark", name = "benchmark-macro-junit4", version.ref = "androidxBenchmark" }
 androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "androidxComposeBom" }
 androidx-compose-foundation = { group = "androidx.compose.foundation", name = "foundation" }
 androidx-compose-material-iconsExtended = { group = "androidx.compose.material", name = "material-icons-extended" }
@@ -66,6 +70,8 @@ androidx-navigation3-ui = { group = "androidx.navigation3", name = "navigation3-
 androidx-profileinstaller = { group = "androidx.profileinstaller", name = "profileinstaller", version.ref = "androidxProfileinstaller" }
 androidx-savedstate-compose = { group = "androidx.savedstate", name = "savedstate-compose", version.ref = "androidxSavedStateCompose" }
 androidx-test-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "androidxTestEspresso" }
+androidx-test-runner = { group = "androidx.test", name = "runner", version.ref = "androidxTestRunner" }
+androidx-test-uiautomator = { group = "androidx.test.uiautomator", name = "uiautomator", version.ref = "androidxUiAutomator" }
 appiconloader = { group = "me.zhanghai.android.appiconloader", name = "appiconloader", version.ref = "appiconloader" }
 coil = { group = "io.coil-kt.coil3", name = "coil", version.ref = "coil" }
 coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
@@ -97,6 +103,8 @@ spotless-gradlePlugin = { group = "com.diffplug.spotless", name = "spotless-plug
 [plugins]
 android-application = { id = "com.android.application", version.ref = "androidGradlePlugin" }
 android-library = { id = "com.android.library", version.ref = "androidGradlePlugin" }
+android-test = { id = "com.android.test", version.ref = "androidGradlePlugin" }
+baselineprofile = { id = "androidx.baselineprofile", version.ref = "androidxBenchmark" }
 compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 dependencyGuard = { id = "com.dropbox.dependency-guard", version.ref = "dependencyGuard" }
 hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
@@ -115,4 +123,5 @@ bigbrother-android-hilt = { id = "bigbrother.android.hilt" }
 bigbrother-android-library = { id = "bigbrother.android.library" }
 bigbrother-android-library-compose = { id = "bigbrother.android.library.compose" }
 bigbrother-android-lint = { id = "bigbrother.android.lint" }
+bigbrother-android-test = { id = "bigbrother.android.test" }
 bigbrother-flashable-module = { id = "bigbrother.flashable.module" }
