@@ -65,6 +65,7 @@ import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketTimeoutException
+import java.util.concurrent.CancellationException
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.LinkedBlockingQueue
@@ -216,7 +217,9 @@ class MainActivity : Activity() {
             OTHER_WAYS.filter { way ->
                 try {
                     File(way, "Download/$MARKER").readText().isNotEmpty()
-                } catch (_: Throwable) {
+                } catch (_: IOException) {
+                    false
+                } catch (_: SecurityException) {
                     false
                 }
             }.joinToString(",")
@@ -438,6 +441,8 @@ class MainActivity : Activity() {
     private fun view(key: String, value: () -> Any?) {
         val seen = try {
             value().toString()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (e: Throwable) {
             "refused:${e.javaClass.simpleName}"
         }
@@ -454,6 +459,8 @@ class MainActivity : Activity() {
     private fun probe(name: String, action: () -> Any?) {
         val outcome = try {
             "ok: ${action()}"
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (e: Throwable) {
             "refused: ${e.javaClass.simpleName}"
         }

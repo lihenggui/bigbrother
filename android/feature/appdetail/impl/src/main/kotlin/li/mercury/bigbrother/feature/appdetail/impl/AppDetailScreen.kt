@@ -74,7 +74,6 @@ import li.mercury.bigbrother.core.designsystem.icon.CageIcons
 import li.mercury.bigbrother.core.model.Access
 import li.mercury.bigbrother.core.model.Action
 import li.mercury.bigbrother.core.model.Category
-import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.ui.AppIcon
 import li.mercury.bigbrother.core.ui.DataCategory
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
@@ -82,7 +81,7 @@ import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.appDisplayName
-import li.mercury.bigbrother.core.ui.failureTitle
+import li.mercury.bigbrother.core.ui.failureReason
 import li.mercury.bigbrother.core.ui.label
 import li.mercury.bigbrother.core.ui.shortTime
 import li.mercury.bigbrother.core.ui.R as UiR
@@ -329,15 +328,7 @@ private fun JailActionDialog(action: JailAction?, appName: String, onConfirm: ()
         is JailAction.Failed -> AlertDialog(
             onDismissRequest = onDismiss,
             title = { Text(stringResource(R.string.jail_action_failed)) },
-            text = {
-                Text(
-                    when (val failure = action.failure) {
-                        is LoadFailure.Other -> stringResource(R.string.jail_action_retry)
-                        null -> stringResource(R.string.jail_app_unavailable)
-                        else -> failureTitle(failure)
-                    },
-                )
-            },
+            text = { Text(failureReason(action.failure)) },
             confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.ok)) } },
         )
 

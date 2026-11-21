@@ -43,7 +43,6 @@ import li.mercury.bigbrother.core.data.repository.ModuleRepository
 import li.mercury.bigbrother.core.data.repository.ModuleUpdate
 import li.mercury.bigbrother.core.data.repository.ModuleUpdater
 import li.mercury.bigbrother.core.data.repository.UserDataRepository
-import li.mercury.bigbrother.core.data.repository.installerError
 import li.mercury.bigbrother.core.data.toLoadFailure
 import li.mercury.bigbrother.core.domain.AppRecords
 import li.mercury.bigbrother.core.domain.GetAppRecordsUseCase
@@ -55,18 +54,6 @@ import li.mercury.bigbrother.core.ui.UserSettingsWriter
 import timber.log.Timber
 import javax.inject.Inject
 
-/** Why the daemon could not be started from the app. */
-sealed interface StartFailure {
-    /** The module is disabled or marked for removal in the root manager. */
-    data object ModuleDisabled : StartFailure
-
-    /** Started, but it never reported in; its log says why. */
-    data object NotReporting : StartFailure
-
-    /** The service script failed, with its output. */
-    data class Failed(val output: String) : StartFailure
-}
-
 /** Progress of flashing the module from inside the app. */
 sealed interface ModuleSetup {
     data object Idle : ModuleSetup
@@ -74,7 +61,7 @@ sealed interface ModuleSetup {
 
     /** Installed, but the manager could not apply it without a reboot. */
     data object NeedsReboot : ModuleSetup
-    data class Failed(val reason: String?) : ModuleSetup
+    data class Failed(val failure: LoadFailure) : ModuleSetup
 }
 
 data class OverviewUiState(
@@ -96,7 +83,7 @@ data class OverviewUiState(
     /** A request to start the daemon is in progress. */
     val daemonStarting: Boolean = false,
     /** Why the last request to start the daemon failed, if it did. */
-    val daemonStartError: StartFailure? = null,
+    val daemonStartError: LoadFailure? = null,
     val message: UserSettingsWriter.Failure? = null,
 )
 
@@ -172,6 +159,11 @@ class OverviewViewModel @Inject constructor(
             } else if (failure != null) {
                 updateState { it.copy(failure = failure) }
             }
+        } catch (e: RecordsException) {
+            currentCoroutineContext().ensureActive()
+            // A failed comparison must be retried before an update can be offered.
+            completed = request
+            updateState { it.copy(failure = e.toLoadFailure()) }
         } finally {
             updateState { it.copy(refreshing = false) }
         }
@@ -221,13 +213,11 @@ class OverviewViewModel @Inject constructor(
         runRecorderAction {
             updateState { it.copy(daemonStarting = true, daemonStartError = null) }
             val error = try {
-                when {
-                    !moduleRepository.startDaemon() -> StartFailure.ModuleDisabled
-                    moduleUpdater.awaitRecording() -> null
-                    else -> StartFailure.NotReporting
-                }
+                moduleRepository.startDaemon()
+                moduleUpdater.awaitRecording()
+                null
             } catch (e: RecordsException) {
-                StartFailure.Failed(e.message.orEmpty())
+                e.toLoadFailure()
             }
             updateState { it.copy(daemonStarting = false, daemonStartError = error) }
         }
@@ -261,7 +251,7 @@ class OverviewViewModel @Inject constructor(
                     updateState { it.copy(moduleSetup = ModuleSetup.NeedsReboot) }
                 }
             } catch (e: RecordsException) {
-                updateState { it.copy(moduleSetup = ModuleSetup.Failed(installerError(e.message.orEmpty()))) }
+                updateState { it.copy(moduleSetup = ModuleSetup.Failed(e.toLoadFailure())) }
             }
         }
     }

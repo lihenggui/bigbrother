@@ -30,12 +30,13 @@ import li.mercury.bigbrother.core.data.repository.AccessRepository
 import li.mercury.bigbrother.core.data.repository.DiagnosticsRepository
 import li.mercury.bigbrother.core.data.repository.ModuleRepository
 import li.mercury.bigbrother.core.data.repository.UserDataRepository
+import li.mercury.bigbrother.core.data.toLoadFailure
+import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.RecorderStatus
 import li.mercury.bigbrother.core.model.UserData
 import li.mercury.bigbrother.core.ui.UserSettingsWriter
 import timber.log.Timber
 import java.io.File
-import java.io.IOException
 import javax.inject.Inject
 
 /** Collecting the logs for a bug report. */
@@ -45,7 +46,7 @@ sealed interface LogExport {
 
     /** Collected, to be offered for sharing once. */
     data class Ready(val file: File) : LogExport
-    data object Failed : LogExport
+    data class Failed(val failure: LoadFailure) : LogExport
 }
 
 data class SettingsUiState(
@@ -54,6 +55,8 @@ data class SettingsUiState(
     val status: RecorderStatus? = null,
     /** The installed module's version, if known. */
     val moduleVersion: String? = null,
+    val moduleVersionFailure: LoadFailure? = null,
+    val recorderStatusFailure: LoadFailure? = null,
     val logExport: LogExport = LogExport.Idle,
     val message: UserSettingsWriter.Failure? = null,
 )
@@ -65,7 +68,7 @@ class SettingsViewModel @Inject constructor(
     private val userDataRepository: UserDataRepository,
     private val diagnosticsRepository: DiagnosticsRepository,
 ) : ViewModel() {
-    private val moduleVersion = MutableStateFlow<String?>(null)
+    private val recordingDetails = MutableStateFlow(RecordingDetails())
     private val logExport = MutableStateFlow<LogExport>(LogExport.Idle)
 
     private val settingsWriter = UserSettingsWriter(viewModelScope) { Timber.w(it) }
@@ -73,19 +76,34 @@ class SettingsViewModel @Inject constructor(
     val uiState: StateFlow<SettingsUiState> = combine(
         userDataRepository.userData,
         accessRepository.recorderStatus,
-        moduleVersion,
+        recordingDetails,
         logExport,
         settingsWriter.message,
-    ) { userData, status, version, export, message -> SettingsUiState(userData, status, version, export, message) }
+    ) { userData, status, details, export, message ->
+        SettingsUiState(
+            userData = userData,
+            status = status,
+            moduleVersion = details.version,
+            moduleVersionFailure = details.versionFailure,
+            recorderStatusFailure = details.statusFailure.takeIf { status == null },
+            logExport = export,
+            message = message,
+        )
+    }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
 
     fun refresh() {
         viewModelScope.launch {
-            moduleVersion.value = moduleRepository.installedVersion()
-            try {
+            val details = try {
+                RecordingDetails(version = moduleRepository.installedVersion())
+            } catch (e: RecordsException) {
+                RecordingDetails(versionFailure = e.toLoadFailure())
+            }
+            recordingDetails.value = try {
                 accessRepository.getRecorderStatus()
-            } catch (_: RecordsException) {
-                // The status row says it is unknown.
+                details
+            } catch (e: RecordsException) {
+                details.copy(statusFailure = e.toLoadFailure())
             }
         }
     }
@@ -96,9 +114,9 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             logExport.value = try {
                 LogExport.Ready(diagnosticsRepository.exportLogs())
-            } catch (e: IOException) {
-                Timber.w(e, "Logs not exported")
-                LogExport.Failed
+            } catch (e: RecordsException) {
+                Timber.w("Logs not exported: %s", e.toLoadFailure())
+                LogExport.Failed(e.toLoadFailure())
             }
         }
     }
@@ -117,4 +135,10 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun onMessageShown(failure: UserSettingsWriter.Failure, retry: Boolean) = settingsWriter.resolve(failure, retry)
+
+    private data class RecordingDetails(
+        val version: String? = null,
+        val versionFailure: LoadFailure? = null,
+        val statusFailure: LoadFailure? = null,
+    )
 }

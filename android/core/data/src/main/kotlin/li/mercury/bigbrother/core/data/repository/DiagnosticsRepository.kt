@@ -26,9 +26,12 @@ import li.mercury.bigbrother.core.common.di.FilesDir
 import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.IO
 import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.common.logging.LOG_DIR
+import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.bbd.BbdDataSource
+import li.mercury.bigbrother.core.model.LoadFailure
 import timber.log.Timber
 import java.io.File
+import java.io.IOException
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.zip.ZipEntry
@@ -54,11 +57,23 @@ internal class ZipDiagnosticsRepository @Inject constructor(
     @Dispatcher(IO) private val ioDispatcher: CoroutineDispatcher,
 ) : DiagnosticsRepository {
     override suspend fun exportLogs(): File = withContext(ioDispatcher) {
+        try {
+            writeArchive()
+        } catch (_: IOException) {
+            throw RecordsException.CommandFailed(LoadFailure.Operation.LOG_EXPORT_FAILED)
+        }
+    }
+
+    private suspend fun writeArchive(): File {
         // Read through root before anything is written: each is optional,
         // and a device without root still gets the app's own log.
         val diagnostics = bbd.getDiagnostics()
-        val moduleVersion = moduleRepository.installedVersion()
-        val about = about(moduleVersion)
+        val moduleDescription = try {
+            moduleRepository.installedVersion()
+        } catch (_: RecordsException) {
+            "not installed or not readable"
+        }
+        val about = about(moduleDescription)
         val directory = File(cacheDir, EXPORT_DIR)
         // One export at a time: an earlier one has been shared, or not.
         directory.deleteRecursively()
@@ -76,14 +91,14 @@ internal class ZipDiagnosticsRepository @Inject constructor(
             }
         }
         Timber.i("Logs exported: %d KB", zip.length() / 1024)
-        zip
+        return zip
     }
 
-    private fun about(moduleVersion: String?): String {
+    private fun about(moduleDescription: String): String {
         val app = context.packageManager.getPackageInfo(context.packageName, 0)
         return buildString {
             appendLine("App: ${app.versionName} (${app.longVersionCode})")
-            appendLine("Module: ${moduleVersion ?: "not installed or not readable"}")
+            appendLine("Module: $moduleDescription")
             appendLine("Android: ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})")
             appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL}")
             appendLine("ABIs: ${Build.SUPPORTED_ABIS.joinToString()}")

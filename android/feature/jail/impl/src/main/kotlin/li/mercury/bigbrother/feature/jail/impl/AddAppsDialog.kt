@@ -77,7 +77,10 @@ import androidx.window.core.layout.WindowSizeClass
 import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
 import li.mercury.bigbrother.core.designsystem.component.segmentShape
 import li.mercury.bigbrother.core.ui.AppIcon
+import li.mercury.bigbrother.core.ui.Message
+import li.mercury.bigbrother.core.ui.failureReason
 import li.mercury.bigbrother.core.ui.rememberPredictiveDismissProgress
+import li.mercury.bigbrother.core.ui.R as UiR
 
 /**
  * The installed apps, to choose those to put in the sandbox. Full-screen on
@@ -91,6 +94,7 @@ internal fun AddAppsDialog(
     onToggle: (String) -> Unit,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
+    onRetry: () -> Unit,
 ) {
     // Material keeps full-screen dialogs to compact windows.
     val compact = !currentWindowAdaptiveInfoV2().windowSizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND)
@@ -111,6 +115,7 @@ internal fun AddAppsDialog(
             onToggle,
             onDismiss,
             onConfirm,
+            onRetry,
             modifier = Modifier.graphicsLayer {
                 val fraction = PredictiveBackEasing.transform(progress)
                 scaleX = 1f - 0.1f * fraction
@@ -132,6 +137,7 @@ internal fun AddAppsSheet(
     onToggle: (String) -> Unit,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
+    onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (compact) SystemBarsOver(MaterialTheme.colorScheme.surfaceContainer)
@@ -148,7 +154,7 @@ internal fun AddAppsSheet(
         color = MaterialTheme.colorScheme.surfaceContainer,
     ) {
         Column(if (compact) Modifier.systemBarsPadding().imePadding() else Modifier) {
-            AddAppsContent(state, query, onToggle, onDismiss, onConfirm)
+            AddAppsContent(state, query, onToggle, onDismiss, onConfirm, onRetry)
         }
     }
 }
@@ -176,6 +182,7 @@ private fun ColumnScope.AddAppsContent(
     onToggle: (String) -> Unit,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
+    onRetry: () -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -220,6 +227,14 @@ private fun ColumnScope.AddAppsContent(
     )
     val apps = state.apps
     when {
+        state.failure != null -> Message(
+            title = failureReason(state.failure),
+            body = "",
+            modifier = Modifier.weight(1f),
+            actionLabel = stringResource(UiR.string.retry),
+            onAction = onRetry,
+        )
+
         apps == null -> BigBrotherLoadingIndicator(Modifier.weight(1f))
 
         apps.isEmpty() -> Text(

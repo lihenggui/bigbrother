@@ -58,6 +58,7 @@ import li.mercury.bigbrother.core.model.AccessPeriod
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.ClipboardUse
 import li.mercury.bigbrother.core.model.clipboardUse
+import li.mercury.bigbrother.core.ui.InlineMessage
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.LocalWallClock
@@ -65,6 +66,7 @@ import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.appDisplayName
 import li.mercury.bigbrother.core.ui.exactDateTime
+import li.mercury.bigbrother.core.ui.failureReason
 import li.mercury.bigbrother.core.ui.relativeTime
 import li.mercury.bigbrother.core.ui.topicIcon
 import li.mercury.bigbrother.core.ui.topicRecordsSummary
@@ -135,7 +137,16 @@ internal fun RecordScreen(
                     item(key = "details") { Details(details) }
                 }
                 val sessions = state.sensorSessions
-                if (!sessions.isNullOrEmpty()) {
+                if (state.sensorSessionsFailure != null) {
+                    item(key = "sensors-failure") {
+                        InlineMessage(
+                            title = stringResource(R.string.sensor_sessions),
+                            body = failureReason(state.sensorSessionsFailure),
+                            actionLabel = stringResource(UiR.string.retry),
+                            onAction = onRetry,
+                        )
+                    }
+                } else if (!sessions.isNullOrEmpty()) {
                     val groups = groupSessions(sessions)
                     // A few are shown open; many, each sensor folded.
                     val open = sessions.size <= SESSIONS_SHOWN_OPEN

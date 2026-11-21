@@ -101,22 +101,61 @@ fun failureTitle(failure: LoadFailure): String = stringResource(
         LoadFailure.NoRoot -> R.string.no_root_title
         LoadFailure.ModuleMissing -> R.string.no_module_title
         LoadFailure.ModuleOutdated -> R.string.old_module_title
-        is LoadFailure.Other -> R.string.error_title
+        LoadFailure.Operation.LOG_EXPORT_FAILED -> R.string.export_logs_failed
+        else -> R.string.error_title
+    },
+)
+
+/** A specific reason suitable for a notice or a supporting line. */
+@Composable
+fun failureReason(failure: LoadFailure): String = when (failure) {
+    LoadFailure.NoRoot, LoadFailure.ModuleMissing, LoadFailure.ModuleOutdated, LoadFailure.Operation.LOG_EXPORT_FAILED -> failureTitle(failure)
+    else -> failureBody(failure)
+}
+
+@Composable
+fun failureBody(failure: LoadFailure): String = stringResource(
+    when (failure) {
+        LoadFailure.NoRoot -> R.string.no_root_body
+
+        LoadFailure.ModuleMissing -> R.string.no_module_body
+
+        LoadFailure.ModuleOutdated -> R.string.old_module_body
+
+        is LoadFailure.Operation -> when (failure) {
+            LoadFailure.Operation.COMMAND_FAILED -> R.string.command_failed
+            LoadFailure.Operation.BAD_RESPONSE -> R.string.daemon_bad_response
+            LoadFailure.Operation.DATABASE_BUSY -> R.string.database_busy
+            LoadFailure.Operation.DAEMON_UNAVAILABLE -> R.string.daemon_unavailable
+            LoadFailure.Operation.DESTINATION_MISSING -> R.string.destination_missing
+            LoadFailure.Operation.APP_MISSING -> R.string.app_missing
+            LoadFailure.Operation.TIMED_OUT -> R.string.timed_out
+            LoadFailure.Operation.INVALID_PERIOD -> R.string.invalid_period
+            LoadFailure.Operation.MODULE_DISABLED -> R.string.module_disabled
+            LoadFailure.Operation.MODULE_VERSION_UNREADABLE -> R.string.module_version_unreadable
+            LoadFailure.Operation.INSTALLER_MISSING -> R.string.installer_missing
+            LoadFailure.Operation.UNSUPPORTED_ARCHITECTURE -> R.string.unsupported_architecture
+            LoadFailure.Operation.KERNEL_BTF_MISSING -> R.string.kernel_btf_missing
+            LoadFailure.Operation.KERNEL_TOO_OLD -> R.string.kernel_too_old
+            LoadFailure.Operation.MODULE_ARCHIVE_INVALID -> R.string.module_archive_invalid
+            LoadFailure.Operation.DATABASE_INCOMPATIBLE -> R.string.database_incompatible
+            LoadFailure.Operation.MODULE_INSTALL_FAILED -> R.string.module_install_failed
+            LoadFailure.Operation.MODULE_UPDATE_FAILED -> R.string.module_update_failed
+            LoadFailure.Operation.DAEMON_START_FAILED -> R.string.daemon_start_failed
+            LoadFailure.Operation.DAEMON_NOT_REPORTING -> R.string.daemon_not_reporting
+            LoadFailure.Operation.FILE_ACCESS_DENIED -> R.string.file_access_denied
+            LoadFailure.Operation.INSTALLED_APPS_UNAVAILABLE -> R.string.installed_apps_unavailable
+            LoadFailure.Operation.LOG_EXPORT_FAILED -> R.string.export_logs_failed
+        }
     },
 )
 
 /** Explains a [LoadFailure] and offers to retry. */
 @Composable
 fun LoadFailureMessage(failure: LoadFailure, onRetry: () -> Unit, modifier: Modifier = Modifier) {
-    val body = when (failure) {
-        LoadFailure.NoRoot -> stringResource(R.string.no_root_body)
-        LoadFailure.ModuleMissing -> stringResource(R.string.no_module_body)
-        LoadFailure.ModuleOutdated -> stringResource(R.string.old_module_body)
-        is LoadFailure.Other -> failure.message
-    }
     Message(
         title = failureTitle(failure),
-        body = body,
+        body = failureBody(failure),
         modifier = modifier,
         actionLabel = stringResource(R.string.retry),
         onAction = onRetry,

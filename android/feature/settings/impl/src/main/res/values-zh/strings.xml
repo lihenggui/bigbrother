@@ -43,5 +43,4 @@
     <string name="export_logs">导出日志</string>
     <string name="export_logs_summary">应用和守护进程的日志，用于报告问题</string>
     <string name="export_logs_collecting">正在收集日志…</string>
-    <string name="export_logs_failed">无法收集日志</string>
 </resources>

@@ -22,9 +22,11 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.RecordsException
+import li.mercury.bigbrother.core.data.toLoadFailure
 import li.mercury.bigbrother.core.model.BucketSize
 import li.mercury.bigbrother.core.model.DestinationDetail
 import li.mercury.bigbrother.core.model.HostActivity
+import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.NetworkActivity
 import li.mercury.bigbrother.core.model.NetworkRule
 import li.mercury.bigbrother.core.model.NetworkTarget
@@ -116,7 +118,7 @@ class BbdNetworkTest {
         val failure = assertFailsWith<RecordsException.CommandFailed> {
             dataSource.unblockNetwork("com.example.shopping", 0, NetworkTarget.Domain("adnet.example"))
         }
-        assertEquals("no such rule", failure.message)
+        assertEquals(LoadFailure.Operation.COMMAND_FAILED, failure.toLoadFailure())
     }
 
     @Test
@@ -248,11 +250,11 @@ class BbdNetworkTest {
     }
 
     @Test
-    fun givenActivityWithMalformedDestination_whenRead_thenReportsCommandFailure() = runTest {
+    fun givenActivityWithMalformedDestination_whenRead_thenReportsBadResponse() = runTest {
         val shell = TestBbdRootShell(bbdFixture("net-malformed-destination"))
         val dataSource = RootShellBbdDataSource(shell, StandardTestDispatcher(testScheduler))
 
-        assertFailsWith<RecordsException.CommandFailed> { dataSource.getActivity("com.example.shopping", 0, 0) }
+        assertFailsWith<RecordsException.BadResponse> { dataSource.getActivity("com.example.shopping", 0, 0) }
     }
 
     private suspend fun RootShellBbdDataSource.getActivity(

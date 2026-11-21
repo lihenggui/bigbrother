@@ -74,11 +74,11 @@ import li.mercury.bigbrother.core.model.Access
 import li.mercury.bigbrother.core.model.AccessPeriod
 import li.mercury.bigbrother.core.model.Action
 import li.mercury.bigbrother.core.model.Category
-import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.ui.LocalWallClock
 import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.VOLUME_ROOT
 import li.mercury.bigbrother.core.ui.exactDateTime
+import li.mercury.bigbrother.core.ui.failureReason
 import li.mercury.bigbrother.core.ui.label
 import li.mercury.bigbrother.core.ui.relativeTime
 import li.mercury.bigbrother.core.ui.rememberPredictiveBackTransition
@@ -667,8 +667,7 @@ internal fun FileDetailsSheet(details: FileDetails, onOpen: () -> Unit, onDismis
             val periods = details.periods
             when {
                 details.failure != null -> Text(
-                    text = (details.failure as? LoadFailure.Other)?.message
-                        ?: stringResource(UiR.string.error_title),
+                    text = failureReason(details.failure),
                     color = MaterialTheme.colorScheme.error,
                 )
 

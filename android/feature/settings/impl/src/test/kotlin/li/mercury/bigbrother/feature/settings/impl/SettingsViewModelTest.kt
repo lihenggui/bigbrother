@@ -21,7 +21,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
+import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.DiagnosticsRepository
+import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.UserData
 import li.mercury.bigbrother.core.testing.MainDispatcherRule
 import li.mercury.bigbrother.core.testing.repository.TestAccessRepository
@@ -38,6 +40,37 @@ import kotlin.test.assertNull
 class SettingsViewModelTest {
     @get:Rule
     val mainDispatcherRule = MainDispatcherRule()
+
+    @Test
+    fun givenStatusAndVersionReadFailures_whenRefreshing_thenStateShowsBothFailures() = runTest {
+        val records = TestAccessRepository().apply { failure = RecordsException.NoRoot() }
+        val module = TestModuleRepository().apply {
+            versionFailure = RecordsException.CommandFailed(LoadFailure.Operation.MODULE_VERSION_UNREADABLE)
+        }
+        val viewModel = SettingsViewModel(
+            records,
+            module,
+            TestUserDataRepository(),
+            object : DiagnosticsRepository {
+                override suspend fun exportLogs() = error("Logs are not exported by this test")
+            },
+        )
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
+        viewModel.refresh()
+        advanceUntilIdle()
+
+        assertEquals(LoadFailure.Operation.MODULE_VERSION_UNREADABLE, viewModel.uiState.value.moduleVersionFailure)
+        assertEquals(LoadFailure.NoRoot, viewModel.uiState.value.recorderStatusFailure)
+
+        module.versionFailure = null
+        records.failure = null
+        viewModel.refresh()
+        advanceUntilIdle()
+
+        assertNull(viewModel.uiState.value.moduleVersionFailure)
+        assertNull(viewModel.uiState.value.recorderStatusFailure)
+        assertEquals("v0.1.6", viewModel.uiState.value.moduleVersion)
+    }
 
     @Test
     fun givenBothSwitchWritesFail_whenRetried_thenEachChoiceIsSaved() = runTest {

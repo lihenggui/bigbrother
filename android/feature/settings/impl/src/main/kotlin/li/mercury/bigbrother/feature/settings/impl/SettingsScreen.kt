@@ -70,6 +70,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import li.mercury.bigbrother.core.designsystem.component.SegmentedSwitchRow
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.UserSettingsWriter
+import li.mercury.bigbrother.core.ui.failureReason
 import li.mercury.bigbrother.core.ui.rememberSettingsWriteSnackbar
 import li.mercury.bigbrother.core.ui.R as UiR
 
@@ -186,8 +187,10 @@ internal fun SettingsScreen(
                     ),
                     summary = listOfNotNull(
                         state.moduleVersion?.let { stringResource(R.string.module_version, it) },
+                        state.moduleVersionFailure?.let { failureReason(it) },
+                        state.recorderStatusFailure?.let { failureReason(it) },
                         stringResource(R.string.retention),
-                    ).joinToString(stringResource(UiR.string.dot_separator)),
+                    ).distinct().joinToString(stringResource(UiR.string.dot_separator)),
                     index = 0,
                     count = recordingRows,
                 )
@@ -245,13 +248,11 @@ internal fun SettingsScreen(
                 Row(
                     icon = Icons.Outlined.BugReport,
                     title = stringResource(R.string.export_logs),
-                    summary = stringResource(
-                        when (state.logExport) {
-                            LogExport.Collecting -> R.string.export_logs_collecting
-                            LogExport.Failed -> R.string.export_logs_failed
-                            else -> R.string.export_logs_summary
-                        },
-                    ),
+                    summary = when (val export = state.logExport) {
+                        LogExport.Collecting -> stringResource(R.string.export_logs_collecting)
+                        is LogExport.Failed -> failureReason(export.failure)
+                        else -> stringResource(R.string.export_logs_summary)
+                    },
                     index = 1,
                     count = 4,
                     onClick = onExportLogs,

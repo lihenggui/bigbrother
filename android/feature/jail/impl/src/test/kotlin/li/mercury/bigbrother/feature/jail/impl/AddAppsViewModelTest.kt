@@ -22,8 +22,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.InstalledAppRepository
 import li.mercury.bigbrother.core.domain.GetAppVisibilityUseCase
+import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.UserData
 import li.mercury.bigbrother.core.testing.MainDispatcherRule
 import li.mercury.bigbrother.core.testing.repository.TestInstalledAppRepository
@@ -98,6 +100,26 @@ class AddAppsViewModelTest {
         runCurrent()
 
         assertEquals(1, reads)
+        assertEquals(listOf("Notes", "Weather"), viewModel.uiState.value.apps?.map { it.info.label })
+    }
+
+    @Test
+    fun givenInstalledAppsReadFailure_whenOpeningPicker_thenStateShowsFailureAndRetryRecovers() = runTest {
+        installedAppRepository.failure = RecordsException.CommandFailed(LoadFailure.Operation.INSTALLED_APPS_UNAVAILABLE)
+        val viewModel = viewModel(sandboxLoaded = false)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
+        runCurrent()
+
+        assertEquals(LoadFailure.Operation.INSTALLED_APPS_UNAVAILABLE, viewModel.uiState.value.failure)
+        assertNull(viewModel.uiState.value.apps)
+        assertTrue(viewModel.chosen().isEmpty())
+
+        installedAppRepository.failure = null
+        sandboxRepository.refresh()
+        viewModel.retry()
+        runCurrent()
+
+        assertNull(viewModel.uiState.value.failure)
         assertEquals(listOf("Notes", "Weather"), viewModel.uiState.value.apps?.map { it.info.label })
     }
 

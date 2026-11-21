@@ -38,7 +38,7 @@ class RootAccessRepositoryTest {
         var calls = 0
         val dataSource = object : TestBbdDataSource() {
             override suspend fun getApps(range: TimeRange): List<BbdAppSummary> {
-                if (++calls == 1) throw RecordsException.CommandFailed("read failed")
+                if (++calls == 1) throw RecordsException.CommandFailed()
                 return listOf(BbdAppSummary(10234, "com.example.notes", emptyMap(), 1, 0, emptyList(), 0, emptyList()))
             }
         }

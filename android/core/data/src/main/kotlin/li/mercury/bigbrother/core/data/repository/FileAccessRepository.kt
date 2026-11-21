@@ -21,15 +21,17 @@ import android.os.Environment
 import dagger.hilt.android.qualifiers.ApplicationContext
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.root.RootShell
+import li.mercury.bigbrother.core.data.root.shellQuoted
+import li.mercury.bigbrother.core.model.LoadFailure
 import javax.inject.Inject
 
 /** This app's own access to shared storage, needed to open recorded files. */
 interface FileAccessRepository {
     /**
      * Makes sure the app holds all-files access, granting it through root if
-     * necessary. Returns whether the app has it afterwards.
+     * necessary. Throws [RecordsException] if the grant cannot be obtained.
      */
-    suspend fun ensureAllFilesAccess(): Boolean
+    suspend fun ensureAllFilesAccess()
 }
 
 internal class RootFileAccessRepository @Inject constructor(
@@ -37,15 +39,14 @@ internal class RootFileAccessRepository @Inject constructor(
     private val rootShell: RootShell,
 ) : FileAccessRepository {
 
-    override suspend fun ensureAllFilesAccess(): Boolean {
-        if (Environment.isExternalStorageManager()) return true
+    override suspend fun ensureAllFilesAccess() {
+        if (Environment.isExternalStorageManager()) return
         // The app already runs with root, so it grants itself the permission
         // instead of sending the user to the settings screen.
-        try {
-            rootShell.run("appops set ${context.packageName} MANAGE_EXTERNAL_STORAGE allow")
-        } catch (_: RecordsException) {
-            return false
-        }
-        return Environment.isExternalStorageManager()
+        rootShell.run(
+            "appops set ${context.packageName.shellQuoted()} MANAGE_EXTERNAL_STORAGE allow",
+            label = "grant all-files access",
+        )
+        if (!Environment.isExternalStorageManager()) throw RecordsException.CommandFailed(LoadFailure.Operation.FILE_ACCESS_DENIED)
     }
 }

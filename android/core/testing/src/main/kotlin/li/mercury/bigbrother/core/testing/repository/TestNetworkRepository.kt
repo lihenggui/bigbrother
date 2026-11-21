@@ -23,6 +23,7 @@ import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.NetworkRepository
 import li.mercury.bigbrother.core.model.BucketSize
 import li.mercury.bigbrother.core.model.DestinationDetail
+import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.NetworkActivity
 import li.mercury.bigbrother.core.model.NetworkTarget
 import java.time.ZoneId
@@ -63,7 +64,7 @@ class TestNetworkRepository(var activity: NetworkActivity) : NetworkRepository {
     override suspend fun getDestination(packageName: String, userId: Int, target: NetworkTarget, since: Long, bucket: BucketSize, zone: ZoneId): DestinationDetail {
         check()
         val destination = (activity.domains + activity.addresses).firstOrNull { it.target == target }
-            ?: throw RecordsException.CommandFailed("no such destination")
+            ?: throw RecordsException.CommandFailed(LoadFailure.Operation.DESTINATION_MISSING)
         return DestinationDetail(destination, activity.buckets, activity.bucketSeconds, zone)
     }
 

@@ -146,7 +146,7 @@ class JailSettingsViewModelTest {
     fun givenListUnreadableAfterwards_whenAllReleased_thenToldHowManyAreLeftWithoutError() = runTest {
         sandboxRepository.releaseAllLeaves = 1
         val viewModel = viewModel()
-        sandboxRepository.refreshFailure = RecordsException.CommandFailed("cannot read")
+        sandboxRepository.refreshFailure = RecordsException.CommandFailed()
 
         viewModel.releaseAll()
 

@@ -49,7 +49,7 @@ data class TimelineUiState(
     val nextBefore: Long? = null,
     val loadingMore: Boolean = false,
     /** Loading the next page failed; it is tried again on request, not on its own. */
-    val loadMoreFailed: Boolean = false,
+    val loadMoreFailure: LoadFailure? = null,
     val refreshing: Boolean = false,
     val appInfo: Map<String, AppInfo> = emptyMap(),
     val failure: LoadFailure? = null,
@@ -101,7 +101,7 @@ class TimelineViewModel @Inject constructor(
 
     private suspend fun readPage(request: PageRequest) {
         val first = request.before == null
-        load.update { it.copy(refreshing = first, loadingMore = !first, loadMoreFailed = first && it.loadMoreFailed) }
+        load.update { it.copy(refreshing = first, loadingMore = !first, loadMoreFailure = it.loadMoreFailure.takeIf { first }) }
         try {
             val page = accessRepository.getTimeline(TimeRange.ALL, before = request.before, limit = PAGE_SIZE)
             val info = appInfoFor(page.entries)
@@ -114,6 +114,7 @@ class TimelineViewModel @Inject constructor(
                     nextBefore = page.nextBefore,
                     appInfo = if (first) info else it.appInfo + info,
                     failure = if (first) null else it.failure,
+                    loadMoreFailure = null,
                 )
             }
         } catch (e: RecordsException) {
@@ -121,7 +122,7 @@ class TimelineViewModel @Inject constructor(
             completed = request
             // Keep the existing pages and offer a retry where loading failed.
             load.update {
-                if (first) it.copy(failure = e.toLoadFailure()) else it.copy(loadMoreFailed = true)
+                if (first) it.copy(failure = e.toLoadFailure()) else it.copy(loadMoreFailure = e.toLoadFailure())
             }
         } finally {
             load.update { it.copy(refreshing = false, loadingMore = false) }
