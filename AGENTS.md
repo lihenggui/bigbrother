@@ -74,6 +74,22 @@ once before `:app` tasks that assemble the APK.
 - Dependencies stay on their latest stable versions. Dependabot proposes
   updates for Gradle, Cargo and GitHub Actions.
 
+## Code structure
+
+- Split non-test source files past about 800 lines (500 for Compose) and
+  functions past about 80. Split by responsibility and name pieces for their work.
+- Event loops and command handlers dispatch to named handlers that do the work.
+- CI checks function length (see CONTRIBUTING.md) with Clippy `too_many_lines`
+  for Rust and the `:lint` module for Kotlin.
+- Use one implementation and one name per concept. Check `bbd/AGENTS.md` and
+  `android/AGENTS.md` for shared helpers before writing one.
+- Delete unused code. Keep refactors free of compatibility shims and re-exports.
+- Keep module dependencies acyclic in the daemon and the app.
+- Handle, return or log every error, or explain in a one-line comment why it
+  can be ignored. Rate-limit logs for errors that can repeat.
+- Refactors preserve behaviour, output, schema and screenshots. Put a change
+  to any of these in its own commit and explain why in the commit body.
+
 ## Privacy rules
 
 - The app has no network access. Do not add the INTERNET permission or any

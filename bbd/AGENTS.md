@@ -25,8 +25,20 @@ The leaf modules (`record`, `topic`, `proc`, `dir`, `clock`, `sync`, `log`,
 them. Of the daemon modules, `store` depends only on `record`. Classifiers
 such as `rules` and `paths` sit above the shared types and helpers. `report`
 reads the store and classifies records for queries. The engines and the
-daemon loop build on the lower layers, with the CLI at the top. New code
-must keep dependencies acyclic.
+daemon loop build on the lower layers, with the CLI at the top.
+
+## Shared helpers and errors
+
+- Reuse `proc` for `/proc` parsing, `clock` for clocks and `sync` for
+  poisoned-lock recovery. Use `backoff::Backoff` for restart backoff.
+- Use `bb-common`'s `PER_USER_RANGE` and `FIRST_APPLICATION_UID` with
+  `packages::app_id_of` and `packages::user_of` for Android uids.
+- Use `anyhow` for errors and `io::Result` in low-level modules. Use
+  `Result<_, String>` only for CLI and protocol parsing.
+- Give a one-line comment when `let _ =`, `.ok()` or `if let Ok` drops an error.
+  Log repeating failures through `log::Limited`.
+- Use `unwrap` and `expect` only where infallibility is obvious or documented
+  in a comment.
 
 ## Sandbox
 
@@ -101,8 +113,7 @@ The daemon runs on every device all the time; its cost is the product's cost.
   replaced, and `/data/user_de` and each user's directory in it for new
   directories; while a new app waits to be tried again, a timer runs until
   then. With that off nothing is watched and there is no timer.
-- Rate-limit anything that can repeat (log lines, helper restarts) and back off
-  on failure.
+- Rate-limit repeated work such as helper restarts and back off on failure.
 - Filter as early as possible: in the kernel if the decision can be made there
   (see `bb-ebpf/AGENTS.md`), otherwise before allocating or storing.
 
