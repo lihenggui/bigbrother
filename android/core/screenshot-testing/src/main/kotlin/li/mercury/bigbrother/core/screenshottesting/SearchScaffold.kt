@@ -21,17 +21,32 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.input.rememberTextFieldState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material3.AppBarWithSearch
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SearchBarDefaults
+import androidx.compose.material3.Text
+import androidx.compose.material3.rememberSearchBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 
 /** Reserves space for the shared search bar above the destination content. */
 @Composable
-fun SearchScaffold(topBar: @Composable () -> Unit, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+fun SearchScaffold(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     Scaffold(
         modifier = modifier,
-        topBar = topBar,
+        topBar = { ScreenshotSearchBar() },
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
         // The search bar and destinations each handle their own system insets.
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -42,4 +57,34 @@ fun SearchScaffold(topBar: @Composable () -> Unit, modifier: Modifier = Modifier
             content = { content() },
         )
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun ScreenshotSearchBar() {
+    val state = rememberSearchBarState()
+    val colors = MaterialTheme.colorScheme
+    AppBarWithSearch(
+        state = state,
+        colors = SearchBarDefaults.appBarWithSearchColors(
+            searchBarColors = SearchBarDefaults.colors(containerColor = colors.surfaceContainerHighest),
+            appBarContainerColor = colors.surfaceContainer,
+            scrolledAppBarContainerColor = colors.surfaceContainer,
+        ),
+        inputField = {
+            SearchBarDefaults.InputField(
+                textFieldState = rememberTextFieldState(),
+                searchBarState = state,
+                onSearch = {},
+                modifier = Modifier.focusProperties { canFocus = false },
+                placeholder = { Text(stringResource(R.string.screenshot_search_hint), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+            )
+        },
+        actions = {
+            IconButton(onClick = {}) {
+                Icon(Icons.Outlined.Settings, contentDescription = stringResource(R.string.screenshot_settings))
+            }
+        },
+    )
 }

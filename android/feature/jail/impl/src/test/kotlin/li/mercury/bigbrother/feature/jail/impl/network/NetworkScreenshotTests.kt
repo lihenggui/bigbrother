@@ -106,6 +106,13 @@ class NetworkScreenshotTests {
     }
 
     @Test
+    fun givenDestinationsReadFailure_whenPageShown_thenShowsReasonInActivityRow() {
+        capture("JailAppDestinationsFailure", "phone_whole", WHOLE_PAGE) {
+            App(destinationsFailure = LoadFailure.Operation.DAEMON_UNAVAILABLE)
+        }
+    }
+
+    @Test
     fun givenRecordingApp_whenPageShownInDarkTheme_thenMatchesGolden() {
         capture("JailAppNetwork", "phone_whole_dark", WHOLE_PAGE, dark = true) { App() }
     }
@@ -478,6 +485,7 @@ class NetworkScreenshotTests {
         unmet: Map<SandboxItem, Set<SandboxPart>> = emptyMap(),
         requested: Set<String> = setOf("android.permission.INTERNET", "android.permission.CAMERA"),
         expanded: SandboxItem? = null,
+        destinationsFailure: LoadFailure? = null,
     ) {
         JailAppScreen(
             state = JailAppUiState(
@@ -495,7 +503,8 @@ class NetworkScreenshotTests {
                 ),
                 info = info(app),
                 requested = requested,
-                destinations = 38,
+                destinations = 38.takeIf { destinationsFailure == null },
+                destinationsFailure = destinationsFailure,
                 loading = false,
             ),
             showBack = true,

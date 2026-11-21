@@ -16,6 +16,7 @@
 
 package li.mercury.bigbrother.core.testing.repository
 
+import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.InstalledAppRepository
 import li.mercury.bigbrother.core.model.InstalledApp
 
@@ -24,7 +25,12 @@ class TestInstalledAppRepository(
     var apps: List<InstalledApp> = emptyList(),
     var permissions: Map<String, Set<String>> = emptyMap(),
 ) : InstalledAppRepository {
-    override suspend fun getInstalledApps(): List<InstalledApp> = apps
+    var failure: RecordsException? = null
+
+    override suspend fun getInstalledApps(): List<InstalledApp> {
+        failure?.let { throw it }
+        return apps
+    }
 
     override suspend fun getRequestedPermissions(packageName: String): Set<String>? = permissions[packageName]
 }

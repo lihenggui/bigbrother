@@ -67,8 +67,8 @@ internal interface BbdDataSource {
 
     suspend fun disableSandbox(packageName: String, userId: Int)
 
-    /** A decoding failure is returned so the lists can still be refreshed after a successful command. */
-    suspend fun disableAllSandboxes(): Result<BbdSandboxReleaseResult>
+    /** A malformed reply throws [li.mercury.bigbrother.core.data.RecordsException.BadResponse] after the command ran. */
+    suspend fun disableAllSandboxes(): BbdSandboxReleaseResult
 
     suspend fun setSandboxItems(packageName: String, userId: Int, changes: Map<SandboxItem, SandboxMode?>)
 

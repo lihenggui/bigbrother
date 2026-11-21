@@ -18,6 +18,7 @@ package li.mercury.bigbrother.core.data.root
 
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.root.ModulePaths.BBD
+import li.mercury.bigbrother.core.model.LoadFailure
 
 private const val BBD_MISSING_MARKER = "bbd-not-installed"
 
@@ -34,7 +35,22 @@ internal fun CommandResult.bbdFailure(): RecordsException? {
         headline.startsWith("error: unexpected argument ") ||
         (headline.startsWith("error: the argument ") && headline.endsWith(" cannot be used multiple times"))
     if (cliRejectedRequest || headline == "unknown command") return RecordsException.ModuleOutdated()
-    return RecordsException.CommandFailed(reason.ifBlank { "bbd exited with $code" })
+    return daemonCommandFailure(error)
+}
+
+/** Recognizes daemon errors without retaining output that can include paths or package names. */
+internal fun daemonCommandFailure(error: String): RecordsException.CommandFailed {
+    val headline = error.removePrefix("Error: ").lineSequence().firstOrNull().orEmpty()
+    val reason = when {
+        headline == "the daemon is not running" -> LoadFailure.Operation.DAEMON_UNAVAILABLE
+        headline == "database is locked" -> LoadFailure.Operation.DATABASE_BUSY
+        headline.startsWith("unsupported database schema ") -> LoadFailure.Operation.DATABASE_INCOMPATIBLE
+        headline.endsWith(" is not installed") -> LoadFailure.Operation.APP_MISSING
+        headline == "no such destination" -> LoadFailure.Operation.DESTINATION_MISSING
+        headline == "timed out" -> LoadFailure.Operation.TIMED_OUT
+        else -> LoadFailure.Operation.COMMAND_FAILED
+    }
+    return RecordsException.CommandFailed(reason)
 }
 
 /**

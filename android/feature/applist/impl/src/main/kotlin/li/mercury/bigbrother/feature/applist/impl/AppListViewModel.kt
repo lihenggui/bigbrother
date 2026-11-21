@@ -16,29 +16,42 @@
 
 package li.mercury.bigbrother.feature.applist.impl
 
+import android.content.res.Resources
 import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.DEFAULT
+import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.data.RecordsException
-import li.mercury.bigbrother.core.data.repository.AccessRepository
-import li.mercury.bigbrother.core.data.repository.AppInfoRepository
 import li.mercury.bigbrother.core.data.repository.UserDataRepository
-import li.mercury.bigbrother.core.data.repository.UserSettingsWriter
 import li.mercury.bigbrother.core.data.toLoadFailure
+import li.mercury.bigbrother.core.domain.AppRecords
+import li.mercury.bigbrother.core.domain.AppVisibility
+import li.mercury.bigbrother.core.domain.GetAppRecordsUseCase
+import li.mercury.bigbrother.core.domain.GetAppVisibilityUseCase
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.TimeRange
+import li.mercury.bigbrother.core.ui.UserSettingsWriter
+import timber.log.Timber
 import javax.inject.Inject
 
 data class AppListUiState(
@@ -51,77 +64,93 @@ data class AppListUiState(
     val failure: LoadFailure? = null,
     /** Whether apps that are part of the system image are listed. */
     val showSystemApps: Boolean = false,
+    val hiddenApps: Int = 0,
+    val message: UserSettingsWriter.Failure? = null,
 )
 
 @HiltViewModel
 class AppListViewModel @Inject constructor(
-    private val accessRepository: AccessRepository,
-    private val appInfoRepository: AppInfoRepository,
+    private val getAppRecords: GetAppRecordsUseCase,
+    getAppVisibility: GetAppVisibilityUseCase,
     private val userDataRepository: UserDataRepository,
+    @Dispatcher(DEFAULT) private val defaultDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
-    private val _uiState = MutableStateFlow(AppListUiState())
-    val uiState: StateFlow<AppListUiState> = _uiState.asStateFlow()
+    private val settingsWriter = UserSettingsWriter(viewModelScope) { Timber.w(it) }
+    private val refreshes = MutableStateFlow(0L)
+    private val load = MutableStateFlow(AppListLoad())
+    private var completed: Pair<TimeRange, Long>? = null
 
-    private val settingsWriter = UserSettingsWriter(viewModelScope, userDataRepository)
-    val settingsWriteFailures = settingsWriter.failures
-
-    private var loadJob: Job? = null
-
-    /** When the last load finished, on the elapsed realtime clock. */
+    /** When the last successful load finished, on the elapsed realtime clock. */
     private var loadedAt = 0L
 
-    init {
-        viewModelScope.launch {
-            userDataRepository.userData.map { it.showSystemApps }.distinctUntilChanged().collect { show ->
-                _uiState.update { it.copy(showSystemApps = show) }
-            }
-        }
-        // A range chosen here or on the overview reloads the list.
-        viewModelScope.launch {
-            userDataRepository.userData.map { it.timeRange }.distinctUntilChanged().collect { range ->
-                _uiState.update { it.copy(range = range) }
-                refresh()
-            }
-        }
-    }
+    private val ranges = userDataRepository.userData.map { it.timeRange }.distinctUntilChanged()
 
-    /**
-     * Reload when the screen is shown again, unless a load is running or has
-     * just finished: at launch, the first load is still on its way.
-     */
+    val uiState: StateFlow<AppListUiState> = channelFlow {
+        launch {
+            combine(ranges, refreshes, ::Pair).collectLatest { request ->
+                if (request != completed) loadApps(request)
+            }
+        }
+        combine(load, getAppVisibility()) { state, visibility ->
+            state.ui.withVisibility(state.records, visibility)
+        }.combine(settingsWriter.message) { state, message ->
+            state.copy(message = message)
+        }.collect { send(it) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppListUiState())
+
+    internal fun present(filters: Flow<AppListFilter>, resources: Resources): Flow<AppListPresentation> = combine(uiState, filters) { state, filter -> state.present(filter, resources) }
+        .flowOn(defaultDispatcher)
+
+    /** Reload when the screen is shown again and the data is stale. */
     fun refreshIfStale() {
-        if (loadJob?.isActive == true) return
-        if (SystemClock.elapsedRealtime() - loadedAt < STALE_AFTER_MS) return
-        refresh()
+        if (completed?.second != refreshes.value || load.value.ui.refreshing) return
+        if (SystemClock.elapsedRealtime() - loadedAt >= STALE_AFTER_MS) refresh()
     }
 
-    /** Load, or reload, the list. */
     fun refresh() {
-        loadJob?.cancel()
-        loadJob = viewModelScope.launch {
-            _uiState.update { it.copy(refreshing = true) }
-            try {
-                val range = userDataRepository.userData.first().timeRange
-                val apps = accessRepository.getApps(range)
-                val appInfo = appInfoRepository.getAppInfo(
-                    apps.map { it.packageName }.filter { it.isNotEmpty() }.toSet(),
-                )
-                loadedAt = SystemClock.elapsedRealtime()
-                _uiState.update {
-                    it.copy(range = range, apps = apps, appInfo = appInfo, refreshing = false, failure = null)
-                }
-            } catch (e: RecordsException) {
-                _uiState.update { it.copy(refreshing = false, failure = e.toLoadFailure()) }
-            }
+        refreshes.update { it + 1 }
+    }
+
+    private suspend fun loadApps(request: Pair<TimeRange, Long>) {
+        val range = request.first
+        load.update { it.copy(ui = it.ui.copy(range = range, refreshing = true)) }
+        try {
+            val loaded = getAppRecords(range)
+            currentCoroutineContext().ensureActive()
+            loadedAt = SystemClock.elapsedRealtime()
+            completed = request
+            load.update { AppListLoad(it.ui.copy(refreshing = false, failure = null), loaded) }
+        } catch (e: RecordsException) {
+            currentCoroutineContext().ensureActive()
+            completed = request
+            load.update { it.copy(ui = it.ui.copy(refreshing = false, failure = e.toLoadFailure())) }
+        } finally {
+            load.update { it.copy(ui = it.ui.copy(refreshing = false)) }
         }
     }
 
-    fun setRange(range: TimeRange) = settingsWriter.setTimeRange(range)
+    private fun AppListUiState.withVisibility(records: AppRecords?, visibility: AppVisibility): AppListUiState {
+        val shown = records?.let(visibility::visibleApps)
+        return copy(
+            apps = shown?.apps,
+            appInfo = records?.appInfo.orEmpty(),
+            showSystemApps = visibility.showSystemApps,
+            hiddenApps = shown?.hiddenCount ?: 0,
+        )
+    }
 
-    fun setShowSystemApps(show: Boolean) = settingsWriter.setShowSystemApps(show)
+    fun setRange(range: TimeRange) = settingsWriter.save(UserSettingsWriter.Setting.TIME_RANGE) {
+        userDataRepository.setTimeRange(range)
+    }
 
-    fun resolveSettingsWrite(failure: UserSettingsWriter.Failure, retry: Boolean) = settingsWriter.resolve(failure, retry)
+    fun setShowSystemApps(show: Boolean) = settingsWriter.save(UserSettingsWriter.Setting.SHOW_SYSTEM_APPS) {
+        userDataRepository.setShowSystemApps(show)
+    }
+
+    fun onMessageShown(failure: UserSettingsWriter.Failure, retry: Boolean) = settingsWriter.resolve(failure, retry)
 }
+
+private data class AppListLoad(val ui: AppListUiState = AppListUiState(), val records: AppRecords? = null)
 
 /** How soon after a load the screen being shown again reloads it. */
 private const val STALE_AFTER_MS = 10_000L

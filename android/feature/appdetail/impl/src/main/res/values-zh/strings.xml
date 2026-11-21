@@ -20,8 +20,6 @@
     <string name="isolate_app">隔离</string>
     <string name="isolating_app">正在隔离应用…</string>
     <string name="jail_action_failed">无法打开隔离设置</string>
-    <string name="jail_action_retry">请重新打开隔离设置。</string>
-    <string name="jail_app_unavailable">此应用已从当前 Android 用户中移除。</string>
 
     <string name="action_read">读取</string>
     <string name="action_write">修改</string>
@@ -90,7 +88,6 @@
     <string name="open_file_missing">文件不存在。</string>
     <string name="open_file_no_viewer">没有可打开此文件的应用。</string>
 
-    <string name="open_file_no_access">无法访问共享存储，请确认已授予 root 权限。</string>
 
     <string name="open_file">打开</string>
     <string name="show_all_details">显示全部 %d 项</string>

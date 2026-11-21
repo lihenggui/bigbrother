@@ -24,9 +24,12 @@ import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.root.RootShell
 import li.mercury.bigbrother.core.data.root.bbd
 import li.mercury.bigbrother.core.data.root.bbdStatsForDiagnostics
+import li.mercury.bigbrother.core.data.root.daemonCommandFailure
 import li.mercury.bigbrother.core.data.root.shellQuoted
+import li.mercury.bigbrother.core.data.toLoadFailure
 import li.mercury.bigbrother.core.model.BucketSize
 import li.mercury.bigbrother.core.model.Category
+import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.NetworkTarget
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
@@ -118,7 +121,7 @@ internal class RootShellBbdDataSource @Inject constructor(
     private suspend fun diagnosticOutput(label: String, read: suspend () -> String): String? = try {
         read()
     } catch (e: RecordsException) {
-        Timber.w("Not exported, %s: %s", label, e.message)
+        Timber.w("Not exported, %s: %s", label, e.toLoadFailure())
         null
     }
 
@@ -178,14 +181,10 @@ internal class RootShellBbdDataSource @Inject constructor(
 
     override suspend fun disableSandbox(packageName: String, userId: Int) = sandboxChange("disable ${packageName.shellQuoted()} --user $userId")
 
-    override suspend fun disableAllSandboxes(): Result<BbdSandboxReleaseResult> = withContext(ioDispatcher) {
-        val answer = sandbox("disable --all")
+    override suspend fun disableAllSandboxes(): BbdSandboxReleaseResult = decode {
+        val answer = JSONObject(sandbox("disable --all"))
         // The daemon names apps it could not release in time.
-        try {
-            Result.success(BbdSandboxReleaseResult(failedCount = JSONObject(answer).getJSONArray("failed").length()))
-        } catch (e: JSONException) {
-            Result.failure(RecordsException.CommandFailed(e.message.orEmpty()))
-        }
+        BbdSandboxReleaseResult(failedCount = answer.getJSONArray("failed").length())
     }
 
     override suspend fun setSandboxItems(packageName: String, userId: Int, changes: Map<SandboxItem, SandboxMode?>) {
@@ -211,7 +210,7 @@ internal class RootShellBbdDataSource @Inject constructor(
         val answer = JSONObject(rootShell.bbd("net", " $args", json = true))
         // The daemon can refuse a command even when it exits successfully.
         if (!answer.optBoolean("ok", true)) {
-            throw RecordsException.CommandFailed(answer.optString("error").ifBlank { "bbd refused the command" })
+            throw daemonCommandFailure(answer.optString("error"))
         }
         return answer
     }
@@ -219,8 +218,8 @@ internal class RootShellBbdDataSource @Inject constructor(
     private suspend fun <T> decode(block: suspend () -> T): T = withContext(ioDispatcher) {
         try {
             block()
-        } catch (e: JSONException) {
-            throw RecordsException.CommandFailed("unexpected output from bbd: ${e.message}")
+        } catch (_: JSONException) {
+            throw RecordsException.BadResponse()
         }
     }
 
@@ -233,7 +232,7 @@ internal class RootShellBbdDataSource @Inject constructor(
             return "--since $since" + (until?.let { " --until $it" } ?: "") + " --bucket ${bucket.id}"
         }
         val end = until ?: Instant.now().epochSecond
-        if (since >= end) throw RecordsException.CommandFailed("the period is empty")
+        if (since >= end) throw RecordsException.CommandFailed(LoadFailure.Operation.INVALID_PERIOD)
         val firstDay = Instant.ofEpochSecond(since).atZone(zone).toLocalDate()
         val starts = generateSequence(firstDay) { it.plusDays(1) }
             .map { it.atStartOfDay(zone).toEpochSecond() }
@@ -241,7 +240,7 @@ internal class RootShellBbdDataSource @Inject constructor(
             .distinct() // A skipped date has the same start as the following date.
             .take(MOST_BUCKETS + 1)
             .toList()
-        if (starts.size > MOST_BUCKETS) throw RecordsException.CommandFailed("the period has more than $MOST_BUCKETS buckets")
+        if (starts.size > MOST_BUCKETS) throw RecordsException.CommandFailed(LoadFailure.Operation.INVALID_PERIOD)
         return "--since $since --until $end --bucket ${bucket.id} --day-starts=${starts.joinToString(",")}"
     }
 

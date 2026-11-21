@@ -28,7 +28,6 @@ import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertIs
 import kotlin.test.assertNull
 
 @RunWith(RobolectricTestRunner::class)
@@ -104,18 +103,17 @@ class BbdSandboxTest {
     fun givenPartialRelease_whenDisabled_thenCountsFailedPackages() = runTest {
         val shell = TestBbdRootShell(bbdFixture("sandbox-release-all"))
 
-        assertEquals(BbdSandboxReleaseResult(1), RootShellBbdDataSource(shell, Dispatchers.Unconfined).disableAllSandboxes().getOrThrow())
+        assertEquals(BbdSandboxReleaseResult(1), RootShellBbdDataSource(shell, Dispatchers.Unconfined).disableAllSandboxes())
         assertContains(shell.lines.single(), "sandbox disable --all --json;")
     }
 
     @Test
-    fun givenReleaseWithoutFailuresArray_whenDecoded_thenReturnsCommandFailure() = runTest {
+    fun givenReleaseWithoutFailuresArray_whenDecoded_thenThrowsBadResponse() = runTest {
         val shell = TestBbdRootShell(bbdFixture("sandbox-release-all-malformed"))
 
-        val result = RootShellBbdDataSource(shell, Dispatchers.Unconfined).disableAllSandboxes()
+        val source = RootShellBbdDataSource(shell, Dispatchers.Unconfined)
 
-        assertIs<RecordsException.CommandFailed>(result.exceptionOrNull())
-        assertContains(result.exceptionOrNull()?.message.orEmpty(), "failed")
+        assertFailsWith<RecordsException.BadResponse> { source.disableAllSandboxes() }
     }
 
     @Test

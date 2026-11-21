@@ -20,8 +20,6 @@
     <string name="isolate_app">Isolate</string>
     <string name="isolating_app">Isolating app…</string>
     <string name="jail_action_failed">Could not open Jail settings</string>
-    <string name="jail_action_retry">Try opening Jail again.</string>
-    <string name="jail_app_unavailable">This app is no longer installed for this Android user.</string>
 
     <!-- What an app did with a path. -->
     <string name="action_read">Read</string>
@@ -113,7 +111,6 @@
     <string name="open_file_missing">File not found.</string>
     <string name="open_file_no_viewer">No app can open this file.</string>
 
-    <string name="open_file_no_access">Shared storage is not accessible. Check that root access is granted.</string>
 
     <!-- File details: opens the file in a viewer app. -->
     <string name="open_file">Open</string>

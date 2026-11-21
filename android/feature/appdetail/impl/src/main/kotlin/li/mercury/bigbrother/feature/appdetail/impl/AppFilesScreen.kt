@@ -34,17 +34,17 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlinx.coroutines.launch
 import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
@@ -52,6 +52,7 @@ import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.OpenFileResult
 import li.mercury.bigbrother.core.ui.PredictiveSearchTopBar
 import li.mercury.bigbrother.core.ui.appDisplayName
+import li.mercury.bigbrother.core.ui.failureReason
 import li.mercury.bigbrother.core.ui.openFile
 import li.mercury.bigbrother.core.ui.R as UiR
 
@@ -65,7 +66,25 @@ fun AppFilesScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
+    val fileAccessResult = uiState.fileAccessResult
+    val failureText = (fileAccessResult as? FileAccessResult.Failed)?.let { failureReason(it.failure) }
+    val fileMissing = stringResource(R.string.open_file_missing)
+    val noFileViewer = stringResource(R.string.open_file_no_viewer)
+    LaunchedEffect(fileAccessResult) {
+        val result = when (fileAccessResult) {
+            is FileAccessResult.Granted -> openFile(context, fileAccessResult.path)
+            is FileAccessResult.Failed -> null
+            null -> return@LaunchedEffect
+        }
+        val message = when (result) {
+            OpenFileResult.OPENED -> null
+            OpenFileResult.MISSING -> fileMissing
+            OpenFileResult.NO_VIEWER -> noFileViewer
+            null -> failureText
+        }
+        if (message != null) Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        viewModel.onFileAccessHandled(fileAccessResult)
+    }
     AppFilesScreen(
         state = uiState,
         uid = uid,
@@ -78,18 +97,7 @@ fun AppFilesScreen(
         onReadOnly = viewModel::showReadOnly,
         onFileDetails = viewModel::showFileDetails,
         onDismissFileDetails = viewModel::dismissFileDetails,
-        onOpenFile = { path ->
-            scope.launch {
-                val result = if (viewModel.ensureFileAccess()) openFile(context, path) else OpenFileResult.NO_ACCESS
-                val message = when (result) {
-                    OpenFileResult.OPENED -> null
-                    OpenFileResult.MISSING -> R.string.open_file_missing
-                    OpenFileResult.NO_VIEWER -> R.string.open_file_no_viewer
-                    OpenFileResult.NO_ACCESS -> R.string.open_file_no_access
-                }
-                if (message != null) Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-            }
-        },
+        onOpenFile = viewModel::ensureFileAccess,
     )
 }
 
@@ -120,38 +128,7 @@ internal fun AppFilesScreen(
     Scaffold(
         containerColor = background,
         topBar = {
-            PredictiveSearchTopBar(
-                searching = state.searching,
-                query = state.query,
-                onQueryChange = onQueryChange,
-                placeholder = stringResource(R.string.search_paths),
-                onClose = onCloseSearch,
-            ) {
-                TopAppBar(
-                    title = { Text(stringResource(R.string.files_title), maxLines = 1) },
-                    subtitle = {
-                        val app = AppSummary(uid, state.packageName, emptyMap(), 0)
-                        Text(appDisplayName(app, state.appInfo), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = onBack) {
-                            Icon(
-                                if (beside) Icons.Filled.Close else Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = stringResource(if (beside) R.string.close else UiR.string.back),
-                            )
-                        }
-                    },
-                    actions = {
-                        IconButton(onClick = onOpenSearch) {
-                            Icon(Icons.Filled.Search, contentDescription = stringResource(UiR.string.search))
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = background,
-                        scrolledContainerColor = background,
-                    ),
-                )
-            }
+            AppFilesTopBar(state, uid, background, beside, onBack, onOpenSearch, onCloseSearch, onQueryChange)
         },
     ) { padding ->
         Box(Modifier.padding(padding)) {
@@ -172,5 +149,51 @@ internal fun AppFilesScreen(
                 )
             }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun AppFilesTopBar(
+    state: AppFilesUiState,
+    uid: Int,
+    background: Color,
+    beside: Boolean,
+    onBack: () -> Unit,
+    onOpenSearch: () -> Unit,
+    onCloseSearch: () -> Unit,
+    onQueryChange: (String) -> Unit,
+) {
+    PredictiveSearchTopBar(
+        searching = state.searching,
+        query = state.query,
+        onQueryChange = onQueryChange,
+        placeholder = stringResource(R.string.search_paths),
+        onClose = onCloseSearch,
+    ) {
+        TopAppBar(
+            title = { Text(stringResource(R.string.files_title), maxLines = 1) },
+            subtitle = {
+                val app = AppSummary(uid, state.packageName, emptyMap(), 0)
+                Text(appDisplayName(app, state.appInfo), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            },
+            navigationIcon = {
+                IconButton(onClick = onBack) {
+                    Icon(
+                        if (beside) Icons.Filled.Close else Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = stringResource(if (beside) R.string.close else UiR.string.back),
+                    )
+                }
+            },
+            actions = {
+                IconButton(onClick = onOpenSearch) {
+                    Icon(Icons.Filled.Search, contentDescription = stringResource(UiR.string.search))
+                }
+            },
+            colors = TopAppBarDefaults.topAppBarColors(
+                containerColor = background,
+                scrolledContainerColor = background,
+            ),
+        )
     }
 }

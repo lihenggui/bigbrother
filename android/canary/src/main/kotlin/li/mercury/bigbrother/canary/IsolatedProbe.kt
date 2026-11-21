@@ -26,6 +26,7 @@ import android.os.Messenger
 import android.os.RemoteException
 import android.provider.Settings
 import java.io.File
+import java.util.concurrent.CancellationException
 
 /**
  * Runs in an isolated process: a uid of its own, outside the app's, as a
@@ -57,6 +58,8 @@ class IsolatedProbe : Service() {
     private fun Bundle.view(key: String, value: () -> Any?) {
         val seen = try {
             value().toString()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (e: Throwable) {
             "refused:${e.javaClass.simpleName}"
         }

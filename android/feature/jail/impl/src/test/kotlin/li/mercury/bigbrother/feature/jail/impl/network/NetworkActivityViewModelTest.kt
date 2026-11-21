@@ -62,7 +62,6 @@ class NetworkActivityViewModelTest {
             currentUserId = 0,
         )
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
-        viewModel.refresh()
         return viewModel
     }
 

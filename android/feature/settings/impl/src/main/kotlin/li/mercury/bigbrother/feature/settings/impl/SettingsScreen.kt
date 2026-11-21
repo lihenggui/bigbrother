@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.BugReport
@@ -51,6 +52,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -67,16 +69,16 @@ import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import li.mercury.bigbrother.core.data.repository.UserSettingsWriter
 import li.mercury.bigbrother.core.designsystem.component.SegmentedSwitchRow
 import li.mercury.bigbrother.core.ui.SectionHeader
+import li.mercury.bigbrother.core.ui.UserSettingsWriter
+import li.mercury.bigbrother.core.ui.failureReason
 import li.mercury.bigbrother.core.ui.rememberSettingsWriteSnackbar
 import li.mercury.bigbrother.core.ui.R as UiR
 
 @Composable
 fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val settingsWriteFailures by viewModel.settingsWriteFailures.collectAsStateWithLifecycle()
     LifecycleResumeEffect(Unit) {
         viewModel.refresh()
         onPauseOrDispose {}
@@ -95,8 +97,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel) {
         onUseDynamicColor = viewModel::setUseDynamicColor,
         onExportLogs = viewModel::exportLogs,
         onDismissLogExport = viewModel::dismissLogExport,
-        settingsWriteFailure = settingsWriteFailures.firstOrNull(),
-        onSettingsWriteResult = viewModel::resolveSettingsWrite,
+        onSettingsWriteResult = viewModel::onMessageShown,
     )
 }
 
@@ -124,11 +125,44 @@ internal fun SettingsScreen(
     onUseDynamicColor: (Boolean) -> Unit,
     onExportLogs: () -> Unit,
     onDismissLogExport: () -> Unit,
-    settingsWriteFailure: UserSettingsWriter.Failure? = null,
     onSettingsWriteResult: (UserSettingsWriter.Failure, Boolean) -> Unit = { _, _ -> },
 ) {
     val context = LocalContext.current
-    val exported = state.logExport as? LogExport.Ready
+    ShareLogs(state.logExport as? LogExport.Ready, onDismissLogExport)
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    val background = MaterialTheme.colorScheme.surfaceContainer
+    val snackbar = rememberSettingsWriteSnackbar(state.message, onSettingsWriteResult)
+    Scaffold(
+        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+        containerColor = background,
+        snackbarHost = { SnackbarHost(snackbar) },
+        topBar = {
+            SettingsTopBar(background, scrollBehavior, onBack)
+        },
+    ) { padding ->
+        val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+        val unavailable = state.status?.unavailable.orEmpty().map { id -> featureLabel(id)?.let { stringResource(it) } ?: id }
+        LazyColumn(
+            // Settings read best in a column of moderate width.
+            modifier = Modifier
+                .fillMaxSize()
+                .wrapContentWidth(Alignment.CenterHorizontally)
+                .widthIn(max = 840.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding(), bottom = 24.dp + bottom),
+            verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
+        ) {
+            recorderSection(state, unavailable)
+            displaySection(state, onShowSystemApps, onUseDynamicColor)
+            aboutSection(state.logExport, appVersion, onExportLogs) {
+                context.startActivity(Intent(Intent.ACTION_VIEW, SOURCE_URL.toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShareLogs(exported: LogExport.Ready?, onDismissLogExport: () -> Unit) {
+    val context = LocalContext.current
     LaunchedEffect(exported) {
         if (exported == null) return@LaunchedEffect
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", exported.file)
@@ -142,142 +176,136 @@ internal fun SettingsScreen(
         context.startActivity(Intent.createChooser(send, null))
         onDismissLogExport()
     }
-    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
-    val background = MaterialTheme.colorScheme.surfaceContainer
-    val snackbar = rememberSettingsWriteSnackbar(settingsWriteFailure, onSettingsWriteResult)
-    Scaffold(
-        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
-        containerColor = background,
-        snackbarHost = { SnackbarHost(snackbar) },
-        topBar = {
-            MediumFlexibleTopAppBar(
-                title = { Text(stringResource(R.string.settings_title)) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(UiR.string.back))
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = background, scrolledContainerColor = background),
-                scrollBehavior = scrollBehavior,
-            )
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun SettingsTopBar(background: Color, scrollBehavior: TopAppBarScrollBehavior, onBack: () -> Unit) {
+    MediumFlexibleTopAppBar(
+        title = { Text(stringResource(R.string.settings_title)) },
+        navigationIcon = {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(UiR.string.back))
+            }
         },
-    ) { padding ->
-        val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-        val status = state.status
-        val unavailable = status?.unavailable.orEmpty().map { id -> featureLabel(id)?.let { stringResource(it) } ?: id }
-        LazyColumn(
-            // Settings read best in a column of moderate width.
-            modifier = Modifier
-                .fillMaxSize()
-                .wrapContentWidth(Alignment.CenterHorizontally)
-                .widthIn(max = 840.dp),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding(), bottom = 24.dp + bottom),
-            verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
-        ) {
-            item(key = "recording") { SectionHeader(stringResource(R.string.section_recording)) }
-            val recordingRows = 2 + if (unavailable.isNotEmpty()) 1 else 0
-            item(key = "status") {
-                Row(
-                    icon = if (status?.recording == false) Icons.Outlined.ErrorOutline else Icons.Outlined.RadioButtonChecked,
-                    iconTint = if (status?.recording == false) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                    title = stringResource(
-                        when (status?.recording) {
-                            true -> R.string.recording_active
-                            false -> R.string.recording_stopped
-                            null -> R.string.recording_unknown
-                        },
-                    ),
-                    summary = listOfNotNull(
-                        state.moduleVersion?.let { stringResource(R.string.module_version, it) },
-                        stringResource(R.string.retention),
-                    ).joinToString(stringResource(UiR.string.dot_separator)),
-                    index = 0,
-                    count = recordingRows,
-                )
-            }
-            if (unavailable.isNotEmpty()) {
-                item(key = "coverage") {
-                    Row(
-                        icon = Icons.Outlined.RuleFolder,
-                        title = stringResource(R.string.coverage_title),
-                        summary = unavailable.joinToString(stringResource(UiR.string.summary_separator)),
-                        index = 1,
-                        count = recordingRows,
-                    )
-                }
-            }
-            item(key = "lsposed") {
-                Row(
-                    icon = Icons.Outlined.Extension,
-                    title = stringResource(R.string.lsposed_title),
-                    summary = stringResource(R.string.lsposed_summary),
-                    index = recordingRows - 1,
-                    count = recordingRows,
-                )
-            }
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = background, scrolledContainerColor = background),
+        scrollBehavior = scrollBehavior,
+    )
+}
 
-            item(key = "display") { SectionHeader(stringResource(R.string.section_display)) }
-            item(key = "system-apps") {
-                SegmentedSwitchRow(
-                    leadingContent = { Icon(Icons.Outlined.VisibilityOff, contentDescription = null) },
-                    title = stringResource(R.string.setting_system_apps),
-                    summary = stringResource(R.string.setting_system_apps_summary),
-                    checked = state.userData.showSystemApps,
-                    onCheckedChange = onShowSystemApps,
-                    index = 0,
-                    count = 2,
-                )
-            }
-            item(key = "dynamic-color") {
-                SegmentedSwitchRow(
-                    leadingContent = { Icon(Icons.Outlined.Palette, contentDescription = null) },
-                    title = stringResource(R.string.dynamic_color),
-                    summary = stringResource(R.string.dynamic_color_summary),
-                    checked = state.userData.useDynamicColor,
-                    onCheckedChange = onUseDynamicColor,
-                    index = 1,
-                    count = 2,
-                )
-            }
-
-            item(key = "about") { SectionHeader(stringResource(R.string.section_about)) }
-            item(key = "version") {
-                Row(icon = Icons.Outlined.Info, title = stringResource(R.string.version), summary = appVersion, index = 0, count = 4)
-            }
-            item(key = "export-logs") {
-                Row(
-                    icon = Icons.Outlined.BugReport,
-                    title = stringResource(R.string.export_logs),
-                    summary = stringResource(
-                        when (state.logExport) {
-                            LogExport.Collecting -> R.string.export_logs_collecting
-                            LogExport.Failed -> R.string.export_logs_failed
-                            else -> R.string.export_logs_summary
-                        },
-                    ),
-                    index = 1,
-                    count = 4,
-                    onClick = onExportLogs,
-                )
-            }
-            item(key = "source") {
-                Row(
-                    icon = Icons.Outlined.Code,
-                    title = stringResource(R.string.source_code),
-                    summary = SOURCE_URL.removePrefix("https://"),
-                    index = 2,
-                    count = 4,
-                    onClick = {
-                        context.startActivity(
-                            Intent(Intent.ACTION_VIEW, SOURCE_URL.toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                        )
-                    },
-                )
-            }
-            item(key = "license") {
-                Row(icon = Icons.Outlined.Gavel, title = stringResource(R.string.license), summary = "GPL-3.0", index = 3, count = 4)
-            }
+private fun LazyListScope.recorderSection(state: SettingsUiState, unavailable: List<String>) {
+    val status = state.status
+    item(key = "recording") { SectionHeader(stringResource(R.string.section_recording)) }
+    val recordingRows = 2 + if (unavailable.isNotEmpty()) 1 else 0
+    item(key = "status") {
+        Row(
+            icon = if (status?.recording == false) Icons.Outlined.ErrorOutline else Icons.Outlined.RadioButtonChecked,
+            iconTint = if (status?.recording == false) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+            title = stringResource(
+                when (status?.recording) {
+                    true -> R.string.recording_active
+                    false -> R.string.recording_stopped
+                    null -> R.string.recording_unknown
+                },
+            ),
+            summary = listOfNotNull(
+                state.moduleVersion?.let { stringResource(R.string.module_version, it) },
+                state.moduleVersionFailure?.let { failureReason(it) },
+                state.recorderStatusFailure?.let { failureReason(it) },
+                stringResource(R.string.retention),
+            ).distinct().joinToString(stringResource(UiR.string.dot_separator)),
+            index = 0,
+            count = recordingRows,
+        )
+    }
+    if (unavailable.isNotEmpty()) {
+        item(key = "coverage") {
+            Row(
+                icon = Icons.Outlined.RuleFolder,
+                title = stringResource(R.string.coverage_title),
+                summary = unavailable.joinToString(stringResource(UiR.string.summary_separator)),
+                index = 1,
+                count = recordingRows,
+            )
         }
+    }
+    item(key = "lsposed") {
+        Row(
+            icon = Icons.Outlined.Extension,
+            title = stringResource(R.string.lsposed_title),
+            summary = stringResource(R.string.lsposed_summary),
+            index = recordingRows - 1,
+            count = recordingRows,
+        )
+    }
+}
+
+private fun LazyListScope.displaySection(
+    state: SettingsUiState,
+    onShowSystemApps: (Boolean) -> Unit,
+    onUseDynamicColor: (Boolean) -> Unit,
+) {
+    item(key = "display") { SectionHeader(stringResource(R.string.section_display)) }
+    item(key = "system-apps") {
+        SegmentedSwitchRow(
+            leadingContent = { Icon(Icons.Outlined.VisibilityOff, contentDescription = null) },
+            title = stringResource(R.string.setting_system_apps),
+            summary = stringResource(R.string.setting_system_apps_summary),
+            checked = state.userData.showSystemApps,
+            onCheckedChange = onShowSystemApps,
+            index = 0,
+            count = 2,
+        )
+    }
+    item(key = "dynamic-color") {
+        SegmentedSwitchRow(
+            leadingContent = { Icon(Icons.Outlined.Palette, contentDescription = null) },
+            title = stringResource(R.string.dynamic_color),
+            summary = stringResource(R.string.dynamic_color_summary),
+            checked = state.userData.useDynamicColor,
+            onCheckedChange = onUseDynamicColor,
+            index = 1,
+            count = 2,
+        )
+    }
+}
+
+private fun LazyListScope.aboutSection(
+    export: LogExport?,
+    appVersion: String,
+    onExportLogs: () -> Unit,
+    onOpenSource: () -> Unit,
+) {
+    item(key = "about") { SectionHeader(stringResource(R.string.section_about)) }
+    item(key = "version") {
+        Row(icon = Icons.Outlined.Info, title = stringResource(R.string.version), summary = appVersion, index = 0, count = 4)
+    }
+    item(key = "export-logs") {
+        Row(
+            icon = Icons.Outlined.BugReport,
+            title = stringResource(R.string.export_logs),
+            summary = when (export) {
+                LogExport.Collecting -> stringResource(R.string.export_logs_collecting)
+                is LogExport.Failed -> failureReason(export.failure)
+                else -> stringResource(R.string.export_logs_summary)
+            },
+            index = 1,
+            count = 4,
+            onClick = onExportLogs,
+        )
+    }
+    item(key = "source") {
+        Row(
+            icon = Icons.Outlined.Code,
+            title = stringResource(R.string.source_code),
+            summary = SOURCE_URL.removePrefix("https://"),
+            index = 2,
+            count = 4,
+            onClick = onOpenSource,
+        )
+    }
+    item(key = "license") {
+        Row(icon = Icons.Outlined.Gavel, title = stringResource(R.string.license), summary = "GPL-3.0", index = 3, count = 4)
     }
 }
 

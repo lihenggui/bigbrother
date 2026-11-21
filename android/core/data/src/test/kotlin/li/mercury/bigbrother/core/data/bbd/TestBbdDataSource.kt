@@ -67,7 +67,7 @@ internal open class TestBbdDataSource : BbdDataSource {
 
     override suspend fun disableSandbox(packageName: String, userId: Int): Unit = error("Unexpected disableSandbox call")
 
-    override suspend fun disableAllSandboxes(): Result<BbdSandboxReleaseResult> = error("Unexpected disableAllSandboxes call")
+    override suspend fun disableAllSandboxes(): BbdSandboxReleaseResult = error("Unexpected disableAllSandboxes call")
 
     override suspend fun setSandboxItems(packageName: String, userId: Int, changes: Map<SandboxItem, SandboxMode?>): Unit = error("Unexpected setSandboxItems call")
 

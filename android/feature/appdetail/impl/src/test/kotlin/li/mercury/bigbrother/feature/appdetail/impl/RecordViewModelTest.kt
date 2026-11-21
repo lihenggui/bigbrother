@@ -17,6 +17,8 @@
 package li.mercury.bigbrother.feature.appdetail.impl
 
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.RecordsException
@@ -24,6 +26,7 @@ import li.mercury.bigbrother.core.model.Access
 import li.mercury.bigbrother.core.model.AccessPeriod
 import li.mercury.bigbrother.core.model.Action
 import li.mercury.bigbrother.core.model.Category
+import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.SensorSession
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.testing.MainDispatcherRule
@@ -82,6 +85,7 @@ class RecordViewModelTest {
     @Test
     fun givenSensorRecords_whenLoaded_thenSessionsAndHistoryShown() = runTest {
         val viewModel = viewModel("sensors")
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
         advanceUntilIdle()
 
         assertEquals(listOf(session), viewModel.uiState.value.sensorSessions)
@@ -89,19 +93,29 @@ class RecordViewModelTest {
     }
 
     @Test
-    fun givenSessionsNotRead_whenSensorRecordLoaded_thenSessionsLeftOutAndHistoryShown() = runTest {
-        accessRepository.sensorSessionsFailure = RecordsException.CommandFailed("failed")
+    fun givenSessionReadFailure_whenSensorRecordLoaded_thenStateShowsFailureAndHistory() = runTest {
+        accessRepository.sensorSessionsFailure = RecordsException.CommandFailed(LoadFailure.Operation.DAEMON_UNAVAILABLE)
         val viewModel = viewModel("sensors")
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
         advanceUntilIdle()
 
         assertNull(viewModel.uiState.value.sensorSessions)
+        assertEquals(LoadFailure.Operation.DAEMON_UNAVAILABLE, viewModel.uiState.value.sensorSessionsFailure)
         assertNull(viewModel.uiState.value.failure)
         assertEquals(listOf(period), viewModel.uiState.value.periods)
+
+        accessRepository.sensorSessionsFailure = null
+        viewModel.retry()
+        advanceUntilIdle()
+
+        assertNull(viewModel.uiState.value.sensorSessionsFailure)
+        assertEquals(listOf(session), viewModel.uiState.value.sensorSessions)
     }
 
     @Test
     fun givenClipboardRecords_whenLoaded_thenHistoryShownWithoutSessions() = runTest {
         val viewModel = viewModel("clipboard")
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
         advanceUntilIdle()
 
         assertNull(viewModel.uiState.value.sensorSessions)

@@ -20,36 +20,44 @@ import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.DEFAULT
+import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.AccessRepository
 import li.mercury.bigbrother.core.data.repository.AppInfoRepository
-import li.mercury.bigbrother.core.data.repository.UserDataRepository
 import li.mercury.bigbrother.core.data.toLoadFailure
+import li.mercury.bigbrother.core.domain.GetAppVisibilityUseCase
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.model.TimelineEntry
+import java.time.ZoneId
 import javax.inject.Inject
 
 data class TimelineUiState(
-    /** Everything loaded so far, most recent first; null until the first page is in. */
+    /** Visible entries loaded so far, most recent first; null until the first page is in. */
     val entries: List<TimelineEntry>? = null,
     /** Where the next, older, page starts; null when everything is loaded. */
     val nextBefore: Long? = null,
     val loadingMore: Boolean = false,
     /** Loading the next page failed; it is tried again on request, not on its own. */
-    val loadMoreFailed: Boolean = false,
+    val loadMoreFailure: LoadFailure? = null,
     val refreshing: Boolean = false,
     val appInfo: Map<String, AppInfo> = emptyMap(),
-    val showSystemApps: Boolean = false,
     val failure: LoadFailure? = null,
 )
 
@@ -57,83 +65,81 @@ data class TimelineUiState(
 class TimelineViewModel @Inject constructor(
     private val accessRepository: AccessRepository,
     private val appInfoRepository: AppInfoRepository,
-    userDataRepository: UserDataRepository,
+    getAppVisibility: GetAppVisibilityUseCase,
+    @Dispatcher(DEFAULT) private val defaultDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
-    private val _uiState = MutableStateFlow(TimelineUiState())
-    val uiState: StateFlow<TimelineUiState> = _uiState.asStateFlow()
+    private val load = MutableStateFlow(TimelineUiState())
+    private val requests = MutableStateFlow(PageRequest())
+    private var completed: PageRequest? = null
 
-    private var loadJob: Job? = null
-
-    /** When the most recent page was loaded, in milliseconds since boot. */
+    /** When the first page was loaded, in milliseconds since boot. */
     private var loadedAt = 0L
 
-    init {
-        viewModelScope.launch {
-            userDataRepository.userData.map { it.showSystemApps }.distinctUntilChanged().collect { show ->
-                _uiState.update { it.copy(showSystemApps = show) }
+    val uiState: StateFlow<TimelineUiState> = channelFlow {
+        launch {
+            requests.collectLatest { request ->
+                if (request != completed) readPage(request)
             }
         }
-    }
+        combine(load, getAppVisibility()) { state, visibility ->
+            state.copy(entries = state.entries?.let { visibility.visibleEntries(it, state.appInfo) })
+        }.collect { send(it) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TimelineUiState())
+
+    internal fun present(filters: Flow<TimelineFilter>, zone: ZoneId): Flow<TimelinePresentation> = combine(uiState, filters) { state, filter -> state.present(filter, zone) }
+        .flowOn(defaultDispatcher)
 
     /**
-     * Load the most recent page again, unless it was loaded moments ago:
-     * reloading drops the older pages, and with them the user's place in a
-     * long timeline, each time the screen comes back.
+     * Reloading drops the older pages, and with them the user's place in a
+     * long timeline. Keep recent pages when returning to the screen.
      */
     fun refreshIfStale() {
-        if (_uiState.value.entries == null || SystemClock.elapsedRealtime() - loadedAt > STALE_AFTER_MS) refresh()
+        if (completed != requests.value) return
+        if (load.value.entries == null || SystemClock.elapsedRealtime() - loadedAt > STALE_AFTER_MS) refresh()
     }
 
     /** Load the most recent page again, dropping older pages. */
     fun refresh() {
-        loadJob?.cancel()
-        loadJob = viewModelScope.launch {
-            _uiState.update { it.copy(refreshing = true) }
-            try {
-                val page = accessRepository.getTimeline(TimeRange.ALL, before = null, limit = PAGE_SIZE)
-                val appInfo = appInfoFor(page.entries)
-                _uiState.update {
-                    it.copy(
-                        entries = page.entries,
-                        nextBefore = page.nextBefore,
-                        appInfo = appInfo,
-                        refreshing = false,
-                        loadingMore = false,
-                        failure = null,
-                    )
-                }
-                loadedAt = SystemClock.elapsedRealtime()
-            } catch (e: RecordsException) {
-                // A page that was loading when the refresh began was cancelled with it.
-                _uiState.update { it.copy(refreshing = false, loadingMore = false, failure = e.toLoadFailure()) }
-            }
-        }
+        requests.update { PageRequest(it.version + 1) }
     }
 
     /** Load the next, older, page, if there is one. */
     fun loadMore() {
-        val state = _uiState.value
-        val before = state.nextBefore ?: return
-        if (state.loadingMore || loadJob?.isActive == true) return
-        _uiState.update { it.copy(loadingMore = true, loadMoreFailed = false) }
-        loadJob = viewModelScope.launch {
-            try {
-                val page = accessRepository.getTimeline(TimeRange.ALL, before = before, limit = PAGE_SIZE)
-                val appInfo = appInfoFor(page.entries)
-                _uiState.update {
-                    it.copy(
-                        entries = it.entries.orEmpty() + page.entries,
-                        nextBefore = page.nextBefore,
-                        appInfo = it.appInfo + appInfo,
-                        loadingMore = false,
-                    )
-                }
-            } catch (_: RecordsException) {
-                // What is already shown stays, with a way to try again below it.
-                _uiState.update { it.copy(loadingMore = false, loadMoreFailed = true) }
+        val before = load.value.nextBefore ?: return
+        requests.update { if (it == completed) PageRequest(it.version + 1, before) else it }
+    }
+
+    private suspend fun readPage(request: PageRequest) {
+        val first = request.before == null
+        load.update { it.copy(refreshing = first, loadingMore = !first, loadMoreFailure = it.loadMoreFailure.takeIf { first }) }
+        try {
+            val page = accessRepository.getTimeline(TimeRange.ALL, before = request.before, limit = PAGE_SIZE)
+            val info = appInfoFor(page.entries)
+            currentCoroutineContext().ensureActive()
+            if (first) loadedAt = SystemClock.elapsedRealtime()
+            completed = request
+            load.update {
+                it.copy(
+                    entries = if (first) page.entries else it.entries.orEmpty() + page.entries,
+                    nextBefore = page.nextBefore,
+                    appInfo = if (first) info else it.appInfo + info,
+                    failure = if (first) null else it.failure,
+                    loadMoreFailure = null,
+                )
             }
+        } catch (e: RecordsException) {
+            currentCoroutineContext().ensureActive()
+            completed = request
+            // Keep the existing pages and offer a retry where loading failed.
+            load.update {
+                if (first) it.copy(failure = e.toLoadFailure()) else it.copy(loadMoreFailure = e.toLoadFailure())
+            }
+        } finally {
+            load.update { it.copy(refreshing = false, loadingMore = false) }
         }
     }
+
+    private data class PageRequest(val version: Long = 0, val before: Long? = null)
 
     private suspend fun appInfoFor(entries: List<TimelineEntry>): Map<String, AppInfo> = appInfoRepository.getAppInfo(entries.map { it.packageName }.filter { it.isNotEmpty() }.toSet())
 

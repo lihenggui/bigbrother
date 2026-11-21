@@ -33,6 +33,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.libsu.core)
 
+    testImplementation(projects.core.testing)
     testImplementation(libs.kotlin.test.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     // For org.json, which the daemon's answers are read with.

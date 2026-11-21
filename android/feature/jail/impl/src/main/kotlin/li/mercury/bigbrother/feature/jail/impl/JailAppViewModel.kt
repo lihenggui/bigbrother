@@ -70,6 +70,7 @@ data class JailAppUiState(
     val requested: Set<String>? = null,
     /** How many destinations it reached in the last 24 hours; null if not read. */
     val destinations: Int? = null,
+    val destinationsFailure: LoadFailure? = null,
     val loading: Boolean = true,
     val failure: LoadFailure? = null,
     /** Why the last change was not made, to be told once. */
@@ -187,18 +188,20 @@ class JailAppViewModel @AssistedInject constructor(
 
     /**
      * Counts the destinations of the last 24 hours, for an app whose
-     * connections are recorded or that has something blocked. Not read,
-     * the count is left out rather than failing the page.
+     * connections are recorded or that has something blocked.
      */
     private suspend fun readDestinations() {
-        val app = sandboxRepository.apps.value?.firstOrNull { it.uid == uid && it.enabled } ?: return
-        if (!app.modeOf(SandboxItem.NETWORK_RECORD).isOn && app.networkRules == 0 && app.recordingSince == null) return
+        val app = sandboxRepository.apps.value?.firstOrNull { it.uid == uid && it.enabled }
+        if (app == null || (!app.modeOf(SandboxItem.NETWORK_RECORD).isOn && app.networkRules == 0 && app.recordingSince == null)) {
+            load.update { it.copy(destinations = null, destinationsFailure = null) }
+            return
+        }
         try {
             val now = System.currentTimeMillis() / 1000
             val activity = networkRepository.getActivity(packageName, app.userId, now - DAY)
-            load.update { it.copy(destinations = activity.domains.size + activity.addresses.size) }
-        } catch (_: RecordsException) {
-            load.update { it.copy(destinations = null) }
+            load.update { it.copy(destinations = activity.domains.size + activity.addresses.size, destinationsFailure = null) }
+        } catch (e: RecordsException) {
+            load.update { it.copy(destinations = null, destinationsFailure = e.toLoadFailure()) }
         }
     }
 
