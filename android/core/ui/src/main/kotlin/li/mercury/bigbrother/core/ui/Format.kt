@@ -21,7 +21,6 @@ import android.text.format.DateUtils
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneId
@@ -67,7 +66,7 @@ fun shortTime(context: Context, epochSeconds: Long): String {
     val flags = if (DateUtils.isToday(millis)) {
         DateUtils.FORMAT_SHOW_TIME
     } else {
-        DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH
+        ABBREVIATED_DATE
     }
     return DateUtils.formatDateTime(context, millis, flags)
 }
@@ -76,17 +75,26 @@ fun shortTime(context: Context, epochSeconds: Long): String {
 @Composable
 fun shortTime(epochSeconds: Long): String = shortTime(LocalContext.current, epochSeconds)
 
-/**
- * How long ago, in as few characters as possible ("5m", "3h", "2d"), for
- * places where the time shares a row with other text.
- */
-@Composable
-fun compactTime(epochSeconds: Long): String {
-    val seconds = (System.currentTimeMillis() / 1000 - epochSeconds).coerceAtLeast(0)
-    return when {
-        seconds < 60 -> stringResource(R.string.time_now)
-        seconds < 3600 -> stringResource(R.string.time_minutes, seconds / 60)
-        seconds < 86_400 -> stringResource(R.string.time_hours, seconds / 3600)
-        else -> stringResource(R.string.time_days, seconds / 86_400)
-    }
+/** Time of day, optionally with an abbreviated date, in the device's locale and time zone. */
+fun timeOfDay(context: Context, epochSeconds: Long, includeDate: Boolean = false): String {
+    val flags = DateUtils.FORMAT_SHOW_TIME or if (includeDate) ABBREVIATED_DATE else 0
+    return DateUtils.formatDateTime(context, epochSeconds * 1000, flags)
 }
+
+/** Time of day, with the date added for days other than today. */
+@Composable
+fun timeWithDateIfNotToday(epochSeconds: Long): String = timeOfDay(
+    LocalContext.current,
+    epochSeconds,
+    includeDate = !DateUtils.isToday(epochSeconds * 1000),
+)
+
+/** A date with its weekday, abbreviated in the device's locale. */
+@Composable
+fun dateWithWeekday(epochSeconds: Long): String = DateUtils.formatDateTime(
+    LocalContext.current,
+    epochSeconds * 1000,
+    DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_SHOW_WEEKDAY or DateUtils.FORMAT_ABBREV_ALL,
+)
+
+private const val ABBREVIATED_DATE = DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH

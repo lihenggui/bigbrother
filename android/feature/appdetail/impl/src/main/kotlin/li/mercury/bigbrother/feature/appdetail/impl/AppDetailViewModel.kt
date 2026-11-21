@@ -47,6 +47,7 @@ import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.PackageDetails
 import li.mercury.bigbrother.core.model.TimeRange
+import li.mercury.bigbrother.core.model.isNonCoreUid
 
 internal data class AppDetailUiState(
     /** The app's totals. Until loaded, a placeholder that only carries the uid. */
@@ -166,7 +167,7 @@ class AppDetailViewModel @AssistedInject constructor(
                     null
                 }
                 val canOpenJail = packageName != ownPackage &&
-                    uid % PER_USER_RANGE >= FIRST_APPLICATION_UID &&
+                    isNonCoreUid(uid) &&
                     info?.packageInfo?.applicationInfo?.uid == uid
                 mutableUiState.update {
                     it.copy(appInfo = info, packageDetails = details, canOpenJail = canOpenJail && it.app.packageName == packageName)
@@ -214,11 +215,6 @@ class AppDetailViewModel @AssistedInject constructor(
     @AssistedFactory
     interface Factory {
         fun create(uid: Int, packageName: String, range: TimeRange): AppDetailViewModel
-    }
-
-    private companion object {
-        const val PER_USER_RANGE = 100_000
-        const val FIRST_APPLICATION_UID = 10_000
     }
 }
 

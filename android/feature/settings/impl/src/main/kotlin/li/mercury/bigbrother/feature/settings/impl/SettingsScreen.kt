@@ -27,8 +27,6 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.selection.toggleable
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.BugReport
@@ -51,7 +49,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MediumFlexibleTopAppBar
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -60,19 +57,18 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import li.mercury.bigbrother.core.data.repository.UserSettingsWriter
+import li.mercury.bigbrother.core.designsystem.component.SegmentedSwitchRow
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.rememberSettingsWriteSnackbar
 import li.mercury.bigbrother.core.ui.R as UiR
@@ -222,8 +218,8 @@ internal fun SettingsScreen(
 
             item(key = "display") { SectionHeader(stringResource(R.string.section_display)) }
             item(key = "system-apps") {
-                SwitchRow(
-                    icon = Icons.Outlined.VisibilityOff,
+                SegmentedSwitchRow(
+                    leadingContent = { Icon(Icons.Outlined.VisibilityOff, contentDescription = null) },
                     title = stringResource(R.string.setting_system_apps),
                     summary = stringResource(R.string.setting_system_apps_summary),
                     checked = state.userData.showSystemApps,
@@ -233,8 +229,8 @@ internal fun SettingsScreen(
                 )
             }
             item(key = "dynamic-color") {
-                SwitchRow(
-                    icon = Icons.Outlined.Palette,
+                SegmentedSwitchRow(
+                    leadingContent = { Icon(Icons.Outlined.Palette, contentDescription = null) },
                     title = stringResource(R.string.dynamic_color),
                     summary = stringResource(R.string.dynamic_color_summary),
                     checked = state.userData.useDynamicColor,
@@ -314,46 +310,4 @@ private fun Row(
             supportingContent = supporting,
         ) { Text(title) }
     }
-}
-
-/**
- * A setting that takes effect at once, as Material asks of a switch. The
- * whole row toggles it; the switch alone shows the state, so the row keeps
- * its color.
- */
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
-@Composable
-private fun SwitchRow(
-    icon: ImageVector,
-    title: String,
-    summary: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-    index: Int,
-    count: Int,
-) {
-    ListItem(
-        modifier = Modifier
-            .clip(if (count == 1) MaterialTheme.shapes.large else segmentShape(index, count))
-            .toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange),
-        shapes = ListItemDefaults.segmentedShapes(index, count),
-        colors = ListItemDefaults.segmentedColors(),
-        leadingContent = { Icon(icon, contentDescription = null) },
-        supportingContent = { Text(summary) },
-        trailingContent = { Switch(checked = checked, onCheckedChange = null) },
-        verticalAlignment = Alignment.CenterVertically,
-    ) { Text(title) }
-}
-
-/** The shape of a row in a segmented group, for clipping its touch feedback. */
-@Composable
-private fun segmentShape(index: Int, count: Int): RoundedCornerShape {
-    val outer = 16.dp
-    val inner = 4.dp
-    return RoundedCornerShape(
-        topStart = if (index == 0) outer else inner,
-        topEnd = if (index == 0) outer else inner,
-        bottomStart = if (index == count - 1) outer else inner,
-        bottomEnd = if (index == count - 1) outer else inner,
-    )
 }

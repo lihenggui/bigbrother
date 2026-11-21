@@ -81,7 +81,7 @@ class JailAppViewModelTest {
 
     @Test
     fun givenAppOfOtherUserNotInstalledHere_whenLoaded_thenUserShownAndPermissionsUnknown() = runTest {
-        val uid = 10 * 100_000 + 10_231
+        val uid = 1_010_231
         val repository = TestSandboxRepository(apps = listOf(sandboxed(uid, "com.example.flashlight", enabled = true)))
 
         val viewModel = viewModel(uid, "com.example.flashlight", repository)

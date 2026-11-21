@@ -16,7 +16,6 @@
 
 package li.mercury.bigbrother.feature.appdetail.impl
 
-import android.text.format.DateUtils
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -47,6 +46,8 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import li.mercury.bigbrother.core.model.SensorSession
 import li.mercury.bigbrother.core.ui.sensorName
+import li.mercury.bigbrother.core.ui.timeOfDay
+import li.mercury.bigbrother.core.ui.timeWithDateIfNotToday
 import java.text.NumberFormat
 import java.time.Instant
 import java.time.ZoneId
@@ -217,13 +218,9 @@ private fun sessionSpan(start: Long, end: Long?): String {
     val context = LocalContext.current
     val zone = ZoneId.systemDefault()
     fun day(time: Long) = Instant.ofEpochSecond(time).atZone(zone).toLocalDate()
-    fun format(time: Long, withDate: Boolean): String {
-        val date = if (withDate) DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH else 0
-        return DateUtils.formatDateTime(context, time * 1000, DateUtils.FORMAT_SHOW_TIME or date)
-    }
-    val from = format(start, withDate = !DateUtils.isToday(start * 1000))
+    val from = timeWithDateIfNotToday(start)
     if (end == null) return stringResource(R.string.sensor_since, from)
-    val to = format(end, withDate = day(end) != day(start))
+    val to = timeOfDay(context, end, includeDate = day(end) != day(start))
     return if (to == from) from else stringResource(R.string.session_span, from, to)
 }
 

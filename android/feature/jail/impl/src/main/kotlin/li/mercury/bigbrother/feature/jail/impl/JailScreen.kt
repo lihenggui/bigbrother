@@ -82,6 +82,8 @@ import li.mercury.bigbrother.core.model.SandboxStatus
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.SectionHeader
+import li.mercury.bigbrother.core.ui.appNameWithUser
+import li.mercury.bigbrother.core.ui.failureTitle
 import li.mercury.bigbrother.core.ui.R as UiR
 
 /**
@@ -211,7 +213,7 @@ private fun JailList(
         ),
         verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
     ) {
-        statusCards(state.status)
+        sandboxWarnings(state.status)
         if (apps.isEmpty()) {
             item(key = "empty") { EmptyJail(onAdd) }
         } else {
@@ -220,7 +222,7 @@ private fun JailList(
             }
             itemsIndexed(apps, key = { _, app -> app.app.uid }) { index, app ->
                 LinkRow(
-                    title = nameWithUser(app.name, app.otherUser),
+                    title = appNameWithUser(app.name, app.otherUser),
                     supporting = itemsSummary(app.app.items),
                     onClick = { onOpenApp(app) },
                     index = index,
@@ -247,11 +249,11 @@ private fun JailList(
 }
 
 /** What is not in effect on this device, said before anything else. */
-private fun androidx.compose.foundation.lazy.LazyListScope.statusCards(status: SandboxStatus?) {
+private fun androidx.compose.foundation.lazy.LazyListScope.sandboxWarnings(status: SandboxStatus?) {
     if (status == null) return
     if (!status.androidIdHook || !status.appListHook) {
         item(key = "hook") {
-            StatusCard(
+            SandboxWarningCard(
                 title = stringResource(R.string.jail_hook_missing_title),
                 body = stringResource(R.string.jail_hook_missing),
                 modifier = Modifier.padding(bottom = 8.dp),
@@ -260,7 +262,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.statusCards(status: S
     }
     if (!status.gate) {
         item(key = "gate") {
-            StatusCard(
+            SandboxWarningCard(
                 title = stringResource(R.string.jail_gate_missing_title),
                 body = stringResource(R.string.jail_gate_missing),
                 modifier = Modifier.padding(bottom = 8.dp),
@@ -269,7 +271,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.statusCards(status: S
     }
     if (!status.appOps) {
         item(key = "appops") {
-            StatusCard(
+            SandboxWarningCard(
                 title = stringResource(R.string.jail_appops_missing_title),
                 body = stringResource(R.string.jail_appops_missing),
                 modifier = Modifier.padding(bottom = 8.dp),
@@ -374,7 +376,7 @@ private fun messageText(message: JailMessage): String {
 /** [one] with the app's name, or [several] with the number of apps, then why. */
 @Composable
 private fun notChanged(names: List<String>, @StringRes one: Int, @PluralsRes several: Int, failure: LoadFailure): String {
-    val reason = failureReason(failure)
+    val reason = (failure as? LoadFailure.Other)?.message ?: failureTitle(failure)
     return if (names.size == 1) stringResource(one, names.single(), reason) else pluralStringResource(several, names.size, names.size, reason)
 }
 

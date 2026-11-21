@@ -40,6 +40,7 @@ import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxStatus
 import li.mercury.bigbrother.core.model.SandboxedApp
+import li.mercury.bigbrother.core.model.labelOrPackageName
 import javax.inject.Inject
 
 /**
@@ -47,7 +48,7 @@ import javax.inject.Inject
  * [otherUser], the Android user it belongs to, if not the one this app runs as.
  */
 data class IsolatedApp(val app: SandboxedApp, val info: AppInfo?, val otherUser: Int? = null) {
-    val name: String get() = info?.label ?: app.packageName
+    val name: String get() = info.labelOrPackageName(app.packageName)
 }
 
 data class JailUiState(
@@ -127,7 +128,7 @@ class JailViewModel @Inject constructor(
      */
     fun isolate(apps: List<InstalledApp>) {
         viewModelScope.launch {
-            val (done, failed, failure) = eachApp(apps) { sandboxRepository.isolate(it.packageName, it.uid / PER_USER_RANGE) }
+            val (done, failed, failure) = eachApp(apps) { sandboxRepository.isolate(it.packageName, it.userId) }
             _message.value = when {
                 done.isEmpty() -> failure?.let { JailMessage.NotIsolated(failed.names(), it) }
                 else -> JailMessage.Isolated(done.names(), done, notIsolated = failed.names())
@@ -138,7 +139,7 @@ class JailViewModel @Inject constructor(
     /** Takes out again what [isolate] put in, each whatever became of the others. */
     fun undoIsolate(apps: List<InstalledApp>) {
         viewModelScope.launch {
-            val (_, failed, failure) = eachApp(apps) { sandboxRepository.release(it.packageName, it.uid / PER_USER_RANGE) }
+            val (_, failed, failure) = eachApp(apps) { sandboxRepository.release(it.packageName, it.userId) }
             if (failure != null) _message.value = JailMessage.NotReleased(failed.names(), failure)
         }
     }
@@ -184,8 +185,4 @@ class JailViewModel @Inject constructor(
             is RecordsException.NoRoot, is RecordsException.ModuleMissing, is RecordsException.ModuleOutdated -> true
             is RecordsException.CommandFailed -> false
         }
-
-    private companion object {
-        const val PER_USER_RANGE = 100_000
-    }
 }

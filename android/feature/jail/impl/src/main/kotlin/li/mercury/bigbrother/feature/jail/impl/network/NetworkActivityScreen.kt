@@ -101,11 +101,12 @@ import li.mercury.bigbrother.core.ui.MenuOption
 import li.mercury.bigbrother.core.ui.PredictiveSearchTopBar
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.TimeRangeButtonGroup
+import li.mercury.bigbrother.core.ui.appNameWithUser
+import li.mercury.bigbrother.core.ui.timeWithDateIfNotToday
 import li.mercury.bigbrother.feature.jail.impl.ErrorEffect
 import li.mercury.bigbrother.feature.jail.impl.Note
 import li.mercury.bigbrother.feature.jail.impl.R
-import li.mercury.bigbrother.feature.jail.impl.StatusCard
-import li.mercury.bigbrother.feature.jail.impl.nameWithUser
+import li.mercury.bigbrother.feature.jail.impl.SandboxWarningCard
 import java.text.NumberFormat
 import li.mercury.bigbrother.core.ui.R as UiR
 
@@ -214,7 +215,7 @@ internal fun NetworkActivityScreen(
                 MediumFlexibleTopAppBar(
                     title = { Text(stringResource(R.string.jail_network_activity)) },
                     subtitle = {
-                        val name = nameWithUser(state.name, state.otherUser)
+                        val name = appNameWithUser(state.name, state.otherUser)
                         Text(
                             when (recording?.on) {
                                 null -> name
@@ -273,7 +274,7 @@ internal fun NetworkActivityScreen(
         NetworkDialog.CLEAR -> AlertDialog(
             onDismissRequest = { dialog = null },
             title = { Text(stringResource(R.string.jail_net_clear_title)) },
-            text = { Text(stringResource(R.string.jail_net_clear_body, nameWithUser(state.name, state.otherUser))) },
+            text = { Text(stringResource(R.string.jail_net_clear_body, appNameWithUser(state.name, state.otherUser))) },
             confirmButton = {
                 TextButton(onClick = {
                     dialog = null
@@ -387,7 +388,7 @@ private fun LazyListScope.notices(activity: NetworkActivity, actions: NetworkAct
             NoticeCard(
                 icon = Icons.Outlined.History,
                 title = null,
-                body = stringResource(R.string.jail_net_stopped, dateTime(last)),
+                body = stringResource(R.string.jail_net_stopped, timeWithDateIfNotToday(last)),
                 containerColor = MaterialTheme.colorScheme.secondaryContainer,
                 contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
                 action = stringResource(R.string.jail_net_start) to { actions.onSetRecording(true) },
@@ -407,7 +408,7 @@ private fun LazyListScope.notices(activity: NetworkActivity, actions: NetworkAct
     }
     if (!activity.names) {
         item(key = "names") {
-            StatusCard(
+            SandboxWarningCard(
                 title = stringResource(R.string.jail_net_names_missing_title),
                 body = stringResource(R.string.jail_net_names_missing_body),
                 modifier = Modifier.padding(bottom = 8.dp),
@@ -456,7 +457,7 @@ private fun Empty(since: Long) {
         ShapedIcon(Icons.Outlined.Public, size = 72.dp, iconSize = 32.dp)
         Text(stringResource(R.string.jail_net_empty_title), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
         Text(
-            stringResource(R.string.jail_net_empty_body, dateTime(since)),
+            stringResource(R.string.jail_net_empty_body, timeWithDateIfNotToday(since)),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,

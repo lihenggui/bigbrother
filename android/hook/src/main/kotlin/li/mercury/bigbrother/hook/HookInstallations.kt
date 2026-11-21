@@ -41,7 +41,7 @@ internal class HookInstallations(private val bootId: File) {
                 val uid = fields[1].toInt()
                 val pkg = fields[2]
                 check(uid in uids && uid !in next && pkg.matches(PACKAGE))
-                val path = "/data/user_de/${uid / 100000}/$pkg"
+                val path = "/data/user_de/${uid / PER_USER_RANGE}/$pkg"
                 val fd = Os.open(path, O_PATH or OsConstants.O_NOFOLLOW or OsConstants.O_CLOEXEC, 0)
                 try {
                     val stat = Os.fstat(fd)

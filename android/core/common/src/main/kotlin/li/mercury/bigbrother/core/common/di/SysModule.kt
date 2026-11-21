@@ -23,6 +23,7 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import li.mercury.bigbrother.core.model.userIdOf
 import java.io.File
 import javax.inject.Qualifier
 
@@ -66,8 +67,5 @@ internal object SysModule {
 
     @Provides
     @CurrentUserId
-    fun providesCurrentUserId(): Int = Process.myUid() / PER_USER_RANGE
-
-    /** uid = user * 100000 + app id. */
-    private const val PER_USER_RANGE = 100_000
+    fun providesCurrentUserId(): Int = userIdOf(Process.myUid())
 }

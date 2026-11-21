@@ -40,8 +40,6 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
@@ -52,7 +50,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
@@ -70,24 +67,15 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import li.mercury.bigbrother.core.designsystem.component.ShapedIcon
+import li.mercury.bigbrother.core.designsystem.component.SwitchStateIcon
+import li.mercury.bigbrother.core.designsystem.component.segmentCornerSize
+import li.mercury.bigbrother.core.designsystem.component.segmentShape
 import li.mercury.bigbrother.core.designsystem.icon.CageIcons
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxPart
 import li.mercury.bigbrother.core.ui.AppIcon
-import li.mercury.bigbrother.core.ui.R as UiR
-
-/** Outer and inner corners of a row in a segmented group, as Material lists have them. */
-private val OUTER_CORNER = 16.dp
-private val INNER_CORNER = 4.dp
-
-/** The shape of a row in a segmented group, for clipping its touch feedback. */
-internal fun segmentShape(index: Int, count: Int): RoundedCornerShape {
-    val top = if (index == 0) OUTER_CORNER else INNER_CORNER
-    val bottom = if (index == count - 1) OUTER_CORNER else INNER_CORNER
-    return RoundedCornerShape(topStart = top, topEnd = top, bottomStart = bottom, bottomEnd = bottom)
-}
 
 /**
  * A row that opens something, in a segmented group. [selected] is whether
@@ -122,10 +110,6 @@ internal fun LinkRow(
         verticalAlignment = Alignment.CenterVertically,
     ) { Text(title) }
 }
-
-/** An app's name, followed by its Android user if that is not the one this app runs as. */
-@Composable
-internal fun nameWithUser(name: String, otherUser: Int?): String = if (otherUser == null) name else stringResource(UiR.string.app_name_with_user, name, otherUser)
 
 /** An app's icon, with the cage that marks it as isolated. */
 @Composable
@@ -174,8 +158,8 @@ internal fun ItemRow(
     appOpsChecking: Boolean = false,
 ) {
     val spatial = MaterialTheme.motionScheme.fastSpatialSpec<androidx.compose.ui.unit.Dp>()
-    val top by animateDpAsState(if (expanded || index == 0) OUTER_CORNER else INNER_CORNER, spatial, label = "top")
-    val bottom by animateDpAsState(if (expanded || index == count - 1) OUTER_CORNER else INNER_CORNER, spatial, label = "bottom")
+    val top by animateDpAsState(segmentCornerSize(outer = expanded || index == 0), spatial, label = "top")
+    val bottom by animateDpAsState(segmentCornerSize(outer = expanded || index == count - 1), spatial, label = "bottom")
     val turn by animateFloatAsState(if (expanded) 180f else 0f, MaterialTheme.motionScheme.fastSpatialSpec(), label = "turn")
     val title = stringResource(item.title)
     val state = stringResource(if (expanded) R.string.jail_choices_shown else R.string.jail_choices_hidden)
@@ -230,13 +214,7 @@ internal fun ItemRow(
                     modifier = Modifier
                         .padding(horizontal = 16.dp)
                         .semantics { contentDescription = title },
-                    thumbContent = {
-                        Icon(
-                            if (checked) Icons.Filled.Check else Icons.Filled.Close,
-                            contentDescription = null,
-                            modifier = Modifier.size(SwitchDefaults.IconSize),
-                        )
-                    },
+                    thumbContent = { SwitchStateIcon(checked) },
                 )
             }
             AnimatedVisibility(
@@ -364,7 +342,7 @@ private fun CustomTag() {
 
 /** A warning about a part of the sandbox that does not work on this device. */
 @Composable
-internal fun StatusCard(title: String, body: String, modifier: Modifier = Modifier) {
+internal fun SandboxWarningCard(title: String, body: String, modifier: Modifier = Modifier) {
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,

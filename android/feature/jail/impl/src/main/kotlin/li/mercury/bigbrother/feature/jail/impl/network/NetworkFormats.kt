@@ -16,13 +16,10 @@
 
 package li.mercury.bigbrother.feature.jail.impl.network
 
-import android.content.Context
 import android.text.format.DateFormat
-import android.text.format.DateUtils
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
 import li.mercury.bigbrother.core.model.BucketSize
 import li.mercury.bigbrother.core.model.TimeRange
 import java.time.Instant
@@ -74,11 +71,7 @@ internal fun isWebPort(port: Int): Boolean = port == 443 || port == 80
 private val CLOCK = DateTimeFormatter.ofPattern("HH:mm")
 
 /** A period of [seconds] from [start], as "03:00–04:00" by the clock of [zone]; one ending at midnight ends at "00:00". */
-internal fun hourRange(start: Long, seconds: Int, zone: ZoneId = ZoneId.systemDefault()): String {
-    val from = Instant.ofEpochSecond(start).atZone(zone)
-    val to = Instant.ofEpochSecond(start + seconds).atZone(zone)
-    return CLOCK.format(from) + "–" + CLOCK.format(to)
-}
+internal fun hourRange(start: Long, seconds: Int, zone: ZoneId = ZoneId.systemDefault()): String = clockTime(start, zone) + "–" + clockTime(start + seconds, zone)
 
 /** The time of day, "15:00", by the clock of [zone]. */
 internal fun clockTime(epochSeconds: Long, zone: ZoneId = ZoneId.systemDefault()): String = CLOCK.format(Instant.ofEpochSecond(epochSeconds).atZone(zone))
@@ -99,16 +92,6 @@ internal const val RECORDS_KEPT_DAYS = 30
 
 /** The ranges the activity can be shown for: a single hour is a single bar. */
 internal val ACTIVITY_RANGES = listOf(TimeRange.DAY, TimeRange.WEEK, TimeRange.ALL)
-
-/** When something happened: the time of day for today, the date and time otherwise, in the device's locale. */
-internal fun dateTime(context: Context, epochSeconds: Long): String {
-    val millis = epochSeconds * 1000
-    val date = if (DateUtils.isToday(millis)) 0 else DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH
-    return DateUtils.formatDateTime(context, millis, date or DateUtils.FORMAT_SHOW_TIME)
-}
-
-@Composable
-internal fun dateTime(epochSeconds: Long): String = dateTime(LocalContext.current, epochSeconds)
 
 /** A day, "Nov 16", in the device's locale. */
 @Composable

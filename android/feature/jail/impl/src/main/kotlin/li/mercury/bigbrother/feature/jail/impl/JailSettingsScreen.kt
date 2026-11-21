@@ -23,15 +23,11 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.HourglassEmpty
@@ -47,8 +43,6 @@ import androidx.compose.material3.MediumFlexibleTopAppBar
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
@@ -61,15 +55,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
+import li.mercury.bigbrother.core.designsystem.component.SegmentedSwitchRow
 import li.mercury.bigbrother.core.designsystem.component.ShapedIcon
 import li.mercury.bigbrother.core.designsystem.icon.CageIcons
 import li.mercury.bigbrother.core.model.SandboxItem
@@ -177,7 +170,15 @@ internal fun JailSettingsScreen(
                     verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
                 ) {
                     item(key = "auto_isolate") {
-                        AutoIsolateRow(state.autoIsolate, onSetAutoIsolate, Modifier.padding(top = 8.dp, bottom = 16.dp))
+                        SegmentedSwitchRow(
+                            title = stringResource(R.string.jail_auto_isolate),
+                            summary = stringResource(R.string.jail_auto_isolate_summary),
+                            checked = state.autoIsolate,
+                            onCheckedChange = onSetAutoIsolate,
+                            leadingContent = { ShapedIcon(Icons.Outlined.InstallMobile) },
+                            modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
+                            showThumbIcon = true,
+                        )
                     }
                     item(key = "summary") { Note(stringResource(R.string.jail_items_summary)) }
                     for (group in ItemGroup.entries) {
@@ -242,38 +243,6 @@ internal fun JailSettingsScreen(
             },
         )
     }
-}
-
-/**
- * Whether apps installed from now on are isolated with these settings. The
- * whole row toggles it, as a switch takes effect at once.
- */
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
-@Composable
-private fun AutoIsolateRow(checked: Boolean, onCheckedChange: (Boolean) -> Unit, modifier: Modifier = Modifier) {
-    ListItem(
-        modifier = modifier
-            .clip(segmentShape(0, 1))
-            .toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange),
-        shapes = ListItemDefaults.segmentedShapes(0, 1),
-        colors = ListItemDefaults.segmentedColors(),
-        leadingContent = { ShapedIcon(Icons.Outlined.InstallMobile) },
-        supportingContent = { Text(stringResource(R.string.jail_auto_isolate_summary)) },
-        trailingContent = {
-            Switch(
-                checked = checked,
-                onCheckedChange = null,
-                thumbContent = {
-                    Icon(
-                        if (checked) Icons.Filled.Check else Icons.Filled.Close,
-                        contentDescription = null,
-                        modifier = Modifier.size(SwitchDefaults.IconSize),
-                    )
-                },
-            )
-        },
-        verticalAlignment = Alignment.CenterVertically,
-    ) { Text(stringResource(R.string.jail_auto_isolate)) }
 }
 
 /** Which parts of the sandbox work on this device; until known, neither good nor bad. */

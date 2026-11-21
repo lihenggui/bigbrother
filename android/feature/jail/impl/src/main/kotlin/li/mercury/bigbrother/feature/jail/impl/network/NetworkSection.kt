@@ -22,12 +22,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyListScope
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.BarChart
 import androidx.compose.material.icons.outlined.FiberManualRecord
 import androidx.compose.material.icons.outlined.Public
@@ -36,28 +32,25 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import li.mercury.bigbrother.core.designsystem.component.SegmentedSwitchRow
 import li.mercury.bigbrother.core.designsystem.component.ShapedIcon
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxPart
 import li.mercury.bigbrother.core.model.SandboxedApp
 import li.mercury.bigbrother.core.ui.SectionHeader
+import li.mercury.bigbrother.core.ui.timeWithDateIfNotToday
 import li.mercury.bigbrother.feature.jail.impl.ItemRow
 import li.mercury.bigbrother.feature.jail.impl.LinkRow
 import li.mercury.bigbrother.feature.jail.impl.Note
 import li.mercury.bigbrother.feature.jail.impl.R
-import li.mercury.bigbrother.feature.jail.impl.segmentShape
 
 /**
  * The daemon's mode of the network for access [allowed]. The daemon has the
@@ -188,40 +181,22 @@ internal fun LazyListScope.globalNetworkSection(
  * Whether the app's connections are recorded: what is recorded and for how
  * long, or since when. The whole row toggles it, at once.
  */
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun RecordRow(recording: Boolean, since: Long?, onCheckedChange: (Boolean) -> Unit, index: Int, count: Int) {
-    ListItem(
-        modifier = Modifier
-            .clip(segmentShape(index, count))
-            .toggleable(value = recording, role = Role.Switch, onValueChange = onCheckedChange),
-        shapes = ListItemDefaults.segmentedShapes(index, count),
-        colors = ListItemDefaults.segmentedColors(),
+    SegmentedSwitchRow(
+        title = stringResource(R.string.jail_network_record),
+        summary = if (recording && since != null) {
+            stringResource(R.string.jail_network_recording_since, timeWithDateIfNotToday(since))
+        } else {
+            stringResource(R.string.jail_network_record_summary)
+        },
+        checked = recording,
+        onCheckedChange = onCheckedChange,
+        index = index,
+        count = count,
         leadingContent = { ShapedIcon(Icons.Outlined.FiberManualRecord) },
-        supportingContent = {
-            Text(
-                if (recording && since != null) {
-                    stringResource(R.string.jail_network_recording_since, dateTime(since))
-                } else {
-                    stringResource(R.string.jail_network_record_summary)
-                },
-            )
-        },
-        trailingContent = {
-            Switch(
-                checked = recording,
-                onCheckedChange = null,
-                thumbContent = {
-                    Icon(
-                        if (recording) Icons.Filled.Check else Icons.Filled.Close,
-                        contentDescription = null,
-                        modifier = Modifier.size(SwitchDefaults.IconSize),
-                    )
-                },
-            )
-        },
-        verticalAlignment = Alignment.CenterVertically,
-    ) { Text(stringResource(R.string.jail_network_record)) }
+        showThumbIcon = true,
+    )
 }
 
 /** The only line of the section for an app that cannot connect anyway. */

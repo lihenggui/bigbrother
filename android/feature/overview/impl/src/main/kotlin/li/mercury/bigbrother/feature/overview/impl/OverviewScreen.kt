@@ -84,6 +84,7 @@ import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.TimeRangeButtonGroup
 import li.mercury.bigbrother.core.ui.appDisplayName
+import li.mercury.bigbrother.core.ui.failureTitle
 import li.mercury.bigbrother.core.ui.namedList
 import li.mercury.bigbrother.core.ui.rememberSettingsWriteSnackbar
 import li.mercury.bigbrother.core.ui.topicTitle
@@ -181,7 +182,7 @@ private fun Content(
                 .verticalScroll(rememberScrollState())
                 .padding(start = margin, end = margin, bottom = 24.dp + bottomInset),
         ) {
-            StatusCards(state, onUpdateModule, onStartDaemon)
+            RecorderStatusCards(state, onUpdateModule, onStartDaemon)
             TimeRangeButtonGroup(
                 range = state.range,
                 onRange = onRange,
@@ -378,10 +379,10 @@ private fun Modifier.ring(color: Color, width: Dp): Modifier = this
 /** Status that needs the user, shown only when something is wrong. */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun StatusCards(state: OverviewUiState, onUpdateModule: () -> Unit, onStartDaemon: () -> Unit) {
+private fun RecorderStatusCards(state: OverviewUiState, onUpdateModule: () -> Unit, onStartDaemon: () -> Unit) {
     // A staged update comes first: starting now would run the old module.
     when {
-        state.modulePendingReboot -> StatusCard(
+        state.modulePendingReboot -> RecorderStatusCard(
             icon = Icons.Outlined.SystemUpdate,
             title = stringResource(R.string.module_pending_reboot),
             body = null,
@@ -390,7 +391,7 @@ private fun StatusCards(state: OverviewUiState, onUpdateModule: () -> Unit, onSt
 
         state.recording == false -> {
             val error = state.daemonStartError
-            StatusCard(
+            RecorderStatusCard(
                 icon = Icons.Filled.ErrorOutline,
                 title = stringResource(R.string.status_stopped),
                 body = when {
@@ -420,7 +421,7 @@ private fun ModuleUpdateCard(update: ModuleUpdate, onUpdateModule: () -> Unit, o
     when (update) {
         ModuleUpdate.Idle -> Unit
 
-        ModuleUpdate.Updating -> StatusCard(
+        ModuleUpdate.Updating -> RecorderStatusCard(
             icon = Icons.Outlined.SystemUpdate,
             title = stringResource(R.string.updating_module),
             body = null,
@@ -428,14 +429,14 @@ private fun ModuleUpdateCard(update: ModuleUpdate, onUpdateModule: () -> Unit, o
             busy = true,
         )
 
-        ModuleUpdate.Disabled -> StatusCard(
+        ModuleUpdate.Disabled -> RecorderStatusCard(
             icon = Icons.Outlined.SystemUpdate,
             title = stringResource(R.string.module_disabled),
             body = null,
             error = false,
         )
 
-        ModuleUpdate.NotReporting -> StatusCard(
+        ModuleUpdate.NotReporting -> RecorderStatusCard(
             icon = Icons.Filled.ErrorOutline,
             title = stringResource(R.string.status_stopped),
             body = stringResource(R.string.daemon_not_reporting),
@@ -444,7 +445,7 @@ private fun ModuleUpdateCard(update: ModuleUpdate, onUpdateModule: () -> Unit, o
             onAction = onStartDaemon,
         )
 
-        is ModuleUpdate.Failed -> StatusCard(
+        is ModuleUpdate.Failed -> RecorderStatusCard(
             icon = Icons.Filled.ErrorOutline,
             title = stringResource(R.string.update_failed_title),
             body = installerError(update.output),
@@ -461,7 +462,7 @@ private fun ModuleUpdateCard(update: ModuleUpdate, onUpdateModule: () -> Unit, o
  */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun StatusCard(
+private fun RecorderStatusCard(
     icon: ImageVector,
     title: String,
     body: String?,
@@ -523,7 +524,7 @@ internal fun installerError(output: String): String? {
 private fun ModuleSetupMessage(setup: ModuleSetup, onInstall: () -> Unit, onRetry: () -> Unit) {
     when (setup) {
         ModuleSetup.Idle -> Message(
-            title = stringResource(UiR.string.no_module_title),
+            title = failureTitle(LoadFailure.ModuleMissing),
             body = stringResource(UiR.string.no_module_body),
             actionLabel = stringResource(R.string.install_module),
             onAction = onInstall,

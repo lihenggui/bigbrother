@@ -38,6 +38,7 @@ import li.mercury.bigbrother.core.data.repository.SandboxRepository
 import li.mercury.bigbrother.core.data.repository.UserDataRepository
 import li.mercury.bigbrother.core.model.InstalledApp
 import li.mercury.bigbrother.core.model.SandboxedApp
+import li.mercury.bigbrother.core.model.isNonCoreUid
 import javax.inject.Inject
 
 data class AddAppsUiState(
@@ -123,7 +124,7 @@ class AddAppsViewModel @Inject constructor(
         val isolated = sandboxed.filter { it.enabled }.map { it.uid }.toSet()
         return filter { app ->
             app.packageName != ownPackage &&
-                app.uid % PER_USER_RANGE >= FIRST_APPLICATION_UID &&
+                isNonCoreUid(app.uid) &&
                 app.uid !in isolated &&
                 (showSystem || !app.info.isSystem)
         }
@@ -131,9 +132,5 @@ class AddAppsViewModel @Inject constructor(
 
     private companion object {
         const val SELECTED_PACKAGES = "selected_packages"
-        const val PER_USER_RANGE = 100_000
-
-        /** App ids below are the system's own, shared by many components. */
-        const val FIRST_APPLICATION_UID = 10_000
     }
 }

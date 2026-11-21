@@ -213,17 +213,13 @@ data class SandboxedApp(
     /** Whether the daemon is still checking this app's Android restrictions. */
     val appOpsChecking: Boolean = false,
 ) {
-    val userId: Int get() = uid / PER_USER_RANGE
+    val userId: Int get() = userIdOf(uid)
 
     /** The mode of [item] that applies. */
     fun modeOf(item: SandboxItem): SandboxMode = items[item] ?: item.default
 
     /** In the sandbox with an item on that takes app ops. */
     val needsAppOps: Boolean get() = enabled && SandboxItem.entries.any { SandboxPart.APP_OPS in it.parts && modeOf(it).isOn }
-
-    private companion object {
-        const val PER_USER_RANGE = 100_000
-    }
 }
 
 /** Which parts of the sandbox work on this device. */
@@ -282,4 +278,6 @@ class InstalledApp(
     val packageName: String,
     val uid: Int,
     val info: AppInfo,
-)
+) {
+    val userId: Int get() = userIdOf(uid)
+}

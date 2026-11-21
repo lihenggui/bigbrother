@@ -158,21 +158,19 @@ data class AppSummary(
     /** Kinds of information it went after besides user files, as topic ids. */
     val topics: List<String> = emptyList(),
 ) {
-    /** Android user the app runs as: uid = user * 100000 + app id. */
-    val userId: Int get() = uid / PER_USER_RANGE
+    /** Android user the app runs as. */
+    val userId: Int get() = userIdOf(uid)
 
     /**
      * An isolated process the daemon could not trace to its app: one it did
      * trace is recorded under the app's own uid.
      */
     val isUnattributedIsolated: Boolean
-        get() = packageName.isEmpty() && uid % PER_USER_RANGE >= FIRST_ISOLATED_APP_ID
+        get() = packageName.isEmpty() && appIdOf(uid) >= FIRST_ISOLATED_APP_ID
 
     fun count(category: Category): Int = counts[category] ?: 0
 
     private companion object {
-        const val PER_USER_RANGE = 100_000
-
         /** Isolated processes, with or without an app zygote, have app ids from here up. */
         const val FIRST_ISOLATED_APP_ID = 90_000
     }

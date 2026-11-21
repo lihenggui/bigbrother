@@ -48,6 +48,8 @@ import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxPart
 import li.mercury.bigbrother.core.model.SandboxedApp
+import li.mercury.bigbrother.core.model.labelOrPackageName
+import li.mercury.bigbrother.core.model.userIdOf
 import li.mercury.bigbrother.feature.jail.impl.network.networkMode
 
 data class JailAppUiState(
@@ -78,7 +80,7 @@ data class JailAppUiState(
      */
     val left: Boolean = false,
 ) {
-    val name: String get() = info?.label ?: packageName
+    val name: String get() = info.labelOrPackageName(packageName)
 }
 
 /** What the sandbox keeps from one app, item by item. */
@@ -97,7 +99,7 @@ class JailAppViewModel @AssistedInject constructor(
         fun create(uid: Int, packageName: String): JailAppViewModel
     }
 
-    private val initial = JailAppUiState(packageName = packageName, otherUser = (uid / PER_USER_RANGE).takeIf { it != currentUserId })
+    private val initial = JailAppUiState(packageName = packageName, otherUser = userIdOf(uid).takeIf { it != currentUserId })
     private val load = MutableStateFlow(initial)
 
     /** Taken out from here: the page leaves even if the list is not read again. */
@@ -231,7 +233,6 @@ class JailAppViewModel @AssistedInject constructor(
     }
 
     private companion object {
-        const val PER_USER_RANGE = 100_000
         const val DAY = 86_400L
         const val CHECKING_REFRESH_MS = 1_000L
         const val RECOVERY_REFRESH_MS = 30_000L

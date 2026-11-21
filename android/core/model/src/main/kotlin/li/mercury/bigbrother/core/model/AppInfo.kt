@@ -28,3 +28,6 @@ class AppInfo(
     /** Part of the system image, as opposed to installed by the user. */
     val isSystem: Boolean,
 )
+
+/** Show the package name when the package manager cannot supply the app label. */
+fun AppInfo?.labelOrPackageName(packageName: String): String = this?.label ?: packageName
