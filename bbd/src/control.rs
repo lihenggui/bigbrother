@@ -86,6 +86,7 @@ pub fn daemon_running(db: &Path) -> bool {
     else {
         return false;
     };
+    // An unreadable proc entry cannot establish that the daemon is running.
     let comm = fs::read_to_string(format!("/proc/{pid}/comm")).unwrap_or_default();
     let cmdline = fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
     is_daemon(&comm, &cmdline)
@@ -149,12 +150,14 @@ pub fn listen(db: &Path) -> anyhow::Result<UnixListener> {
 
 /// Remove the socket [`listen`] created.
 pub fn unlisten(db: &Path) {
+    // The next listener removes any socket left behind.
     let _ = fs::remove_file(socket_path(db));
 }
 
 /// Answer a flush request: what the daemon held is written.
 pub fn answer(stream: &UnixStream) {
     // One byte into a new connection's empty buffer: this does not block.
+    // A client that times out still reads the database.
     let _ = stream.try_write(&[1]);
 }
 
@@ -304,6 +307,7 @@ pub fn failure(error: &str) -> String {
 /// connect.
 pub fn listen_commands(db: &Path) -> anyhow::Result<UnixListener> {
     let path = command_socket_path(db);
+    // Binding below reports any stale socket that could not be removed.
     let _ = fs::remove_file(&path);
     let listener = UnixListener::bind(&path)?;
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
@@ -312,6 +316,7 @@ pub fn listen_commands(db: &Path) -> anyhow::Result<UnixListener> {
 
 /// Remove the socket [`listen_commands`] created.
 pub fn unlisten_commands(db: &Path) {
+    // The next listener removes any socket left behind.
     let _ = fs::remove_file(command_socket_path(db));
 }
 

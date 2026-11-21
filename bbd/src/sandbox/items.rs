@@ -334,6 +334,7 @@ impl Settings {
             else {
                 continue;
             };
+            // As documented above, a later build may have allowed this mode.
             let _ = settings.set(item, Some(mode));
         }
         settings

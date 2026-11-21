@@ -63,12 +63,13 @@
 //! leaves the sandbox, whatever its items say.
 
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     io::{BufRead as _, BufReader, Write as _},
     os::fd::AsRawFd as _,
     process::ChildStdin,
     sync::{
-        Arc, Condvar, Mutex, MutexGuard, OnceLock,
+        Arc, Condvar, Mutex, MutexGuard, OnceLock, TryLockError,
         atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant},
@@ -78,6 +79,7 @@ use anyhow::Context as _;
 
 use super::{
     Effect, Entry, Resumed, Status,
+    gate::FailureLog,
     items::{self, OpMode, Settings},
 };
 use crate::helper;
@@ -216,6 +218,7 @@ struct State {
     /// Recovery commands still to send, including when the pipe filled
     /// or a change was in progress for a UID.
     pending_verifications: BTreeSet<u32>,
+    rollback_errors: FailureLog,
     /// Initial checks are in progress while replies arrive. After the
     /// regular command deadline without progress, an absent answer is
     /// reported as unavailable.
@@ -270,9 +273,17 @@ impl State {
             .context("the app ops helper takes no commands")
     }
 
+    fn rollback(&mut self, line: &str) {
+        if let Err(e) = self.send(line) {
+            self.rollback_errors.log(format_args!(
+                "cannot roll back app ops with the helper: {e:#}"
+            ));
+        }
+    }
+
     /// Have the helper look at the ops of `uid` and hold it to what it is
     /// held to here. Nothing for a uid not held, or one a command is
-    /// changing.
+    /// changing. A start held only for its mounts can have no ops to check.
     fn verify(&mut self, uid: u32) -> anyhow::Result<()> {
         if self.asking != Some(uid)
             && let Some(targets) = self.guarded.get(&uid)
@@ -468,6 +479,7 @@ impl AppOps {
     /// killed before that write would give back the state from before the
     /// user's choice.
     pub fn on_found(&self, wake: impl Fn() + Send + Sync + 'static) {
+        // The original callback belongs to the only consumer.
         let _ = self.shared.on_found.set(Box::new(wake));
     }
 
@@ -485,11 +497,20 @@ impl AppOps {
     /// again on its own every minute.
     pub fn verifier(&self) -> impl Fn(u32) + Send + 'static {
         let shared = self.shared.clone();
+        let errors = RefCell::new(FailureLog::default());
         move |uid| {
-            // An app held at the gate for its mounts alone has no ops to
-            // look at.
-            if let Ok(mut state) = shared.state.try_lock() {
-                let _ = state.verify(uid);
+            let result = match shared.state.try_lock() {
+                Ok(mut state) => state.verify(uid),
+                // The helper checks again on its own, so admission need not wait.
+                Err(TryLockError::WouldBlock) => return,
+                Err(TryLockError::Poisoned(_)) => {
+                    Err(anyhow::anyhow!("the app ops state lock is poisoned"))
+                }
+            };
+            if let Err(e) = result {
+                errors
+                    .borrow_mut()
+                    .log(format_args!("cannot request app ops verification: {e:#}"));
             }
         }
     }
@@ -850,7 +871,9 @@ impl Effect for AppOps {
             failed => {
                 // It may have set them all the same, or be about to: a
                 // helper that is there puts back what it saved itself.
-                let _ = self.shared.state().send(&Command::Release(uid).to_string());
+                self.shared
+                    .state()
+                    .rollback(&Command::Release(uid).to_string());
                 self.shared.rest_if_unused();
                 failed?;
                 anyhow::bail!("the system did not take the app ops")
@@ -946,7 +969,7 @@ impl Effect for AppOps {
             failed => {
                 // It may have applied them all the same, or be about to:
                 // what was held is held again.
-                let _ = self.shared.state().send(&back);
+                self.shared.state().rollback(&back);
                 failed?;
                 anyhow::bail!("the system did not take the app ops")
             }

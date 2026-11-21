@@ -133,6 +133,7 @@ impl Identity {
     }
 
     fn live_status(&self) -> Option<String> {
+        // A missing or unverifiable status cannot establish that the hook is active.
         let text = fs::read_to_string(&self.status).ok()?;
         let pid: u32 = text
             .lines()
@@ -311,6 +312,7 @@ impl Effect for Identity {
     }
 
     fn report(&self, status: &mut Status) {
+        // Without the boot ID, the granular status must default to unavailable.
         let boot = fs::read_to_string(BOOT_ID).unwrap_or_default();
         status.hook = self
             .live_status()

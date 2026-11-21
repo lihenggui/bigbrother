@@ -123,6 +123,7 @@ pub struct Auto {
     /// How long into a look apps are still put in.
     look_wait: Duration,
     failures: FailureLog,
+    switch_errors: super::gate::FailureLog,
     #[cfg(test)]
     user_data_fixture: Option<PathBuf>,
 }
@@ -191,6 +192,7 @@ impl Auto {
             told_apps: BTreeSet::new(),
             look_wait: DISABLE_ALL_WAIT,
             failures: FailureLog::default(),
+            switch_errors: super::gate::FailureLog::default(),
             #[cfg(test)]
             user_data_fixture: None,
         })
@@ -208,8 +210,12 @@ impl Auto {
             Err(e) => {
                 // A known app missing from the maps could never start.
                 // Better hold none: new apps are still found by the watch.
-                let _ = kernel.switch.set(0, &0, 0);
-                eprintln!("bbd: sandbox: starts of new apps are not held: {e:#}");
+                match kernel.switch.set(0, &0, 0) {
+                    Ok(()) => eprintln!("bbd: sandbox: starts of new apps are not held: {e:#}"),
+                    Err(switch) => self.switch_errors.log(format_args!(
+                        "cannot stop holding starts of new apps after a map sync failure: {switch:?} ({e:#})"
+                    )),
+                }
                 false
             }
         };
@@ -847,6 +853,8 @@ struct Inotify {
     users_dir: PathBuf,
     /// The watches of each user's data directory.
     user_dirs: BTreeSet<i32>,
+    /// Failures already reported while this watch is armed.
+    failed_user_dirs: BTreeSet<Vec<u8>>,
 }
 
 impl Watch {
@@ -936,6 +944,7 @@ impl Inotify {
             users,
             users_dir: users_dir.to_path_buf(),
             user_dirs: BTreeSet::new(),
+            failed_user_dirs: BTreeSet::new(),
         };
         inotify.watch_users();
         Ok(inotify)
@@ -961,8 +970,16 @@ impl Inotify {
             return;
         }
         let dir = self.users_dir.join(std::ffi::OsStr::from_bytes(name));
-        if let Ok(wd) = add_watch(self.fd.get_ref(), &dir, USER_MASK) {
-            self.user_dirs.insert(wd);
+        match add_watch(self.fd.get_ref(), &dir, USER_MASK) {
+            Ok(wd) => {
+                self.user_dirs.insert(wd);
+            }
+            Err(e) if !self.failed_user_dirs.contains(name) => {
+                self.failed_user_dirs.insert(name.to_vec());
+                let user = String::from_utf8_lossy(name);
+                eprintln!("bbd: sandbox: cannot watch for installed apps for user {user}: {e}");
+            }
+            Err(_) => {}
         }
     }
 
@@ -1421,6 +1438,23 @@ mod tests {
             }
             Err(_) => false,
         }
+    }
+
+    #[tokio::test]
+    async fn a_failed_user_watch_is_reported_once_and_can_still_be_added() {
+        let f = Fixture::new("auto-watch-failure");
+        let (system, users) = layout(&f);
+        let mut watch = Inotify::new(&system, &users).unwrap();
+        let watched = watch.user_dirs.len();
+
+        watch.watch_user(b"10");
+        watch.watch_user(b"10");
+        assert_eq!(watch.failed_user_dirs, BTreeSet::from([b"10".to_vec()]));
+        assert_eq!(watch.user_dirs.len(), watched);
+
+        std::fs::create_dir(users.join("10")).unwrap();
+        watch.watch_user(b"10");
+        assert_eq!(watch.user_dirs.len(), watched + 1);
     }
 
     #[tokio::test]
