@@ -26,6 +26,8 @@ on:
       - android/settings.gradle.kts
       - .github/actions/setup/**
       - .github/workflows/device.yml
+      # A change to the guides alone cannot change what runs on a device.
+      - "!**/*.md"
 
 permissions:
   contents: read

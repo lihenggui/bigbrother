@@ -17,6 +17,8 @@ on:
       - Cargo.toml
       - scripts/check-kernels.sh
       - .github/workflows/kernels.yml
+      # A change to the guides alone cannot change what the kernels run.
+      - "!**/*.md"
   pull_request:
     paths: *paths
   workflow_dispatch:
