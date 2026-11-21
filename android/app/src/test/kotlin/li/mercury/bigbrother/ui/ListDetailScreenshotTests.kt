@@ -332,6 +332,7 @@ class ListDetailScreenshotTests {
                 GetAppRecordsUseCase(TestAccessRepository(apps = records.apps), appInfoRepository),
                 GetAppVisibilityUseCase(settings, ApplicationProvider.getApplicationContext<Application>().packageName),
                 settings,
+                Dispatchers.Unconfined,
             )
         }
         val detailViewModel = remember {

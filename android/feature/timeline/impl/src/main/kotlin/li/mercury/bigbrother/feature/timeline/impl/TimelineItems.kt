@@ -21,6 +21,8 @@ import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.model.TimelineEntry
 import li.mercury.bigbrother.core.ui.DataCategory
 import li.mercury.bigbrother.core.ui.dataCategoryOf
+import java.time.Instant
+import java.time.ZoneId
 
 /** What the timeline shows. */
 data class TimelineFilter(
@@ -103,3 +105,19 @@ fun rangeCovering(entry: TimelineEntry, now: Long): TimeRange {
         .firstOrNull { age <= it.hours * 3600L }
         ?: TimeRange.ALL
 }
+
+internal data class TimelinePresentation(
+    val state: TimelineUiState = TimelineUiState(),
+    val filter: TimelineFilter = TimelineFilter(),
+    val items: List<TimelineItem>? = null,
+)
+
+internal fun TimelineUiState.present(filter: TimelineFilter, zone: ZoneId): TimelinePresentation = TimelinePresentation(
+    state = this,
+    filter = filter,
+    items = entries?.let { records ->
+        timelineItems(records, filter) { ts ->
+            Instant.ofEpochSecond(ts).atZone(zone).toLocalDate().atStartOfDay(zone).toEpochSecond()
+        }
+    },
+)

@@ -17,9 +17,9 @@
 package li.mercury.bigbrother.feature.jail.impl
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
@@ -50,6 +50,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -60,6 +61,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -71,12 +73,12 @@ import li.mercury.bigbrother.core.designsystem.icon.CageIcons
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
+import li.mercury.bigbrother.core.model.SandboxedApp
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.appNameWithUser
 import li.mercury.bigbrother.core.ui.failureReason
-import li.mercury.bigbrother.core.ui.relativeTime
 import li.mercury.bigbrother.feature.jail.impl.network.NetworkSectionActions
 import li.mercury.bigbrother.feature.jail.impl.network.networkSection
 import li.mercury.bigbrother.core.ui.R as UiR
@@ -97,7 +99,7 @@ fun JailAppScreen(
         val watch = viewModel.watchAppOps()
         onPauseOrDispose { watch.cancel() }
     }
-    LaunchedEffect(state.left) { if (state.left) onLeave() }
+    LeavingContent(state.left, onLeave)
     JailAppScreen(
         state = state,
         showBack = !LocalShowsDetailBesideList.current,
@@ -144,21 +146,16 @@ internal fun JailAppScreen(
         containerColor = background,
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
-            MediumFlexibleTopAppBar(
-                title = { Text(appNameWithUser(state.name, state.otherUser)) },
-                subtitle = { Text(state.packageName) },
-                navigationIcon = {
-                    if (showBack) {
-                        IconButton(onClick = onBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(UiR.string.back))
-                        }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = background, scrolledContainerColor = background),
+            JailAppTopBar(
+                title = appNameWithUser(state.name, state.otherUser),
+                subtitle = state.packageName,
+                showBack = showBack,
+                background = background,
+                scrollBehavior = scrollBehavior,
+                onBack = onBack,
                 actions = {
                     if (state.app != null) IsolatedAppIcon(state.info, state.name, Modifier.padding(end = 16.dp))
                 },
-                scrollBehavior = scrollBehavior,
             )
         },
     ) { padding ->
@@ -175,98 +172,195 @@ internal fun JailAppScreen(
             else -> {
                 var expanded by rememberSaveable { mutableStateOf(initiallyExpanded) }
                 var showAll by rememberSaveable { mutableStateOf(false) }
-                // Not knowing what the app asks for, every item is listed as concerning it.
-                val concerned = state.requested?.let { requested -> ITEM_ORDER.filter { it.concerns(requested) } } ?: ITEM_ORDER
-                val others = ITEM_ORDER - concerned.toSet()
-                val row: LazyListScope.(List<SandboxItem>) -> Unit = { items ->
-                    items.forEachIndexed { index, item ->
-                        item(key = item.id) {
-                            ItemRow(
-                                item = item,
-                                mode = app.modeOf(item),
-                                choice = app.settings[item],
-                                globalMode = state.global[item] ?: SandboxMode.ON,
-                                unmet = app.unmet[item].orEmpty(),
-                                appOpsChecking = app.appOpsChecking,
-                                expanded = expanded == item,
-                                onExpandedChange = { open -> expanded = if (open) item else null },
-                                onCheckedChange = { on -> onSetOn(item, on) },
-                                onChoose = { mode -> onChoose(item, mode) },
-                                index = index,
-                                count = items.size,
-                                modifier = Modifier.animateItem(),
-                            )
-                        }
-                    }
+                JailAppItems(
+                    state = state,
+                    app = app,
+                    padding = padding,
+                    expanded = expanded,
+                    showAll = showAll,
+                    onExpand = { expanded = it },
+                    onToggleShowAll = { showAll = !showAll },
+                    onRelease = onRelease,
+                    onOpenRecords = onOpenRecords,
+                    onOpenNetwork = onOpenNetwork,
+                    onReset = onReset,
+                    onSetOn = onSetOn,
+                    onChoose = onChoose,
+                    onAllowNetwork = onAllowNetwork,
+                    onSetRecording = onSetRecording,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LeavingContent(left: Boolean, onLeave: () -> Unit) {
+    LaunchedEffect(left) { if (left) onLeave() }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+internal fun JailAppTopBar(
+    title: String,
+    subtitle: String,
+    showBack: Boolean,
+    background: Color,
+    scrollBehavior: TopAppBarScrollBehavior,
+    onBack: () -> Unit,
+    actions: @Composable RowScope.() -> Unit = {},
+) {
+    MediumFlexibleTopAppBar(
+        title = { Text(title) },
+        subtitle = { Text(subtitle) },
+        navigationIcon = {
+            if (showBack) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(UiR.string.back))
                 }
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .wrapContentWidth(Alignment.CenterHorizontally)
-                        .widthIn(max = 840.dp),
-                    contentPadding = PaddingValues(
-                        start = 16.dp,
-                        end = 16.dp,
-                        top = padding.calculateTopPadding(),
-                        bottom = 24.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(),
-                    ),
-                    verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
-                ) {
-                    item(key = "header") {
-                        Actions(onRelease = onRelease, onOpenRecords = { onOpenRecords(app.uid, app.packageName) })
-                    }
-                    item(key = "items") {
-                        Row {
-                            SectionHeader(
-                                stringResource(R.string.jail_section_items),
-                                Modifier
-                                    .weight(1f)
-                                    .alignByBaseline(),
-                            )
-                            if (app.settings.keys.any { it in ITEM_ORDER }) {
-                                TextButton(onClick = onReset, modifier = Modifier.alignByBaseline()) {
-                                    Text(stringResource(R.string.jail_reset))
-                                }
-                            }
-                        }
-                    }
-                    item(key = "summary") { Note(stringResource(R.string.jail_items_summary)) }
-                    row(concerned)
-                    if (others.isNotEmpty()) {
-                        item(key = "more") {
-                            TextButton(onClick = { showAll = !showAll }, modifier = Modifier.fillMaxWidth()) {
-                                Text(
-                                    if (showAll) {
-                                        stringResource(R.string.jail_fewer_items)
-                                    } else {
-                                        pluralStringResource(R.plurals.jail_more_items, others.size, others.size)
-                                    },
-                                )
-                                Spacer(Modifier.size(6.dp))
-                                Icon(Icons.Outlined.ExpandMore, contentDescription = null, modifier = Modifier.rotate(if (showAll) 180f else 0f))
-                            }
-                        }
-                        if (showAll) row(others)
-                    }
-                    networkSection(
-                        app = app,
-                        globalMode = state.global[SandboxItem.NETWORK] ?: SandboxItem.NETWORK.default,
-                        requested = state.requested,
-                        destinations = state.destinations,
-                        destinationsFailure = state.destinationsFailure,
-                        expanded = expanded == SandboxItem.NETWORK,
-                        actions = NetworkSectionActions(
-                            onExpandedChange = { open -> expanded = if (open) SandboxItem.NETWORK else null },
-                            onSetAllowed = onAllowNetwork,
-                            onChoose = { mode -> onChoose(SandboxItem.NETWORK, mode) },
-                            onSetRecording = onSetRecording,
-                            onOpenActivity = { onOpenNetwork(app.uid, app.packageName) },
-                        ),
-                    )
-                    item(key = "restart") { Note(stringResource(R.string.jail_restart_note), Modifier.padding(top = 8.dp)) }
+            }
+        },
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = background, scrolledContainerColor = background),
+        actions = actions,
+        scrollBehavior = scrollBehavior,
+    )
+}
+
+@Composable
+private fun JailAppItems(
+    state: JailAppUiState,
+    app: SandboxedApp,
+    padding: PaddingValues,
+    expanded: SandboxItem?,
+    showAll: Boolean,
+    onExpand: (SandboxItem?) -> Unit,
+    onToggleShowAll: () -> Unit,
+    onRelease: () -> Unit,
+    onOpenRecords: (uid: Int, packageName: String) -> Unit,
+    onOpenNetwork: (uid: Int, packageName: String) -> Unit,
+    onReset: () -> Unit,
+    onSetOn: (SandboxItem, Boolean) -> Unit,
+    onChoose: (SandboxItem, SandboxMode?) -> Unit,
+    onAllowNetwork: (Boolean) -> Unit,
+    onSetRecording: (Boolean) -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .wrapContentWidth(Alignment.CenterHorizontally)
+            .widthIn(max = 840.dp),
+        contentPadding = PaddingValues(
+            start = 16.dp,
+            end = 16.dp,
+            top = padding.calculateTopPadding(),
+            bottom = 24.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(),
+        ),
+        verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
+    ) {
+        item(key = "header") {
+            Actions(onRelease = onRelease, onOpenRecords = { onOpenRecords(app.uid, app.packageName) })
+        }
+        jailAppItemSection(state, app, expanded, showAll, onExpand, onToggleShowAll, onSetOn, onChoose, onReset)
+        networkSection(
+            app = app,
+            globalMode = state.global[SandboxItem.NETWORK] ?: SandboxItem.NETWORK.default,
+            requested = state.requested,
+            destinations = state.destinations,
+            destinationsFailure = state.destinationsFailure,
+            expanded = expanded == SandboxItem.NETWORK,
+            actions = NetworkSectionActions(
+                onExpandedChange = { open -> onExpand(SandboxItem.NETWORK.takeIf { open }) },
+                onSetAllowed = onAllowNetwork,
+                onChoose = { mode -> onChoose(SandboxItem.NETWORK, mode) },
+                onSetRecording = onSetRecording,
+                onOpenActivity = { onOpenNetwork(app.uid, app.packageName) },
+            ),
+        )
+        item(key = "restart") { Note(stringResource(R.string.jail_restart_note), Modifier.padding(top = 8.dp)) }
+    }
+}
+
+private fun LazyListScope.jailAppItemSection(
+    state: JailAppUiState,
+    app: SandboxedApp,
+    expanded: SandboxItem?,
+    showAll: Boolean,
+    onExpand: (SandboxItem?) -> Unit,
+    onToggleShowAll: () -> Unit,
+    onSetOn: (SandboxItem, Boolean) -> Unit,
+    onChoose: (SandboxItem, SandboxMode?) -> Unit,
+    onReset: () -> Unit,
+) {
+    // Not knowing what the app asks for, every item is listed as concerning it.
+    val concerned = state.requested?.let { requested -> ITEM_ORDER.filter { it.concerns(requested) } } ?: ITEM_ORDER
+    val others = ITEM_ORDER - concerned.toSet()
+    item(key = "items") {
+        Row {
+            SectionHeader(
+                stringResource(R.string.jail_section_items),
+                Modifier
+                    .weight(1f)
+                    .alignByBaseline(),
+            )
+            if (app.settings.keys.any { it in ITEM_ORDER }) {
+                TextButton(onClick = onReset, modifier = Modifier.alignByBaseline()) {
+                    Text(stringResource(R.string.jail_reset))
                 }
             }
         }
+    }
+    item(key = "summary") { Note(stringResource(R.string.jail_items_summary)) }
+    jailItemRows(concerned, state, app, expanded, onExpand, onSetOn, onChoose)
+    if (others.isNotEmpty()) {
+        item(key = "more") {
+            ShowAllToggle(showAll, others.size, onToggleShowAll)
+        }
+        if (showAll) jailItemRows(others, state, app, expanded, onExpand, onSetOn, onChoose)
+    }
+}
+
+private fun LazyListScope.jailItemRows(
+    items: List<SandboxItem>,
+    state: JailAppUiState,
+    app: SandboxedApp,
+    expanded: SandboxItem?,
+    onExpand: (SandboxItem?) -> Unit,
+    onSetOn: (SandboxItem, Boolean) -> Unit,
+    onChoose: (SandboxItem, SandboxMode?) -> Unit,
+) {
+    items.forEachIndexed { index, item ->
+        item(key = item.id) {
+            ItemRow(
+                item = item,
+                mode = app.modeOf(item),
+                choice = app.settings[item],
+                globalMode = state.global[item] ?: SandboxMode.ON,
+                unmet = app.unmet[item].orEmpty(),
+                appOpsChecking = app.appOpsChecking,
+                expanded = expanded == item,
+                onExpandedChange = { open -> onExpand(item.takeIf { open }) },
+                onCheckedChange = { on -> onSetOn(item, on) },
+                onChoose = { mode -> onChoose(item, mode) },
+                index = index,
+                count = items.size,
+                modifier = Modifier.animateItem(),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ShowAllToggle(showAll: Boolean, count: Int, onClick: () -> Unit) {
+    TextButton(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+        Text(
+            if (showAll) {
+                stringResource(R.string.jail_fewer_items)
+            } else {
+                pluralStringResource(R.plurals.jail_more_items, count, count)
+            },
+        )
+        Spacer(Modifier.size(6.dp))
+        Icon(Icons.Outlined.ExpandMore, contentDescription = null, modifier = Modifier.rotate(if (showAll) 180f else 0f))
     }
 }
 

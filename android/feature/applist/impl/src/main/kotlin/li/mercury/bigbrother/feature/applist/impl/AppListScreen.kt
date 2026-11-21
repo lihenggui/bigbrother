@@ -48,7 +48,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -67,23 +69,12 @@ import li.mercury.bigbrother.core.ui.MenuOption
 import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.UserSettingsWriter
-import li.mercury.bigbrother.core.ui.appDisplayName
 import li.mercury.bigbrother.core.ui.categoriesSummary
 import li.mercury.bigbrother.core.ui.categoryDetail
-import li.mercury.bigbrother.core.ui.dataCategories
 import li.mercury.bigbrother.core.ui.label
-import li.mercury.bigbrother.core.ui.readFiles
 import li.mercury.bigbrother.core.ui.rememberSettingsWriteSnackbar
 import li.mercury.bigbrother.core.ui.shortTime
 import li.mercury.bigbrother.core.ui.R as UiR
-
-/** How the app list is ordered. */
-private enum class SortOrder(val label: Int) {
-    /** Apps that read files first, then by their most sensitive category, most recent first within. */
-    SENSITIVITY(R.string.sort_sensitivity),
-    RECENT(R.string.sort_recent),
-    NAME(R.string.sort_name),
-}
 
 @Composable
 fun AppListScreen(
@@ -91,14 +82,23 @@ fun AppListScreen(
     onOpenApp: (app: AppSummary, range: TimeRange, category: DataCategory?) -> Unit,
     viewModel: AppListViewModel,
 ) {
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    var sort by rememberSaveable { mutableStateOf(SortOrder.SENSITIVITY) }
+    var category by rememberSaveable { mutableStateOf<DataCategory?>(null) }
+    val resources = LocalResources.current
+    val configuration = LocalConfiguration.current
+    val lists = remember(viewModel, resources, configuration) {
+        viewModel.present(snapshotFlow { AppListFilter(sort, category) }, resources)
+    }
+    val presentation by lists.collectAsStateWithLifecycle(initialValue = AppListPresentation())
     // Records keep accumulating in the background, so reload on return.
     LifecycleResumeEffect(Unit) {
         viewModel.refreshIfStale()
         onPauseOrDispose {}
     }
     AppListScreen(
-        state = uiState,
+        presentation = presentation,
+        onSort = { sort = it },
+        onCategory = { category = it },
         selectedUid = selectedUid,
         onRange = viewModel::setRange,
         onRefresh = viewModel::refresh,
@@ -108,23 +108,12 @@ fun AppListScreen(
     )
 }
 
-/** An app with the categories of private data it accessed, computed once per load. */
-private class Entry(val app: AppSummary, val categories: List<DataCategory>) {
-    /**
-     * Position in the sensitivity order: apps that read the user's files
-     * lead; the rest follow their most sensitive other category. Merely
-     * looking for files, which nearly every app does, does not count.
-     */
-    val rank: Int = when {
-        app.readFiles -> DataCategory.FILES.ordinal
-        else -> categories.firstOrNull { it != DataCategory.FILES }?.ordinal ?: DataCategory.FILES.ordinal
-    }
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun AppListScreen(
-    state: AppListUiState,
+    presentation: AppListPresentation,
+    onSort: (SortOrder) -> Unit,
+    onCategory: (DataCategory?) -> Unit,
     selectedUid: Int?,
     onRange: (TimeRange) -> Unit,
     onRefresh: () -> Unit,
@@ -132,9 +121,8 @@ internal fun AppListScreen(
     onShowSystemApps: (Boolean) -> Unit,
     onSettingsWriteResult: (UserSettingsWriter.Failure, Boolean) -> Unit = { _, _ -> },
 ) {
-    val entries = remember(state.apps) { state.apps?.map { Entry(it, it.dataCategories()) } }
-    var sort by rememberSaveable { mutableStateOf(SortOrder.SENSITIVITY) }
-    var category by rememberSaveable { mutableStateOf<DataCategory?>(null) }
+    val (state, filter, groups, categories) = presentation
+    val (sort, category) = filter
     val snackbar = rememberSettingsWriteSnackbar(state.message, onSettingsWriteResult)
 
     Scaffold(
@@ -146,15 +134,15 @@ internal fun AppListScreen(
                 .fillMaxSize()
                 .padding(top = padding.calculateTopPadding()),
         ) {
-            if (state.failure == null && entries != null) {
+            if (state.failure == null && groups != null) {
                 Filters(
                     range = state.range,
                     onRange = onRange,
-                    entries = entries,
+                    present = categories,
                     category = category,
-                    onCategory = { category = it },
+                    onCategory = onCategory,
                     sort = sort,
-                    onSort = { sort = it },
+                    onSort = onSort,
                     showSystemApps = state.showSystemApps,
                     onShowSystemApps = onShowSystemApps,
                 )
@@ -167,10 +155,10 @@ internal fun AppListScreen(
                 when {
                     state.failure != null -> LoadFailureMessage(state.failure, onRetry = onRefresh)
 
-                    entries == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
+                    groups == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
 
                     else -> AppList(
-                        entries = entries,
+                        groups = groups,
                         appInfo = state.appInfo,
                         sort = sort,
                         category = category,
@@ -194,7 +182,7 @@ internal fun AppListScreen(
 private fun Filters(
     range: TimeRange,
     onRange: (TimeRange) -> Unit,
-    entries: List<Entry>,
+    present: List<DataCategory>,
     category: DataCategory?,
     onCategory: (DataCategory?) -> Unit,
     sort: SortOrder,
@@ -202,11 +190,6 @@ private fun Filters(
     showSystemApps: Boolean,
     onShowSystemApps: (Boolean) -> Unit,
 ) {
-    // A category stays in the menu when nothing is left in it, so that the
-    // filter can always be cleared where it was set.
-    val present = remember(entries, category) {
-        DataCategory.entries.filter { c -> c == category || entries.any { c in it.categories } }
-    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -253,7 +236,7 @@ private fun Filters(
 
 @Composable
 private fun AppList(
-    entries: List<Entry>,
+    groups: List<Pair<Int?, List<AppListEntry>>>,
     appInfo: Map<String, AppInfo>,
     sort: SortOrder,
     category: DataCategory?,
@@ -263,26 +246,6 @@ private fun AppList(
     onOpen: (AppSummary) -> Unit,
     onShowSystemApps: () -> Unit,
 ) {
-    val resources = LocalResources.current
-    val shown = remember(entries, appInfo, sort, category) {
-        val matching = entries.filter { category == null || category in it.categories }
-        when (sort) {
-            SortOrder.SENSITIVITY -> matching.sortedWith(compareBy<Entry> { it.rank }.thenByDescending { it.app.lastSeen })
-
-            // The daemon already lists the most recent first.
-            SortOrder.RECENT -> matching
-
-            SortOrder.NAME -> matching.sortedBy { appDisplayName(it.app, appInfo[it.app.packageName], resources).lowercase() }
-        }
-    }
-    // In sensitivity order the apps that read files form a group of their
-    // own, which says why they come first.
-    val groups: List<Pair<Int?, List<Entry>>> = if (sort == SortOrder.SENSITIVITY && category == null) {
-        val (read, other) = shown.partition { it.app.readFiles }
-        listOf(R.plurals.list_group_read_files to read, R.plurals.list_group_other to other).filter { it.second.isNotEmpty() }
-    } else {
-        listOf(null to shown)
-    }
     // A different filter or order is a different list: start it at the top
     // instead of keeping whichever row happened to be first.
     val listState = rememberSaveable(sort, category, showSystemApps, saver = LazyListState.Saver) { LazyListState() }
@@ -293,21 +256,9 @@ private fun AppList(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp + bottomInset),
         verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
     ) {
-        if (shown.isEmpty()) {
+        if (groups.all { (_, members) -> members.isEmpty() }) {
             item(key = "empty") {
-                val modifier = Modifier.fillParentMaxHeight(0.7f)
-                if (hiddenApps > 0 && category == null) {
-                    // There are records, but only for apps that are hidden.
-                    Message(
-                        title = stringResource(R.string.only_system_apps),
-                        body = "",
-                        modifier = modifier,
-                        actionLabel = stringResource(R.string.show_system_apps),
-                        onAction = onShowSystemApps,
-                    )
-                } else {
-                    Message(stringResource(UiR.string.empty_title), "", modifier)
-                }
+                EmptyAppList(hiddenApps, category, onShowSystemApps, Modifier.fillParentMaxHeight(0.7f))
             }
         }
         for ((title, members) in groups) {
@@ -334,5 +285,21 @@ private fun AppList(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun EmptyAppList(hiddenApps: Int, category: DataCategory?, onShowSystemApps: () -> Unit, modifier: Modifier = Modifier) {
+    if (hiddenApps > 0 && category == null) {
+        // There are records, but only for apps that are hidden.
+        Message(
+            title = stringResource(R.string.only_system_apps),
+            body = "",
+            modifier = modifier,
+            actionLabel = stringResource(R.string.show_system_apps),
+            onAction = onShowSystemApps,
+        )
+    } else {
+        Message(stringResource(UiR.string.empty_title), "", modifier)
     }
 }
