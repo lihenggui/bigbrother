@@ -341,6 +341,7 @@ class ListDetailScreenshotTests {
                 installedAppRepository = TestInstalledAppRepository(),
                 sandboxRepository = TestSandboxRepository(),
                 ownPackage = ApplicationProvider.getApplicationContext<Application>().packageName,
+                currentUserId = 0,
                 defaultDispatcher = Dispatchers.Unconfined,
                 uid = DemoApp.WEATHER.uid,
                 packageName = DemoApp.WEATHER.packageName,

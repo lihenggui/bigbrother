@@ -55,7 +55,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import li.mercury.bigbrother.core.data.repository.UserSettingsWriter
 import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
@@ -67,6 +66,7 @@ import li.mercury.bigbrother.core.ui.MenuFilterChip
 import li.mercury.bigbrother.core.ui.MenuOption
 import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.SectionHeader
+import li.mercury.bigbrother.core.ui.UserSettingsWriter
 import li.mercury.bigbrother.core.ui.appDisplayName
 import li.mercury.bigbrother.core.ui.categoriesSummary
 import li.mercury.bigbrother.core.ui.categoryDetail
@@ -92,7 +92,6 @@ fun AppListScreen(
     viewModel: AppListViewModel,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val settingsWriteFailures by viewModel.settingsWriteFailures.collectAsStateWithLifecycle()
     // Records keep accumulating in the background, so reload on return.
     LifecycleResumeEffect(Unit) {
         viewModel.refreshIfStale()
@@ -105,8 +104,7 @@ fun AppListScreen(
         onRefresh = viewModel::refresh,
         onOpen = onOpenApp,
         onShowSystemApps = viewModel::setShowSystemApps,
-        settingsWriteFailure = settingsWriteFailures.firstOrNull(),
-        onSettingsWriteResult = viewModel::resolveSettingsWrite,
+        onSettingsWriteResult = viewModel::onMessageShown,
     )
 }
 
@@ -132,13 +130,12 @@ internal fun AppListScreen(
     onRefresh: () -> Unit,
     onOpen: (AppSummary, TimeRange, DataCategory?) -> Unit,
     onShowSystemApps: (Boolean) -> Unit,
-    settingsWriteFailure: UserSettingsWriter.Failure? = null,
     onSettingsWriteResult: (UserSettingsWriter.Failure, Boolean) -> Unit = { _, _ -> },
 ) {
     val entries = remember(state.apps) { state.apps?.map { Entry(it, it.dataCategories()) } }
     var sort by rememberSaveable { mutableStateOf(SortOrder.SENSITIVITY) }
     var category by rememberSaveable { mutableStateOf<DataCategory?>(null) }
-    val snackbar = rememberSettingsWriteSnackbar(settingsWriteFailure, onSettingsWriteResult)
+    val snackbar = rememberSettingsWriteSnackbar(state.message, onSettingsWriteResult)
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surfaceContainer,

@@ -22,10 +22,15 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import li.mercury.bigbrother.core.data.RecordsException
@@ -79,42 +84,54 @@ class DestinationViewModel @AssistedInject constructor(
     }
 
     private val userId = userIdOf(uid)
-    private val _uiState = MutableStateFlow(DestinationUiState(target = NetworkTarget.fromId(target)))
-    val uiState: StateFlow<DestinationUiState> = _uiState.asStateFlow()
+    private val target = NetworkTarget.fromId(target)
+    private val load = MutableStateFlow(DestinationUiState(target = this.target))
+    private val refreshes = MutableStateFlow(0L)
+    private var completed: Pair<Long, Int>? = null
 
-    init {
-        refresh()
-        viewModelScope.launch { networkRepository.changes.drop(1).collect { refresh() } }
-    }
+    val uiState: StateFlow<DestinationUiState> = channelFlow {
+        launch {
+            combine(refreshes, networkRepository.changes, ::Pair).collectLatest { request ->
+                if (request != completed) {
+                    read()
+                    completed = request
+                }
+            }
+        }
+        load.collect { send(it) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), load.value)
 
     fun refresh() {
-        val target = _uiState.value.target
+        refreshes.update { it + 1 }
+    }
+
+    private suspend fun read() {
+        val target = target
         if (target == null) {
-            // Not a destination this build knows: said, not waited for.
-            _uiState.update { it.copy(failure = RecordsException.CommandFailed("unknown destination").toLoadFailure()) }
+            load.update { it.copy(failure = RecordsException.CommandFailed("unknown destination").toLoadFailure()) }
             return
         }
-        viewModelScope.launch {
-            try {
-                val since = range.since(System.currentTimeMillis() / 1000)
-                val detail = networkRepository.getDestination(packageName, userId, target, since, range.bucketSize)
-                // What blocking a domain does besides is found among the app's other destinations.
-                val activity = if (target is NetworkTarget.Domain) {
-                    networkRepository.getActivity(packageName, userId, since, bucket = range.bucketSize)
-                } else {
-                    null
-                }
-                _uiState.update {
-                    it.copy(
-                        detail = detail,
-                        sharedWith = activity?.sharingAddressesWith(detail.destination).orEmpty(),
-                        ownResolver = activity?.addresses?.isNotEmpty() == true,
-                        failure = null,
-                    )
-                }
-            } catch (e: RecordsException) {
-                _uiState.update { it.copy(failure = e.toLoadFailure()) }
+        try {
+            val since = range.since(System.currentTimeMillis() / 1000)
+            val detail = networkRepository.getDestination(packageName, userId, target, since, range.bucketSize)
+            // What blocking a domain does besides is found among the app's other destinations.
+            val activity = if (target is NetworkTarget.Domain) {
+                networkRepository.getActivity(packageName, userId, since, bucket = range.bucketSize)
+            } else {
+                null
             }
+            currentCoroutineContext().ensureActive()
+            load.update {
+                it.copy(
+                    detail = detail,
+                    sharedWith = activity?.sharingAddressesWith(detail.destination).orEmpty(),
+                    ownResolver = activity?.addresses?.isNotEmpty() == true,
+                    failure = null,
+                )
+            }
+        } catch (e: RecordsException) {
+            currentCoroutineContext().ensureActive()
+            load.update { it.copy(failure = e.toLoadFailure()) }
         }
     }
 
@@ -127,25 +144,25 @@ class DestinationViewModel @AssistedInject constructor(
     }
 
     fun undo() {
-        val message = _uiState.value.message ?: return
-        _uiState.update { it.copy(message = null) }
+        val message = load.value.message ?: return
+        load.update { it.copy(message = null) }
         change(message.target, blocked = message is NetworkMessage.Unblocked, tell = false)
     }
 
     fun dismissMessage() {
-        _uiState.update { it.copy(message = null) }
+        load.update { it.copy(message = null) }
     }
 
     fun dismissError() {
-        _uiState.update { it.copy(error = null) }
+        load.update { it.copy(error = null) }
     }
 
     private fun change(target: NetworkTarget, blocked: Boolean, tell: Boolean = true) {
-        _uiState.update { it.copy(pending = it.pending + (target to blocked)) }
+        load.update { it.copy(pending = it.pending + (target to blocked)) }
         viewModelScope.launch {
             try {
                 if (blocked) networkRepository.block(packageName, userId, target) else networkRepository.unblock(packageName, userId, target)
-                _uiState.update { state ->
+                load.update { state ->
                     state.copy(
                         detail = state.detail?.let { it.copy(destination = it.destination.withRule(target, blocked)) },
                         pending = state.pending - target,
@@ -159,7 +176,7 @@ class DestinationViewModel @AssistedInject constructor(
                     )
                 }
             } catch (e: RecordsException) {
-                _uiState.update { it.copy(pending = it.pending - target, error = e.toLoadFailure()) }
+                load.update { it.copy(pending = it.pending - target, error = e.toLoadFailure()) }
             }
         }
     }

@@ -67,16 +67,15 @@ import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import li.mercury.bigbrother.core.data.repository.UserSettingsWriter
 import li.mercury.bigbrother.core.designsystem.component.SegmentedSwitchRow
 import li.mercury.bigbrother.core.ui.SectionHeader
+import li.mercury.bigbrother.core.ui.UserSettingsWriter
 import li.mercury.bigbrother.core.ui.rememberSettingsWriteSnackbar
 import li.mercury.bigbrother.core.ui.R as UiR
 
 @Composable
 fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val settingsWriteFailures by viewModel.settingsWriteFailures.collectAsStateWithLifecycle()
     LifecycleResumeEffect(Unit) {
         viewModel.refresh()
         onPauseOrDispose {}
@@ -95,8 +94,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel) {
         onUseDynamicColor = viewModel::setUseDynamicColor,
         onExportLogs = viewModel::exportLogs,
         onDismissLogExport = viewModel::dismissLogExport,
-        settingsWriteFailure = settingsWriteFailures.firstOrNull(),
-        onSettingsWriteResult = viewModel::resolveSettingsWrite,
+        onSettingsWriteResult = viewModel::onMessageShown,
     )
 }
 
@@ -124,7 +122,6 @@ internal fun SettingsScreen(
     onUseDynamicColor: (Boolean) -> Unit,
     onExportLogs: () -> Unit,
     onDismissLogExport: () -> Unit,
-    settingsWriteFailure: UserSettingsWriter.Failure? = null,
     onSettingsWriteResult: (UserSettingsWriter.Failure, Boolean) -> Unit = { _, _ -> },
 ) {
     val context = LocalContext.current
@@ -144,7 +141,7 @@ internal fun SettingsScreen(
     }
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val background = MaterialTheme.colorScheme.surfaceContainer
-    val snackbar = rememberSettingsWriteSnackbar(settingsWriteFailure, onSettingsWriteResult)
+    val snackbar = rememberSettingsWriteSnackbar(state.message, onSettingsWriteResult)
     Scaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         containerColor = background,

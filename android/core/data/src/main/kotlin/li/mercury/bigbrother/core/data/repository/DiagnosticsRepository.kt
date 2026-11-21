@@ -53,32 +53,30 @@ internal class ZipDiagnosticsRepository @Inject constructor(
     private val moduleRepository: ModuleRepository,
     @Dispatcher(IO) private val ioDispatcher: CoroutineDispatcher,
 ) : DiagnosticsRepository {
-    override suspend fun exportLogs(): File {
+    override suspend fun exportLogs(): File = withContext(ioDispatcher) {
         // Read through root before anything is written: each is optional,
         // and a device without root still gets the app's own log.
         val diagnostics = bbd.getDiagnostics()
         val moduleVersion = moduleRepository.installedVersion()
-        return withContext(ioDispatcher) {
-            val about = about(moduleVersion)
-            val directory = File(cacheDir, EXPORT_DIR)
-            // One export at a time: an earlier one has been shared, or not.
-            directory.deleteRecursively()
-            directory.mkdirs()
-            val name = "big-brother-logs-${LocalDateTime.now().format(FILE_TIME)}.zip"
-            val zip = File(directory, name)
-            ZipOutputStream(zip.outputStream().buffered()).use { out ->
-                out.add("about.txt", about)
-                diagnostics.log?.let { out.add("daemon/bbd.log", it) }
-                diagnostics.stats?.let { out.add("daemon/stats.json", it) }
-                File(filesDir, LOG_DIR).listFiles().orEmpty().sortedBy { it.name }.forEach { file ->
-                    out.putNextEntry(ZipEntry("app/${file.name}"))
-                    file.inputStream().use { it.copyTo(out) }
-                    out.closeEntry()
-                }
+        val about = about(moduleVersion)
+        val directory = File(cacheDir, EXPORT_DIR)
+        // One export at a time: an earlier one has been shared, or not.
+        directory.deleteRecursively()
+        directory.mkdirs()
+        val name = "big-brother-logs-${LocalDateTime.now().format(FILE_TIME)}.zip"
+        val zip = File(directory, name)
+        ZipOutputStream(zip.outputStream().buffered()).use { out ->
+            out.add("about.txt", about)
+            diagnostics.log?.let { out.add("daemon/bbd.log", it) }
+            diagnostics.stats?.let { out.add("daemon/stats.json", it) }
+            File(filesDir, LOG_DIR).listFiles().orEmpty().sortedBy { it.name }.forEach { file ->
+                out.putNextEntry(ZipEntry("app/${file.name}"))
+                file.inputStream().use { it.copyTo(out) }
+                out.closeEntry()
             }
-            Timber.i("Logs exported: %d KB", zip.length() / 1024)
-            zip
         }
+        Timber.i("Logs exported: %d KB", zip.length() / 1024)
+        zip
     }
 
     private fun about(moduleVersion: String?): String {

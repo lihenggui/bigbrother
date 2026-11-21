@@ -22,9 +22,15 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import li.mercury.bigbrother.core.data.RecordsException
@@ -68,34 +74,47 @@ class RecordViewModel @AssistedInject constructor(
     @Assisted("source") private val source: String,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(RecordUiState())
-    val uiState: StateFlow<RecordUiState> = _uiState.asStateFlow()
+    private val refreshes = MutableStateFlow(0L)
+    private var completed: Long? = null
 
-    init {
-        load()
-    }
-
-    fun retry() = load()
-
-    private fun load() {
-        _uiState.update { it.copy(failure = null, historyFailure = null) }
-        if (packageName.isNotEmpty()) {
-            viewModelScope.launch {
-                _uiState.update { it.copy(appInfo = appInfoRepository.getAppInfo(packageName)) }
+    val uiState: StateFlow<RecordUiState> = channelFlow {
+        launch {
+            refreshes.collectLatest { request ->
+                if (request != completed) {
+                    load()
+                    completed = request
+                }
             }
         }
-        viewModelScope.launch {
-            try {
-                val accesses = accessRepository.getAccesses(uid, null, range, MAX_ACCESSES, 0)
-                val group = groupByCategory(accesses).values.flatten()
-                    .firstOrNull { it.topic == topic && it.source.name == source }
-                _uiState.update { it.copy(group = group, loaded = true, failure = null) }
-                if (group != null) {
-                    if (group.topic == SENSORS && group.source == RecordSource.APP) loadSensorSessions()
-                    loadHistory(group)
-                }
-            } catch (e: RecordsException) {
-                _uiState.update { it.copy(loaded = true, failure = e.toLoadFailure()) }
+        _uiState.collect { send(it) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), RecordUiState())
+
+    fun retry() {
+        refreshes.update { it + 1 }
+    }
+
+    private suspend fun load(): Unit = coroutineScope {
+        _uiState.update { it.copy(failure = null, historyFailure = null) }
+        if (packageName.isNotEmpty()) {
+            launch {
+                val info = appInfoRepository.getAppInfo(packageName)
+                ensureActive()
+                _uiState.update { it.copy(appInfo = info) }
             }
+        }
+        try {
+            val accesses = accessRepository.getAccesses(uid, null, range, MAX_ACCESSES, 0)
+            ensureActive()
+            val group = groupByCategory(accesses).values.flatten()
+                .firstOrNull { it.topic == topic && it.source.name == source }
+            _uiState.update { it.copy(group = group, loaded = true, failure = null) }
+            if (group != null) {
+                if (group.topic == SENSORS && group.source == RecordSource.APP) loadSensorSessions()
+                loadHistory(group)
+            }
+        } catch (e: RecordsException) {
+            ensureActive()
+            _uiState.update { it.copy(loaded = true, failure = e.toLoadFailure()) }
         }
     }
 
@@ -108,8 +127,10 @@ class RecordViewModel @AssistedInject constructor(
         val paths = group.accesses.sortedByDescending { it.lastSeen }.map { it.path }.distinct()
         try {
             val periods = accessRepository.getHistory(uid, paths.take(MAX_HISTORY_PATHS), range).take(MAX_PERIODS)
+            currentCoroutineContext().ensureActive()
             _uiState.update { it.copy(periods = periods, partialHistory = paths.size > MAX_HISTORY_PATHS) }
         } catch (e: RecordsException) {
+            currentCoroutineContext().ensureActive()
             _uiState.update { it.copy(historyFailure = e.toLoadFailure()) }
         }
     }
@@ -124,6 +145,7 @@ class RecordViewModel @AssistedInject constructor(
         } catch (_: RecordsException) {
             null
         }
+        currentCoroutineContext().ensureActive()
         _uiState.update { it.copy(sensorSessions = sessions) }
     }
 

@@ -25,10 +25,16 @@ import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -53,6 +59,11 @@ data class FileDetails(
     val failure: LoadFailure? = null,
 )
 
+internal sealed interface FileAccessResult {
+    data class Granted(val path: String) : FileAccessResult
+    data object Denied : FileAccessResult
+}
+
 internal data class AppFilesUiState(
     val packageName: String,
     val appInfo: AppInfo? = null,
@@ -63,6 +74,7 @@ internal data class AppFilesUiState(
     val failure: LoadFailure? = null,
     /** Set while the details of one file are open. */
     val fileDetails: FileDetails? = null,
+    val fileAccessResult: FileAccessResult? = null,
 )
 
 @HiltViewModel(assistedFactory = AppFilesViewModel.Factory::class)
@@ -83,116 +95,154 @@ class AppFilesViewModel @AssistedInject constructor(
             query = savedState[QUERY] ?: "",
         ),
     )
-    internal val uiState: StateFlow<AppFilesUiState> = mutableUiState.asStateFlow()
+    private val refreshes = MutableStateFlow(0L)
+    private val files = MutableStateFlow<LoadedFiles?>(null)
+    private val filter = MutableStateFlow(BrowserFilter(query = browserQuery(), readOnly = savedState[READ_ONLY]))
+    private val detailsPath = MutableStateFlow<String?>(null)
+    private var completed: Long? = null
+    private var builtFor: Pair<LoadedFiles, BrowserFilter>? = null
+    private var fileAccessJob: Job? = null
 
-    private var loadJob: Job? = null
-    private var browserJob: Job? = null
-    private var detailsJob: Job? = null
-    private var files: List<Access>? = null
+    internal val uiState: StateFlow<AppFilesUiState> = channelFlow {
+        launch {
+            refreshes.collectLatest { request ->
+                if (request != completed) {
+                    load()
+                    completed = request
+                }
+            }
+        }
+        launch {
+            combine(files, filter, ::Pair).collectLatest { request ->
+                val (files, filter) = request
+                if (files != null && request != builtFor) buildBrowser(files, filter)
+            }
+        }
+        launch {
+            detailsPath.collectLatest { path ->
+                val details = mutableUiState.value.fileDetails
+                if (path != null && details?.periods == null && details?.failure == null) loadFileDetails(path)
+            }
+        }
+        mutableUiState.collect { send(it) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), mutableUiState.value)
 
-    init {
-        load()
+    fun retry() {
+        refreshes.update { it + 1 }
     }
 
-    fun retry() = load()
-
-    private fun load() {
-        loadJob?.cancel()
-        browserJob?.cancel()
-        files = null
+    private suspend fun load(): Unit = coroutineScope {
+        files.value = null
+        builtFor = null
         mutableUiState.update { it.copy(browser = null, truncated = false, failure = null) }
         val packageName = mutableUiState.value.packageName
-        loadJob = viewModelScope.launch {
-            if (packageName.isNotEmpty()) {
-                launch {
-                    val info = appInfoRepository.getAppInfo(packageName)
+        if (packageName.isNotEmpty()) {
+            launch {
+                val info = appInfoRepository.getAppInfo(packageName)
+                ensureActive()
+                mutableUiState.update { it.copy(appInfo = info) }
+            }
+        }
+        try {
+            // One request for everything so a folder can be assembled from all its paths.
+            val accesses = accessRepository.getAccesses(uid, null, range, MAX_ACCESSES, 0)
+            val loaded = withContext(defaultDispatcher) {
+                accesses.filter { access ->
                     ensureActive()
-                    mutableUiState.update { it.copy(appInfo = info) }
+                    access.isFile()
                 }
             }
-            try {
-                // One request for everything so a folder can be assembled from all its paths.
-                val accesses = accessRepository.getAccesses(uid, null, range, MAX_ACCESSES, 0)
-                files = withContext(defaultDispatcher) {
-                    accesses.filter { access ->
-                        ensureActive()
-                        access.isFile()
-                    }
-                }
-                ensureActive()
-                mutableUiState.update { it.copy(truncated = accesses.size == MAX_ACCESSES) }
-                buildBrowser()
-            } catch (e: RecordsException) {
-                ensureActive()
-                mutableUiState.update { it.copy(failure = e.toLoadFailure()) }
-            }
+            mutableUiState.update { it.copy(truncated = accesses.size == MAX_ACCESSES) }
+            files.value = LoadedFiles(loaded)
+        } catch (e: RecordsException) {
+            ensureActive()
+            mutableUiState.update { it.copy(failure = e.toLoadFailure()) }
         }
     }
 
     fun openSearch() {
         savedState[SEARCHING] = true
         mutableUiState.update { it.copy(searching = true) }
+        updateBrowserQuery()
     }
 
     fun closeSearch() {
-        val wasFiltering = mutableUiState.value.query.isNotBlank()
         savedState[SEARCHING] = false
         savedState[QUERY] = ""
         mutableUiState.update { it.copy(searching = false, query = "") }
-        if (wasFiltering) buildBrowser()
+        updateBrowserQuery()
     }
 
     fun search(query: String) {
-        val changed = query.trim() != mutableUiState.value.query.trim()
         savedState[QUERY] = query
         mutableUiState.update { it.copy(query = query) }
-        if (changed) buildBrowser()
+        updateBrowserQuery()
     }
 
     fun showReadOnly(readOnly: Boolean) {
         if (readOnly == savedState.get<Boolean>(READ_ONLY)) return
         savedState[READ_ONLY] = readOnly
-        buildBrowser()
+        filter.update { it.copy(readOnly = readOnly) }
     }
 
-    private fun buildBrowser() {
-        val files = files ?: return
-        val state = mutableUiState.value
-        val query = if (state.searching) state.query.trim() else ""
-        val readOnly = savedState.get<Boolean>(READ_ONLY)
-        browserJob?.cancel()
-        browserJob = viewModelScope.launch {
-            val browser = withContext(defaultDispatcher) {
-                fileBrowserOf(files, query, readOnly) { ensureActive() }
-            }
-            ensureActive()
-            if (readOnly == null) savedState[READ_ONLY] = browser.readOnly
-            mutableUiState.update { it.copy(browser = browser) }
+    private fun browserQuery(): String = with(mutableUiState.value) { if (searching) query.trim() else "" }
+
+    private fun updateBrowserQuery() {
+        filter.update { it.copy(query = browserQuery()) }
+    }
+
+    private suspend fun buildBrowser(files: LoadedFiles, filter: BrowserFilter) {
+        val readOnly = filter.readOnly ?: savedState.get<Boolean>(READ_ONLY)
+        val browser = withContext(defaultDispatcher) {
+            fileBrowserOf(files.accesses, filter.query, readOnly) { ensureActive() }
         }
+        // A new load or filter can be queued while the worker finishes.
+        if (this.files.value !== files || this.filter.value != filter) return
+        if (readOnly == null) savedState[READ_ONLY] = browser.readOnly
+        mutableUiState.update { it.copy(browser = browser) }
+        builtFor = files to filter
     }
 
     /** Open the details of the file at [path] and load when it was accessed. */
     fun showFileDetails(path: String) {
-        detailsJob?.cancel()
+        if (detailsPath.value == path) return
         mutableUiState.update { it.copy(fileDetails = FileDetails(path)) }
-        detailsJob = viewModelScope.launch {
-            val details = try {
-                FileDetails(path, periods = accessRepository.getHistory(uid, listOf(path), range))
-            } catch (e: RecordsException) {
-                FileDetails(path, failure = e.toLoadFailure())
-            }
-            ensureActive()
-            mutableUiState.update { it.copy(fileDetails = details) }
-        }
+        detailsPath.value = path
     }
 
     fun dismissFileDetails() {
-        detailsJob?.cancel()
+        detailsPath.value = null
         mutableUiState.update { it.copy(fileDetails = null) }
     }
 
-    /** Whether this app can reach files on shared storage, obtaining access if it can. */
-    suspend fun ensureFileAccess(): Boolean = fileAccessRepository.ensureAllFilesAccess()
+    private suspend fun loadFileDetails(path: String) {
+        val details = try {
+            FileDetails(path, periods = accessRepository.getHistory(uid, listOf(path), range))
+        } catch (e: RecordsException) {
+            FileDetails(path, failure = e.toLoadFailure())
+        }
+        currentCoroutineContext().ensureActive()
+        if (detailsPath.value == path) mutableUiState.update { it.copy(fileDetails = details) }
+    }
+
+    /** Obtain access before the screen offers this file to another app. */
+    fun ensureFileAccess(path: String) {
+        fileAccessJob?.cancel()
+        mutableUiState.update { it.copy(fileAccessResult = null) }
+        fileAccessJob = viewModelScope.launch {
+            val result = if (fileAccessRepository.ensureAllFilesAccess()) FileAccessResult.Granted(path) else FileAccessResult.Denied
+            ensureActive()
+            mutableUiState.update { it.copy(fileAccessResult = result) }
+        }
+    }
+
+    internal fun onFileAccessHandled(result: FileAccessResult) {
+        mutableUiState.update { if (it.fileAccessResult === result) it.copy(fileAccessResult = null) else it }
+    }
+
+    private class LoadedFiles(val accesses: List<Access>)
+
+    private data class BrowserFilter(val query: String, val readOnly: Boolean?)
 
     @AssistedFactory
     interface Factory {

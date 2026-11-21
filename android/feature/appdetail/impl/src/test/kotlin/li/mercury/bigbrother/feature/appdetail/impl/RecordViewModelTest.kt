@@ -17,6 +17,8 @@
 package li.mercury.bigbrother.feature.appdetail.impl
 
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.RecordsException
@@ -82,6 +84,7 @@ class RecordViewModelTest {
     @Test
     fun givenSensorRecords_whenLoaded_thenSessionsAndHistoryShown() = runTest {
         val viewModel = viewModel("sensors")
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
         advanceUntilIdle()
 
         assertEquals(listOf(session), viewModel.uiState.value.sensorSessions)
@@ -92,6 +95,7 @@ class RecordViewModelTest {
     fun givenSessionsNotRead_whenSensorRecordLoaded_thenSessionsLeftOutAndHistoryShown() = runTest {
         accessRepository.sensorSessionsFailure = RecordsException.CommandFailed("failed")
         val viewModel = viewModel("sensors")
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
         advanceUntilIdle()
 
         assertNull(viewModel.uiState.value.sensorSessions)
@@ -102,6 +106,7 @@ class RecordViewModelTest {
     @Test
     fun givenClipboardRecords_whenLoaded_thenHistoryShownWithoutSessions() = runTest {
         val viewModel = viewModel("clipboard")
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
         advanceUntilIdle()
 
         assertNull(viewModel.uiState.value.sensorSessions)
