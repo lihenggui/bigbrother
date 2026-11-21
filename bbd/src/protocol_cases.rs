@@ -209,6 +209,30 @@ fn unescape(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn cli_rejections_match_the_diagnostics_read_by_the_app() {
+        let cases = cases(
+            include_str!("../../testdata/protocol/bbd-cli-errors.txt"),
+            &[
+                "unknown-subcommand",
+                "unknown-option",
+                "repeated-option",
+                "invalid-number",
+                "invalid-enum",
+            ],
+            &["arg"],
+        );
+        for case in cases {
+            let args = std::iter::once("bbd").chain(case.all("arg"));
+            let Err(error) = crate::Cli::try_parse_from(args) else {
+                panic!("CLI accepted {}", case.kind);
+            };
+            assert_eq!(error.exit_code(), 2, "{}", case.kind);
+            assert_eq!(error.to_string().lines().next(), Some(case.line.as_str()));
+        }
+    }
 
     #[test]
     fn a_case_is_read_with_its_escapes_and_meaning() {

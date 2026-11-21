@@ -22,15 +22,23 @@ import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.root.ModulePaths.BBD
 import org.json.JSONException
 
-private const val MISSING_MARKER = "bbd-not-installed"
-private const val ERROR_PREFIX = "Error: "
+internal const val BBD_MISSING_MARKER = "bbd-not-installed"
 
-/** What the daemon's command line says of a command or option it does not know. */
-private val OUTDATED = listOf(
-    "unrecognized subcommand",
-    "unexpected argument",
-    "unknown command",
-)
+internal fun CommandResult.bbdFailure(): RecordsException? {
+    if (isSuccess) return null
+    if (error.lineSequence().any { it == BBD_MISSING_MARKER } || output.lineSequence().any { it == BBD_MISSING_MARKER }) {
+        return RecordsException.ModuleMissing()
+    }
+
+    val reason = error.removePrefix("Error: ")
+    // Clap can quote the rejected value in its diagnostics, so look at the diagnostic's form.
+    val headline = reason.substringBefore('\n')
+    val cliRejectedRequest = headline.startsWith("error: unrecognized subcommand ") ||
+        headline.startsWith("error: unexpected argument ") ||
+        (headline.startsWith("error: the argument ") && headline.endsWith(" cannot be used multiple times"))
+    if (cliRejectedRequest || headline == "unknown command") return RecordsException.ModuleOutdated()
+    return RecordsException.CommandFailed(reason.ifBlank { "bbd exited with $code" })
+}
 
 /**
  * Runs `bbd <command> <args> --json` as root and returns what it printed.
@@ -43,18 +51,10 @@ private val OUTDATED = listOf(
  */
 internal suspend fun RootShell.bbd(command: String, args: String): String {
     val result = run(
-        "if [ -x $BBD ]; then $BBD $command $args --json; else echo $MISSING_MARKER >&2; false; fi",
+        "if [ -x $BBD ]; then $BBD $command $args --json; else echo $BBD_MISSING_MARKER >&2; false; fi",
         label = "bbd $command ${args.substringBefore(' ')}",
     )
-    if (!result.isSuccess) {
-        if (MISSING_MARKER in result.error) throw RecordsException.ModuleMissing()
-        // A daemon, or its command line, without this command: the
-        // module is older than this app.
-        if (OUTDATED.any { it in result.error }) throw RecordsException.ModuleOutdated()
-        throw RecordsException.CommandFailed(
-            result.error.removePrefix(ERROR_PREFIX).ifBlank { "bbd exited with ${result.code}" },
-        )
-    }
+    result.bbdFailure()?.let { throw it }
     return result.output
 }
 

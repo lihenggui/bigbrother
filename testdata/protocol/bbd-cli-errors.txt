@@ -1,0 +1,6 @@
+# A rejection type, its first stderr line, and the arguments that produce it.
+unknown-subcommand	error: unrecognized subcommand 'future-command'	arg=future-command
+unknown-option	error: unexpected argument '--future-option' found	arg=files	arg=--future-option
+repeated-option	error: the argument '--limit <LIMIT>' cannot be used multiple times	arg=files	arg=--limit	arg=1	arg=--limit	arg=2
+invalid-number	error: invalid value 'cannot be used multiple times' for '--limit <LIMIT>': invalid digit found in string	arg=files	arg=--limit	arg=cannot be used multiple times
+invalid-enum	error: invalid value 'later' for '[STATE]'	arg=sandbox	arg=auto	arg=later	arg=--json
