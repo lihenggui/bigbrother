@@ -17,13 +17,8 @@
 package li.mercury.bigbrother.feature.search.impl
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.input.clearText
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.material.icons.Icons
@@ -40,10 +35,9 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SearchBarDefaults
+import androidx.compose.material3.SearchBarState
 import androidx.compose.material3.SearchBarValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
@@ -52,50 +46,31 @@ import androidx.compose.material3.rememberSearchBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusProperties
-import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.window.core.layout.WindowSizeClass
 import kotlinx.coroutines.launch
-import li.mercury.bigbrother.core.designsystem.component.ShapedIcon
 import li.mercury.bigbrother.core.model.AppSummary
-import li.mercury.bigbrother.core.model.PathMatch
 import li.mercury.bigbrother.core.model.TimeRange
-import li.mercury.bigbrother.core.ui.AppListItem
 import li.mercury.bigbrother.core.ui.DataCategory
-import li.mercury.bigbrother.core.ui.SectionHeader
-import li.mercury.bigbrother.core.ui.VOLUME_ROOT
-import li.mercury.bigbrother.core.ui.categoriesSummary
-import li.mercury.bigbrother.core.ui.dataCategories
-import li.mercury.bigbrother.core.ui.shortTime
-import li.mercury.bigbrother.core.ui.topicIcon
-import li.mercury.bigbrother.core.ui.topicTitle
+import li.mercury.bigbrother.core.ui.topicTitleIds
 import li.mercury.bigbrother.core.ui.R as UiR
 
-/**
- * The top bar of the top-level screens: a search field in place of a title,
- * since search is the way into the records for anything specific, and the
- * settings. Searching covers apps, the paths they touched and the kinds of
- * data; results open full screen in compact windows and below the field in
- * wider ones.
- */
-@OptIn(
-    ExperimentalMaterial3Api::class,
-    ExperimentalMaterial3ExpressiveApi::class,
-    ExperimentalMaterial3AdaptiveApi::class,
-)
+/** The shared search and settings entry point of the top-level screens. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GlobalSearchBar(
     onOpenApp: (app: AppSummary, range: TimeRange, category: DataCategory?) -> Unit,
@@ -105,65 +80,62 @@ fun GlobalSearchBar(
     modifier: Modifier = Modifier,
     viewModel: SearchViewModel = hiltViewModel(),
 ) {
-    val results by viewModel.results.collectAsStateWithLifecycle()
-    val searchBarState = rememberSearchBarState()
-    val textFieldState = rememberTextFieldState()
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    GlobalSearchBar(
+        state = state,
+        onQueryChange = viewModel::setQuery,
+        onResultClick = { destination ->
+            when (destination) {
+                is SearchDestination.App -> onOpenApp(destination.app, TimeRange.ALL, destination.category)
+                is SearchDestination.Category -> onOpenCategory(destination.category)
+            }
+        },
+        onOpenSettings = onOpenSettings,
+        onRetry = viewModel::retry,
+        settingsBadge = settingsBadge,
+        modifier = modifier,
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+internal fun GlobalSearchBar(
+    state: SearchUiState,
+    onQueryChange: (String, Set<Int>) -> Unit,
+    onResultClick: (SearchDestination) -> Unit,
+    onOpenSettings: () -> Unit,
+    onRetry: () -> Unit,
+    settingsBadge: Boolean,
+    modifier: Modifier = Modifier,
+    textFieldState: TextFieldState = rememberTextFieldState(),
+    searchBarState: SearchBarState = rememberSearchBarState(),
+) {
     val scope = rememberCoroutineScope()
-    LaunchedEffect(textFieldState) {
-        snapshotFlow { textFieldState.text.toString() }.collect(viewModel::setQuery)
+    val resources = LocalResources.current
+    val configuration = LocalConfiguration.current
+    val titles = remember(resources, configuration) {
+        (DataCategory.entries.map { it.title } + topicTitleIds).associateWith(resources::getString)
     }
-    // Opening a result leaves the search, as a fresh start for the next one.
+    val submitQuery by rememberUpdatedState(onQueryChange)
+    LaunchedEffect(textFieldState, titles) {
+        snapshotFlow { textFieldState.text.toString().trim() }.collect { text ->
+            val titleIds = if (text.isEmpty()) emptySet() else titles.filterValues { it.contains(text, ignoreCase = true) }.keys
+            submitQuery(text, titleIds)
+        }
+    }
     val close: () -> Unit = {
         // Navigation can remove the bar and cancel its animation.
         textFieldState.clearText()
-        viewModel.setQuery("")
+        onQueryChange("", emptySet())
         scope.launch { searchBarState.animateToCollapsed() }
     }
     val inputField = @Composable {
-        val expanded = searchBarState.targetValue == SearchBarValue.Expanded
-        val hint = stringResource(R.string.search_hint)
-        Box {
-            SearchBarDefaults.InputField(
-                textFieldState = textFieldState,
-                searchBarState = searchBarState,
-                onSearch = {},
-                // Collapsed, the field takes no focus: a pane that comes into
-                // view may move focus to its first field, which would open
-                // the search uninvited. A tap opens it instead.
-                modifier = if (expanded) Modifier else Modifier.focusProperties { canFocus = false },
-                placeholder = { Text(hint, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                leadingIcon = {
-                    if (expanded) {
-                        IconButton(onClick = close) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(UiR.string.close_search))
-                        }
-                    } else {
-                        Icon(Icons.Filled.Search, contentDescription = null)
-                    }
-                },
-                trailingIcon = if (expanded && textFieldState.text.isNotEmpty()) {
-                    {
-                        IconButton(onClick = { textFieldState.clearText() }) {
-                            Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.clear))
-                        }
-                    }
-                } else {
-                    null
-                },
-            )
-            if (!expanded) {
-                Box(
-                    Modifier
-                        .matchParentSize()
-                        .clickable(role = Role.Button, onClickLabel = hint) {
-                            scope.launch { searchBarState.animateToExpanded() }
-                        }
-                        // The field below can't take focus while collapsed,
-                        // so this is what a screen reader announces.
-                        .semantics { contentDescription = hint },
-                )
-            }
-        }
+        SearchInputField(
+            textFieldState = textFieldState,
+            searchBarState = searchBarState,
+            onClose = close,
+            onExpand = { scope.launch { searchBarState.animateToExpanded() } },
+        )
     }
     // The bar takes the color of the screens below it; the field stands two
     // tones off it, as Material asks.
@@ -185,135 +157,82 @@ fun GlobalSearchBar(
             }
         },
     )
-    val content: @Composable () -> Unit = {
-        Results(
-            results = results,
-            onOpenApp = { app, category ->
-                close()
-                onOpenApp(app, TimeRange.ALL, category)
-            },
-            onOpenCategory = {
-                close()
-                onOpenCategory(it)
-            },
-        )
-    }
-    // Material puts results full screen in compact windows and in a panel
-    // below the field in wider ones.
-    if (!currentWindowAdaptiveInfoV2().windowSizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND)) {
-        ExpandedFullScreenSearchBar(state = searchBarState, inputField = inputField) { content() }
-    } else {
-        ExpandedDockedSearchBar(state = searchBarState, inputField = inputField) { content() }
-    }
-}
-
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
-@Composable
-internal fun Results(
-    results: SearchResults,
-    onOpenApp: (AppSummary, DataCategory?) -> Unit,
-    onOpenCategory: (DataCategory) -> Unit,
-) {
-    // Nothing typed, or the first search still running with nothing to show.
-    if (results.query.isEmpty() && results.complete) return
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
-    ) {
-        val nothing = results.apps.isEmpty() && results.files.isEmpty() && results.data.isEmpty()
-        // A label says that what follows are results, as Material asks for
-        // focused search; it also announces when nothing matched. While a
-        // new text is looked up, the previous results stay, but the label
-        // does not speak for them.
-        item(key = "label") {
-            Text(
-                text = when {
-                    !results.complete -> stringResource(R.string.searching)
-                    nothing -> stringResource(UiR.string.no_matches)
-                    else -> stringResource(R.string.results)
-                },
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .padding(start = 16.dp, top = 8.dp)
-                    .semantics { liveRegion = LiveRegionMode.Polite },
-            )
-        }
-        if (results.apps.isNotEmpty()) {
-            item(key = "apps") { SectionHeader(stringResource(R.string.section_apps)) }
-            itemsIndexed(results.apps, key = { _, app -> "app:${app.uid}" }) { index, app ->
-                AppListItem(
-                    app = app,
-                    info = results.appInfo[app.packageName],
-                    supporting = categoriesSummary(app.dataCategories()),
-                    trailing = shortTime(app.lastSeen),
-                    index = index,
-                    count = results.apps.size,
-                    onClick = { onOpenApp(app, null) },
-                )
-            }
-        }
-        if (results.files.isNotEmpty()) {
-            item(key = "files") { SectionHeader(stringResource(R.string.section_files)) }
-            itemsIndexed(results.files, key = { _, match -> "path:${match.uid}:${match.access.path}" }) { index, match ->
-                FileResult(match, results, index, results.files.size) {
-                    onOpenApp(match.toAppSummary(), DataCategory.FILES)
-                }
-            }
-        }
-        if (results.data.isNotEmpty()) {
-            item(key = "data") { SectionHeader(stringResource(R.string.section_data)) }
-            itemsIndexed(results.data, key = { _, match -> "data:${match.category}:${match.topic}" }) { index, match ->
-                DataResult(match, index, results.data.size) { onOpenCategory(match.category) }
-            }
-        }
-    }
-}
-
-private fun PathMatch.toAppSummary() = AppSummary(uid, packageName, emptyMap(), access.lastSeen)
-
-/** A path: its name, then where it is and which app touched it. */
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
-@Composable
-private fun FileResult(match: PathMatch, results: SearchResults, index: Int, count: Int, onClick: () -> Unit) {
-    val app = match.toAppSummary()
-    val path = match.access.path
-    AppListItem(
-        app = app,
-        info = results.appInfo[match.packageName],
-        // Below the storage volume, the path says where the file is in terms
-        // a file manager uses.
-        supporting = path.replaceFirst(VOLUME_ROOT, "").removePrefix("/").ifEmpty { path },
-        trailing = shortTime(match.access.lastSeen),
-        index = index,
-        count = count,
-        badge = DataCategory.FILES.icon,
-        onClick = onClick,
+    SearchResultsPanel(
+        searchBarState = searchBarState,
+        inputField = inputField,
+        state = state,
+        onResultClick = { destination ->
+            close()
+            onResultClick(destination)
+        },
+        onRetry = onRetry,
     )
 }
 
-/** A kind of data and how many apps accessed it; opens the page of its category. */
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun DataResult(match: DataMatch, index: Int, count: Int, onClick: () -> Unit) {
-    val title = match.topic?.let { topicTitle(it) } ?: match.category.title
-    ListItem(
-        onClick = onClick,
-        shapes = ListItemDefaults.segmentedShapes(index, count),
-        colors = ListItemDefaults.segmentedColors(),
-        leadingContent = { ShapedIcon(if (match.topic != null) topicIcon(match.topic) else match.category.icon) },
-        supportingContent = {
-            val apps = pluralStringResource(UiR.plurals.app_count, match.apps, match.apps)
-            Text(
-                if (match.topic != null) {
-                    stringResource(match.category.title) + stringResource(UiR.string.dot_separator) + apps
+private fun SearchInputField(
+    textFieldState: TextFieldState,
+    searchBarState: SearchBarState,
+    onClose: () -> Unit,
+    onExpand: () -> Unit,
+) {
+    val expanded = searchBarState.targetValue == SearchBarValue.Expanded
+    val hint = stringResource(R.string.search_hint)
+    Box {
+        SearchBarDefaults.InputField(
+            textFieldState = textFieldState,
+            searchBarState = searchBarState,
+            onSearch = {},
+            // A pane can move focus to its first field. Require a tap so this
+            // doesn't open search when the pane comes into view.
+            modifier = if (expanded) Modifier else Modifier.focusProperties { canFocus = false },
+            placeholder = { Text(hint, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            leadingIcon = {
+                if (expanded) {
+                    IconButton(onClick = onClose) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(UiR.string.close_search))
+                    }
                 } else {
-                    apps
-                },
+                    Icon(Icons.Filled.Search, contentDescription = null)
+                }
+            },
+            trailingIcon = if (expanded && textFieldState.text.isNotEmpty()) {
+                {
+                    IconButton(onClick = { textFieldState.clearText() }) {
+                        Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.clear))
+                    }
+                }
+            } else {
+                null
+            },
+        )
+        if (!expanded) {
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .clickable(role = Role.Button, onClickLabel = hint, onClick = onExpand)
+                    // The field cannot take focus while collapsed.
+                    .semantics { contentDescription = hint },
             )
-        },
-    ) {
-        Text(stringResource(title))
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3AdaptiveApi::class)
+@Composable
+private fun SearchResultsPanel(
+    searchBarState: SearchBarState,
+    inputField: @Composable () -> Unit,
+    state: SearchUiState,
+    onResultClick: (SearchDestination) -> Unit,
+    onRetry: () -> Unit,
+) {
+    val content = @Composable { Results(state, onResultClick, onRetry) }
+    val window = currentWindowAdaptiveInfoV2().windowSizeClass
+    if (window.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND)) {
+        ExpandedDockedSearchBar(state = searchBarState, inputField = inputField) { content() }
+    } else {
+        ExpandedFullScreenSearchBar(state = searchBarState, inputField = inputField) { content() }
     }
 }

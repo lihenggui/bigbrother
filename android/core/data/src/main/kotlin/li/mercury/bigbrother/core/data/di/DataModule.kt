@@ -32,12 +32,14 @@ import li.mercury.bigbrother.core.data.repository.ModuleRepository
 import li.mercury.bigbrother.core.data.repository.NetworkRepository
 import li.mercury.bigbrother.core.data.repository.PackageManagerAppInfoRepository
 import li.mercury.bigbrother.core.data.repository.PackageManagerInstalledAppRepository
+import li.mercury.bigbrother.core.data.repository.RecordsSearchRepository
 import li.mercury.bigbrother.core.data.repository.RootAccessRepository
 import li.mercury.bigbrother.core.data.repository.RootFileAccessRepository
 import li.mercury.bigbrother.core.data.repository.RootModuleRepository
 import li.mercury.bigbrother.core.data.repository.RootNetworkRepository
 import li.mercury.bigbrother.core.data.repository.RootSandboxRepository
 import li.mercury.bigbrother.core.data.repository.SandboxRepository
+import li.mercury.bigbrother.core.data.repository.SearchRepository
 import li.mercury.bigbrother.core.data.repository.UserDataRepository
 import li.mercury.bigbrother.core.data.repository.ZipDiagnosticsRepository
 
@@ -46,6 +48,9 @@ import li.mercury.bigbrother.core.data.repository.ZipDiagnosticsRepository
 internal abstract class DataModule {
     @Binds
     abstract fun bindsAccessRepository(repository: RootAccessRepository): AccessRepository
+
+    @Binds
+    abstract fun bindsSearchRepository(repository: RecordsSearchRepository): SearchRepository
 
     @Binds
     abstract fun bindsFileAccessRepository(

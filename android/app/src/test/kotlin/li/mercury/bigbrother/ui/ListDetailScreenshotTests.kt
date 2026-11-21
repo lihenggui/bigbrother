@@ -73,6 +73,7 @@ import li.mercury.bigbrother.core.screenshottesting.captureStoreScreenshot
 import li.mercury.bigbrother.core.testing.repository.TestAccessRepository
 import li.mercury.bigbrother.core.testing.repository.TestInstalledAppRepository
 import li.mercury.bigbrother.core.testing.repository.TestSandboxRepository
+import li.mercury.bigbrother.core.testing.repository.TestSearchRepository
 import li.mercury.bigbrother.core.testing.repository.TestUserDataRepository
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.feature.appdetail.api.navigation.AppDetailNavKey
@@ -291,7 +292,6 @@ class ListDetailScreenshotTests {
     private fun showNavigation() {
         composeTestRule.setContent {
             BigBrotherTheme {
-                val appInfoRepository = remember { DemoAppInfoRepository(DemoRecords(clock)) }
                 BigBrotherNavigation(
                     recordingStopped = false,
                     registerEntries = { navigator ->
@@ -308,7 +308,7 @@ class ListDetailScreenshotTests {
                         entry<JailNavKey>(metadata = ListDetailSceneStrategy.listPane()) { Text("Jail content") }
                         entry<AppDetailNavKey>(metadata = ListDetailSceneStrategy.detailPane()) { Text("App detail") }
                     },
-                    searchBar = { SearchBar(appInfoRepository) },
+                    searchBar = { SearchBar() },
                 )
             }
         }
@@ -362,7 +362,7 @@ class ListDetailScreenshotTests {
             containerColor = MaterialTheme.colorScheme.surfaceContainer,
         ) {
             CompositionLocalProvider(LocalShowsDetailBesideList provides beside) {
-                SearchPaneLayout(directive, showSearch = true, topBar = { SearchBar(appInfoRepository) }) {
+                SearchPaneLayout(directive, showSearch = true, topBar = { SearchBar() }) {
                     ListDetailPaneScaffold(
                         directive = directive,
                         value = if (fitWindow) {
@@ -411,14 +411,9 @@ class ListDetailScreenshotTests {
 
 /** The search bar the top-level screens have as their top bar, idle. */
 @Composable
-private fun SearchBar(appInfoRepository: AppInfoRepository) {
+private fun SearchBar() {
     val viewModel = remember {
-        SearchViewModel(
-            context = ApplicationProvider.getApplicationContext(),
-            accessRepository = TestAccessRepository(),
-            appInfoRepository = appInfoRepository,
-            userDataRepository = TestUserDataRepository(),
-        )
+        SearchViewModel(TestSearchRepository(), Dispatchers.Unconfined)
     }
     GlobalSearchBar(
         onOpenApp = { _, _, _ -> },

@@ -18,21 +18,19 @@ package li.mercury.bigbrother.feature.search.impl
 
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Column
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
-import androidx.test.core.app.ApplicationProvider
+import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.PathMatch
 import li.mercury.bigbrother.core.screenshottesting.DefaultTestDevices
 import li.mercury.bigbrother.core.screenshottesting.DemoApp
 import li.mercury.bigbrother.core.screenshottesting.DemoClockRule
 import li.mercury.bigbrother.core.screenshottesting.DemoRecords
 import li.mercury.bigbrother.core.screenshottesting.captureForDevice
-import li.mercury.bigbrother.core.testing.repository.TestAccessRepository
-import li.mercury.bigbrother.core.testing.repository.TestAppInfoRepository
-import li.mercury.bigbrother.core.testing.repository.TestUserDataRepository
 import li.mercury.bigbrother.core.ui.DataCategory
 import org.junit.Rule
 import org.junit.Test
@@ -69,7 +67,7 @@ class SearchScreenshotTests {
     fun givenAppMatches_whenShown_thenListsApp() {
         capturePhone("SearchResultsApps") {
             val records = remember { DemoRecords(clock) }
-            Results(SearchResults(query = "news", apps = listOf(records.summary(DemoApp.NEWS)), appInfo = records.appInfo))
+            Results(SearchUiState(query = "news", apps = listOf(records.summary(DemoApp.NEWS)), appInfo = records.appInfo))
         }
     }
 
@@ -80,12 +78,19 @@ class SearchScreenshotTests {
 
     @Test
     fun givenFirstSearchRunning_whenShown_thenSaysSearching() {
-        capturePhone("SearchSearching") { Results(SearchResults(complete = false)) }
+        capturePhone("SearchSearching") { Results(SearchUiState(complete = false)) }
     }
 
     @Test
     fun givenNothingMatches_whenShown_thenSaysNoMatches() {
-        capturePhone("SearchNoMatches") { Results(SearchResults(query = "passport")) }
+        capturePhone("SearchNoMatches") { Results(SearchUiState(query = "passport")) }
+    }
+
+    @Test
+    fun givenModuleOutdated_whenSearchFails_thenExplainsWhyAndOffersRetry() {
+        capturePhone("SearchFailureModuleOutdated") {
+            Results(SearchUiState(query = "camera", failure = LoadFailure.ModuleOutdated))
+        }
     }
 
     private fun capturePhone(name: String, body: @Composable () -> Unit) {
@@ -93,14 +98,14 @@ class SearchScreenshotTests {
     }
 
     /** What a search for "camera" finds among the demo records: files and a kind of data. */
-    private fun cameraResults(): SearchResults {
+    private fun cameraResults(): SearchUiState {
         val records = DemoRecords(clock)
         val files = listOf(DemoApp.WEATHER, DemoApp.PHOTO_EDITOR).flatMap { app ->
             records.accesses(app)
                 .filter { it.path.contains("camera", ignoreCase = true) && it.path.startsWith("/") }
                 .map { PathMatch(app.uid, app.packageName, it) }
         }.take(MAX_FILES)
-        return SearchResults(
+        return SearchUiState(
             query = "camera",
             files = files,
             data = listOf(DataMatch(DataCategory.SENSORS, topic = "camera", apps = 1)),
@@ -110,31 +115,25 @@ class SearchScreenshotTests {
 
     /** The results as the expanded search bar shows them, below its field. */
     @Composable
-    private fun Results(results: SearchResults) {
+    private fun Results(results: SearchUiState) {
         Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh) {
             Column {
-                Results(results = results, onOpenApp = { _, _ -> }, onOpenCategory = {})
+                Results(results = results, onResultClick = {}, onRetry = {})
             }
         }
     }
 
+    @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     private fun Bar(settingsBadge: Boolean) {
-        val viewModel = remember {
-            SearchViewModel(
-                context = ApplicationProvider.getApplicationContext(),
-                accessRepository = TestAccessRepository(),
-                appInfoRepository = TestAppInfoRepository(),
-                userDataRepository = TestUserDataRepository(),
-            )
-        }
         Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
             GlobalSearchBar(
-                onOpenApp = { _, _, _ -> },
-                onOpenCategory = {},
+                state = SearchUiState(),
+                onQueryChange = { _, _ -> },
+                onResultClick = {},
+                onRetry = {},
                 onOpenSettings = {},
                 settingsBadge = settingsBadge,
-                viewModel = viewModel,
             )
         }
     }
