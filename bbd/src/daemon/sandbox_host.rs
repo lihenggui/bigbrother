@@ -357,13 +357,13 @@ async fn run_sandbox(
     let mut command_reads = tokio::task::JoinSet::new();
     let mut command_read_errors = Limited::new(RECURRING_INTERVAL, Policy::ResetOnChange);
     // The package list, watched while newly installed apps are sandboxed.
-    let mut package_watch = auto::Watch::default();
+    let mut package_watch = auto::watch::Watch::default();
     let mut tick = interval(FLUSH_INTERVAL);
     tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
     loop {
         if package_watch.arm(
             sandbox.auto_on(),
-            Path::new(auto::PACKAGE_DIR),
+            Path::new(auto::watch::PACKAGE_DIR),
             Path::new(USER_DATA),
         ) {
             // What was installed before the watch began.
