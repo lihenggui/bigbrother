@@ -85,6 +85,8 @@ import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.TimeRangeButtonGroup
 import li.mercury.bigbrother.core.ui.UserSettingsWriter
 import li.mercury.bigbrother.core.ui.appDisplayName
+import li.mercury.bigbrother.core.ui.failureBody
+import li.mercury.bigbrother.core.ui.failureReason
 import li.mercury.bigbrother.core.ui.failureTitle
 import li.mercury.bigbrother.core.ui.namedList
 import li.mercury.bigbrother.core.ui.rememberSettingsWriteSnackbar
@@ -145,6 +147,9 @@ internal fun OverviewScreen(
             when {
                 state.failure == LoadFailure.ModuleMissing ->
                     ModuleSetupMessage(state.moduleSetup, onInstallModule, onRefresh)
+
+                state.failure == LoadFailure.ModuleOutdated && state.moduleUpdate != ModuleUpdate.Idle ->
+                    ModuleUpdateCard(state.moduleUpdate, onUpdateModule, onStartDaemon)
 
                 state.failure != null -> LoadFailureMessage(state.failure, onRetry = onRefresh)
 
@@ -379,37 +384,40 @@ private fun Modifier.ring(color: Color, width: Dp): Modifier = this
 @Composable
 private fun RecorderStatusCards(state: OverviewUiState, onUpdateModule: () -> Unit, onStartDaemon: () -> Unit) {
     // A staged update comes first: starting now would run the old module.
-    when {
-        state.modulePendingReboot -> RecorderStatusCard(
+    if (state.modulePendingReboot) {
+        RecorderStatusCard(
             icon = Icons.Outlined.SystemUpdate,
             title = stringResource(R.string.module_pending_reboot),
             body = null,
             error = false,
         )
+        return
+    }
 
-        state.recording == false -> {
-            val error = state.daemonStartError
-            RecorderStatusCard(
-                icon = Icons.Filled.ErrorOutline,
-                title = stringResource(R.string.status_stopped),
-                body = when {
-                    state.daemonStarting -> stringResource(R.string.daemon_starting)
-                    error == null -> stringResource(R.string.daemon_stopped)
-                    error == StartFailure.ModuleDisabled -> stringResource(R.string.module_disabled)
-                    error == StartFailure.NotReporting -> stringResource(R.string.daemon_not_reporting)
-                    error is StartFailure.Failed -> stringResource(R.string.daemon_start_failed, error.output)
-                    else -> null
-                },
-                error = true,
-                // A disabled module is turned back on in the root manager, not here.
-                action = stringResource(R.string.start_daemon)
-                    .takeUnless { state.daemonStarting || error == StartFailure.ModuleDisabled },
-                busy = state.daemonStarting,
-                onAction = onStartDaemon,
-            )
-        }
-
-        state.moduleUpdate != ModuleUpdate.Idle -> ModuleUpdateCard(state.moduleUpdate, onUpdateModule, onStartDaemon)
+    val update = state.moduleUpdate
+    val updateFailure = (update as? ModuleUpdate.Failed)?.failure
+    val stopped = state.recording == false
+    if (update == ModuleUpdate.Updating || !stopped || (updateFailure != LoadFailure.Operation.DAEMON_NOT_REPORTING && updateFailure != state.daemonStartError)) {
+        ModuleUpdateCard(update, onUpdateModule, onStartDaemon)
+    }
+    if (stopped && update != ModuleUpdate.Updating) {
+        val error = state.daemonStartError
+        RecorderStatusCard(
+            icon = Icons.Filled.ErrorOutline,
+            title = stringResource(R.string.status_stopped),
+            body = when {
+                state.daemonStarting -> stringResource(R.string.daemon_starting)
+                error == null && updateFailure == LoadFailure.Operation.DAEMON_NOT_REPORTING -> failureReason(updateFailure)
+                error == null -> stringResource(R.string.daemon_stopped)
+                else -> failureReason(error)
+            },
+            error = true,
+            // A disabled module is turned back on in the root manager, not here.
+            action = stringResource(R.string.start_daemon)
+                .takeUnless { state.daemonStarting || error == LoadFailure.Operation.MODULE_DISABLED },
+            busy = state.daemonStarting,
+            onAction = onStartDaemon,
+        )
     }
 }
 
@@ -427,26 +435,33 @@ private fun ModuleUpdateCard(update: ModuleUpdate, onUpdateModule: () -> Unit, o
             busy = true,
         )
 
-        ModuleUpdate.Disabled -> RecorderStatusCard(
+        is ModuleUpdate.Failed -> ModuleUpdateFailureCard(update.failure, onUpdateModule, onStartDaemon)
+    }
+}
+
+@Composable
+private fun ModuleUpdateFailureCard(failure: LoadFailure, onUpdateModule: () -> Unit, onStartDaemon: () -> Unit) {
+    when (failure) {
+        LoadFailure.Operation.MODULE_DISABLED -> RecorderStatusCard(
             icon = Icons.Outlined.SystemUpdate,
-            title = stringResource(R.string.module_disabled),
+            title = failureReason(failure),
             body = null,
             error = false,
         )
 
-        ModuleUpdate.NotReporting -> RecorderStatusCard(
+        LoadFailure.Operation.DAEMON_NOT_REPORTING -> RecorderStatusCard(
             icon = Icons.Filled.ErrorOutline,
             title = stringResource(R.string.status_stopped),
-            body = stringResource(R.string.daemon_not_reporting),
+            body = failureReason(failure),
             error = true,
             action = stringResource(R.string.start_daemon),
             onAction = onStartDaemon,
         )
 
-        is ModuleUpdate.Failed -> RecorderStatusCard(
+        else -> RecorderStatusCard(
             icon = Icons.Filled.ErrorOutline,
             title = stringResource(R.string.update_failed_title),
-            body = update.reason,
+            body = failureReason(failure),
             error = true,
             action = stringResource(UiR.string.retry),
             onAction = onUpdateModule,
@@ -512,7 +527,7 @@ private fun ModuleSetupMessage(setup: ModuleSetup, onInstall: () -> Unit, onRetr
     when (setup) {
         ModuleSetup.Idle -> Message(
             title = failureTitle(LoadFailure.ModuleMissing),
-            body = stringResource(UiR.string.no_module_body),
+            body = failureBody(LoadFailure.ModuleMissing),
             actionLabel = stringResource(R.string.install_module),
             onAction = onInstall,
         )
@@ -535,7 +550,7 @@ private fun ModuleSetupMessage(setup: ModuleSetup, onInstall: () -> Unit, onRetr
 
         is ModuleSetup.Failed -> Message(
             title = stringResource(R.string.install_failed_title),
-            body = setup.reason.orEmpty(),
+            body = failureReason(setup.failure),
             actionLabel = stringResource(UiR.string.retry),
             onAction = onInstall,
         )

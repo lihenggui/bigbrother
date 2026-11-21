@@ -182,6 +182,6 @@ class JailViewModel @Inject constructor(
     private val RecordsException.failsEveryApp: Boolean
         get() = when (this) {
             is RecordsException.NoRoot, is RecordsException.ModuleMissing, is RecordsException.ModuleOutdated -> true
-            is RecordsException.CommandFailed -> false
+            is RecordsException.CommandFailed, is RecordsException.BadResponse -> false
         }
 }

@@ -54,11 +54,10 @@ data class RecordUiState(
     /** Why the history could not be loaded, when the records could. */
     val historyFailure: LoadFailure? = null,
     /**
-     * For sensors: when each was on, most recent first. Null when not
-     * loaded, when the read failed, or for records that are not the app's
-     * own.
+     * For sensors: when each was on, most recent first, once loaded.
      */
     val sensorSessions: List<SensorSession>? = null,
+    val sensorSessionsFailure: LoadFailure? = null,
     val loaded: Boolean = false,
     val failure: LoadFailure? = null,
 )
@@ -94,7 +93,7 @@ class RecordViewModel @AssistedInject constructor(
     }
 
     private suspend fun load(): Unit = coroutineScope {
-        _uiState.update { it.copy(failure = null, historyFailure = null) }
+        _uiState.update { it.copy(failure = null, historyFailure = null, sensorSessionsFailure = null) }
         if (packageName.isNotEmpty()) {
             launch {
                 val info = appInfoRepository.getAppInfo(packageName)
@@ -135,18 +134,15 @@ class RecordViewModel @AssistedInject constructor(
         }
     }
 
-    /**
-     * When each sensor was on. If the read fails, the section is left out
-     * and the rest of the record still shows.
-     */
     private suspend fun loadSensorSessions() {
-        val sessions = try {
-            accessRepository.getSensorSessions(uid, range)
-        } catch (_: RecordsException) {
-            null
+        try {
+            val sessions = accessRepository.getSensorSessions(uid, range)
+            currentCoroutineContext().ensureActive()
+            _uiState.update { it.copy(sensorSessions = sessions) }
+        } catch (e: RecordsException) {
+            currentCoroutineContext().ensureActive()
+            _uiState.update { it.copy(sensorSessions = null, sensorSessionsFailure = e.toLoadFailure()) }
         }
-        currentCoroutineContext().ensureActive()
-        _uiState.update { it.copy(sensorSessions = sessions) }
     }
 
     @AssistedFactory

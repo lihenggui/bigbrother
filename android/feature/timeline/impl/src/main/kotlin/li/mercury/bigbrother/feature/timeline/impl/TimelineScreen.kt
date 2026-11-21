@@ -69,6 +69,7 @@ import li.mercury.bigbrother.core.ui.MenuFilterChip
 import li.mercury.bigbrother.core.ui.MenuOption
 import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.dateWithWeekday
+import li.mercury.bigbrother.core.ui.failureTitle
 import li.mercury.bigbrother.core.ui.namedList
 import li.mercury.bigbrother.core.ui.timeOfDay
 import li.mercury.bigbrother.core.ui.topicRecordsSummary
@@ -200,8 +201,8 @@ private fun Timeline(
             last >= info.totalItemsCount - LOAD_AHEAD
         }
     }
-    LaunchedEffect(nearEnd, state.nextBefore, items.size, state.loadMoreFailed) {
-        if (nearEnd && state.nextBefore != null && !state.loadMoreFailed) onLoadMore()
+    LaunchedEffect(nearEnd, state.nextBefore, items.size, state.loadMoreFailure) {
+        if (nearEnd && state.nextBefore != null && state.loadMoreFailure == null) onLoadMore()
     }
     val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     LazyColumn(
@@ -259,14 +260,14 @@ private fun Timeline(
                 }
             }
         }
-        if (state.loadMoreFailed) {
+        if (state.loadMoreFailure != null) {
             item(key = "load-more-failed") {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = stringResource(UiR.string.error_title),
+                        text = failureTitle(state.loadMoreFailure),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.error,
                         modifier = Modifier.weight(1f),

@@ -33,11 +33,14 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
 import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.DEFAULT
 import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
+import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.InstalledAppRepository
 import li.mercury.bigbrother.core.data.repository.SandboxRepository
+import li.mercury.bigbrother.core.data.toLoadFailure
 import li.mercury.bigbrother.core.domain.AppVisibility
 import li.mercury.bigbrother.core.domain.GetAppVisibilityUseCase
 import li.mercury.bigbrother.core.model.InstalledApp
+import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.SandboxedApp
 import li.mercury.bigbrother.core.model.isNonCoreUid
 import javax.inject.Inject
@@ -47,6 +50,7 @@ data class AddAppsUiState(
     val apps: List<InstalledApp>? = null,
     /** Chosen, by package name. */
     val selected: Set<String> = emptySet(),
+    val failure: LoadFailure? = null,
 )
 
 /**
@@ -64,14 +68,27 @@ class AddAppsViewModel @Inject constructor(
     @Dispatcher(DEFAULT) defaultDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
     private val refreshes = MutableStateFlow(0L)
-    private val installed = refreshes.mapLatest { installedAppRepository.getInstalledApps() }
+    private val installed = refreshes.mapLatest {
+        available = null
+        try {
+            InstalledChoices.Apps(installedAppRepository.getInstalledApps())
+        } catch (e: RecordsException) {
+            InstalledChoices.Failed(e.toLoadFailure())
+        }
+    }
     private val query = MutableStateFlow("")
     private val selected = savedStateHandle.getMutableStateFlow(SELECTED_PACKAGES, arrayListOf<String>())
 
     private var available: Pair<List<InstalledApp>, AppVisibility>? = null
-    private val appChoices = combine(installed, getAppVisibility(), ::Pair).onEach { available = it }
+    private val appChoices = combine(installed, getAppVisibility(), ::Pair).onEach { (choices, visibility) ->
+        available = (choices as? InstalledChoices.Apps)?.let { it.apps to visibility }
+    }
 
-    val uiState: StateFlow<AddAppsUiState> = combine(appChoices, sandboxRepository.apps, query, selected) { (installed, visibility), sandboxed, query, selected ->
+    val uiState: StateFlow<AddAppsUiState> = combine(appChoices, sandboxRepository.apps, query, selected) { (choices, visibility), sandboxed, query, selected ->
+        val installed = when (choices) {
+            is InstalledChoices.Apps -> choices.apps
+            is InstalledChoices.Failed -> return@combine AddAppsUiState(failure = choices.failure)
+        }
         withContext(defaultDispatcher) {
             // A restored draft must wait for the sandbox list so existing isolation is left alone.
             val eligible = sandboxed?.let { installed.eligibleApps(it, visibility) }
@@ -101,6 +118,10 @@ class AddAppsViewModel @Inject constructor(
     fun clear() {
         query.value = ""
         selected.value = arrayListOf()
+        retry()
+    }
+
+    fun retry() {
         refreshes.update { it + 1 }
     }
 
@@ -117,6 +138,11 @@ class AddAppsViewModel @Inject constructor(
         return filter { app ->
             isNonCoreUid(app.uid) && app.uid !in isolated && visibility.isShown(app)
         }
+    }
+
+    private sealed interface InstalledChoices {
+        data class Apps(val apps: List<InstalledApp>) : InstalledChoices
+        data class Failed(val failure: LoadFailure) : InstalledChoices
     }
 
     private companion object {

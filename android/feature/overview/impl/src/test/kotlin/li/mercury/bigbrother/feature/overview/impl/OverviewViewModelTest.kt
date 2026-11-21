@@ -156,6 +156,25 @@ class OverviewViewModelTest {
     }
 
     @Test
+    fun givenComparisonFailure_whenLoaded_thenStateShowsFailureBeforeOfferingUpdate() = runTest {
+        moduleRepository.comparisonFailure = RecordsException.CommandFailed(LoadFailure.Operation.MODULE_ARCHIVE_INVALID)
+        val viewModel = collectedViewModel()
+        advanceUntilIdle()
+
+        assertEquals(LoadFailure.Operation.MODULE_ARCHIVE_INVALID, viewModel.uiState.value.failure)
+        assertEquals(ModuleUpdate.Idle, viewModel.uiState.value.moduleUpdate)
+        assertEquals(0, moduleRepository.updates)
+
+        moduleRepository.comparisonFailure = null
+        moduleRepository.installed = InstalledModule.NEWER
+        viewModel.refresh()
+        advanceUntilIdle()
+
+        assertNull(viewModel.uiState.value.failure)
+        assertEquals(0, moduleRepository.updates)
+    }
+
+    @Test
     fun givenCurrentModule_whenRefreshed_thenComparedOnlyOnce() = runTest {
         val viewModel = collectedViewModel()
         advanceUntilIdle()
@@ -176,6 +195,41 @@ class OverviewViewModelTest {
 
         assertEquals(1, moduleRepository.updates)
         assertEquals(LoadFailure.ModuleOutdated, viewModel.uiState.value.failure)
+    }
+
+    @Test
+    fun givenInstallerFailure_whenInstallingModule_thenStateShowsFailure() = runTest {
+        accessRepository.failure = RecordsException.ModuleMissing()
+        moduleRepository.installFailure = RecordsException.CommandFailed(LoadFailure.Operation.KERNEL_BTF_MISSING)
+        val viewModel = collectedViewModel()
+
+        viewModel.installModule()
+        advanceUntilIdle()
+
+        assertEquals(ModuleSetup.Failed(LoadFailure.Operation.KERNEL_BTF_MISSING), viewModel.uiState.value.moduleSetup)
+    }
+
+    @Test
+    fun givenUpdateFailure_whenOutdatedModuleIsLoaded_thenStateShowsFailure() = runTest {
+        accessRepository.failure = RecordsException.ModuleOutdated()
+        moduleRepository.updateFailure = RecordsException.CommandFailed(LoadFailure.Operation.MODULE_DISABLED)
+        val viewModel = collectedViewModel()
+        advanceUntilIdle()
+
+        assertEquals(ModuleUpdate.Failed(LoadFailure.Operation.MODULE_DISABLED), viewModel.uiState.value.moduleUpdate)
+    }
+
+    @Test
+    fun givenStartFailure_whenStartingDaemon_thenStateShowsFailure() = runTest {
+        accessRepository.status = accessRepository.status.copy(recording = false)
+        moduleRepository.startFailure = RecordsException.CommandFailed(LoadFailure.Operation.DAEMON_START_FAILED)
+        val viewModel = collectedViewModel()
+
+        viewModel.startDaemon()
+        advanceUntilIdle()
+
+        assertEquals(LoadFailure.Operation.DAEMON_START_FAILED, viewModel.uiState.value.daemonStartError)
+        assertEquals(false, viewModel.uiState.value.daemonStarting)
     }
 
     @Test

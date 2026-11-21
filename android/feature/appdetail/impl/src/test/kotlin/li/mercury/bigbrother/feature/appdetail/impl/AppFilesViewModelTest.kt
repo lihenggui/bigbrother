@@ -25,10 +25,12 @@ import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.FileAccessRepository
 import li.mercury.bigbrother.core.model.Access
 import li.mercury.bigbrother.core.model.Action
 import li.mercury.bigbrother.core.model.Category
+import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.testing.MainDispatcherRule
 import li.mercury.bigbrother.core.testing.repository.TestAccessRepository
@@ -121,8 +123,19 @@ class AppFilesViewModelTest {
     }
 
     @Test
+    fun givenRootDenied_whenOpeningFile_thenStateShowsAccessFailure() = runTest {
+        val viewModel = viewModel(emptyList(), mainDispatcherRule.testDispatcher) { throw RecordsException.NoRoot() }
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
+
+        viewModel.ensureFileAccess("$FOLDER/read.txt")
+        runCurrent()
+
+        assertEquals(FileAccessResult.Failed(LoadFailure.NoRoot), viewModel.uiState.value.fileAccessResult)
+    }
+
+    @Test
     fun givenFileAccessRequested_whenCollectionStops_thenResultIsAvailableOnReturn() = runTest {
-        val access = CompletableDeferred<Boolean>()
+        val access = CompletableDeferred<Unit>()
         val viewModel = viewModel(emptyList(), mainDispatcherRule.testDispatcher) { access.await() }
         val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
         runCurrent()
@@ -131,7 +144,7 @@ class AppFilesViewModelTest {
         viewModel.ensureFileAccess(path)
         collector.cancel()
         advanceTimeBy(5_001)
-        access.complete(true)
+        access.complete(Unit)
         runCurrent()
 
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
@@ -147,7 +160,7 @@ class AppFilesViewModelTest {
     private fun viewModel(
         accesses: List<Access>,
         worker: CoroutineDispatcher,
-        ensureAccess: suspend () -> Boolean = { true },
+        ensureAccess: suspend () -> Unit = {},
     ) = AppFilesViewModel(
         accessRepository = TestAccessRepository(accesses = accesses),
         appInfoRepository = TestAppInfoRepository(),

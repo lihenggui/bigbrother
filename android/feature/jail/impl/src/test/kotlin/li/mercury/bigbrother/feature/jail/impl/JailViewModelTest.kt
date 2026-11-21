@@ -120,7 +120,7 @@ class JailViewModelTest {
 
     @Test
     fun givenDaemonFailing_whenRefreshed_thenFailureShown() = runTest {
-        sandboxRepository.failure = RecordsException.CommandFailed("")
+        sandboxRepository.failure = RecordsException.CommandFailed()
         val viewModel = viewModel()
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
 
@@ -151,7 +151,7 @@ class JailViewModelTest {
 
     @Test
     fun givenOneAppFailing_whenSeveralIsolated_thenOthersIsolatedWithUndoAndFailedOneNamed() = runTest {
-        sandboxRepository.failsToIsolate = mapOf("com.example.shopping" to RecordsException.CommandFailed("not installed"))
+        sandboxRepository.failsToIsolate = mapOf("com.example.shopping" to RecordsException.CommandFailed(LoadFailure.Operation.APP_MISSING))
         val viewModel = viewModel()
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
         viewModel.refresh()
@@ -197,18 +197,18 @@ class JailViewModelTest {
 
     @Test
     fun givenDaemonFailing_whenIsolated_thenAppNamedWithReason() = runTest {
-        sandboxRepository.failure = RecordsException.CommandFailed("no gate")
+        sandboxRepository.failure = RecordsException.CommandFailed()
         val viewModel = viewModel()
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
 
         viewModel.isolate(listOf(installed(10204, "com.example.shopping", "Shopping")))
 
-        assertEquals(JailMessage.NotIsolated(listOf("Shopping"), LoadFailure.Other("no gate")), viewModel.uiState.value.message)
+        assertEquals(JailMessage.NotIsolated(listOf("Shopping"), LoadFailure.Operation.COMMAND_FAILED), viewModel.uiState.value.message)
     }
 
     @Test
     fun givenListUnreadableAfterwards_whenIsolated_thenToldIsolatedWithUndo() = runTest {
-        sandboxRepository.refreshFailure = RecordsException.CommandFailed("cannot read")
+        sandboxRepository.refreshFailure = RecordsException.CommandFailed()
         val viewModel = viewModel()
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
 
@@ -221,7 +221,7 @@ class JailViewModelTest {
 
     @Test
     fun givenOneAppFailingToRelease_whenUndone_thenOthersReleasedAndFailedOneNamed() = runTest {
-        sandboxRepository.failsToRelease = mapOf("com.example.flashlight" to RecordsException.CommandFailed("busy"))
+        sandboxRepository.failsToRelease = mapOf("com.example.flashlight" to RecordsException.CommandFailed(LoadFailure.Operation.DATABASE_BUSY))
         val viewModel = viewModel()
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
         viewModel.isolate(threeApps)
@@ -231,7 +231,7 @@ class JailViewModelTest {
         viewModel.undoIsolate(message.apps)
 
         assertEquals(listOf("com.example.shopping", "com.example.keyboard"), sandboxRepository.released)
-        assertEquals(JailMessage.NotReleased(listOf("Flashlight"), LoadFailure.Other("busy")), viewModel.uiState.value.message)
+        assertEquals(JailMessage.NotReleased(listOf("Flashlight"), LoadFailure.Operation.DATABASE_BUSY), viewModel.uiState.value.message)
     }
 
     private val threeApps = listOf(

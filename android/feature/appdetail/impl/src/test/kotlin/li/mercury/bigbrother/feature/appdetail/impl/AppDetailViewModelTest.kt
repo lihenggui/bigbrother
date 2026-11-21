@@ -101,7 +101,7 @@ class AppDetailViewModelTest {
 
         assertTrue(sandbox.isolated.isEmpty())
         assertFalse(model.uiState.value.canOpenJail)
-        assertEquals(JailAction.Failed(), model.uiState.value.jailAction)
+        assertEquals(JailAction.Failed(LoadFailure.Operation.APP_MISSING), model.uiState.value.jailAction)
     }
 
     @Test

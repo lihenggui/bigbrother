@@ -75,7 +75,7 @@ internal sealed interface JailAction {
     data object Confirm : JailAction
     data object Isolating : JailAction
     data class Open(val packageName: String) : JailAction
-    data class Failed(val failure: LoadFailure? = null) : JailAction
+    data class Failed(val failure: LoadFailure) : JailAction
 }
 
 @HiltViewModel(assistedFactory = AppDetailViewModel.Factory::class)
@@ -139,7 +139,7 @@ class AppDetailViewModel @AssistedInject constructor(
                 // The records can outlive an installation. Check the live package again
                 // before applying restrictions to its Android user.
                 if (installedAppRepository.getInstalledApps().none { it.uid == uid && it.packageName == packageName }) {
-                    mutableUiState.update { it.copy(canOpenJail = false, jailAction = JailAction.Failed()) }
+                    mutableUiState.update { it.copy(canOpenJail = false, jailAction = JailAction.Failed(LoadFailure.Operation.APP_MISSING)) }
                     return@launch
                 }
                 sandboxRepository.isolate(packageName, mutableUiState.value.app.userId)
@@ -183,7 +183,7 @@ class AppDetailViewModel @AssistedInject constructor(
             val app = withContext(defaultDispatcher) { apps.firstOrNull { it.uid == uid } } ?: return
             mutableUiState.update { it.copy(app = app, canOpenJail = it.canOpenJail && app.packageName == packageName) }
         } catch (_: RecordsException) {
-            // The access list reports the failure; the header keeps its placeholder.
+            // The summary only enriches the header. The access list has its own result.
         }
     }
 

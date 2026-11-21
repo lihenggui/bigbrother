@@ -50,7 +50,7 @@ class RootNetworkRepositoryTest {
     @Test
     fun givenWriteRefused_whenUnblocked_thenChangeIsNotCounted() = runTest {
         val dataSource = object : TestBbdDataSource() {
-            override suspend fun unblockNetwork(packageName: String, userId: Int, target: NetworkTarget): Unit = throw RecordsException.CommandFailed("no such rule")
+            override suspend fun unblockNetwork(packageName: String, userId: Int, target: NetworkTarget): Unit = throw RecordsException.CommandFailed()
         }
         val repository = RootNetworkRepository(dataSource, StandardTestDispatcher(testScheduler))
 

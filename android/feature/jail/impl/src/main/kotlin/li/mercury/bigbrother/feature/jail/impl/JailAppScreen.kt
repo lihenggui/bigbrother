@@ -75,7 +75,7 @@ import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.appNameWithUser
-import li.mercury.bigbrother.core.ui.failureTitle
+import li.mercury.bigbrother.core.ui.failureReason
 import li.mercury.bigbrother.core.ui.relativeTime
 import li.mercury.bigbrother.feature.jail.impl.network.NetworkSectionActions
 import li.mercury.bigbrother.feature.jail.impl.network.networkSection
@@ -253,6 +253,7 @@ internal fun JailAppScreen(
                         globalMode = state.global[SandboxItem.NETWORK] ?: SandboxItem.NETWORK.default,
                         requested = state.requested,
                         destinations = state.destinations,
+                        destinationsFailure = state.destinationsFailure,
                         expanded = expanded == SandboxItem.NETWORK,
                         actions = NetworkSectionActions(
                             onExpandedChange = { open -> expanded = if (open) SandboxItem.NETWORK else null },
@@ -299,8 +300,8 @@ internal fun Note(text: String, modifier: Modifier = Modifier) {
 /** Why a change was not made, in a line. */
 @Composable
 internal fun failureText(failure: LoadFailure): String = when (failure) {
-    is LoadFailure.Other -> stringResource(R.string.jail_failed, failure.message)
-    else -> failureTitle(failure)
+    LoadFailure.NoRoot, LoadFailure.ModuleMissing, LoadFailure.ModuleOutdated -> failureReason(failure)
+    else -> stringResource(R.string.jail_failed, failureReason(failure))
 }
 
 /** Tells once why a change was not made. */

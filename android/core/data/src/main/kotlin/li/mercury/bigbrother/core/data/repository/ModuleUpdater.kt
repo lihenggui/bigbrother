@@ -20,6 +20,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import li.mercury.bigbrother.core.data.RecordsException
+import li.mercury.bigbrother.core.data.toLoadFailure
 import li.mercury.bigbrother.core.model.LoadFailure
 import timber.log.Timber
 import javax.inject.Inject
@@ -29,14 +30,7 @@ sealed interface ModuleUpdate {
     data object Idle : ModuleUpdate
     data object Updating : ModuleUpdate
 
-    /** Disabled or marked for removal in the root manager, and left as it is. */
-    data object Disabled : ModuleUpdate
-
-    /** The files were replaced, but the new daemon did not report in. */
-    data object NotReporting : ModuleUpdate
-
-    /** Replacing the files failed, with the output saying why. */
-    data class Failed(val reason: String?) : ModuleUpdate
+    data class Failed(val failure: LoadFailure) : ModuleUpdate
 }
 
 /** Checks the installed module against this app and tracks an in-place update. */
@@ -74,13 +68,11 @@ class ModuleUpdater @Inject constructor(
     suspend fun updateInPlace() {
         update.value = ModuleUpdate.Updating
         try {
-            update.value = when {
-                !moduleRepository.updateInPlace() -> ModuleUpdate.Disabled
-                awaitRecording() -> ModuleUpdate.Idle
-                else -> ModuleUpdate.NotReporting
-            }
+            moduleRepository.updateInPlace()
+            awaitRecording()
+            update.value = ModuleUpdate.Idle
         } catch (e: RecordsException) {
-            update.value = ModuleUpdate.Failed(installerError(e.message.orEmpty()))
+            update.value = ModuleUpdate.Failed(e.toLoadFailure())
         } finally {
             if (update.value == ModuleUpdate.Updating) update.value = ModuleUpdate.Idle
         }
@@ -88,32 +80,22 @@ class ModuleUpdater @Inject constructor(
     }
 
     /** The daemon reports only after it has written its first batch. */
-    suspend fun awaitRecording(): Boolean {
+    suspend fun awaitRecording() {
         repeat(START_POLLS) {
             delay(START_POLL_INTERVAL_MS)
             val recording = try {
                 accessRepository.getRecorderStatus().recording
             } catch (_: RecordsException) {
+                // The command can fail while the daemon is between generations.
                 false
             }
-            if (recording) return true
+            if (recording) return
         }
-        return false
+        throw RecordsException.CommandFailed(LoadFailure.Operation.DAEMON_NOT_REPORTING)
     }
 
     private companion object {
         const val START_POLLS = 20
         const val START_POLL_INTERVAL_MS = 1_000L
     }
-}
-
-/**
- * Why an installation failed, from the installer's output: the lines
- * Magisk and KernelSU mark with "!" for errors, else the last line. The
- * rest is the installer's banner and progress.
- */
-fun installerError(output: String): String? {
-    val lines = output.lines().map { it.trim() }.filter { it.isNotEmpty() }
-    val errors = lines.filter { it.startsWith("!") }.map { it.removePrefix("!").trim() }
-    return errors.ifEmpty { listOfNotNull(lines.lastOrNull()) }.joinToString("\n").ifEmpty { null }
 }

@@ -18,6 +18,7 @@ package li.mercury.bigbrother.core.data.root
 
 import android.os.SystemClock
 import com.topjohnwu.superuser.Shell
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.IO
@@ -78,6 +79,8 @@ open class RootShell @Inject constructor(
             if (cached.isRoot) return cached
             cached.close()
             Shell.getShell()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (_: Exception) {
             // libsu could not start a shell at all.
             throw RecordsException.NoRoot()

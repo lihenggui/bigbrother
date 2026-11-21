@@ -22,6 +22,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import kotlinx.coroutines.Dispatchers
 import li.mercury.bigbrother.core.domain.AppVisibility
+import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.screenshottesting.DefaultTestDevices
 import li.mercury.bigbrother.core.screenshottesting.DemoClockRule
 import li.mercury.bigbrother.core.screenshottesting.DemoLoadFailure
@@ -110,7 +111,7 @@ class TimelineScreenScreenshotTests {
 
     @Test
     fun givenOlderPageFailed_whenShown_thenOffersToRetryAtEnd() {
-        capturePhone("TimelineLoadMoreFailed") { Timeline { it.firstPage().copy(loadMoreFailed = true) } }
+        capturePhone("TimelineLoadMoreFailed") { Timeline { it.firstPage().copy(loadMoreFailure = LoadFailure.Operation.COMMAND_FAILED) } }
     }
 
     @Test

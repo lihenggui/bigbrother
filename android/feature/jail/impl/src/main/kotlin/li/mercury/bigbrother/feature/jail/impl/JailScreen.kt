@@ -83,7 +83,7 @@ import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.appNameWithUser
-import li.mercury.bigbrother.core.ui.failureTitle
+import li.mercury.bigbrother.core.ui.failureReason
 import li.mercury.bigbrother.core.ui.R as UiR
 
 /**
@@ -373,7 +373,7 @@ private fun messageText(message: JailMessage): String {
 /** [one] with the app's name, or [several] with the number of apps, then why. */
 @Composable
 private fun notChanged(names: List<String>, @StringRes one: Int, @PluralsRes several: Int, failure: LoadFailure): String {
-    val reason = (failure as? LoadFailure.Other)?.message ?: failureTitle(failure)
+    val reason = failureReason(failure)
     return if (names.size == 1) stringResource(one, names.single(), reason) else pluralStringResource(several, names.size, names.size, reason)
 }
 
@@ -396,6 +396,7 @@ internal fun AddAppsDialog(
         state = state,
         query = query,
         onToggle = viewModel::toggle,
+        onRetry = viewModel::retry,
         onDismiss = {
             viewModel.clear()
             onDismiss()

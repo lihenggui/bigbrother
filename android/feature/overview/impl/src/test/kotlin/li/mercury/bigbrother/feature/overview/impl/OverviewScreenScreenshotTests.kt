@@ -22,7 +22,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import kotlinx.coroutines.Dispatchers
 import li.mercury.bigbrother.core.data.repository.ModuleUpdate
-import li.mercury.bigbrother.core.data.repository.installerError
 import li.mercury.bigbrother.core.domain.AppRecords
 import li.mercury.bigbrother.core.domain.AppVisibility
 import li.mercury.bigbrother.core.model.AppSummary
@@ -143,8 +142,8 @@ class OverviewScreenScreenshotTests {
 
     @Test
     fun givenEachStartFailure_whenShown_thenSaysWhy() {
-        for (failure in START_FAILURES) {
-            capturePhone("OverviewStopped${failure.screenshotName}") {
+        for ((name, failure) in START_FAILURES) {
+            capturePhone("OverviewStopped$name") {
                 Overview { it.copy(recording = false, daemonStartError = failure) }
             }
         }
@@ -157,8 +156,8 @@ class OverviewScreenScreenshotTests {
 
     @Test
     fun givenEachModuleUpdateStep_whenShown_thenMatchesGolden() {
-        for (update in MODULE_UPDATES) {
-            capturePhone("OverviewModuleUpdate${update.screenshotName}") { Overview { it.copy(moduleUpdate = update) } }
+        for ((name, update) in MODULE_UPDATES) {
+            capturePhone("OverviewModuleUpdate$name") { Overview { it.copy(moduleUpdate = update) } }
         }
     }
 
@@ -168,14 +167,9 @@ class OverviewScreenScreenshotTests {
     }
 
     @Test
-    fun givenStartFailureCases_whenChecked_thenEveryKindHasOne() {
-        assertSamplesCover(StartFailure::class.java, START_FAILURES)
-    }
-
-    @Test
     fun givenModuleUpdateCases_whenChecked_thenEveryStepHasOne() {
         // Idle is the overview without a card, as in every other case.
-        assertSamplesCover(ModuleUpdate::class.java, MODULE_UPDATES, excluded = setOf(ModuleUpdate.Idle::class.java))
+        assertSamplesCover(ModuleUpdate::class.java, MODULE_UPDATES.values, excluded = setOf(ModuleUpdate.Idle::class.java))
     }
 
     private fun capturePhone(name: String, body: @Composable () -> Unit) {
@@ -220,27 +214,24 @@ class OverviewScreenScreenshotTests {
     }
 
     private companion object {
-        /** What Magisk prints when an installation fails: progress, then the errors marked with "!". */
-        const val INSTALLER_OUTPUT = "- Copying zip to temp directory\n- Installing big_brother.zip\n! Unsupported kernel: no BTF\n! Installation failed"
-
         val MODULE_SETUPS = listOf(
             ModuleSetup.Idle,
             ModuleSetup.Installing,
             ModuleSetup.NeedsReboot,
-            ModuleSetup.Failed(installerError(INSTALLER_OUTPUT)),
+            ModuleSetup.Failed(LoadFailure.Operation.KERNEL_BTF_MISSING),
         )
 
-        val START_FAILURES = listOf(
-            StartFailure.ModuleDisabled,
-            StartFailure.NotReporting,
-            StartFailure.Failed("bbd: loading the eBPF programs failed: Operation not permitted"),
+        val START_FAILURES = mapOf(
+            "ModuleDisabled" to LoadFailure.Operation.MODULE_DISABLED,
+            "NotReporting" to LoadFailure.Operation.DAEMON_NOT_REPORTING,
+            "Failed" to LoadFailure.Operation.DAEMON_START_FAILED,
         )
 
-        val MODULE_UPDATES = listOf(
-            ModuleUpdate.Updating,
-            ModuleUpdate.Disabled,
-            ModuleUpdate.NotReporting,
-            ModuleUpdate.Failed(installerError(INSTALLER_OUTPUT)),
+        val MODULE_UPDATES = mapOf(
+            "Updating" to ModuleUpdate.Updating,
+            "Disabled" to ModuleUpdate.Failed(LoadFailure.Operation.MODULE_DISABLED),
+            "NotReporting" to ModuleUpdate.Failed(LoadFailure.Operation.DAEMON_NOT_REPORTING),
+            "Failed" to ModuleUpdate.Failed(LoadFailure.Operation.KERNEL_BTF_MISSING),
         )
     }
 }

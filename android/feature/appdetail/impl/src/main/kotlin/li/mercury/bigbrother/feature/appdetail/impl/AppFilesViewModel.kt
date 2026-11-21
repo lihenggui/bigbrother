@@ -61,7 +61,7 @@ data class FileDetails(
 
 internal sealed interface FileAccessResult {
     data class Granted(val path: String) : FileAccessResult
-    data object Denied : FileAccessResult
+    data class Failed(val failure: LoadFailure) : FileAccessResult
 }
 
 internal data class AppFilesUiState(
@@ -230,7 +230,12 @@ class AppFilesViewModel @AssistedInject constructor(
         fileAccessJob?.cancel()
         mutableUiState.update { it.copy(fileAccessResult = null) }
         fileAccessJob = viewModelScope.launch {
-            val result = if (fileAccessRepository.ensureAllFilesAccess()) FileAccessResult.Granted(path) else FileAccessResult.Denied
+            val result = try {
+                fileAccessRepository.ensureAllFilesAccess()
+                FileAccessResult.Granted(path)
+            } catch (e: RecordsException) {
+                FileAccessResult.Failed(e.toLoadFailure())
+            }
             ensureActive()
             mutableUiState.update { it.copy(fileAccessResult = result) }
         }

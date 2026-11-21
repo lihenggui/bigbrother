@@ -108,7 +108,7 @@ class DestinationViewModel @AssistedInject constructor(
     private suspend fun read() {
         val target = target
         if (target == null) {
-            load.update { it.copy(failure = RecordsException.CommandFailed("unknown destination").toLoadFailure()) }
+            load.update { it.copy(failure = LoadFailure.Operation.DESTINATION_MISSING) }
             return
         }
         try {

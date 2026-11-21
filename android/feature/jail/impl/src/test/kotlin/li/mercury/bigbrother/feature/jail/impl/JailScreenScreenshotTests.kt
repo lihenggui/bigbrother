@@ -178,8 +178,14 @@ class JailScreenScreenshotTests {
                 onToggle = {},
                 onDismiss = {},
                 onConfirm = {},
+                onRetry = {},
             )
         }
+    }
+
+    @Test
+    fun givenInstalledAppsReadFailure_whenPickerShown_thenShowsRetry() {
+        capturePhone("JailAddAppsFailure") { AddApps(AddAppsUiState(failure = LoadFailure.Operation.INSTALLED_APPS_UNAVAILABLE)) }
     }
 
     @Test
@@ -343,7 +349,7 @@ class JailScreenScreenshotTests {
             "IsolatedPartly" to JailMessage.Isolated(names.take(1), apps.take(1), notIsolated = names.subList(1, 2)),
             "IsolatedPartlyCount" to JailMessage.Isolated(names.take(1), apps.take(1), notIsolated = names.subList(1, 4)),
             "NotIsolated" to JailMessage.NotIsolated(names.take(1), LoadFailure.ModuleOutdated),
-            "NotIsolatedCount" to JailMessage.NotIsolated(names.take(3), LoadFailure.Other("timed out")),
+            "NotIsolatedCount" to JailMessage.NotIsolated(names.take(3), LoadFailure.Operation.TIMED_OUT),
             "NotReleased" to JailMessage.NotReleased(names.take(1), LoadFailure.NoRoot),
         )
     }
@@ -390,6 +396,7 @@ class JailScreenScreenshotTests {
                         onToggle = {},
                         onDismiss = { shown.value = false },
                         onConfirm = {},
+                        onRetry = {},
                     )
                 }
             }
@@ -420,7 +427,7 @@ class JailScreenScreenshotTests {
 
     @Composable
     private fun AddApps(state: AddAppsUiState, compact: Boolean = true) {
-        AddAppsSheet(state = state, query = rememberTextFieldState(), compact = compact, onToggle = {}, onDismiss = {}, onConfirm = {})
+        AddAppsSheet(state = state, query = rememberTextFieldState(), compact = compact, onToggle = {}, onDismiss = {}, onConfirm = {}, onRetry = {})
     }
 
     /** Three apps put in the sandbox over the last days, one with settings of its own. */

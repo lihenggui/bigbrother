@@ -51,6 +51,7 @@ import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.OpenFileResult
 import li.mercury.bigbrother.core.ui.PredictiveSearchTopBar
 import li.mercury.bigbrother.core.ui.appDisplayName
+import li.mercury.bigbrother.core.ui.failureReason
 import li.mercury.bigbrother.core.ui.openFile
 import li.mercury.bigbrother.core.ui.R as UiR
 
@@ -65,17 +66,20 @@ fun AppFilesScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val fileAccessResult = uiState.fileAccessResult
+    val failureText = (fileAccessResult as? FileAccessResult.Failed)?.let { failureReason(it.failure) }
+    val fileMissing = stringResource(R.string.open_file_missing)
+    val noFileViewer = stringResource(R.string.open_file_no_viewer)
     LaunchedEffect(fileAccessResult) {
         val result = when (fileAccessResult) {
             is FileAccessResult.Granted -> openFile(context, fileAccessResult.path)
-            FileAccessResult.Denied -> OpenFileResult.NO_ACCESS
+            is FileAccessResult.Failed -> null
             null -> return@LaunchedEffect
         }
         val message = when (result) {
             OpenFileResult.OPENED -> null
-            OpenFileResult.MISSING -> R.string.open_file_missing
-            OpenFileResult.NO_VIEWER -> R.string.open_file_no_viewer
-            OpenFileResult.NO_ACCESS -> R.string.open_file_no_access
+            OpenFileResult.MISSING -> fileMissing
+            OpenFileResult.NO_VIEWER -> noFileViewer
+            null -> failureText
         }
         if (message != null) Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
         viewModel.onFileAccessHandled(fileAccessResult)
