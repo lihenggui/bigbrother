@@ -20,7 +20,6 @@ import androidx.activity.ComponentActivity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
-import kotlinx.coroutines.Dispatchers
 import li.mercury.bigbrother.core.data.repository.ModuleUpdate
 import li.mercury.bigbrother.core.domain.AppRecords
 import li.mercury.bigbrother.core.domain.AppVisibility
@@ -38,10 +37,7 @@ import li.mercury.bigbrother.core.screenshottesting.captureForDevice
 import li.mercury.bigbrother.core.screenshottesting.captureMultiDevice
 import li.mercury.bigbrother.core.screenshottesting.captureStoreScreenshot
 import li.mercury.bigbrother.core.screenshottesting.screenshotName
-import li.mercury.bigbrother.core.testing.repository.testSearchRecordsUseCase
 import li.mercury.bigbrother.core.ui.readFiles
-import li.mercury.bigbrother.feature.search.impl.GlobalSearchBar
-import li.mercury.bigbrother.feature.search.impl.SearchViewModel
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -189,7 +185,7 @@ class OverviewScreenScreenshotTests {
         val shown = remember(records) {
             AppVisibility(showSystemApps = false, ownPackage = "li.mercury.bigbrother").visibleApps(AppRecords(records.apps, records.appInfo)).apps
         }
-        SearchScaffold(topBar = { SearchBar() }) {
+        SearchScaffold {
             OverviewScreen(
                 state = remember(records) { state(overviewState(records, shown)) },
                 onRange = {},
@@ -234,19 +230,4 @@ class OverviewScreenScreenshotTests {
             "Failed" to ModuleUpdate.Failed(LoadFailure.Operation.KERNEL_BTF_MISSING),
         )
     }
-}
-
-/** The search bar the top-level screens have as their top bar, idle. */
-@Composable
-private fun SearchBar() {
-    val viewModel = remember {
-        SearchViewModel(testSearchRecordsUseCase(Dispatchers.Unconfined), Dispatchers.Unconfined)
-    }
-    GlobalSearchBar(
-        onOpenApp = { _, _, _ -> },
-        onOpenCategory = {},
-        onOpenSettings = {},
-        settingsBadge = false,
-        viewModel = viewModel,
-    )
 }

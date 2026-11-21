@@ -22,14 +22,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
-import li.mercury.bigbrother.core.data.repository.AccessRepository
 import li.mercury.bigbrother.core.domain.GetAppVisibilityUseCase
 import li.mercury.bigbrother.core.model.AppInfo
-import li.mercury.bigbrother.core.model.Category
-import li.mercury.bigbrother.core.model.TimeRange
-import li.mercury.bigbrother.core.model.TimelineEntry
 import li.mercury.bigbrother.core.model.TimelinePage
 import li.mercury.bigbrother.core.testing.MainDispatcherRule
+import li.mercury.bigbrother.core.testing.data.testTimelineEntry
 import li.mercury.bigbrother.core.testing.repository.TestAccessRepository
 import li.mercury.bigbrother.core.testing.repository.TestAppInfoRepository
 import li.mercury.bigbrother.core.testing.repository.TestUserDataRepository
@@ -44,17 +41,13 @@ class TimelineViewModelTest {
 
     @Test
     fun givenHiddenFirstPage_whenLoadingMoreAndShowingSystemApps_thenKeepsCursorAndReusesBothPages() = runTest {
-        val system = entry(10001, "com.example.system", 7200L)
-        val own = entry(10002, OWN_PACKAGE, 7200L)
-        val isolated = entry(99001, "", 3600L)
-        val user = entry(10003, "com.example.user", 3600L)
-        val cursors = mutableListOf<Long?>()
-        val access = object : AccessRepository by TestAccessRepository() {
-            override suspend fun getTimeline(range: TimeRange, before: Long?, limit: Int): TimelinePage {
-                cursors += before
-                return if (before == null) TimelinePage(listOf(system, own), 7200L) else TimelinePage(listOf(isolated, user), null)
-            }
-        }
+        val system = testTimelineEntry(7200L, uid = 10001, packageName = "com.example.system")
+        val own = testTimelineEntry(7200L, uid = 10002, packageName = OWN_PACKAGE)
+        val isolated = testTimelineEntry(3600L, uid = 99001, packageName = "")
+        val user = testTimelineEntry(3600L, uid = 10003, packageName = "com.example.user")
+        val access = TestAccessRepository(
+            timelinePages = mapOf(null to TimelinePage(listOf(system, own), 7200L), 7200L to TimelinePage(listOf(isolated, user), null)),
+        )
         val info = TestAppInfoRepository(mapOf(system.packageName to AppInfo("System", PackageInfo(), isSystem = true)))
         val settings = TestUserDataRepository()
         val viewModel = TimelineViewModel(access, info, GetAppVisibilityUseCase(settings, OWN_PACKAGE), mainDispatcherRule.testDispatcher)
@@ -71,25 +64,8 @@ class TimelineViewModelTest {
         settings.setShowSystemApps(true)
         advanceUntilIdle()
         assertEquals(listOf(system, isolated, user), viewModel.uiState.value.entries)
-        assertEquals(listOf(null, 7200L), cursors)
+        assertEquals(listOf(null, 7200L), access.timelineCursors)
     }
-
-    private fun entry(uid: Int, packageName: String, hour: Long) = TimelineEntry(
-        hourStart = hour,
-        uid = uid,
-        packageName = packageName,
-        category = Category.STORAGE,
-        topic = null,
-        paths = 1,
-        filesRead = 1,
-        allowed = 1,
-        denied = 0,
-        modes = 1,
-        items = 0,
-        folder = null,
-        firstSeen = hour,
-        lastSeen = hour,
-    )
 
     private companion object {
         const val OWN_PACKAGE = "com.example.recorder"

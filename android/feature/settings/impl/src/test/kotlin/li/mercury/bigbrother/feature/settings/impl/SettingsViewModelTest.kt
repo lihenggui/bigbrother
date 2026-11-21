@@ -16,20 +16,23 @@
 
 package li.mercury.bigbrother.feature.settings.impl
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.RecordsException
-import li.mercury.bigbrother.core.data.repository.DiagnosticsRepository
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.UserData
 import li.mercury.bigbrother.core.testing.MainDispatcherRule
 import li.mercury.bigbrother.core.testing.repository.TestAccessRepository
+import li.mercury.bigbrother.core.testing.repository.TestDiagnosticsRepository
 import li.mercury.bigbrother.core.testing.repository.TestModuleRepository
 import li.mercury.bigbrother.core.testing.repository.TestUserDataRepository
 import org.junit.Rule
+import java.io.File
 import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -51,9 +54,7 @@ class SettingsViewModelTest {
             records,
             module,
             TestUserDataRepository(),
-            object : DiagnosticsRepository {
-                override suspend fun exportLogs() = error("Logs are not exported by this test")
-            },
+            TestDiagnosticsRepository(),
         )
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
         viewModel.refresh()
@@ -73,15 +74,45 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun givenExportInProgress_whenRequestedAgain_thenSharesOneArchive() = runTest {
+        val result = CompletableDeferred<File>()
+        var exports = 0
+        val viewModel = SettingsViewModel(
+            TestAccessRepository(),
+            TestModuleRepository(),
+            TestUserDataRepository(),
+            TestDiagnosticsRepository {
+                exports++
+                result.await()
+            },
+        )
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
+
+        viewModel.exportLogs()
+        viewModel.exportLogs()
+        runCurrent()
+
+        assertEquals(LogExport.Collecting, viewModel.uiState.value.logExport)
+        assertEquals(1, exports)
+
+        val archive = File("diagnostics.zip")
+        result.complete(archive)
+        runCurrent()
+        assertEquals(LogExport.Ready(archive), viewModel.uiState.value.logExport)
+
+        viewModel.dismissLogExport()
+        runCurrent()
+        assertEquals(LogExport.Idle, viewModel.uiState.value.logExport)
+    }
+
+    @Test
     fun givenBothSwitchWritesFail_whenRetried_thenEachChoiceIsSaved() = runTest {
         val settings = TestUserDataRepository()
         val viewModel = SettingsViewModel(
             accessRepository = TestAccessRepository(),
             moduleRepository = TestModuleRepository(),
             userDataRepository = settings,
-            diagnosticsRepository = object : DiagnosticsRepository {
-                override suspend fun exportLogs() = error("Logs are not exported by this test")
-            },
+            diagnosticsRepository = TestDiagnosticsRepository(),
         )
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
         settings.writeFailure = IOException("Storage unavailable")

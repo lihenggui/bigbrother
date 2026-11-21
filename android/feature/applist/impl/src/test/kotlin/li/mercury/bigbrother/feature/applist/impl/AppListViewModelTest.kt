@@ -25,9 +25,9 @@ import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.domain.GetAppRecordsUseCase
 import li.mercury.bigbrother.core.domain.GetAppVisibilityUseCase
 import li.mercury.bigbrother.core.model.AppInfo
-import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.testing.MainDispatcherRule
+import li.mercury.bigbrother.core.testing.data.testAppSummary
 import li.mercury.bigbrother.core.testing.repository.TestAccessRepository
 import li.mercury.bigbrother.core.testing.repository.TestAppInfoRepository
 import li.mercury.bigbrother.core.testing.repository.TestUserDataRepository
@@ -73,8 +73,8 @@ class AppListViewModelTest {
 
     @Test
     fun givenHiddenAndOwnRecords_whenShowingSystemApps_thenReusesTheLoadedRecords() = runTest {
-        val system = AppSummary(10001, "com.example.system", emptyMap(), lastSeen = 2)
-        val own = AppSummary(10002, OWN_PACKAGE, emptyMap(), lastSeen = 1)
+        val system = testAppSummary(10001, "com.example.system", lastSeen = 2)
+        val own = testAppSummary(10002, OWN_PACKAGE)
         val access = TestAccessRepository(apps = listOf(system, own))
         val info = TestAppInfoRepository(mapOf(system.packageName to AppInfo("System", PackageInfo(), isSystem = true)))
         val settings = TestUserDataRepository()

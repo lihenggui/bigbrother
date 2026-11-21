@@ -31,11 +31,10 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.AccessRepository
-import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.testing.MainDispatcherRule
+import li.mercury.bigbrother.core.testing.data.testAppSummary
 import li.mercury.bigbrother.core.testing.repository.TestAccessRepository
-import li.mercury.bigbrother.core.testing.repository.TestSearchAccessRepository
 import li.mercury.bigbrother.core.testing.repository.testSearchRecordsUseCase
 import li.mercury.bigbrother.core.ui.DataCategory
 import li.mercury.bigbrother.core.ui.topicTitle
@@ -55,8 +54,8 @@ class SearchViewModelTest {
         val category = DataCategory.SENSORS
         val topic = "camera"
         val topicId = requireNotNull(topicTitle(topic))
-        val app = AppSummary(10001, "com.example.camera", emptyMap(), lastSeen = 1, topics = listOf(topic, topic, "microphone"))
-        val other = AppSummary(10002, "com.example.audio", emptyMap(), lastSeen = 1, topics = listOf("microphone"))
+        val app = testAppSummary(10001, "com.example.camera", topics = listOf(topic, topic, "microphone"))
+        val other = testAppSummary(10002, "com.example.audio", topics = listOf("microphone"))
         val viewModel = collectState(TestAccessRepository(apps = listOf(app, other)))
 
         viewModel.setQuery(" camera ", setOf(category.title, topicId, DataCategory.CONTACTS.title))
@@ -70,7 +69,7 @@ class SearchViewModelTest {
 
     @Test
     fun givenResults_whenQueryCleared_thenClearsWithoutSearchingForBlankText() = runTest {
-        val app = AppSummary(10001, "com.example.notes", emptyMap(), lastSeen = 1)
+        val app = testAppSummary(10001, "com.example.notes")
         val access = TestAccessRepository(apps = listOf(app))
         val viewModel = collectState(access)
         viewModel.setQuery("notes", emptySet())
@@ -114,9 +113,8 @@ class SearchViewModelTest {
         val calls = mutableListOf<String>()
         var cancelled = false
         val release = CompletableDeferred<Unit>()
-        val access = TestAccessRepository(apps = listOf(AppSummary(10001, "com.example.notes", emptyMap(), lastSeen = 1)))
         val viewModel = collectState(
-            TestSearchAccessRepository(access) { query ->
+            TestAccessRepository(apps = listOf(testAppSummary(10001, "com.example.notes"))) { query ->
                 calls += query.text
                 if (query.text == "camera") {
                     try {
