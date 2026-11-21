@@ -26,7 +26,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
-import androidx.test.core.app.ApplicationProvider
+import kotlinx.coroutines.Dispatchers
 import li.mercury.bigbrother.core.designsystem.theme.BigBrotherTheme
 import li.mercury.bigbrother.core.model.InstalledApp
 import li.mercury.bigbrother.core.model.LoadFailure
@@ -44,9 +44,7 @@ import li.mercury.bigbrother.core.screenshottesting.assertSamplesCover
 import li.mercury.bigbrother.core.screenshottesting.captureForDevice
 import li.mercury.bigbrother.core.screenshottesting.captureMultiDevice
 import li.mercury.bigbrother.core.screenshottesting.screenshotName
-import li.mercury.bigbrother.core.testing.repository.TestAccessRepository
-import li.mercury.bigbrother.core.testing.repository.TestAppInfoRepository
-import li.mercury.bigbrother.core.testing.repository.TestUserDataRepository
+import li.mercury.bigbrother.core.testing.repository.TestSearchRepository
 import li.mercury.bigbrother.feature.search.impl.GlobalSearchBar
 import li.mercury.bigbrother.feature.search.impl.SearchViewModel
 import org.junit.Assert.assertEquals
@@ -539,12 +537,7 @@ class JailScreenScreenshotTests {
 @Composable
 private fun SearchBar() {
     val viewModel = remember {
-        SearchViewModel(
-            context = ApplicationProvider.getApplicationContext(),
-            accessRepository = TestAccessRepository(),
-            appInfoRepository = TestAppInfoRepository(),
-            userDataRepository = TestUserDataRepository(),
-        )
+        SearchViewModel(TestSearchRepository(), Dispatchers.Unconfined)
     }
     GlobalSearchBar(
         onOpenApp = { _, _, _ -> },

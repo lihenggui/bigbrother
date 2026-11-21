@@ -117,6 +117,8 @@ private val TOPICS: Map<String, TopicInfo> = mapOf(
     "microphone" to TopicInfo(R.string.topic_microphone_title, DataCategory.SENSORS, Icons.Outlined.Mic),
 )
 
+val topicTitleIds: List<Int> = TOPICS.values.map { it.title }
+
 /** Name of a topic id, or null for an id this build doesn't know, in which case the raw path is shown. */
 @StringRes
 fun topicTitle(topic: String): Int? = TOPICS[topic]?.title
