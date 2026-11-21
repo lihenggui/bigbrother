@@ -24,8 +24,9 @@ app      reads the daemon's JSON output as root
   `security_*` functions that call them can be inlined into their callers,
   as they are on android13-5.15 kernels, and a probe on an inlined function
   attaches but never fires.
-- Kernel struct offsets are read from BTF at startup and passed to the eBPF
-  programs, so one binary works across kernel versions.
+- At startup, the probe loader in `bbd/src/probes.rs` reads kernel struct
+  offsets from BTF and passes them to the eBPF programs, so one binary works
+  across kernel versions. `bbd run` and `bbd selftest` share the loader.
 - Network destinations are classified in the kernel; only loopback, private,
   link-local and multicast addresses leave it. A connection to a port the
   app itself listens on is not recorded. Destinations on the internet leave
@@ -107,6 +108,12 @@ with increasing delays if it exits. Its database is
 The app runs the same binary for its queries (`bbd apps`, `bbd files`,
 `bbd timeline`, `bbd sensors`, `bbd stats` and others), which print JSON.
 `bbd sandbox` sends commands to the running daemon instead.
+
+`bbd/src/record.rs` defines the category and access mode stored with each
+record. The app, file and timeline queries in `bbd/src/report.rs` read SQLite
+through the store and use `rules::topic_of` to attach the topic IDs defined
+in `bbd/src/topic.rs`. The network queries and sandbox rules share
+destination parsing in `bbd/src/sandbox/target.rs`.
 
 When the app is updated, it compares the installed module with the one it
 carries, by version code and, for the same version, by the daemon's SHA-256,

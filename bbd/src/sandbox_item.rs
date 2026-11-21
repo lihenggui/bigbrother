@@ -13,6 +13,9 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 //! Item and mode names shared by the sandbox and its control protocol.
+//!
+//! This module lives outside `sandbox/` so the command protocol in
+//! `control.rs` can use these names without depending on the sandbox engine.
 
 use serde::{Deserialize, Serialize};
 

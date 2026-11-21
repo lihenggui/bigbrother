@@ -18,6 +18,16 @@ JSON.
   (`control::Request`); they need the running daemon and never write the
   database themselves.
 
+## Module layering
+
+The leaf modules (`record`, `topic`, `proc`, `dir`, `clock`, `sync`, `log`,
+`backoff`, `sandbox_item`, and `sandbox/target`) depend on nothing above
+them. Of the daemon modules, `store` depends only on `record`. Classifiers
+such as `rules` and `paths` sit above the shared types and helpers. `report`
+reads the store and classifies records for queries. The engines and the
+daemon loop build on the lower layers, with the CLI at the top. New code
+must keep dependencies acyclic.
+
 ## Sandbox
 
 `src/sandbox/` gives an app the user put in it another view of the device
@@ -40,9 +50,10 @@ JSON.
 - The gate thread (`sandbox/gate.rs`) is what a starting app waits for. It
   never waits for the main loop, the database or a helper program, and has
   no timer: it blocks until a sandboxed app starts.
-- A sandbox directory belongs to the sandboxed app. As root, reach into it
-  only through `sandbox/dirs.rs`, one name at a time and never through a
-  symbolic link.
+- A sandbox directory belongs to the sandboxed app. As root, use the layout
+  in `src/sandbox/dirs.rs` and reach into it only through the directory
+  descriptors in `src/dir.rs`, one name at a time without following symbolic
+  links.
 - The errors and log lines of the mounts name the step, not the path: the
   paths have package names in them.
 - Commands run on the main loop and hold up recording while they do: keep
@@ -99,7 +110,8 @@ The daemon runs on every device all the time; its cost is the product's cost.
 
 - The rules live in `src/rules.rs` (`/proc`, `/sys`, `/dev`), `src/paths.rs`
   (shared storage), `src/commands.rs`, `src/binder.rs`, `src/net.rs` and
-  `src/personal.rs`. A new kind of record needs a topic, which the app shows,
-  and tests for what is and is not recorded.
+  `src/personal.rs`. A new kind of record needs a topic ID in `src/topic.rs`
+  for the app to show, and tests for what is and is not recorded.
+  `src/report.rs` classifies stored records by topic on the read side.
 - Paths, command lines and package names come from other apps: treat them as
   untrusted data. Never pass them to a shell or interpret them.
