@@ -58,6 +58,8 @@ pub fn file_open(ctx: ProbeContext) -> u32 {
     0
 }
 
+// Splitting this further risks changing what the BPF verifier sees.
+#[allow(clippy::too_many_lines)]
 fn try_file_open(ctx: &ProbeContext) -> Result<(), i32> {
     let uid = bpf_get_current_uid_gid() as u32;
     if !should_trace(uid) {

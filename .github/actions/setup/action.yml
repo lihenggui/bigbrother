@@ -16,7 +16,7 @@ runs:
           --component rustfmt,clippy \
           --target aarch64-linux-android --target x86_64-linux-android
         rustup default stable
-        rustup toolchain install nightly --profile minimal --component rust-src
+        rustup toolchain install nightly --profile minimal --component rust-src,clippy
 
     # The release binary links LLVM statically, so it does not depend on the
     # LLVM version of the image.

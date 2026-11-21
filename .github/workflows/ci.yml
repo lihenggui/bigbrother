@@ -31,6 +31,15 @@ jobs:
       - name: Lint
         run: cargo clippy --all-targets -- -D warnings
 
+      - name: Check eBPF function length
+        env:
+          RUSTFLAGS: '--cfg bpf_target_arch="x86_64"'
+        run: |
+          for features in "" task-storage; do
+            cargo +nightly clippy -Z build-std=core --target bpfel-unknown-none \
+              -p bb-ebpf --features "$features" -- -A clippy::all -D clippy::too_many_lines
+          done
+
       - name: Test the daemon
         run: cargo test
 
@@ -73,9 +82,9 @@ jobs:
         working-directory: android
         run: ./gradlew :app:lintRelease
 
-      - name: Check Kotlin test names
+      - name: Check Kotlin source structure and test names
         working-directory: android
-        run: ./gradlew lintDebug -PlintTestNamesOnly
+        run: ./gradlew lintStructure -PlintStructureOnly
 
       - name: Upload the lint reports
         if: failure()
@@ -85,6 +94,7 @@ jobs:
           path: |
             android/app/build/reports/lint-results-release.html
             android/**/build/reports/lint-results-debug.html
+            android/**/build/reports/lint-results.html
           if-no-files-found: ignore
 
       # Signed with the debug key; release builds come from release.yml.

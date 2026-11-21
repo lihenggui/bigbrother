@@ -20,6 +20,9 @@ libc = { version = "0.2.191", default-features = false }
 tokio = { version = "1.54.1", default-features = false }
 which = { version = "8.0.6", default-features = false }
 
+[workspace.lints.clippy]
+too_many_lines = "warn"
+
 [profile.release]
 lto = true
 strip = true
