@@ -73,7 +73,7 @@ use std::{
 
 use anyhow::Context as _;
 
-use crate::netctl;
+use crate::{netctl, sync::lock};
 
 /// Where netd listens for the lookups of apps.
 const NETD: &str = "/dev/socket/dnsproxyd";
@@ -136,7 +136,7 @@ struct Known {
 impl Names {
     /// Remember that `uid` was given `addresses` for `host`.
     pub fn learn(&self, uid: u32, host: &str, addresses: &[IpAddr]) {
-        let mut known = self.known.lock().unwrap_or_else(|e| e.into_inner());
+        let mut known = lock(&self.known);
         let Known {
             by_address, count, ..
         } = &mut *known;
@@ -155,14 +155,14 @@ impl Names {
 
     /// Forget what is remembered of `uid`: it belongs to another app.
     pub fn forget(&self, uid: u32) {
-        let mut known = self.known.lock().unwrap_or_else(|e| e.into_inner());
+        let mut known = lock(&self.known);
         known.by_address.remove(&uid);
         known.refused.remove(&uid);
     }
 
     /// Note the addresses `uid` is refused with the names it is kept from.
     pub fn keep_refused(&self, uid: u32, addresses: BTreeSet<IpAddr>) {
-        let mut known = self.known.lock().unwrap_or_else(|e| e.into_inner());
+        let mut known = lock(&self.known);
         if addresses.is_empty() {
             known.refused.remove(&uid);
         } else {
@@ -172,7 +172,7 @@ impl Names {
 
     /// Whether `address` is one `uid` is refused with a name.
     pub fn refused(&self, uid: u32, address: IpAddr) -> bool {
-        let known = self.known.lock().unwrap_or_else(|e| e.into_inner());
+        let known = lock(&self.known);
         known
             .refused
             .get(&uid)
@@ -181,7 +181,7 @@ impl Names {
 
     /// The name `uid` was last given `address` for.
     pub fn host_of(&self, uid: u32, address: IpAddr) -> Option<String> {
-        let known = self.known.lock().unwrap_or_else(|e| e.into_inner());
+        let known = lock(&self.known);
         known
             .by_address
             .get(&uid)?
@@ -191,7 +191,7 @@ impl Names {
 
     /// The addresses `uid` was given for the names `covered` holds for.
     pub fn addresses_of(&self, uid: u32, covered: impl Fn(&str) -> bool) -> Vec<IpAddr> {
-        let known = self.known.lock().unwrap_or_else(|e| e.into_inner());
+        let known = lock(&self.known);
         known
             .by_address
             .get(&uid)
@@ -271,7 +271,7 @@ impl Shared {
     /// Take a place for a lookup of `uid`, if it and all apps together
     /// have one left.
     fn take_place(&self, uid: u32) -> bool {
-        let mut of_each = self.of_each.lock().unwrap_or_else(|e| e.into_inner());
+        let mut of_each = lock(&self.of_each);
         let of_this = of_each.entry(uid).or_insert(0);
         if *of_this >= MOST_OF_ONE_APP || self.at_once.load(Ordering::Relaxed) >= MOST_AT_ONCE {
             if *of_this == 0 {
@@ -285,7 +285,7 @@ impl Shared {
     }
 
     fn leave_place(&self, uid: u32) {
-        let mut of_each = self.of_each.lock().unwrap_or_else(|e| e.into_inner());
+        let mut of_each = lock(&self.of_each);
         if let Some(of_this) = of_each.get_mut(&uid) {
             *of_this -= 1;
             if *of_this == 0 {

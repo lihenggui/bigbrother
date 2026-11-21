@@ -45,7 +45,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{packages::PER_USER_RANGE, sandbox::dirs::Dir};
+use bb_common::PER_USER_RANGE;
+
+use crate::sandbox::dirs::Dir;
 
 const MAX_FILE: u64 = 4 * 1024 * 1024;
 const MAX_EVENTS: usize = 8192;

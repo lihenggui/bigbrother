@@ -18,18 +18,22 @@
 //! subcommands read the database and print JSON for the app.
 
 mod appops;
+mod backoff;
 mod binder;
 mod btf;
+mod clock;
 mod commands;
 mod control;
 mod helper;
 mod lifecycle;
+mod log;
 mod mounts;
 mod net;
 mod netctl;
 mod packages;
 mod paths;
 mod personal;
+mod proc;
 #[cfg(test)]
 mod protocol_cases;
 mod rules;
@@ -38,17 +42,16 @@ mod selftest;
 mod sensors;
 mod spool;
 mod store;
+mod sync;
 mod syscalls;
 #[cfg(test)]
 mod test_sync;
 mod trace;
 
-use std::{
-    path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
+use clock::now;
 use sandbox::items::{self, Item, Mode};
 use serde::Serialize;
 
@@ -343,12 +346,6 @@ impl From<SandboxCommand> for control::Request {
             },
         }
     }
-}
-
-fn now() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64)
 }
 
 fn since(hours: Option<u32>) -> i64 {

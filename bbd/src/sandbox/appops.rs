@@ -79,10 +79,14 @@ use anyhow::Context as _;
 
 use super::{
     Effect, Entry, Resumed, Status,
-    gate::FailureLog,
     items::{self, OpMode, Settings},
 };
-use crate::helper;
+use crate::{
+    backoff::Backoff,
+    helper,
+    log::Limited,
+    sync::{lock, recover},
+};
 
 const HELPER_CLASS: &str = "AppOpsGuard";
 
@@ -91,18 +95,13 @@ const HELPER_CLASS: &str = "AppOpsGuard";
 /// at all.
 pub const ANSWER_WAIT: Duration = Duration::from_secs(5);
 
-/// How soon the helper is started again after it ends: twice as long after
-/// each time, each start being a Java runtime's. A helper that ran for
-/// `HEALTHY` starts the count again.
-const RETRY: Duration = Duration::from_secs(10);
-const RETRY_MAX: Duration = Duration::from_secs(1800);
-const HEALTHY: Duration = Duration::from_secs(600);
-
-fn retry_delay(failures: u32) -> Duration {
-    RETRY
-        .saturating_mul(1 << failures.saturating_sub(1).min(16))
-        .min(RETRY_MAX)
-}
+/// Each helper restart starts a Java runtime. A healthy run brings the
+/// delay back to its initial value.
+const RESTART_BACKOFF: Backoff = Backoff {
+    first: Duration::from_secs(10),
+    max: Duration::from_secs(1800),
+    healthy: Some(Duration::from_secs(600)),
+};
 
 /// The helper's answer to a command about one uid.
 #[derive(Debug, PartialEq, Eq)]
@@ -218,7 +217,7 @@ struct State {
     /// Recovery commands still to send, including when the pipe filled
     /// or a change was in progress for a UID.
     pending_verifications: BTreeSet<u32>,
-    rollback_errors: FailureLog,
+    rollback_errors: Limited<()>,
     /// Initial checks are in progress while replies arrive. After the
     /// regular command deadline without progress, an absent answer is
     /// reported as unavailable.
@@ -275,7 +274,7 @@ impl State {
 
     fn rollback(&mut self, line: &str) {
         if let Err(e) = self.send(line) {
-            self.rollback_errors.log(format_args!(
+            self.rollback_errors.log_sandbox(format_args!(
                 "cannot roll back app ops with the helper: {e:#}"
             ));
         }
@@ -332,7 +331,7 @@ impl Shared {
     fn state(&self) -> MutexGuard<'_, State> {
         // Whoever panicked holding it left nothing half done that matters:
         // an answer is inserted or not.
-        self.state.lock().unwrap_or_else(|e| e.into_inner())
+        lock(&self.state)
     }
 
     /// Send a command about `uid`, wait for the helper's answer, and hand
@@ -366,12 +365,7 @@ impl Shared {
         settle: impl FnOnce(&mut State, A) -> T,
     ) -> anyhow::Result<T> {
         let mut state = self.state();
-        let wait = |state, left| {
-            self.changed
-                .wait_timeout(state, left)
-                .unwrap_or_else(|e| e.into_inner())
-                .0
-        };
+        let wait = |state, left| recover(self.changed.wait_timeout(state, left)).0;
         let late = || anyhow::anyhow!("the app ops helper did not answer in time");
         // Started for this command if it was not running, which takes a
         // second or two.
@@ -497,7 +491,7 @@ impl AppOps {
     /// again on its own every minute.
     pub fn verifier(&self) -> impl Fn(u32) + Send + 'static {
         let shared = self.shared.clone();
-        let errors = RefCell::new(FailureLog::default());
+        let errors = RefCell::new(Limited::default());
         move |uid| {
             let result = match shared.state.try_lock() {
                 Ok(mut state) => state.verify(uid),
@@ -510,7 +504,7 @@ impl AppOps {
             if let Err(e) = result {
                 errors
                     .borrow_mut()
-                    .log(format_args!("cannot request app ops verification: {e:#}"));
+                    .log_sandbox(format_args!("cannot request app ops verification: {e:#}"));
             }
         }
     }
@@ -1057,10 +1051,7 @@ fn supervise(shared: &Shared) {
         {
             let mut state = shared.state();
             while !state.wanted {
-                state = shared
-                    .changed
-                    .wait(state)
-                    .unwrap_or_else(|e| e.into_inner());
+                state = recover(shared.changed.wait(state));
             }
         }
         let started = Instant::now();
@@ -1070,10 +1061,7 @@ fn supervise(shared: &Shared) {
             failures = 0;
             continue;
         }
-        if started.elapsed() >= HEALTHY {
-            failures = 0;
-        }
-        failures += 1;
+        failures = RESTART_BACKOFF.failures_after_run(failures, started.elapsed());
         // The same reason again says nothing new.
         let said = format!("{ended:#}");
         if said != last_said {
@@ -1081,18 +1069,14 @@ fn supervise(shared: &Shared) {
             last_said = said;
         }
         // Until the delay is over, or a command wants the helper now.
-        let until = Instant::now() + retry_delay(failures);
+        let until = Instant::now() + RESTART_BACKOFF.delay(failures);
         let mut state = shared.state();
         while !state.hurry {
             let left = until.saturating_duration_since(Instant::now());
             if left.is_zero() {
                 break;
             }
-            state = shared
-                .changed
-                .wait_timeout(state, left)
-                .unwrap_or_else(|e| e.into_inner())
-                .0;
+            state = recover(shared.changed.wait_timeout(state, left)).0;
         }
     }
 }
@@ -2100,9 +2084,9 @@ mod tests {
 
     #[test]
     fn restarts_are_spaced_further_and_further_apart() {
-        assert_eq!(retry_delay(1), RETRY);
-        assert_eq!(retry_delay(2), RETRY * 2);
-        assert_eq!(retry_delay(40), RETRY_MAX);
+        assert_eq!(RESTART_BACKOFF.delay(1), Duration::from_secs(10));
+        assert_eq!(RESTART_BACKOFF.delay(2), Duration::from_secs(20));
+        assert_eq!(RESTART_BACKOFF.delay(40), Duration::from_secs(1800));
     }
 
     #[test]

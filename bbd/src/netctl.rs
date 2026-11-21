@@ -28,7 +28,7 @@ use anyhow::Context as _;
 use serde_json::{Value, json};
 
 use crate::{
-    packages::PER_USER_RANGE,
+    packages::user_of,
     sandbox::{items::Settings, items_of},
     store::{
         Reader,
@@ -430,7 +430,7 @@ impl ChartOptions {
             other => anyhow::bail!("{other}: not hour or day"),
         };
         let since = self.since;
-        let until = self.until.unwrap_or_else(crate::now);
+        let until = self.until.unwrap_or_else(crate::clock::now);
         anyhow::ensure!(since < until, "the period is empty");
         // Leave room to align range endpoints to days or hours.
         let timestamps = (i64::MIN + LONGEST_DAY)..=(i64::MAX - LONGEST_DAY);
@@ -535,7 +535,7 @@ fn read(db: &Path, package: &str, user: u32, chart: &Chart) -> anyhow::Result<Re
     let entry = reader
         .sandbox_entries()?
         .into_iter()
-        .filter(|entry| entry.package == package && entry.uid / PER_USER_RANGE == user)
+        .filter(|entry| entry.package == package && user_of(entry.uid) == user)
         .max_by_key(|entry| (entry.enabled, entry.created))
         .with_context(|| format!("{package} was never in the sandbox"))?;
     let global = Settings::parse(&reader.sandbox_global()?);

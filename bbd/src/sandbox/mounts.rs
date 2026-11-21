@@ -42,7 +42,7 @@ use super::{
     dirs::{self, Dir},
     resolver::Cover,
 };
-use crate::packages::PER_USER_RANGE;
+use crate::packages::user_of;
 
 /// The app's own directories on shared storage, by what they are for.
 const OWN_KINDS: &[&str] = &["data", "obb", "media"];
@@ -99,13 +99,13 @@ fn storage_of(user: u32) -> (String, String) {
 
 /// Where the sandbox of `uid` is mounted.
 pub fn storage_root_of(uid: u32) -> String {
-    storage_of(uid / PER_USER_RANGE).0
+    storage_of(user_of(uid)).0
 }
 
 /// The directory behind the shared storage of the user of `uid`, where
 /// the directory of the sandboxes is.
 pub fn media_of(uid: u32) -> String {
-    storage_of(uid / PER_USER_RANGE).1
+    storage_of(user_of(uid)).1
 }
 
 /// Give the namespace `sys` works in the sandbox of `uid`, under which run
@@ -137,7 +137,7 @@ pub fn apply<S: Sys>(
 
 /// The storage part of [`apply`].
 fn replace_storage<S: Sys>(sys: &mut S, uid: u32, packages: &[String]) -> anyhow::Result<()> {
-    let (root, media) = storage_of(uid / PER_USER_RANGE);
+    let (root, media) = storage_of(user_of(uid));
     sys.make_private("/storage")
         .context("detaching /storage from the system's mounts")?;
 
@@ -323,7 +323,7 @@ impl Sys for Kernel {
     fn bind_sandbox(&mut self, uid: u32, onto: &str) -> io::Result<()> {
         // Opened and checked first, then mounted by its descriptor: what is
         // mounted is what was checked, whatever is done to the path since.
-        let (_, media) = storage_of(uid / PER_USER_RANGE);
+        let (_, media) = storage_of(user_of(uid));
         let sandbox = dirs::open_sandbox(Path::new(&media), uid, &self.generation)?;
         let by_descriptor = format!("/proc/thread-self/fd/{}", sandbox.as_raw_fd());
         mount(Some(&by_descriptor), onto, None, libc::MS_BIND, None)

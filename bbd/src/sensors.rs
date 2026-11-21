@@ -1056,27 +1056,6 @@ impl Session {
     }
 }
 
-// ---- processes --------------------------------------------------------------
-
-/// When the process `pid` started, in clock ticks after boot; `None` if
-/// there is no such process.
-pub fn process_start(pid: u32) -> Option<u64> {
-    parse_start(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
-}
-
-/// Whether the process `pid` that started at `start` still runs.
-pub fn process_alive(pid: u32, start: u64) -> bool {
-    process_start(pid) == Some(start)
-}
-
-/// The start time from `/proc/<pid>/stat`: the 22nd field. The second, the
-/// command name, is in parentheses and may hold spaces and parentheses
-/// itself, so the fields are counted from the last `)`.
-fn parse_start(stat: &str) -> Option<u64> {
-    let (_, rest) = stat.rsplit_once(')')?;
-    rest.split_ascii_whitespace().nth(22 - 3)?.parse().ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1244,14 +1223,6 @@ BMI160 accelerometer| Bosch     | version=1 |android.sensor.accelerometer| 0x000
             );
             assert_eq!(binder::asked_package(&subject), None);
         }
-    }
-
-    #[test]
-    fn the_start_time_is_the_22nd_field_after_the_name() {
-        let stat =
-            "4242 (my (odd) app) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 987654 20 21";
-        assert_eq!(parse_start(stat), Some(987_654));
-        assert_eq!(parse_start("4242 (short) S 1"), None);
     }
 
     // ---- sessions ----

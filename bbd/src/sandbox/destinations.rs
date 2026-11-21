@@ -39,7 +39,10 @@ use aya::maps::{HashMap as BpfHashMap, MapData};
 use bb_common::NetRuleKey;
 
 use super::{Effect, Entry, Resumed, Status, items::Settings, names::Names, network::Listed};
-use crate::netctl::Target;
+use crate::{
+    netctl::Target,
+    sync::{lock, read},
+};
 
 /// The destinations each uid is kept from, as the user named them: shared
 /// between what changes them (the commands) and what carries them out.
@@ -57,11 +60,11 @@ pub struct View {
 
 impl View {
     pub fn refuses(&self, uid: u32, to: std::net::SocketAddr) -> bool {
-        let snapshot = self.snapshot.read().unwrap_or_else(|e| e.into_inner());
+        let snapshot = read(&self.snapshot);
         let Some(entry) = snapshot.get(&uid) else {
             return false;
         };
-        let global = self.global.read().unwrap_or_else(|e| e.into_inner());
+        let global = read(&self.global);
         if super::items_of(entry, &global).network_refused() {
             return true;
         }
@@ -80,7 +83,7 @@ impl View {
             .names
             .as_ref()
             .and_then(|names| names.host_of(uid, to.ip()));
-        let book = self.book.lock().unwrap_or_else(|e| e.into_inner());
+        let book = lock(&self.book);
         book.get(&uid).is_some_and(|targets| {
             targets.contains(&Target::Ip(to.ip(), None))
                 || targets.contains(&Target::Ip(to.ip(), Some(to.port())))
@@ -222,7 +225,7 @@ impl Destinations {
     /// has for it would otherwise go on.
     fn wanted(&mut self, uid: u32) -> BTreeSet<Address> {
         let targets: BTreeSet<Target> = {
-            let book = self.book.lock().unwrap_or_else(|e| e.into_inner());
+            let book = lock(&self.book);
             book.get(&uid).cloned().unwrap_or_default()
         };
         let mut wanted = BTreeSet::new();
@@ -341,7 +344,7 @@ impl Effect for Destinations {
         // A rule being removed may still be restored if its removal fails.
         // Keep its addresses until that is known, even if the app since
         // looked up another name that resolves to the same address.
-        let book = self.book.lock().unwrap_or_else(|e| e.into_inner());
+        let book = lock(&self.book);
         let targets = book.get(&uid);
         self.with_names
             .retain(|(of, target), _| *of != uid || targets.is_some_and(|t| t.contains(target)));

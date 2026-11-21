@@ -54,6 +54,7 @@ use super::{
     items::{Item, Mode, Settings},
     items_of,
 };
+use crate::sync::read;
 
 /// Keep in sync with `SandboxHook.kt`.
 const LIST: &str = "/data/system/big_brother_sandbox";
@@ -115,10 +116,8 @@ impl Identity {
     /// leave the lines of the apps it did not reach, or undid, as they
     /// were.
     pub fn new(snapshot: &Snapshot, global: &Global) -> Self {
-        let global = global.read().unwrap_or_else(|e| e.into_inner());
-        let listed = snapshot
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
+        let global = read(global);
+        let listed = read(snapshot)
             .values()
             .filter_map(|entry| Some((entry.uid, listed(entry, &items_of(entry, &global))?)))
             .collect();

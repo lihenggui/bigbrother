@@ -41,7 +41,7 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     fs::{self, File},
-    io::{self, Read as _},
+    io,
     os::{
         fd::{AsRawFd, FromRawFd, OwnedFd},
         unix::fs::PermissionsExt as _,
@@ -66,7 +66,13 @@ use super::{
     mounts::{self, Kernel},
     resolver::{self, Cover},
 };
-use crate::netctl::Target;
+use crate::{
+    clock::clock_ns,
+    log::Limited,
+    netctl::Target,
+    proc::{is_nonleader, parse_stat, process_start, real_uid},
+    sync::{lock, read, write},
+};
 
 /// How long a process is waited for to come to a stop. It stops as it leaves
 /// the system call it was caught in, which takes microseconds.
@@ -74,9 +80,6 @@ const STOP_WAIT: Duration = Duration::from_secs(2);
 
 /// Hold times kept for the 95th percentile `bbd sandbox status` reports.
 const HOLDS_KEPT: usize = 256;
-
-/// Least time between log lines for a recurring sandbox failure.
-const FAILURE_LOG_INTERVAL: Duration = Duration::from_secs(60);
 
 /// A process held by a descriptor, so that a signal meant for it cannot
 /// reach another process that was given its pid in the meantime.
@@ -154,25 +157,6 @@ impl Process {
     }
 }
 
-fn is_nonleader(pid: i32) -> io::Result<bool> {
-    let mut status = Vec::new();
-    File::open(format!("/proc/{pid}/status"))?
-        .take(4096)
-        .read_to_end(&mut status)?;
-    // Read the IDs even when the thread's name includes non-UTF-8 bytes.
-    let field = |prefix: &[u8]| {
-        let value = status
-            .split(|&byte| byte == b'\n')
-            .find_map(|line| line.strip_prefix(prefix))?;
-        std::str::from_utf8(value)
-            .ok()?
-            .trim_ascii()
-            .parse::<i32>()
-            .ok()
-    };
-    Ok(field(b"Pid:") == Some(pid) && field(b"Tgid:").is_some_and(|tgid| tgid > 0 && tgid != pid))
-}
-
 /// What the starts of an app are held for: its mounts, and what it finds
 /// at the socket of the system's resolver.
 type Hold = (Mounts, Cover);
@@ -207,7 +191,8 @@ struct Gated {
     resolver: Cover,
 }
 
-/// What the gate thread and the daemon's main loop share.
+/// What the gate thread and the daemon's main loop share. Each update
+/// takes a single call, so the guards can be recovered after a panic.
 struct Shared {
     /// The uids held at the gate.
     apps: RwLock<HashMap<u32, Gated>>,
@@ -254,7 +239,7 @@ impl Stats {
 /// mount for each.
 pub struct Storage {
     uids: BpfHashMap<MapData, u32, u32>,
-    release_errors: FailureLog,
+    release_errors: Limited<()>,
     shared: Arc<Shared>,
     /// Whether apps can be kept from the network on this device. Where
     /// they cannot, the resolver is left to them too.
@@ -294,7 +279,7 @@ impl Storage {
             ring,
             closing: Closing {
                 waiting,
-                reset_errors: FailureLog::default(),
+                reset_errors: Limited::default(),
                 shared: shared.clone(),
             },
             keeper: Keeper::new(shared.clone(), scratch),
@@ -308,7 +293,7 @@ impl Storage {
             .context("the gate thread ended as it started")??;
         Ok(Self {
             uids,
-            release_errors: FailureLog::default(),
+            release_errors: Limited::default(),
             shared,
             network: false,
             names: None,
@@ -333,7 +318,7 @@ impl Storage {
     /// What a start of the app of `uid`, with `items`, is held for.
     fn held_for(&self, uid: u32, items: &Settings) -> Hold {
         let kept_from_names = |book: &Book| {
-            let book = book.lock().unwrap_or_else(|e| e.into_inner());
+            let book = lock(book);
             book.get(&uid).is_some_and(|targets| {
                 targets
                     .iter()
@@ -356,10 +341,7 @@ impl Storage {
 
     /// What the starts of `uid` are held for now.
     fn holding(&self, uid: u32) -> Hold {
-        self.shared
-            .apps
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
+        read(&self.shared.apps)
             .get(&uid)
             .map_or(NOT_HELD, |gated| (gated.mounts, gated.resolver))
     }
@@ -370,7 +352,7 @@ impl Storage {
             && !missing_gate_key(&e)
         {
             self.release_errors
-                .log(format_args!("cannot remove uid {uid} from the gate: {e:?}"));
+                .log_sandbox(format_args!("cannot remove uid {uid} from the gate: {e:?}"));
         }
         write(&self.shared.apps).remove(&uid);
     }
@@ -531,11 +513,7 @@ impl Effect for Storage {
         if was == wanted && !self.resolver_unknown.contains(&entry.uid) {
             return Ok(());
         }
-        let packages = self
-            .shared
-            .apps
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
+        let packages = read(&self.shared.apps)
             .get(&entry.uid)
             .map(|gated| gated.packages.clone());
         // Not held so far: the packages are needed for the storage mounts
@@ -579,14 +557,9 @@ impl Effect for Storage {
     }
 
     fn report(&self, status: &mut Status) {
-        status.gated_uids.extend(
-            self.shared
-                .apps
-                .read()
-                .unwrap_or_else(|e| e.into_inner())
-                .keys()
-                .copied(),
-        );
+        status
+            .gated_uids
+            .extend(read(&self.shared.apps).keys().copied());
         let stats = lock(&self.shared.stats);
         status.gate = self.shared.open.load(Ordering::Relaxed);
         status.admitted = stats.admitted;
@@ -637,16 +610,6 @@ impl Effect for Unavailable {
     }
 }
 
-// A thread that panicked while holding one of these cannot have left what
-// it guards half changed: each is changed in a single call.
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|e| e.into_inner())
-}
-
-fn write<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
-    lock.write().unwrap_or_else(|e| e.into_inner())
-}
-
 // ---- the thread ------------------------------------------------------------
 
 struct Thread {
@@ -659,14 +622,14 @@ struct Thread {
 struct Keeper {
     shared: Arc<Shared>,
     kernel: Kernel,
-    failures: FailureLog,
+    failures: Limited<()>,
 }
 
 /// Closes the gate when the thread ends, however it ends: the kernel side
 /// then kills the starts it would have held for nobody.
 struct Closing {
     waiting: Array<MapData, u64>,
-    reset_errors: FailureLog,
+    reset_errors: Limited<()>,
     shared: Arc<Shared>,
 }
 
@@ -737,7 +700,7 @@ impl Thread {
                 let lost = self.keeper.admit(&event, &home, &cpuinfo).is_err();
                 // Nothing waits any more: a later start is timed anew.
                 if let Err(e) = self.closing.waiting.set(0, &0, 0) {
-                    self.closing.reset_errors.log(format_args!(
+                    self.closing.reset_errors.log_sandbox(format_args!(
                         "cannot reset the gate wait in the kernel: {e:?}"
                     ));
                 }
@@ -755,7 +718,7 @@ impl Keeper {
         Self {
             shared,
             kernel: Kernel::new(scratch),
-            failures: FailureLog::default(),
+            failures: Limited::default(),
         }
     }
 
@@ -776,7 +739,7 @@ impl Keeper {
                     return Ok(());
                 }
                 Err(e) => {
-                    self.failures.log_start(event.uid, &e.into());
+                    log_start(&mut self.failures, event.uid, &e.into());
                     // The kernel closes subsequent starts while the reader is
                     // unable to acquire a process descriptor.
                     self.shared.open.store(false, Ordering::Relaxed);
@@ -789,16 +752,17 @@ impl Keeper {
         let ticks = (u128::from(start) * hz as u128 / 1_000_000_000) as u64;
         loop {
             match process.signal(0) {
-                Ok(()) => match crate::sensors::process_start(event.pid) {
+                Ok(()) => match process_start(event.pid) {
                     Some(actual) if actual == ticks => break,
                     Some(_) => return Ok(()),
-                    None => self.failures.log_start(
+                    None => log_start(
+                        &mut self.failures,
                         event.uid,
                         &anyhow::anyhow!("process generation unavailable"),
                     ),
                 },
                 Err(e) if e.raw_os_error() == Some(libc::ESRCH) => return Ok(()),
-                Err(e) => self.failures.log_start(event.uid, &e.into()),
+                Err(e) => log_start(&mut self.failures, event.uid, &e.into()),
             }
             self.shared.open.store(false, Ordering::Relaxed);
             std::thread::sleep(Duration::from_millis(100));
@@ -822,7 +786,8 @@ impl Keeper {
         let shared = &self.shared;
         match held {
             Ok(Held::Sandboxed) => {
-                let held_us = monotonic_ns().saturating_sub(event.at_ns()) / 1000;
+                let held_us =
+                    (clock_ns(libc::CLOCK_MONOTONIC) as u64).saturating_sub(event.at_ns()) / 1000;
                 lock(&shared.stats).admit(held_us);
                 if let Some(told) = lock(&shared.admitted).as_ref() {
                     told(event.uid);
@@ -836,7 +801,7 @@ impl Keeper {
                     Ok(_) => lock(&shared.stats).failed += 1,
                     Err(e) => {
                         lock(&shared.stats).failed += 1;
-                        self.failures.log_start(event.uid, &e);
+                        log_start(&mut self.failures, event.uid, &e);
                     }
                 }
                 // Keep the descriptor until termination is confirmed or the
@@ -846,7 +811,7 @@ impl Keeper {
                         break;
                     }
                     shared.open.store(false, Ordering::Relaxed);
-                    self.failures.log_start(event.uid, &e.into());
+                    log_start(&mut self.failures, event.uid, &e.into());
                     std::thread::sleep(Duration::from_millis(100));
                 }
                 if rescan {
@@ -873,25 +838,20 @@ impl Keeper {
         let pid = event.pid as i32;
         let uid = event.uid;
         let stat = fs::read_to_string(format!("/proc/{pid}/stat")).context("reading its state")?;
-        let (_, parent) = parse_stat(&stat).context("reading its state")?;
+        let (_, parent) = parse_stat(&stat)
+            .and_then(|stat| stat.state_and_parent())
+            .context("reading its state")?;
         // Only zygote starts apps. Something else that took the uid with
         // the same thread name is none of the sandbox's business; what
         // started it has to be known for that, though.
         let started_by =
             fs::read_link(format!("/proc/{parent}/exe")).context("reading what started it")?;
         let parent_status = fs::read_to_string(format!("/proc/{parent}/status"))?;
-        if !is_zygote(&started_by) || real_uid(&parent_status) != Some(0) {
+        if !is_zygote(&started_by) || real_uid(parent_status.as_bytes()) != Some(0) {
             return Ok(Held::NotOurs);
         }
         // A new app put in the sandbox since it was stopped is given it now.
-        let Some(gated) = self
-            .shared
-            .apps
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&uid)
-            .cloned()
-        else {
+        let Some(gated) = read(&self.shared.apps).get(&uid).cloned() else {
             return Ok(if event.unknown != 0 {
                 Held::New
             } else {
@@ -918,7 +878,7 @@ impl Keeper {
         }
         let status = fs::read_to_string(format!("/proc/{pid}/status"))?;
         anyhow::ensure!(
-            real_uid(&status) == Some(uid),
+            real_uid(status.as_bytes()) == Some(uid),
             "unexpected process credentials"
         );
         process.signal(0)?;
@@ -977,16 +937,6 @@ fn is_zygote(exe: &Path) -> bool {
     )
 }
 
-fn real_uid(status: &str) -> Option<u32> {
-    status
-        .lines()
-        .find_map(|line| line.strip_prefix("Uid:"))?
-        .split_whitespace()
-        .next()?
-        .parse()
-        .ok()
-}
-
 /// Prepare the calling thread to visit other mount namespaces, and return
 /// its own to come back to.
 fn own_namespace() -> anyhow::Result<File> {
@@ -1009,16 +959,6 @@ fn enter(namespace: &File) -> io::Result<()> {
     Ok(())
 }
 
-/// The state and the parent of a process, from its `/proc/<pid>/stat`:
-/// `<pid> (<name>) <state> <parent> ...`. The name is the process's to
-/// choose, and may contain spaces and parentheses; the fields are counted
-/// from its last closing one.
-fn parse_stat(stat: &str) -> Option<(char, i32)> {
-    let mut fields = stat.rsplit_once(") ")?.1.split(' ');
-    let state = fields.next()?.chars().next()?;
-    Some((state, fields.next()?.parse().ok()?))
-}
-
 /// Wait until the process has stopped.
 fn wait_stopped(pid: i32) -> anyhow::Result<()> {
     let deadline = Instant::now() + STOP_WAIT;
@@ -1026,7 +966,7 @@ fn wait_stopped(pid: i32) -> anyhow::Result<()> {
     loop {
         let state = fs::read_to_string(format!("/proc/{pid}/stat"))
             .ok()
-            .and_then(|stat| parse_stat(&stat))
+            .and_then(|stat| parse_stat(&stat)?.state_and_parent())
             .map(|(state, _)| state);
         match state {
             Some('T') => return Ok(()),
@@ -1041,46 +981,8 @@ fn wait_stopped(pid: i32) -> anyhow::Result<()> {
     }
 }
 
-fn monotonic_ns() -> u64 {
-    let mut now = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut now) };
-    now.tv_sec as u64 * 1_000_000_000 + now.tv_nsec as u64
-}
-
-/// Logs a recurring sandbox failure at most once per interval.
-#[derive(Default)]
-pub(super) struct FailureLog {
-    logged: Option<Instant>,
-    unlogged: u32,
-}
-
-impl FailureLog {
-    fn log_start(&mut self, uid: u32, e: &anyhow::Error) {
-        self.log(format_args!("a start of uid {uid} was stopped: {e:#}"));
-    }
-
-    pub(super) fn log(&mut self, message: std::fmt::Arguments<'_>) {
-        match self.record(Instant::now()) {
-            Some(0) => eprintln!("bbd: sandbox: {message}"),
-            Some(n) => eprintln!("bbd: sandbox: {message} ({n} more since the last)"),
-            None => {}
-        }
-    }
-
-    fn record(&mut self, now: Instant) -> Option<u32> {
-        if self
-            .logged
-            .is_some_and(|at| now.duration_since(at) < FAILURE_LOG_INTERVAL)
-        {
-            self.unlogged = self.unlogged.saturating_add(1);
-            return None;
-        }
-        self.logged = Some(now);
-        Some(std::mem::take(&mut self.unlogged))
-    }
+fn log_start(log: &mut Limited<()>, uid: u32, e: &anyhow::Error) {
+    log.log_sandbox(format_args!("a start of uid {uid} was stopped: {e:#}"));
 }
 
 #[cfg(test)]
@@ -1099,34 +1001,6 @@ mod tests {
         assert!(missing_gate_key(&delete_error(libc::ENOENT)));
         assert!(!missing_gate_key(&delete_error(libc::EPERM)));
         assert!(!missing_gate_key(&delete_error(libc::EINVAL)));
-    }
-
-    #[test]
-    fn sandbox_failures_are_counted_between_log_lines() {
-        let mut log = FailureLog::default();
-        let start = Instant::now();
-        assert_eq!(log.record(start), Some(0));
-        assert_eq!(log.record(start + Duration::from_secs(1)), None);
-        assert_eq!(log.record(start + Duration::from_secs(59)), None);
-        assert_eq!(log.record(start + FAILURE_LOG_INTERVAL), Some(2));
-    }
-
-    #[test]
-    fn the_state_and_parent_are_read_past_any_process_name() {
-        assert_eq!(
-            parse_stat("4321 (main) T 612 612 0 0 -1 4194624"),
-            Some(('T', 612))
-        );
-        // A name is whatever the process set.
-        assert_eq!(
-            parse_stat("4321 (a) R 1 (b c) S 99 0) R 612 612 0"),
-            Some(('R', 612))
-        );
-        assert_eq!(parse_stat("4321 (usap64) S 700 700"), Some(('S', 700)));
-        assert_eq!(parse_stat(""), None);
-        assert_eq!(parse_stat("4321 (main"), None);
-        assert_eq!(parse_stat("4321 (main) T"), None);
-        assert_eq!(parse_stat("4321 (main) T x"), None);
     }
 
     #[test]
@@ -1171,7 +1045,7 @@ mod tests {
     }
 
     fn new_app_start(pid: u32) -> GateEvent {
-        let ticks = crate::sensors::process_start(pid).unwrap_or(0);
+        let ticks = process_start(pid).unwrap_or(0);
         let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) } as u64;
         let start = (ticks * 1_000_000_000).div_ceil(hz);
         GateEvent {
@@ -1253,7 +1127,7 @@ mod tests {
         let state = |pid: u32| {
             fs::read_to_string(format!("/proc/{pid}/stat"))
                 .ok()
-                .and_then(|stat| parse_stat(&stat))
+                .and_then(|stat| parse_stat(&stat)?.state_and_parent())
                 .map(|(state, _)| state)
         };
         let deadline = Instant::now() + Duration::from_secs(5);

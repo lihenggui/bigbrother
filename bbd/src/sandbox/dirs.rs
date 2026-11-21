@@ -29,6 +29,8 @@ use std::{
     sync::Mutex,
 };
 
+use crate::{packages::user_of, sync::lock};
+
 /// Group of the files on shared storage (`media_rw`).
 pub const MEDIA_RW: u32 = 1023;
 
@@ -255,7 +257,7 @@ fn pin_install_with(
     create: impl FnOnce() -> io::Result<Option<[u8; 16]>>,
 ) -> io::Result<(Dir, String)> {
     let dir = Dir::open(root)?
-        .open_child(&(uid / crate::packages::PER_USER_RANGE).to_string())?
+        .open_child(&user_of(uid).to_string())?
         .open_child(package)?;
     if dir.owner_and_mode()?.0 != uid {
         return Err(io::Error::from_raw_os_error(libc::ESTALE));
@@ -375,7 +377,7 @@ fn sandboxes(
     keeper: u32,
     make: Option<(u32, u32)>,
 ) -> io::Result<Option<(String, Dir)>> {
-    let mut found = FOUND.lock().unwrap_or_else(|e| e.into_inner());
+    let mut found = lock(&FOUND);
     if let Some(name) = found.get(media) {
         match top.open_child(name) {
             Ok(dir) if kept_by(&dir, keeper).is_ok() && dir.is_marked(keeper) => {
