@@ -91,7 +91,8 @@ dependencies {
     implementation(projects.core.navigation)
     implementation(projects.core.ui)
 
-    // The LSPosed hook ships in the same APK.
+    // The root helpers and the LSPosed hook ship in the same APK.
+    implementation(projects.helper)
     implementation(projects.hook)
 
     implementation(libs.androidx.activity.compose)
@@ -117,13 +118,4 @@ dependencies {
 // one, direct or transitive, comes in with a reviewed change.
 dependencyGuard {
     configuration("releaseRuntimeClasspath")
-}
-
-// The tests read the protocol cases shared with the daemon's tests, and the
-// permission matrix shared with scripts/check-permissions.sh.
-val protocolCases = rootDir.resolve("../testdata/protocol")
-val permissionMatrix = rootDir.resolve("../testdata/permissions/matrix.tsv")
-tasks.withType<Test>().configureEach {
-    inputs.dir(protocolCases).withPropertyName("protocolCases").withPathSensitivity(PathSensitivity.RELATIVE)
-    inputs.file(permissionMatrix).withPropertyName("permissionMatrix").withPathSensitivity(PathSensitivity.RELATIVE)
 }

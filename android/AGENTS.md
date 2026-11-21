@@ -6,8 +6,9 @@ Hilt, Compose with Material 3 Expressive, and Navigation 3.
 
 ## Modules
 
-- `app/`: the application, navigation and adaptive layout (`ui/BigBrotherApp.kt`),
-  and the helper programs the daemon runs (`catalog/`).
+- `app/`: the application, navigation and adaptive layout (`ui/BigBrotherApp.kt`).
+- `helper/` (`:helper`): standalone `app_process` programs run as root by the
+  daemon and packaged in the app APK.
 - `core/model` holds data types. `core/domain` holds use cases shared across features.
   `core/data`: repositories; `root/RootShell.kt` is
   the only place the app runs root commands. `core/datastore`: settings.
@@ -46,7 +47,7 @@ Assembling `:app` needs the daemons in `../out/` (`../scripts/build.sh`).
 - Only packages the user installed are hidden from a sandboxed app. What
   came with the system stays visible whatever its app id: the same check
   decides whether an app can reach the WebView or the media provider.
-- `app/.../catalog/AppOpsGuard.kt` is run by the daemon, not the app. Its
+- The daemon runs `helper/.../catalog/AppOpsGuard.kt` as root. Its
   line protocol is `AppOpsGuardProtocol.kt`; change it together with
   `bbd/src/sandbox/appops.rs`. Its commands are carried out by
   `AppOpsGuardHandler.kt`, which reaches the framework only through

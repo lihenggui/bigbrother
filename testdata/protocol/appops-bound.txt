@@ -1,0 +1,10 @@
+# The helper reads the binding before parsing the enclosed command.
+# bound names the expected package, token and command text; bound-bad is rejected.
+bound	bound com.example.app_2 0123456789abcdef0123456789abcdef restore 10100 android:camera=4	package=com.example.app_2	token=0123456789abcdef0123456789abcdef	command=restore 10100 android:camera=4
+bound	bound com.example.app 0123456789abcdef0123456789abcdef invalid command	package=com.example.app	token=0123456789abcdef0123456789abcdef	command=invalid command
+bound-bad	bound com..example 0123456789abcdef0123456789abcdef restore 10100
+bound-bad	bound com.example 0123456789abcdef0123456789abcdeF restore 10100
+bound-bad	bound com.example 0123456789abcdef0123456789abcde restore 10100
+bound-bad	bound com.example 0123456789abcdef0123456789abcdef
+bound-bad	bound  com.example 0123456789abcdef0123456789abcdef restore 10100
+bound-bad	restore 10100 android:camera=4

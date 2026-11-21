@@ -12,7 +12,7 @@ building, checks and releasing in CONTRIBUTING.md.
 - `bb-common/`: types shared by the eBPF programs and the daemon.
 - `bbd/`: the daemon (`bbd run`) and the query CLI the app calls. See `bbd/AGENTS.md`.
 - `module/`: root module scripts, packaged into the app. See `module/AGENTS.md`.
-- `android/`: the app, the LSPosed hook and the canary test app. See `android/AGENTS.md`.
+- `android/`: the app, the root helper programs (`:helper`), the LSPosed hook and the canary test app. See `android/AGENTS.md`.
 - `scripts/`: `build.sh` (full build), `check-kernels.sh` (`bbd selftest` on
   Android kernels in QEMU), `check-canary.sh`, `check-sandbox.sh` and
   `check-permissions.sh` (on-device checks of the records, of the sandbox
@@ -23,7 +23,7 @@ building, checks and releasing in CONTRIBUTING.md.
   `PermissionMatrixTest`.
 
 The sandbox (`bbd sandbox`, `bbd/src/sandbox/`, `SandboxHook` in the hook,
-`AppOpsGuard` in the app) is described in docs/sandbox.md.
+`AppOpsGuard` in `:helper`) is described in docs/sandbox.md.
 
 ## Commands
 

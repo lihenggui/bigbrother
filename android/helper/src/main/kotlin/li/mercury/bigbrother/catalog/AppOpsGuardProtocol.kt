@@ -243,6 +243,18 @@ internal object AppOpsGuardProtocol {
      */
     data class OpState(val name: String, val uidMode: Int?, val defaultMode: Int?)
 
+    private val BOUND_PACKAGE = Regex("[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)*")
+    private val INSTALLATION_TOKEN = Regex("[0-9a-f]{32}")
+
+    data class Bound(val packageName: String, val token: String, val commandLine: String)
+
+    /** Read the installation binding separately so an invalid command can still be reported. */
+    fun parseBound(line: String): Bound? {
+        val parts = line.split(' ', limit = 4)
+        if (parts.size != 4 || parts[0] != "bound" || !BOUND_PACKAGE.matches(parts[1]) || !INSTALLATION_TOKEN.matches(parts[2])) return null
+        return Bound(parts[1], parts[2], parts[3])
+    }
+
     /** The command on [line], or `null` if it is not one. */
     fun parseCommand(line: String): Command? {
         val words = line.trim().split(' ', '\t').filter { it.isNotEmpty() }
