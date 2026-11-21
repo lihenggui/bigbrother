@@ -1,0 +1,8 @@
+{
+  "entries": [
+    {"cat":"unknown"},
+    {"hour_ts":3600,"uid":10234,"pkg":"com.example.notes","cat":"storage","paths":1,"files_read":1,
+     "ok":1,"fail":0,"modes":1,"first_ts":3612,"last_ts":3615,"folder":"Download","subjects":[{"path":"example","ok":1,"fail":0}]}
+  ],
+  "next_before":3600
+}

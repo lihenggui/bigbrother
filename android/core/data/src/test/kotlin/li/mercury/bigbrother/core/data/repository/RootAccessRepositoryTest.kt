@@ -16,63 +16,59 @@
 
 package li.mercury.bigbrother.core.data.repository
 
-import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.RecordsException
-import li.mercury.bigbrother.core.data.root.CommandResult
-import li.mercury.bigbrother.core.data.root.RootShell
+import li.mercury.bigbrother.core.data.bbd.BbdAppSummary
+import li.mercury.bigbrother.core.data.bbd.BbdRecorderStatus
+import li.mercury.bigbrother.core.data.bbd.TestBbdDataSource
 import li.mercury.bigbrother.core.model.TimeRange
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertSame
 
 @RunWith(RobolectricTestRunner::class)
 class RootAccessRepositoryTest {
     @Test
-    fun givenManyAccesses_whenRead_thenMappingWaitsForDefaultDispatcher() = runTest {
-        val output = (1..5_000).joinToString(prefix = "[", postfix = "]") { i ->
-            """{"cat":"storage","path":"/storage/emulated/0/Download/file-$i.txt","mode":1,"ok":1,"fail":0,"last_ts":1}"""
+    fun givenFailedAppsRead_whenRetried_thenMapsAndCachesTheValidAnswer() = runTest {
+        var calls = 0
+        val dataSource = object : TestBbdDataSource() {
+            override suspend fun getApps(range: TimeRange): List<BbdAppSummary> {
+                if (++calls == 1) throw RecordsException.CommandFailed("read failed")
+                return listOf(BbdAppSummary(10234, "com.example.notes", emptyMap(), 1, 0, emptyList(), 0, emptyList()))
+            }
         }
-        val repository = RootAccessRepository(TestRootShell(output), StandardTestDispatcher(testScheduler))
-        val read = async(start = CoroutineStart.UNDISPATCHED) {
-            repository.getAccesses(10234, null, TimeRange.ALL, limit = 5_000, offset = 0)
-        }
-
-        // The shell fake returns immediately, so the repository must dispatch the work.
-        assertFalse(read.isCompleted)
-        val accesses = read.await()
-        assertEquals(5_000, accesses.size)
-        assertEquals("/storage/emulated/0/Download/file-5000.txt", accesses.last().path)
-    }
-
-    @Test
-    fun givenMalformedApps_whenReadRetried_thenMapsAndCachesTheValidAnswer() = runTest {
-        val shell = TestRootShell("""{"apps":[]}""")
-        val repository = RootAccessRepository(shell, StandardTestDispatcher(testScheduler))
+        val repository = RootAccessRepository(dataSource, StandardTestDispatcher(testScheduler))
 
         assertFailsWith<RecordsException.CommandFailed> { repository.getApps(TimeRange.ALL) }
 
-        shell.output = """[{"uid":10234,"pkg":"com.example.notes","last_ts":1,"files_read":0}]"""
         val apps = repository.getApps(TimeRange.ALL)
         assertEquals("com.example.notes", apps.single().packageName)
         assertSame(apps, repository.getApps(TimeRange.ALL))
-        assertEquals(2, shell.calls)
+        assertEquals(2, calls)
     }
 
-    private class TestRootShell(var output: String) : RootShell(Dispatchers.Unconfined) {
-        var calls = 0
-            private set
-
-        override suspend fun run(command: String, label: String): CommandResult {
-            calls++
-            return CommandResult(isSuccess = true, code = 0, output = output, error = "")
+    @Test
+    fun givenPublishedStatus_whenReadingFails_thenClearsTheStatus() = runTest {
+        var fail = false
+        val dataSource = object : TestBbdDataSource() {
+            override suspend fun getRecorderStatus(): BbdRecorderStatus {
+                if (fail) throw RecordsException.ModuleMissing()
+                return BbdRecorderStatus(true, mapOf("sensors" to -1, "net" to 0))
+            }
         }
+        val repository = RootAccessRepository(dataSource, StandardTestDispatcher(testScheduler))
+
+        val status = repository.getRecorderStatus()
+        assertSame(status, repository.recorderStatus.value)
+        assertEquals(listOf("net"), status.unavailable)
+
+        fail = true
+        assertFailsWith<RecordsException.ModuleMissing> { repository.getRecorderStatus() }
+        assertNull(repository.recorderStatus.value)
     }
 }

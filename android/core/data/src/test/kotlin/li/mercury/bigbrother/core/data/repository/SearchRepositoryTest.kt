@@ -17,15 +17,17 @@
 package li.mercury.bigbrother.core.data.repository
 
 import android.content.pm.PackageInfo
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.RecordsException
-import li.mercury.bigbrother.core.data.root.CommandResult
-import li.mercury.bigbrother.core.data.root.RootShell
+import li.mercury.bigbrother.core.data.bbd.BbdAccess
+import li.mercury.bigbrother.core.data.bbd.BbdAppSummary
+import li.mercury.bigbrother.core.data.bbd.BbdPathMatch
+import li.mercury.bigbrother.core.data.bbd.TestBbdDataSource
 import li.mercury.bigbrother.core.model.AppInfo
+import li.mercury.bigbrother.core.model.Category
 import li.mercury.bigbrother.core.model.PackageDetails
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.model.UserData
@@ -34,43 +36,45 @@ import org.robolectric.RobolectricTestRunner
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertTrue
 
 @RunWith(RobolectricTestRunner::class)
 class SearchRepositoryTest {
     @Test
     fun givenCameraRecords_whenSearchingByName_thenReturnsMatchesAndVisibleApps() = runTest {
-        val shell = SearchRootShell()
-        val repository = repository(shell)
+        val dataSource = SearchBbdDataSource()
+        val repository = repository(dataSource)
         val result = repository.search("cAmErA")
 
         assertEquals(listOf("com.example.photos", "com.example.camera"), result.apps.map { it.packageName })
         assertEquals(listOf("/storage/emulated/0/DCIM/Camera/photo.jpg"), result.files.map { it.access.path })
         assertEquals(listOf(10001, 10002, 10005), result.visibleApps.map { it.uid })
-        assertTrue(shell.pathCommand.contains("--cat storage --cat provider --uid 10001 --uid 10002 --uid 10005 --limit 100"))
+        assertEquals(listOf(Category.STORAGE, Category.PROVIDER), dataSource.categories)
+        assertEquals(listOf(10001, 10002, 10005), dataSource.uids)
+        assertEquals(100, dataSource.limit)
     }
 
     @Test
     fun givenSystemAppsShown_whenSearching_thenIncludesSystemAndIsolatedRecordsExceptOwnApp() = runTest {
-        val shell = SearchRootShell()
-        val repository = repository(shell, showSystemApps = true)
+        val dataSource = SearchBbdDataSource()
+        val repository = repository(dataSource, showSystemApps = true)
         val result = repository.search("camera")
 
         assertEquals(listOf(10001, 10002, 10003, 99001, 10005), result.visibleApps.map { it.uid })
-        assertTrue(shell.pathCommand.contains("--uid 10001 --uid 10002 --uid 10003 --uid 99001 --uid 10005 --limit 100"))
+        assertEquals(listOf(10001, 10002, 10003, 99001, 10005), dataSource.uids)
+        assertEquals(100, dataSource.limit)
     }
 
     @Test
     fun givenPathCommandUnsupported_whenSearching_thenPropagatesModuleOutdated() = runTest {
-        val repository = repository(SearchRootShell(failPaths = true))
+        val repository = repository(SearchBbdDataSource(failPaths = true))
 
         assertFailsWith<RecordsException.ModuleOutdated> { repository.search("camera") }
     }
 
-    private fun TestScope.repository(shell: SearchRootShell, showSystemApps: Boolean = false): SearchRepository {
+    private fun TestScope.repository(dataSource: SearchBbdDataSource, showSystemApps: Boolean = false): SearchRepository {
         val dispatcher = StandardTestDispatcher(testScheduler)
         return RecordsSearchRepository(
-            accessRepository = RootAccessRepository(shell, dispatcher),
+            accessRepository = RootAccessRepository(dataSource, dispatcher),
             appInfoRepository = SearchAppInfoRepository(),
             userDataRepository = SearchSettingsRepository(showSystemApps),
             ownPackage = "com.example.recorder",
@@ -96,42 +100,52 @@ class SearchRepositoryTest {
         override suspend fun setUseDynamicColor(use: Boolean) = error("Unexpected settings write")
     }
 
-    private class SearchRootShell(private val failPaths: Boolean = false) : RootShell(Dispatchers.Unconfined) {
-        var pathCommand = ""
+    private class SearchBbdDataSource(private val failPaths: Boolean = false) : TestBbdDataSource() {
+        var categories = emptyList<Category>()
+            private set
+        var uids = emptyList<Int>()
+            private set
+        var limit = 0
             private set
 
-        override suspend fun run(command: String, label: String): CommandResult = when (label) {
-            "bbd apps" -> CommandResult(isSuccess = true, code = 0, output = APPS, error = "")
+        override suspend fun getApps(range: TimeRange): List<BbdAppSummary> = listOf(
+            app(10001, "com.example.photos"),
+            app(10002, "com.example.camera"),
+            app(10003, "com.example.system"),
+            app(99001, ""),
+            app(10004, "com.example.recorder"),
+            app(10005, "com.example.reader"),
+        )
 
-            "bbd files" -> {
-                pathCommand = command
-                if (failPaths) {
-                    CommandResult(isSuccess = false, code = 2, output = "", error = "error: unexpected argument '--contains' found")
-                } else {
-                    CommandResult(isSuccess = true, code = 0, output = PATHS, error = "")
-                }
-            }
-
-            else -> error("Unexpected read: $label")
+        override suspend fun searchPaths(
+            text: String,
+            categories: Collection<Category>,
+            uids: Collection<Int>,
+            range: TimeRange,
+            limit: Int,
+        ): List<BbdPathMatch> {
+            this.categories = categories.toList()
+            this.uids = uids.toList()
+            this.limit = limit
+            if (failPaths) throw RecordsException.ModuleOutdated()
+            return listOf(path(1), path(4))
         }
-    }
 
-    private companion object {
-        val APPS = """
-            [
-              {"uid":10001,"pkg":"com.example.photos","last_ts":5,"files_read":1,"topics":["camera","camera"]},
-              {"uid":10002,"pkg":"com.example.camera","last_ts":4,"files_read":0,"topics":["camera"]},
-              {"uid":10003,"pkg":"com.example.system","last_ts":3,"files_read":0,"topics":["camera"]},
-              {"uid":99001,"pkg":"","last_ts":2,"files_read":0,"topics":["camera"]},
-              {"uid":10004,"pkg":"com.example.recorder","last_ts":1,"files_read":0,"topics":["camera"]},
-              {"uid":10005,"pkg":"com.example.reader","last_ts":1,"files_read":0}
-            ]
-        """.trimIndent()
-        val PATHS = """
-            [
-              {"uid":10001,"pkg":"com.example.photos","cat":"storage","path":"/storage/emulated/0/DCIM/Camera/photo.jpg","mode":1,"ok":1,"fail":0,"last_ts":5},
-              {"uid":10001,"pkg":"com.example.photos","cat":"storage","path":"/storage/emulated/0/DCIM/Camera/photo.jpg","mode":4,"ok":1,"fail":0,"last_ts":4}
-            ]
-        """.trimIndent()
+        private fun app(uid: Int, pkg: String) = BbdAppSummary(uid, pkg, emptyMap(), 1, 0, emptyList(), 0, emptyList())
+
+        private fun path(mode: Int) = BbdPathMatch(
+            uid = 10001,
+            packageName = "com.example.photos",
+            access = BbdAccess(
+                category = Category.STORAGE,
+                path = "/storage/emulated/0/DCIM/Camera/photo.jpg",
+                mode = mode,
+                items = 0,
+                allowed = 1,
+                denied = 0,
+                lastSeen = 5,
+                topic = null,
+            ),
+        )
     }
 }

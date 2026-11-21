@@ -26,9 +26,7 @@ import li.mercury.bigbrother.core.common.di.FilesDir
 import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.IO
 import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.common.logging.LOG_DIR
-import li.mercury.bigbrother.core.data.RecordsException
-import li.mercury.bigbrother.core.data.root.ModulePaths.BBD
-import li.mercury.bigbrother.core.data.root.RootShell
+import li.mercury.bigbrother.core.data.bbd.BbdDataSource
 import timber.log.Timber
 import java.io.File
 import java.time.LocalDateTime
@@ -51,17 +49,17 @@ internal class ZipDiagnosticsRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     @FilesDir private val filesDir: File,
     @CacheDir private val cacheDir: File,
-    private val rootShell: RootShell,
+    private val bbd: BbdDataSource,
     private val moduleRepository: ModuleRepository,
     @Dispatcher(IO) private val ioDispatcher: CoroutineDispatcher,
 ) : DiagnosticsRepository {
     override suspend fun exportLogs(): File {
         // Read through root before anything is written: each is optional,
         // and a device without root still gets the app's own log.
-        val daemonLog = rootOutput("tail -n $DAEMON_LOG_LINES $DAEMON_LOG", label = "daemon log")
-        val daemonStatus = rootOutput("$BBD stats", label = "bbd stats")
-        val about = about(moduleRepository.installedVersion())
+        val diagnostics = bbd.getDiagnostics()
+        val moduleVersion = moduleRepository.installedVersion()
         return withContext(ioDispatcher) {
+            val about = about(moduleVersion)
             val directory = File(cacheDir, EXPORT_DIR)
             // One export at a time: an earlier one has been shared, or not.
             directory.deleteRecursively()
@@ -70,8 +68,8 @@ internal class ZipDiagnosticsRepository @Inject constructor(
             val zip = File(directory, name)
             ZipOutputStream(zip.outputStream().buffered()).use { out ->
                 out.add("about.txt", about)
-                daemonLog?.let { out.add("daemon/bbd.log", it) }
-                daemonStatus?.let { out.add("daemon/stats.json", it) }
+                diagnostics.log?.let { out.add("daemon/bbd.log", it) }
+                diagnostics.stats?.let { out.add("daemon/stats.json", it) }
                 File(filesDir, LOG_DIR).listFiles().orEmpty().sortedBy { it.name }.forEach { file ->
                     out.putNextEntry(ZipEntry("app/${file.name}"))
                     file.inputStream().use { it.copyTo(out) }
@@ -81,14 +79,6 @@ internal class ZipDiagnosticsRepository @Inject constructor(
             Timber.i("Logs exported: %d KB", zip.length() / 1024)
             zip
         }
-    }
-
-    private suspend fun rootOutput(command: String, label: String): String? = try {
-        rootShell.run("$command 2>&1", label).output
-    } catch (e: RecordsException) {
-        // Without root: the app's own log is still worth having.
-        Timber.w("Not exported, %s: %s", label, e.message)
-        null
     }
 
     private fun about(moduleVersion: String?): String {
@@ -111,8 +101,6 @@ internal class ZipDiagnosticsRepository @Inject constructor(
 
     private companion object {
         const val EXPORT_DIR = "exports"
-        const val DAEMON_LOG = "/data/adb/big_brother/bbd.log"
-        const val DAEMON_LOG_LINES = 5000
         val FILE_TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")
     }
 }

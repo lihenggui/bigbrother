@@ -1,0 +1,4 @@
+[
+  {"cat":"unknown"},
+  {"cat":"storage","path":"/storage/emulated/0/Download/file.txt","mode":1,"ok":1,"fail":0,"last_ts":1,"uid":10234,"pkg":"com.example.notes"}
+]
