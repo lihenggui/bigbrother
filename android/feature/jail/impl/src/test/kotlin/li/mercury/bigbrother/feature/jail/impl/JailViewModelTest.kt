@@ -69,7 +69,7 @@ class JailViewModelTest {
     @Test
     fun givenSamePackageInTwoUsers_whenListed_thenOtherUsersCopyMarked() = runTest {
         val repository = TestSandboxRepository(
-            apps = listOf(sandboxed(10156, "com.example.notes", enabled = true), sandboxed(10 * 100_000 + 10156, "com.example.notes", enabled = true)),
+            apps = listOf(sandboxed(10156, "com.example.notes", enabled = true), sandboxed(1_010_156, "com.example.notes", enabled = true)),
         )
         val viewModel = viewModel(repository)
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }

@@ -94,23 +94,28 @@ fun InlineMessage(
     }
 }
 
+/** The title shared by full-screen failures and messages about failed changes. */
+@Composable
+fun failureTitle(failure: LoadFailure): String = stringResource(
+    when (failure) {
+        LoadFailure.NoRoot -> R.string.no_root_title
+        LoadFailure.ModuleMissing -> R.string.no_module_title
+        LoadFailure.ModuleOutdated -> R.string.old_module_title
+        is LoadFailure.Other -> R.string.error_title
+    },
+)
+
 /** Explains a [LoadFailure] and offers to retry. */
 @Composable
 fun LoadFailureMessage(failure: LoadFailure, onRetry: () -> Unit, modifier: Modifier = Modifier) {
-    val (title, body) = when (failure) {
-        LoadFailure.NoRoot ->
-            stringResource(R.string.no_root_title) to stringResource(R.string.no_root_body)
-
-        LoadFailure.ModuleMissing ->
-            stringResource(R.string.no_module_title) to stringResource(R.string.no_module_body)
-
-        LoadFailure.ModuleOutdated ->
-            stringResource(R.string.old_module_title) to stringResource(R.string.old_module_body)
-
-        is LoadFailure.Other -> stringResource(R.string.error_title) to failure.message
+    val body = when (failure) {
+        LoadFailure.NoRoot -> stringResource(R.string.no_root_body)
+        LoadFailure.ModuleMissing -> stringResource(R.string.no_module_body)
+        LoadFailure.ModuleOutdated -> stringResource(R.string.old_module_body)
+        is LoadFailure.Other -> failure.message
     }
     Message(
-        title = title,
+        title = failureTitle(failure),
         body = body,
         modifier = modifier,
         actionLabel = stringResource(R.string.retry),

@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.Dp
 import coil3.compose.AsyncImage
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
+import li.mercury.bigbrother.core.model.labelOrPackageName
 
 /**
  * The name to show for an app: its label, else its package, else, for an
@@ -40,10 +41,10 @@ import li.mercury.bigbrother.core.model.AppSummary
 fun appDisplayName(app: AppSummary, info: AppInfo?): String = appDisplayName(app, info, LocalResources.current)
 
 /** [appDisplayName] outside composition, for sorting and searching by name. */
-fun appDisplayName(app: AppSummary, info: AppInfo?, resources: Resources): String = when {
-    info != null -> info.label
-    app.packageName.isNotEmpty() -> app.packageName
-    else -> resources.getString(R.string.isolated_process_uid, app.uid)
+fun appDisplayName(app: AppSummary, info: AppInfo?, resources: Resources): String = if (info == null && app.packageName.isEmpty()) {
+    resources.getString(R.string.isolated_process_uid, app.uid)
+} else {
+    info.labelOrPackageName(app.packageName)
 }
 
 /**

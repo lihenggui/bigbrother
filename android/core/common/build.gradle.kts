@@ -27,6 +27,7 @@ dependencies {
     // Logging, for every module that builds on this one.
     api(libs.timber)
 
+    implementation(projects.core.model)
     implementation(libs.kotlinx.coroutines.android)
 
     testImplementation(libs.kotlin.test.junit)

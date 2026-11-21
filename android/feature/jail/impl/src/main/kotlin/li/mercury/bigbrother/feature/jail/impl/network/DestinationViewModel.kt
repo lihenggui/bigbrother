@@ -37,6 +37,7 @@ import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.NetworkActivity
 import li.mercury.bigbrother.core.model.NetworkTarget
 import li.mercury.bigbrother.core.model.TimeRange
+import li.mercury.bigbrother.core.model.userIdOf
 import li.mercury.bigbrother.core.model.withRule
 
 data class DestinationUiState(
@@ -77,7 +78,7 @@ class DestinationViewModel @AssistedInject constructor(
         fun create(uid: Int, @Assisted("package") packageName: String, @Assisted("target") target: String, range: TimeRange): DestinationViewModel
     }
 
-    private val userId = uid / PER_USER_RANGE
+    private val userId = userIdOf(uid)
     private val _uiState = MutableStateFlow(DestinationUiState(target = NetworkTarget.fromId(target)))
     val uiState: StateFlow<DestinationUiState> = _uiState.asStateFlow()
 
@@ -161,10 +162,6 @@ class DestinationViewModel @AssistedInject constructor(
                 _uiState.update { it.copy(pending = it.pending - target, error = e.toLoadFailure()) }
             }
         }
-    }
-
-    private companion object {
-        const val PER_USER_RANGE = 100_000
     }
 }
 

@@ -74,6 +74,8 @@ import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.SectionHeader
+import li.mercury.bigbrother.core.ui.appNameWithUser
+import li.mercury.bigbrother.core.ui.failureTitle
 import li.mercury.bigbrother.core.ui.relativeTime
 import li.mercury.bigbrother.feature.jail.impl.network.NetworkSectionActions
 import li.mercury.bigbrother.feature.jail.impl.network.networkSection
@@ -143,7 +145,7 @@ internal fun JailAppScreen(
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             MediumFlexibleTopAppBar(
-                title = { Text(nameWithUser(state.name, state.otherUser)) },
+                title = { Text(appNameWithUser(state.name, state.otherUser)) },
                 subtitle = { Text(state.packageName) },
                 navigationIcon = {
                     if (showBack) {
@@ -298,16 +300,7 @@ internal fun Note(text: String, modifier: Modifier = Modifier) {
 @Composable
 internal fun failureText(failure: LoadFailure): String = when (failure) {
     is LoadFailure.Other -> stringResource(R.string.jail_failed, failure.message)
-    else -> failureReason(failure)
-}
-
-/** Why a change was not made, to follow a line that says which. */
-@Composable
-internal fun failureReason(failure: LoadFailure): String = when (failure) {
-    LoadFailure.NoRoot -> stringResource(UiR.string.no_root_title)
-    LoadFailure.ModuleMissing -> stringResource(UiR.string.no_module_title)
-    LoadFailure.ModuleOutdated -> stringResource(UiR.string.old_module_title)
-    is LoadFailure.Other -> failure.message
+    else -> failureTitle(failure)
 }
 
 /** Tells once why a change was not made. */

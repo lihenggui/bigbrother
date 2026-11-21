@@ -50,6 +50,8 @@ import li.mercury.bigbrother.core.model.NetworkTarget
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.TimeRange
+import li.mercury.bigbrother.core.model.labelOrPackageName
+import li.mercury.bigbrother.core.model.userIdOf
 
 /** How the destinations are listed. */
 enum class DestinationSort { DATA, CONNECTIONS, RECENT, NAME }
@@ -138,7 +140,7 @@ data class NetworkActivityUiState(
     val error: LoadFailure? = null,
     val message: NetworkMessage? = null,
 ) {
-    val name: String get() = info?.label ?: packageName
+    val name: String get() = info.labelOrPackageName(packageName)
 
     /** What the list and the summary show: the chosen period's, or the whole range's. */
     val listed: NetworkActivity? get() = if (bucket != null) period else activity
@@ -160,7 +162,7 @@ class NetworkActivityViewModel @AssistedInject constructor(
         fun create(uid: Int, packageName: String): NetworkActivityViewModel
     }
 
-    private val userId = uid / PER_USER_RANGE
+    private val userId = userIdOf(uid)
     private val load = MutableStateFlow(
         NetworkActivityUiState(packageName = packageName, otherUser = userId.takeIf { it != currentUserId }),
     )
@@ -334,10 +336,6 @@ class NetworkActivityViewModel @AssistedInject constructor(
     }
 
     private fun now() = System.currentTimeMillis() / 1000
-
-    private companion object {
-        const val PER_USER_RANGE = 100_000
-    }
 }
 
 /** Rows shown of each group before "Show all". */

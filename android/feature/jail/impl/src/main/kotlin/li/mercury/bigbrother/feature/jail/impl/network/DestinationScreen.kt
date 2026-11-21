@@ -70,6 +70,7 @@ import li.mercury.bigbrother.core.model.PortActivity
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.SectionHeader
+import li.mercury.bigbrother.core.ui.timeWithDateIfNotToday
 import li.mercury.bigbrother.feature.jail.impl.ErrorEffect
 import li.mercury.bigbrother.feature.jail.impl.R
 import java.text.NumberFormat
@@ -223,7 +224,7 @@ private fun Header(target: NetworkTarget?, destination: DestinationActivity?, on
                 val parts = buildList {
                     val hosts = destination.hosts.size
                     if (hosts > 1) add(pluralStringResource(R.plurals.jail_net_subdomains, hosts, hosts))
-                    add(stringResource(R.string.jail_net_first_last, dateTime(destination.first), dateTime(destination.last)))
+                    add(stringResource(R.string.jail_net_first_last, timeWithDateIfNotToday(destination.first), timeWithDateIfNotToday(destination.last)))
                 }
                 val blocked = stringResource(R.string.jail_net_blocked)
                 val tertiary = MaterialTheme.colorScheme.tertiary

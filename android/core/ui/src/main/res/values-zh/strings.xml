@@ -79,11 +79,6 @@
     <string name="topic_camera_title">相机</string>
     <string name="topic_microphone_title">麦克风</string>
 
-    <string name="time_now">刚刚</string>
-    <string name="time_minutes">%d 分钟</string>
-    <string name="time_hours">%d 小时</string>
-    <string name="time_days">%d 天</string>
-
     <string name="category_messages">短信和通话记录</string>
     <string name="category_contacts">通讯录</string>
     <string name="category_location">位置信息</string>

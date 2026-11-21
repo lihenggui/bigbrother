@@ -75,6 +75,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.window.core.layout.WindowSizeClass
 import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
+import li.mercury.bigbrother.core.designsystem.component.segmentShape
 import li.mercury.bigbrother.core.ui.AppIcon
 import li.mercury.bigbrother.core.ui.rememberPredictiveDismissProgress
 

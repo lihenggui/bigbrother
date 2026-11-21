@@ -83,12 +83,6 @@
     <string name="topic_camera_title">Camera</string>
     <string name="topic_microphone_title">Microphone</string>
 
-    <!-- Compact "how long ago": now, minutes, hours, days. -->
-    <string name="time_now">now</string>
-    <string name="time_minutes">%dm</string>
-    <string name="time_hours">%dh</string>
-    <string name="time_days">%dd</string>
-
     <!-- Categories of private data, as grouped in DataCategory. -->
     <string name="category_messages">SMS and call logs</string>
     <string name="category_contacts">Contacts</string>

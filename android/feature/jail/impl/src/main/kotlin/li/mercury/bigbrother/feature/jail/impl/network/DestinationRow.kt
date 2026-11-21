@@ -42,9 +42,9 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
+import li.mercury.bigbrother.core.designsystem.component.segmentShape
 import li.mercury.bigbrother.core.model.ConnectionCounts
 import li.mercury.bigbrother.feature.jail.impl.R
-import li.mercury.bigbrother.feature.jail.impl.segmentShape
 
 /**
  * A destination in a segmented group: its name, what went to it, and the

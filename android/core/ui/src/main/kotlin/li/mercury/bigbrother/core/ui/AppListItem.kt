@@ -88,11 +88,14 @@ fun AppListItem(
  * same. An isolated process's name already gives its uid.
  */
 @Composable
-fun appNameWithUser(app: AppSummary, name: String): String = if (app.userId == 0 || app.isUnattributedIsolated) {
-    name
-} else {
-    stringResource(R.string.app_name_with_user, name, app.userId)
-}
+fun appNameWithUser(app: AppSummary, name: String): String = appNameWithUser(
+    name,
+    app.userId.takeUnless { it == 0 || app.isUnattributedIsolated },
+)
+
+/** Adds the Android user when the caller needs to distinguish an app's copy. */
+@Composable
+fun appNameWithUser(name: String, otherUser: Int?): String = if (otherUser == null) name else stringResource(R.string.app_name_with_user, name, otherUser)
 
 /** An app's icon, with a work badge for another Android user and an optional badge for a kind of data. */
 @Composable

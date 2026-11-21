@@ -16,7 +16,6 @@
 
 package li.mercury.bigbrother.feature.timeline.impl
 
-import android.text.format.DateUtils
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -69,7 +68,9 @@ import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.MenuFilterChip
 import li.mercury.bigbrother.core.ui.MenuOption
 import li.mercury.bigbrother.core.ui.Message
+import li.mercury.bigbrother.core.ui.dateWithWeekday
 import li.mercury.bigbrother.core.ui.namedList
+import li.mercury.bigbrother.core.ui.timeOfDay
 import li.mercury.bigbrother.core.ui.topicRecordsSummary
 import li.mercury.bigbrother.core.ui.topicTitle
 import java.time.Instant
@@ -225,7 +226,7 @@ private fun Timeline(
                 )
 
                 is TimelineItem.Hour -> Text(
-                    text = DateUtils.formatDateTime(context, item.hourStart * 1000, DateUtils.FORMAT_SHOW_TIME),
+                    text = timeOfDay(context, item.hourStart),
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 6.dp),
@@ -237,7 +238,7 @@ private fun Timeline(
                         app = first.toAppSummary(),
                         info = state.appInfo[first.packageName],
                         supporting = rowSummary(item.entries),
-                        trailing = DateUtils.formatDateTime(context, item.lastSeen * 1000, DateUtils.FORMAT_SHOW_TIME),
+                        trailing = timeOfDay(context, item.lastSeen),
                         index = item.index,
                         count = item.count,
                         // The app open beside the timeline is marked in every hour.
@@ -283,22 +284,14 @@ private const val LOAD_AHEAD = 20
 /** "Today", "Yesterday", or the date with its weekday. */
 @Composable
 private fun dayLabel(dayStart: Long): String {
-    val context = LocalContext.current
-    val millis = dayStart * 1000
     // By calendar date: a day is not always 24 hours long.
     val zone = ZoneId.systemDefault()
     val day = Instant.ofEpochSecond(dayStart).atZone(zone).toLocalDate()
     val today = LocalDate.now(zone)
     return when (day) {
         today -> stringResource(R.string.today)
-
         today.minusDays(1) -> stringResource(R.string.yesterday)
-
-        else -> DateUtils.formatDateTime(
-            context,
-            millis,
-            DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_SHOW_WEEKDAY or DateUtils.FORMAT_ABBREV_ALL,
-        )
+        else -> dateWithWeekday(dayStart)
     }
 }
 

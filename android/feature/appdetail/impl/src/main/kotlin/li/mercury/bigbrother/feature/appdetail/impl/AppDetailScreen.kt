@@ -82,6 +82,7 @@ import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.appDisplayName
+import li.mercury.bigbrother.core.ui.failureTitle
 import li.mercury.bigbrother.core.ui.label
 import li.mercury.bigbrother.core.ui.shortTime
 import li.mercury.bigbrother.core.ui.R as UiR
@@ -330,15 +331,11 @@ private fun JailActionDialog(action: JailAction?, appName: String, onConfirm: ()
             title = { Text(stringResource(R.string.jail_action_failed)) },
             text = {
                 Text(
-                    stringResource(
-                        when (action.failure) {
-                            LoadFailure.NoRoot -> UiR.string.no_root_title
-                            LoadFailure.ModuleMissing -> UiR.string.no_module_title
-                            LoadFailure.ModuleOutdated -> UiR.string.old_module_title
-                            is LoadFailure.Other -> R.string.jail_action_retry
-                            null -> R.string.jail_app_unavailable
-                        },
-                    ),
+                    when (val failure = action.failure) {
+                        is LoadFailure.Other -> stringResource(R.string.jail_action_retry)
+                        null -> stringResource(R.string.jail_app_unavailable)
+                        else -> failureTitle(failure)
+                    },
                 )
             },
             confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.ok)) } },

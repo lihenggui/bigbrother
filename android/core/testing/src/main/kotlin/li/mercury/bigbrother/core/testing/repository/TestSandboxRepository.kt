@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.SandboxRepository
+import li.mercury.bigbrother.core.model.FIRST_APPLICATION_UID
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxStatus
@@ -90,7 +91,7 @@ class TestSandboxRepository(
         if (index >= 0) {
             stored[index] = stored[index].copy(enabled = true)
         } else {
-            stored += SandboxedApp(10_000 + stored.size, packageName, true, 0, emptyMap(), emptyMap())
+            stored += SandboxedApp(FIRST_APPLICATION_UID + stored.size, packageName, true, 0, emptyMap(), emptyMap())
         }
         refreshAfterChange()
     }
