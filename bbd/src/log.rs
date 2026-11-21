@@ -15,80 +15,79 @@
 //! Rate limits for repeated daemon messages.
 
 use std::{
-    fmt::Arguments,
+    fmt::{Arguments, Display},
     time::{Duration, Instant},
 };
 
-const RECURRING_INTERVAL: Duration = Duration::from_secs(3600);
-const SANDBOX_INTERVAL: Duration = Duration::from_secs(60);
+pub const RECURRING_INTERVAL: Duration = Duration::from_secs(3600);
+pub const SANDBOX_INTERVAL: Duration = Duration::from_secs(60);
 
-/// The last logged message (or a unit key for messages sharing a limit) and
-/// the number suppressed since. The log is only rotated at boot.
-#[derive(Default)]
-pub struct Limited<K> {
-    last: Option<(K, Instant)>,
-    unlogged: u32,
+pub enum Policy {
+    /// All messages from a caller share a limit.
+    Shared,
+    /// A changed message starts a fresh interval.
+    ResetOnChange,
 }
 
-impl<K: PartialEq> Limited<K> {
-    fn record(&mut self, key: K, now: Instant, interval: Duration) -> Option<(&K, u32)> {
-        if let Some((last, logged)) = &self.last
-            && *last == key
-        {
-            if now.duration_since(*logged) < interval {
-                self.unlogged = self.unlogged.saturating_add(1);
-                return None;
-            }
-        } else {
-            self.unlogged = 0;
+/// The log is only rotated at boot, so a recurring failure must be bounded.
+pub struct Limited {
+    interval: Duration,
+    logged: Option<Instant>,
+    last_message: Option<String>,
+    suppressed: u32,
+}
+
+impl Limited {
+    pub const fn new(interval: Duration, policy: Policy) -> Self {
+        Self {
+            interval,
+            logged: None,
+            last_message: match policy {
+                Policy::Shared => None,
+                Policy::ResetOnChange => Some(String::new()),
+            },
+            suppressed: 0,
         }
-        let (key, _) = self.last.insert((key, now));
-        Some((key, std::mem::take(&mut self.unlogged)))
     }
-}
 
-impl Limited<String> {
-    /// A changed message is logged immediately.
-    pub fn log(&mut self, message: String) {
-        if let Some(line) = self.line(message, Instant::now()) {
-            eprintln!("{line}");
+    pub fn log(&mut self, message: Arguments<'_>) {
+        self.log_at(message, Instant::now(), |line| eprintln!("{line}"));
+    }
+
+    fn log_at(&mut self, message: Arguments<'_>, now: Instant, emit: impl FnOnce(Arguments<'_>)) {
+        // Shared limits can decide whether to log without formatting the message.
+        let changed = self.last_message.as_mut().is_some_and(|last| {
+            let text = message.to_string();
+            if text == *last {
+                return false;
+            }
+            *last = text;
+            true
+        });
+        if changed {
+            self.suppressed = 0;
+        } else if self
+            .logged
+            .is_some_and(|at| now.duration_since(at) < self.interval)
+        {
+            self.suppressed = self.suppressed.saturating_add(1);
+            return;
+        }
+        self.logged = Some(now);
+        let message: &dyn Display = match &self.last_message {
+            Some(text) => text,
+            None => &message,
+        };
+        match std::mem::take(&mut self.suppressed) {
+            0 => emit(format_args!("{message}")),
+            n => emit(format_args!("{message} ({n} more since the last)")),
         }
     }
 
     #[cfg(test)]
     pub fn last_message(&self) -> Option<&str> {
-        self.last.as_ref().map(|(message, _)| message.as_str())
-    }
-
-    fn line(&mut self, message: String, now: Instant) -> Option<String> {
-        let (message, count) = self.record(message, now, RECURRING_INTERVAL)?;
-        Some(match count {
-            0 => message.clone(),
-            n => format!("{message} ({n} more since)"),
-        })
-    }
-}
-
-impl Limited<()> {
-    /// Distinct sandbox failures share a limit within each caller. Format
-    /// the message only if it will be written.
-    pub fn log_sandbox(&mut self, message: Arguments<'_>) {
-        self.write_sandbox(message);
-    }
-
-    fn write_sandbox(&mut self, message: Arguments<'_>) -> bool {
-        match self.record((), Instant::now(), SANDBOX_INTERVAL) {
-            Some((_, 0)) => eprintln!("bbd: sandbox: {message}"),
-            Some((_, n)) => eprintln!("bbd: sandbox: {message} ({n} more since the last)"),
-            None => return false,
-        }
-        true
-    }
-
-    pub fn log_sandbox_after_write(&mut self, message: Arguments<'_>) {
-        if self.write_sandbox(message) {
-            self.last = Some(((), Instant::now()));
-        }
+        self.logged?;
+        self.last_message.as_deref()
     }
 }
 
@@ -96,34 +95,50 @@ impl Limited<()> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_recurring_message_is_logged_once_an_hour() {
-        let mut log = Limited::default();
-        let start = Instant::now();
-        let at = |secs| start + Duration::from_secs(secs);
-        assert_eq!(log.line("a".into(), at(0)).as_deref(), Some("a"));
-        assert_eq!(log.line("a".into(), at(30)), None);
-        assert_eq!(log.line("a".into(), at(90)), None);
-        assert_eq!(
-            log.line("a".into(), at(3600)).as_deref(),
-            Some("a (2 more since)")
-        );
-        assert_eq!(log.line("a".into(), at(3630)), None);
-        // A different message is logged at once.
-        assert_eq!(log.line("b".into(), at(3660)).as_deref(), Some("b"));
-        assert_eq!(log.line("a".into(), at(3690)).as_deref(), Some("a"));
-        // One that recurs no more than hourly is logged each time, as is.
-        assert_eq!(log.line("a".into(), at(7290)).as_deref(), Some("a"));
+    fn line(log: &mut Limited, message: &str, now: Instant) -> Option<String> {
+        let mut line = None;
+        log.log_at(format_args!("{message}"), now, |text| {
+            line = Some(text.to_string());
+        });
+        line
     }
 
     #[test]
-    fn sandbox_failures_are_counted_between_log_lines() {
-        let mut log = Limited::default();
-        let mut record = |at| log.record((), at, SANDBOX_INTERVAL).map(|(_, count)| count);
+    fn a_recurring_message_is_logged_once_an_hour() {
+        let mut log = Limited::new(RECURRING_INTERVAL, Policy::ResetOnChange);
         let start = Instant::now();
-        assert_eq!(record(start), Some(0));
-        assert_eq!(record(start + Duration::from_secs(1)), None);
-        assert_eq!(record(start + Duration::from_secs(59)), None);
-        assert_eq!(record(start + SANDBOX_INTERVAL), Some(2));
+        let mut at = |message, secs| line(&mut log, message, start + Duration::from_secs(secs));
+        assert_eq!(at("a", 0).as_deref(), Some("a"));
+        assert_eq!(at("a", 30), None);
+        assert_eq!(at("a", 90), None);
+        assert_eq!(at("a", 3600).as_deref(), Some("a (2 more since the last)"));
+        assert_eq!(at("a", 3630), None);
+        // A different message is logged at once.
+        assert_eq!(at("b", 3660).as_deref(), Some("b"));
+        assert_eq!(at("a", 3690).as_deref(), Some("a"));
+        // One that recurs no more than hourly is logged each time, as is.
+        assert_eq!(at("a", 7290).as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn different_messages_share_the_same_limit() {
+        let mut log = Limited::new(SANDBOX_INTERVAL, Policy::Shared);
+        let start = Instant::now();
+        assert_eq!(
+            line(&mut log, "bbd: sandbox: a", start).as_deref(),
+            Some("bbd: sandbox: a")
+        );
+        assert_eq!(
+            line(&mut log, "bbd: sandbox: b", start + Duration::from_secs(1)),
+            None
+        );
+        assert_eq!(
+            line(&mut log, "bbd: sandbox: c", start + Duration::from_secs(59)),
+            None
+        );
+        assert_eq!(
+            line(&mut log, "bbd: sandbox: d", start + SANDBOX_INTERVAL).as_deref(),
+            Some("bbd: sandbox: d (2 more since the last)")
+        );
     }
 }

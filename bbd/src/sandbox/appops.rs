@@ -84,7 +84,7 @@ use super::{
 use crate::{
     backoff::Backoff,
     helper,
-    log::Limited,
+    log::{Limited, Policy, SANDBOX_INTERVAL},
     sync::{lock, recover},
 };
 
@@ -193,7 +193,6 @@ fn found_in(line: &str) -> Option<(u32, String)> {
         .then(|| (uid, found.to_string()))
 }
 
-#[derive(Default)]
 struct State {
     /// Whether the helper is to run: an app is sandboxed, or about to be.
     wanted: bool,
@@ -217,7 +216,7 @@ struct State {
     /// Recovery commands still to send, including when the pipe filled
     /// or a change was in progress for a UID.
     pending_verifications: BTreeSet<u32>,
-    rollback_errors: Limited<()>,
+    rollback_errors: Limited,
     /// Initial checks are in progress while replies arrive. After the
     /// regular command deadline without progress, an absent answer is
     /// reported as unavailable.
@@ -240,6 +239,29 @@ struct State {
     /// The permissions the helper found changed by the user, by uid, as
     /// [`found_in`] reads them, not yet kept in the entries.
     found: Vec<(u32, String)>,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            wanted: false,
+            dismissed: false,
+            hurry: false,
+            input: None,
+            guarded: BTreeMap::new(),
+            owners: BTreeMap::new(),
+            asking: None,
+            pending_verifications: BTreeSet::new(),
+            rollback_errors: Limited::new(SANDBOX_INTERVAL, Policy::Shared),
+            checking_until: None,
+            answers: HashMap::new(),
+            captured: None,
+            kind: None,
+            unheld: BTreeMap::new(),
+            unsure: BTreeMap::new(),
+            found: Vec::new(),
+        }
+    }
 }
 
 impl State {
@@ -274,8 +296,8 @@ impl State {
 
     fn rollback(&mut self, line: &str) {
         if let Err(e) = self.send(line) {
-            self.rollback_errors.log_sandbox(format_args!(
-                "cannot roll back app ops with the helper: {e:#}"
+            self.rollback_errors.log(format_args!(
+                "bbd: sandbox: cannot roll back app ops with the helper: {e:#}"
             ));
         }
     }
@@ -491,7 +513,7 @@ impl AppOps {
     /// again on its own every minute.
     pub fn verifier(&self) -> impl Fn(u32) + Send + 'static {
         let shared = self.shared.clone();
-        let errors = RefCell::new(Limited::default());
+        let errors = RefCell::new(Limited::new(SANDBOX_INTERVAL, Policy::Shared));
         move |uid| {
             let result = match shared.state.try_lock() {
                 Ok(mut state) => state.verify(uid),
@@ -502,9 +524,9 @@ impl AppOps {
                 }
             };
             if let Err(e) = result {
-                errors
-                    .borrow_mut()
-                    .log_sandbox(format_args!("cannot request app ops verification: {e:#}"));
+                errors.borrow_mut().log(format_args!(
+                    "bbd: sandbox: cannot request app ops verification: {e:#}"
+                ));
             }
         }
     }

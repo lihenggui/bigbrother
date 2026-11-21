@@ -69,7 +69,7 @@ use aya::{
 };
 
 use super::{Effect, Entry, Resumed, Status, items::Settings};
-use crate::log::Limited;
+use crate::log::{Limited, Policy, SANDBOX_INTERVAL};
 
 /// The sandbox's chain in the `filter` table, which `OUTPUT` jumps to.
 const CHAIN: &str = "bb_sandbox";
@@ -254,7 +254,7 @@ enum Rules {
 pub struct Network {
     tools: Box<dyn Tools>,
     listed: Box<dyn Listed>,
-    rollback_errors: Limited<()>,
+    rollback_errors: Limited,
     /// The uids listed.
     refused: BTreeSet<u32>,
     rules: Rules,
@@ -306,7 +306,7 @@ impl Network {
         Self {
             tools,
             listed,
-            rollback_errors: Limited::default(),
+            rollback_errors: Limited::new(SANDBOX_INTERVAL, Policy::Shared),
             refused: BTreeSet::new(),
             rules: Rules::Unknown,
             resumed: false,
@@ -362,8 +362,8 @@ impl Network {
             if !self.refused.contains(&uid)
                 && let Err(rollback) = self.listed.remove(uid)
             {
-                self.rollback_errors.log_sandbox(format_args!(
-                    "cannot roll back a network map entry: {rollback:#}"
+                self.rollback_errors.log(format_args!(
+                    "bbd: sandbox: cannot roll back a network map entry: {rollback:#}"
                 ));
             }
             return Err(e);

@@ -69,7 +69,7 @@ use tokio::io::{Interest, unix::AsyncFd};
 use super::{DISABLE_ALL_WAIT, LAST_USER, OWN_PACKAGES, Sandbox};
 use crate::{
     backoff::Backoff,
-    log::Limited,
+    log::{Limited, Policy, SANDBOX_INTERVAL},
     packages::{Packages, app_id_of, user_of},
     store::{KnownApp, Writer},
 };
@@ -124,8 +124,8 @@ pub struct Auto {
     told_apps: BTreeSet<(u32, String)>,
     /// How long into a look apps are still put in.
     look_wait: Duration,
-    failures: Limited<()>,
-    switch_errors: Limited<()>,
+    failures: Limited,
+    switch_errors: Limited,
     #[cfg(test)]
     user_data_fixture: Option<PathBuf>,
 }
@@ -191,8 +191,8 @@ impl Auto {
             libraries: None,
             told_apps: BTreeSet::new(),
             look_wait: DISABLE_ALL_WAIT,
-            failures: Limited::default(),
-            switch_errors: Limited::default(),
+            failures: Limited::new(SANDBOX_INTERVAL, Policy::Shared),
+            switch_errors: Limited::new(SANDBOX_INTERVAL, Policy::Shared),
             #[cfg(test)]
             user_data_fixture: None,
         })
@@ -212,8 +212,8 @@ impl Auto {
                 // Better hold none: new apps are still found by the watch.
                 match kernel.switch.set(0, &0, 0) {
                     Ok(()) => eprintln!("bbd: sandbox: starts of new apps are not held: {e:#}"),
-                    Err(switch) => self.switch_errors.log_sandbox(format_args!(
-                        "cannot stop holding starts of new apps after a map sync failure: {switch:?} ({e:#})"
+                    Err(switch) => self.switch_errors.log(format_args!(
+                        "bbd: sandbox: cannot stop holding starts of new apps after a map sync failure: {switch:?} ({e:#})"
                     )),
                 }
                 false
@@ -677,8 +677,8 @@ impl Sandbox {
                     left += 1;
                     // Package names are not logged; the error may name it.
                     let e = format!("{e:#}").replace(package.as_str(), "the app");
-                    self.auto.failures.log_sandbox_after_write(format_args!(
-                        "uid {uid}, newly installed, is not in the sandbox: {e}"
+                    self.auto.failures.log(format_args!(
+                        "bbd: sandbox: uid {uid}, newly installed, is not in the sandbox: {e}"
                     ));
                 }
             }

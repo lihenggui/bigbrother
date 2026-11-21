@@ -50,7 +50,7 @@ use crate::{
     btf::Btf,
     clock::{clock_ns, now},
     commands, control, helper,
-    log::Limited,
+    log::{Limited, Policy, RECURRING_INTERVAL},
     mounts::Mounts,
     net::{self, Destination, Listeners},
     packages::{FIRST_ISOLATED_APP_ID, Packages, app_id_of, user_of},
@@ -389,7 +389,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
             if let Err(e) = tracer.writer.net_clear(uid) {
                 tracer
                     .write_errors
-                    .log(format!("bbd: could not clear network records: {e:#}"));
+                    .log(format_args!("bbd: could not clear network records: {e:#}"));
             }
         }
         // A failed write (disk full, database busy) keeps the batch for the
@@ -401,7 +401,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         if let Err(e) = written {
             tracer
                 .write_errors
-                .log(format!("bbd: could not write records: {e:#}"));
+                .log(format_args!("bbd: could not write records: {e:#}"));
         }
         if let Some(stream) = request {
             control::answer(&stream);
@@ -756,7 +756,7 @@ async fn run_sandbox(
     writer.tell_net_cleared(net_cleared);
     let mut packages = Packages::new(&packages_list);
     let mut command_reads = tokio::task::JoinSet::new();
-    let mut command_read_errors = Limited::default();
+    let mut command_read_errors = Limited::new(RECURRING_INTERVAL, Policy::ResetOnChange);
     // The package list, watched while newly installed apps are sandboxed.
     let mut package_watch = sandbox::auto::Watch::default();
     let mut tick = interval(FLUSH_INTERVAL);
@@ -797,7 +797,7 @@ async fn run_sandbox(
                     Err(e) => {
                         // Panic payloads can include command data.
                         let outcome = if e.is_panic() { "panicked" } else { "was cancelled" };
-                        command_read_errors.log(format!("bbd: sandbox: command read task {outcome}"));
+                        command_read_errors.log(format_args!("bbd: sandbox: command read task {outcome}"));
                     }
                 }
             }
@@ -1099,7 +1099,7 @@ fn spawn_appops_reader() -> std::sync::mpsc::Receiver<Option<Vec<appops::Entry>>
     std::thread::spawn(move || {
         let mut failures = 0;
         let mut read_once = false;
-        let mut log = Limited::default();
+        let mut log = Limited::new(RECURRING_INTERVAL, Policy::ResetOnChange);
         loop {
             let started = Instant::now();
             // Returns when the helper has ended, which it is not meant to.
@@ -1108,7 +1108,7 @@ fn spawn_appops_reader() -> std::sync::mpsc::Receiver<Option<Vec<appops::Entry>>
                 StreamEnd::DaemonGone => return,
             };
             failures = APPOPS_BACKOFF.failures_after_run(failures, started.elapsed());
-            log.log(format!("bbd: reading permission use: {e:#}"));
+            log.log(format_args!("bbd: reading permission use: {e:#}"));
             // Reported once, when it stops looking like a system that is
             // still starting.
             if failures == APPOPS_GIVE_UP && !read_once {
@@ -1136,8 +1136,6 @@ fn stream_appops(
     sender: &std::sync::mpsc::Sender<Option<Vec<appops::Entry>>>,
     read_once: &mut bool,
 ) -> StreamEnd {
-    use std::io::BufRead as _;
-
     let interval = APPOPS_INTERVAL.as_secs().to_string();
     let mut args: Vec<&str> = vec!["--every", &interval];
     for op in appops::ops() {
@@ -1145,10 +1143,20 @@ fn stream_appops(
     }
     // Its stdin is held open for as long as `helper` lives; the helper
     // leaves when it closes, so it does not outlive the daemon.
-    let mut helper = match helper::spawn(appops::HELPER_CLASS, args.into_iter()) {
+    let helper = match helper::spawn(appops::HELPER_CLASS, args.into_iter()) {
         Ok(helper) => helper,
         Err(e) => return StreamEnd::Helper(e),
     };
+    read_appops(helper, sender, read_once)
+}
+
+fn read_appops(
+    mut helper: std::process::Child,
+    sender: &std::sync::mpsc::Sender<Option<Vec<appops::Entry>>>,
+    read_once: &mut bool,
+) -> StreamEnd {
+    use std::io::BufRead as _;
+
     let output = helper.stdout.take().expect("spawned with a piped stdout");
     // What it says when it fails, for the message; read as it comes, so
     // that the helper never waits for room in the pipe.
@@ -1335,9 +1343,9 @@ struct Tracer {
     /// Sensor sessions not kept for being over the limits, as last written
     /// (`sensor_sessions_dropped` in `bbd stats`), and its log.
     sensors_dropped: u64,
-    sensors_dropped_log: Limited<String>,
+    sensors_dropped_log: Limited,
     writer: Writer,
-    write_errors: Limited<String>,
+    write_errors: Limited,
     counters: Counters,
     /// Keyed by thread id.
     awaiting_result: HashMap<u32, Vec<Held>>,
@@ -1365,9 +1373,9 @@ impl Tracer {
             catalog: None,
             sensors,
             sensors_dropped: 0,
-            sensors_dropped_log: Limited::default(),
+            sensors_dropped_log: Limited::new(RECURRING_INTERVAL, Policy::ResetOnChange),
             writer,
-            write_errors: Limited::default(),
+            write_errors: Limited::new(RECURRING_INTERVAL, Policy::ResetOnChange),
             counters: Counters::default(),
             awaiting_result: HashMap::new(),
             isolated_owners: HashMap::new(),
@@ -1402,7 +1410,7 @@ impl Tracer {
             Ok(()) => true,
             Err(e) => {
                 self.write_errors
-                    .log(format!("bbd: could not write {key}: {e:#}"));
+                    .log(format_args!("bbd: could not write {key}: {e:#}"));
                 false
             }
         }
@@ -1776,8 +1784,9 @@ impl Tracer {
                 .set_meta("sensor_sessions_dropped", dropped as i64)
                 .is_ok()
         {
-            self.sensors_dropped_log
-                .log("bbd: sensor sessions not kept: an app has too many open".into());
+            self.sensors_dropped_log.log(format_args!(
+                "bbd: sensor sessions not kept: an app has too many open"
+            ));
             self.sensors_dropped = dropped;
         }
     }

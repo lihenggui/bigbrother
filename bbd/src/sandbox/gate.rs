@@ -68,7 +68,7 @@ use super::{
 };
 use crate::{
     clock::clock_ns,
-    log::Limited,
+    log::{Limited, Policy, SANDBOX_INTERVAL},
     netctl::Target,
     proc::{is_nonleader, parse_stat, process_start, real_uid},
     sync::{lock, read, write},
@@ -239,7 +239,7 @@ impl Stats {
 /// mount for each.
 pub struct Storage {
     uids: BpfHashMap<MapData, u32, u32>,
-    release_errors: Limited<()>,
+    release_errors: Limited,
     shared: Arc<Shared>,
     /// Whether apps can be kept from the network on this device. Where
     /// they cannot, the resolver is left to them too.
@@ -279,7 +279,7 @@ impl Storage {
             ring,
             closing: Closing {
                 waiting,
-                reset_errors: Limited::default(),
+                reset_errors: Limited::new(SANDBOX_INTERVAL, Policy::Shared),
                 shared: shared.clone(),
             },
             keeper: Keeper::new(shared.clone(), scratch),
@@ -293,7 +293,7 @@ impl Storage {
             .context("the gate thread ended as it started")??;
         Ok(Self {
             uids,
-            release_errors: Limited::default(),
+            release_errors: Limited::new(SANDBOX_INTERVAL, Policy::Shared),
             shared,
             network: false,
             names: None,
@@ -351,8 +351,9 @@ impl Storage {
         if let Err(e) = self.uids.remove(&uid)
             && !missing_gate_key(&e)
         {
-            self.release_errors
-                .log_sandbox(format_args!("cannot remove uid {uid} from the gate: {e:?}"));
+            self.release_errors.log(format_args!(
+                "bbd: sandbox: cannot remove uid {uid} from the gate: {e:?}"
+            ));
         }
         write(&self.shared.apps).remove(&uid);
     }
@@ -622,14 +623,14 @@ struct Thread {
 struct Keeper {
     shared: Arc<Shared>,
     kernel: Kernel,
-    failures: Limited<()>,
+    failures: Limited,
 }
 
 /// Closes the gate when the thread ends, however it ends: the kernel side
 /// then kills the starts it would have held for nobody.
 struct Closing {
     waiting: Array<MapData, u64>,
-    reset_errors: Limited<()>,
+    reset_errors: Limited,
     shared: Arc<Shared>,
 }
 
@@ -700,8 +701,8 @@ impl Thread {
                 let lost = self.keeper.admit(&event, &home, &cpuinfo).is_err();
                 // Nothing waits any more: a later start is timed anew.
                 if let Err(e) = self.closing.waiting.set(0, &0, 0) {
-                    self.closing.reset_errors.log_sandbox(format_args!(
-                        "cannot reset the gate wait in the kernel: {e:?}"
+                    self.closing.reset_errors.log(format_args!(
+                        "bbd: sandbox: cannot reset the gate wait in the kernel: {e:?}"
                     ));
                 }
                 if lost {
@@ -718,7 +719,7 @@ impl Keeper {
         Self {
             shared,
             kernel: Kernel::new(scratch),
-            failures: Limited::default(),
+            failures: Limited::new(SANDBOX_INTERVAL, Policy::Shared),
         }
     }
 
@@ -981,8 +982,10 @@ fn wait_stopped(pid: i32) -> anyhow::Result<()> {
     }
 }
 
-fn log_start(log: &mut Limited<()>, uid: u32, e: &anyhow::Error) {
-    log.log_sandbox(format_args!("a start of uid {uid} was stopped: {e:#}"));
+fn log_start(log: &mut Limited, uid: u32, e: &anyhow::Error) {
+    log.log(format_args!(
+        "bbd: sandbox: a start of uid {uid} was stopped: {e:#}"
+    ));
 }
 
 #[cfg(test)]
