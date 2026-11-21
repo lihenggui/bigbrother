@@ -23,17 +23,12 @@ use std::{
 };
 
 use anyhow::Context as _;
-use aya::{
-    EbpfLoader,
-    maps::{HashMap as BpfHashMap, MapData, PerCpuArray, RingBuf},
-    programs::{KProbe, RawTracePoint},
-};
+use aya::maps::{MapData, PerCpuArray, RingBuf};
 use bb_common::{
-    BinderEvent, BinderKey, BinderValue, ConnectEvent, EV_BINDER, EV_CONNECT, EV_EXEC, EV_FILE,
-    EV_NETLINK, EV_PATH, EV_PROCESS, EV_RESULT, EV_TRAFFIC, EXEC_ARGS, EventHeader, ExecEvent,
-    FIRST_APPLICATION_UID, FUSE_SUPER_MAGIC, FileEvent, NetlinkEvent, OFF_COUNT, OFF_MISSING,
-    OP_PROBE, OP_WATCH, PROC_SUPER_MAGIC, PROCESS_READ, PROCESS_WRITE, PathEvent, ProcessEvent,
-    ResultEvent, SELINUX_MAGIC, SYSFS_MAGIC, read_event,
+    BinderEvent, ConnectEvent, EV_BINDER, EV_CONNECT, EV_EXEC, EV_FILE, EV_NETLINK, EV_PATH,
+    EV_PROCESS, EV_RESULT, EV_TRAFFIC, EXEC_ARGS, EventHeader, ExecEvent, FIRST_APPLICATION_UID,
+    FUSE_SUPER_MAGIC, FileEvent, NetlinkEvent, OP_PROBE, OP_WATCH, PROC_SUPER_MAGIC, PROCESS_READ,
+    PROCESS_WRITE, PathEvent, ProcessEvent, ResultEvent, SELINUX_MAGIC, SYSFS_MAGIC, read_event,
 };
 use tokio::{
     io::{Interest, unix::AsyncFd},
@@ -47,7 +42,6 @@ use crate::{
     appops,
     backoff::Backoff,
     binder::{self, Catalog},
-    btf::Btf,
     clock::{clock_ns, now},
     commands, control, helper,
     log::{Limited, Policy, RECURRING_INTERVAL},
@@ -55,16 +49,21 @@ use crate::{
     net::{self, Destination, Listeners},
     packages::{FIRST_ISOLATED_APP_ID, Packages, app_id_of, user_of},
     paths, personal,
+    probes::{
+        BinderWatch, Probes, attach_binder, attach_feature, attach_traffic, dropped_events,
+        load_probes, print_profile, watch,
+    },
     proc::{parent_pid, process_alive, process_start, real_uid, uid_of_pid},
+    record::{
+        Category, MODE_CALL, MODE_CONNECT, MODE_DIR, MODE_EXEC, MODE_ISOLATED, MODE_PROBE,
+        MODE_QUERY, MODE_READ, MODE_VIA_PROVIDER, MODE_WATCH, MODE_WRITE, Mode,
+    },
     rules,
-    sandbox::{self, Sandbox},
+    sandbox::{self, Sandbox, target::Target},
     selftest, sensors,
     spool::{self, Spool},
     store::net::{NetKey, NetSeen},
-    store::{
-        Category, Counters, MODE_CALL, MODE_CONNECT, MODE_DIR, MODE_EXEC, MODE_ISOLATED,
-        MODE_PROBE, MODE_QUERY, MODE_READ, MODE_VIA_PROVIDER, MODE_WATCH, MODE_WRITE, Mode, Writer,
-    },
+    store::{Counters, Writer},
     sync::{lock, read},
     syscalls,
 };
@@ -202,7 +201,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     let dropped: PerCpuArray<MapData, u64> =
         PerCpuArray::try_from(ebpf.take_map("DROPPED").context("DROPPED map missing")?)?;
     // Events the kernel side lost, summed over CPUs.
-    let dropped_events = || selftest::dropped_events(&dropped);
+    let dropped_events = || dropped_events(&dropped);
     let ring = RingBuf::try_from(ebpf.take_map("EVENTS").context("EVENTS map missing")?)?;
     // SAFETY: the RingBuf owns its fd, which stays open and unchanged for as
     // long as the AsyncFd owns the RingBuf.
@@ -256,7 +255,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     );
     if let Some(map) = &mut binder_watch {
         let fixed = Catalog::parse("");
-        match watch(map, &fixed) {
+        match watch(map, fixed.map_entries()) {
             Ok(()) => {
                 tracer.catalog = Some(fixed);
                 tracer.sensors.watching(Instant::now());
@@ -559,7 +558,7 @@ fn start_sandbox(
                         Some(host) => target.covers_name(host),
                         // A name that could not be read: refused to
                         // an app kept from any name.
-                        None => !matches!(target, crate::netctl::Target::Ip(..)),
+                        None => !matches!(target, Target::Ip(..)),
                     })
                 })
         })
@@ -580,7 +579,7 @@ fn start_sandbox(
                     || lock(&book).get(&uid).is_some_and(|targets| {
                         targets
                             .iter()
-                            .any(|target| !matches!(target, crate::netctl::Target::Ip(..)))
+                            .any(|target| !matches!(target, Target::Ip(..)))
                     }))
         })
     };
@@ -824,250 +823,6 @@ async fn run_sandbox(
     sandbox.keep_found(&writer);
 }
 
-/// The eBPF programs, loaded, with the recorders attached.
-pub struct Probes {
-    pub ebpf: aya::Ebpf,
-    pub offsets: [u32; OFF_COUNT],
-    pub symbols: HashSet<&'static str>,
-    /// Whether SELinux is running (see `syscalls`).
-    pub selinux: bool,
-    /// The file probes, then each optional feature, with what it is
-    /// attached to or why it is not. The file probes' plan begins with the
-    /// security hook `file_open` is attached to.
-    pub features: Vec<(&'static syscalls::Feature, anyhow::Result<selftest::Plan>)>,
-}
-
-/// Load the eBPF programs and attach the file probes and every optional
-/// feature the kernel allows. Fails only without the file probes.
-pub fn load_probes() -> anyhow::Result<Probes> {
-    // Kernels before 5.11 account BPF memory against RLIMIT_MEMLOCK
-    // (https://lwn.net/Articles/837122/); GKI 5.10 is one of them.
-    let rlim = libc::rlimit {
-        rlim_cur: libc::RLIM_INFINITY,
-        rlim_max: libc::RLIM_INFINITY,
-    };
-    if unsafe { libc::setrlimit(libc::RLIMIT_MEMLOCK, &rlim) } != 0 {
-        eprintln!("bbd: warning: could not raise RLIMIT_MEMLOCK");
-    }
-
-    let offsets = Btf::from_kernel()?.kernel_offsets()?;
-    let modern = aya::include_bytes_aligned!(concat!(env!("OUT_DIR"), "/bb-ebpf"));
-    let legacy = aya::include_bytes_aligned!(concat!(env!("OUT_DIR"), "/bb-ebpf-legacy"));
-    let mut ebpf = match load_file_programs(modern, &offsets, true) {
-        Ok(ebpf) => ebpf,
-        Err(error) => {
-            eprintln!(
-                "bbd: using the syscall hash table: {error} ({})",
-                error.root_cause()
-            );
-            load_file_programs(legacy, &offsets, false)?
-        }
-    };
-
-    let symbols = syscalls::kernel_symbols().context("reading /proc/kallsyms")?;
-    anyhow::ensure!(
-        symbols.contains(syscalls::REQUIRED),
-        "{} not in /proc/kallsyms (unsupported kernel, or kallsyms restricted)",
-        syscalls::REQUIRED
-    );
-
-    let kprobe: &mut KProbe = ebpf
-        .program_mut("file_open")
-        .context("program file_open missing from object")?
-        .try_into()?;
-    let selinux = syscalls::selinux_running();
-    let hook = syscalls::file_open_hook(&symbols, selinux);
-    kprobe
-        .attach(hook, 0)
-        .with_context(|| format!("attaching kprobe {hook}"))?;
-    eprintln!("bbd: file_open on {hook}");
-
-    // Syscall probes: one entry program per argument layout plus a shared
-    // return program, attached to each syscall function this kernel has.
-    // The return program is shared by every feature that reports outcomes.
-    let mut files = vec![("file_open", hook)];
-    files.extend(
-        attach_feature(&mut ebpf, &syscalls::FILES, &symbols, selinux, &offsets)
-            .context("setting up the file probes")?,
-    );
-    let mut features = vec![(&syscalls::FILES, Ok(files))];
-
-    // Everything else is recorded where the kernel allows it. A probe that
-    // can't be set up costs its own records, not the daemon: what is and
-    // isn't covered is stored for `bbd stats` to report.
-    for feature in syscalls::FEATURES {
-        let attached = attach_feature(&mut ebpf, feature, &symbols, selinux, &offsets);
-        if let Err(e) = &attached {
-            eprintln!("bbd: warning: not recording {}: {e:#}", feature.name);
-        }
-        features.push((feature, attached));
-    }
-    Ok(Probes {
-        ebpf,
-        offsets,
-        symbols,
-        selinux,
-        features,
-    })
-}
-
-/// Verify the lookup, insertion and return paths before attaching anything.
-/// Some kernels advertise BTF but lack the map type or one of its helpers.
-fn load_file_programs(
-    object: &[u8],
-    offsets: &[u32; OFF_COUNT],
-    task_storage: bool,
-) -> anyhow::Result<aya::Ebpf> {
-    let mut loader = EbpfLoader::new();
-    if task_storage {
-        // Aya can load task storage but has no userspace map wrapper for it.
-        loader.allow_unsupported_maps();
-    }
-    let mut ebpf = loader
-        .override_global("OFFSETS", &offsets[..], true)
-        .load(object)
-        .context("loading eBPF object (need root and a BPF-enabled kernel)")?;
-    for name in ["file_open", "enter_openat", "sys_ret"] {
-        let program: &mut KProbe = ebpf
-            .program_mut(name)
-            .with_context(|| format!("program {name} missing from object"))?
-            .try_into()?;
-        program
-            .load()
-            .with_context(|| format!("verifier rejected {name}"))?;
-    }
-    Ok(ebpf)
-}
-
-/// Load and attach the probes of one optional feature. Returns the
-/// (program, kernel function) pairs attached.
-fn attach_feature(
-    ebpf: &mut aya::Ebpf,
-    feature: &syscalls::Feature,
-    symbols: &HashSet<&'static str>,
-    selinux: bool,
-    offsets: &[u32],
-) -> anyhow::Result<selftest::Plan> {
-    anyhow::ensure!(
-        feature
-            .offsets
-            .iter()
-            .all(|&slot| offsets[slot] != OFF_MISSING),
-        "this kernel's type information lacks a field it reads"
-    );
-    let plan = syscalls::attach_plan(feature, symbols, selinux);
-    anyhow::ensure!(
-        !plan.is_empty(),
-        "this kernel has none of the functions it attaches to"
-    );
-    for (name, _) in feature.table {
-        let program: &mut KProbe = ebpf
-            .program_mut(name)
-            .with_context(|| format!("program {name} missing from object"))?
-            .try_into()?;
-        if program.fd().is_err() {
-            program
-                .load()
-                .with_context(|| format!("verifier rejected {name}"))?;
-        }
-    }
-    // All or nothing: a feature left half attached would go on producing
-    // records, some of them wrong (a call whose return is not seen counts
-    // as successful), while being reported as not recorded.
-    let mut links = Vec::new();
-    let attached = (|| -> anyhow::Result<()> {
-        for (entry, function) in &plan {
-            let returns = feature.with_return.then_some("sys_ret");
-            for name in std::iter::once(*entry).chain(returns) {
-                let program: &mut KProbe = ebpf
-                    .program_mut(name)
-                    .with_context(|| format!("program {name} missing from object"))?
-                    .try_into()?;
-                let link = program
-                    .attach(function, 0)
-                    .with_context(|| format!("attaching {name} to {function}"))?;
-                links.push((name, link));
-            }
-        }
-        Ok(())
-    })();
-    if let Err(e) = attached {
-        for (name, link) in links {
-            if let Some(Ok(program)) = ebpf.program_mut(name).map(<&mut KProbe>::try_from)
-                && let Err(e) = program.detach(link)
-            {
-                eprintln!("bbd: probes: could not detach {name} after an attach failure: {e}");
-            }
-        }
-        return Err(e);
-    }
-    // Which of the alternatives was taken depends on the kernel.
-    if feature.alternatives {
-        for (_, function) in &plan {
-            eprintln!("bbd: {} on {function}", feature.name);
-        }
-    }
-    Ok(plan)
-}
-
-/// Load and attach the program that reports what went over the TCP
-/// connections of the apps recorded, as each ends.
-fn attach_traffic(ebpf: &mut aya::Ebpf, offsets: &[u32]) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        [
-            bb_common::OFF_SOCK_PROTOCOL,
-            bb_common::OFF_SK_FAMILY,
-            bb_common::OFF_SK_DADDR,
-            bb_common::OFF_SK_DPORT,
-            bb_common::OFF_SK_V6_DADDR,
-            bb_common::OFF_SK_UID,
-            bb_common::OFF_TCP_ACKED,
-            bb_common::OFF_TCP_RECEIVED,
-        ]
-        .iter()
-        .all(|&slot| offsets[slot] != OFF_MISSING),
-        "this kernel's type information lacks a field it reads"
-    );
-    let program: &mut RawTracePoint = ebpf
-        .program_mut("inet_sock_set_state")
-        .context("program inet_sock_set_state missing from object")?
-        .try_into()?;
-    program
-        .load()
-        .context("verifier rejected inet_sock_set_state")?;
-    program
-        .attach("inet_sock_set_state")
-        .context("attaching to the inet_sock_set_state tracepoint")?;
-    Ok(())
-}
-
-/// Load and attach the binder tracepoint program, and return the map that
-/// tells it which calls to report.
-fn attach_binder(ebpf: &mut aya::Ebpf) -> anyhow::Result<BinderWatch> {
-    let program: &mut RawTracePoint = ebpf
-        .program_mut("binder_ioctl")
-        .context("program binder_ioctl missing from object")?
-        .try_into()?;
-    program.load().context("verifier rejected binder_ioctl")?;
-    program
-        .attach("binder_ioctl")
-        .context("attaching to the binder_ioctl tracepoint")?;
-    Ok(BpfHashMap::try_from(
-        ebpf.take_map("BINDER_WATCH")
-            .context("BINDER_WATCH map missing")?,
-    )?)
-}
-
-type BinderWatch = BpfHashMap<MapData, BinderKey, BinderValue>;
-
-/// Tell the kernel side which calls to report.
-fn watch(map: &mut BinderWatch, catalog: &Catalog) -> anyhow::Result<()> {
-    for (key, value) in catalog.map_entries() {
-        map.insert(&key, &value, 0)?;
-    }
-    Ok(())
-}
-
 /// Value of a `coverage_*` entry while it is not yet known whether the
 /// feature works on this device: neither 1 (recording) nor 0 (can't).
 const COVERAGE_PENDING: i64 = -1;
@@ -1232,33 +987,6 @@ fn spawn_catalog_loader() -> tokio::task::JoinHandle<Option<Catalog>> {
     })
 }
 
-/// Per-program run counts and time, as measured by the kernel. This is the
-/// CPU time the tracing itself adds to the processes being traced.
-fn print_profile(ebpf: &aya::Ebpf) {
-    eprintln!("bbd: eBPF program cost");
-    let mut total = Duration::ZERO;
-    let mut programs: Vec<_> = ebpf.programs().collect();
-    programs.sort_by_key(|(name, _)| *name);
-    for (name, program) in programs {
-        let Ok(info) = program.info() else { continue };
-        let (runs, time) = (info.run_count(), info.run_time());
-        total += time;
-        let average = if runs > 0 {
-            time.as_nanos() / u128::from(runs)
-        } else {
-            0
-        };
-        eprintln!(
-            "  {name:<14} runs={runs:<9} total={:>9.3}ms avg={average}ns",
-            time.as_secs_f64() * 1000.0
-        );
-    }
-    eprintln!(
-        "  all programs   total={:.3}ms",
-        total.as_secs_f64() * 1000.0
-    );
-}
-
 /// Turns the times the kernel gives events, nanoseconds since boot, into
 /// unix time.
 struct EventClock {
@@ -1390,7 +1118,7 @@ impl Tracer {
     /// besides the fixed ones already watched. Without a catalog only the
     /// fixed ones stay watched, and service calls count as not recorded.
     fn use_catalog(&mut self, map: &mut BinderWatch, loaded: Option<Catalog>) {
-        let watching = loaded.and_then(|catalog| match watch(map, &catalog) {
+        let watching = loaded.and_then(|catalog| match watch(map, catalog.map_entries()) {
             Ok(()) => Some(catalog),
             Err(e) => {
                 eprintln!("bbd: warning: not recording service calls: {e:#}");
@@ -2299,10 +2027,18 @@ mod tests {
         unaligned.extend_from_slice(bytes);
         tracer.on_event(&unaligned[1..], &clock);
         tracer.writer.flush(&tracer.counters, 5).unwrap();
-        let rows = crate::store::Reader::open(&db)
-            .unwrap()
-            .files(&[10100], &[Category::Storage], None, None, 0, 10, 0)
-            .unwrap();
+        let reader = crate::store::Reader::open(&db).unwrap();
+        let rows = crate::report::files(
+            &reader,
+            &[10100],
+            &[Category::Storage],
+            None,
+            None,
+            0,
+            10,
+            0,
+        )
+        .unwrap();
         assert_eq!(rows.len(), 1);
         let row = &rows[0];
         assert_eq!(row.pkg, "com.example.reader");

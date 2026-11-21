@@ -24,6 +24,7 @@ mod btf;
 mod clock;
 mod commands;
 mod control;
+mod dir;
 mod helper;
 mod lifecycle;
 mod log;
@@ -33,11 +34,15 @@ mod netctl;
 mod packages;
 mod paths;
 mod personal;
+mod probes;
 mod proc;
 #[cfg(test)]
 mod protocol_cases;
+mod record;
+mod report;
 mod rules;
 mod sandbox;
+mod sandbox_item;
 mod selftest;
 mod sensors;
 mod spool;
@@ -46,13 +51,15 @@ mod sync;
 mod syscalls;
 #[cfg(test)]
 mod test_sync;
+mod topic;
 mod trace;
 
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use clock::now;
-use sandbox::items::{self, Item, Mode};
+use sandbox::items;
+use sandbox_item::{Item, Mode};
 use serde::Serialize;
 
 #[derive(Parser)]
@@ -105,7 +112,7 @@ enum Command {
         uid: Vec<u32>,
         /// Only these categories (repeat for several).
         #[arg(long, value_enum)]
-        cat: Vec<store::Category>,
+        cat: Vec<record::Category>,
         /// Only paths starting with this prefix.
         #[arg(long)]
         prefix: Option<String>,
@@ -402,7 +409,9 @@ fn main() -> anyhow::Result<()> {
                 ingest_provider_events: !no_provider_events,
                 sandbox: !no_provider_events,
             })),
-        Command::Apps { hours } => print_json(&store::Reader::open(&cli.db)?.apps(since(hours))?),
+        Command::Apps { hours } => {
+            print_json(&report::apps(&store::Reader::open(&cli.db)?, since(hours))?)
+        }
         Command::Files {
             uid,
             cat,
@@ -411,7 +420,8 @@ fn main() -> anyhow::Result<()> {
             hours,
             limit,
             offset,
-        } => print_json(&store::Reader::open(&cli.db)?.files(
+        } => print_json(&report::files(
+            &store::Reader::open(&cli.db)?,
             &uid,
             &cat,
             prefix.as_deref(),
@@ -424,7 +434,8 @@ fn main() -> anyhow::Result<()> {
             hours,
             before,
             limit,
-        } => print_json(&store::Reader::open(&cli.db)?.timeline(
+        } => print_json(&report::timeline(
+            &store::Reader::open(&cli.db)?,
             since(hours),
             // Through the current hour.
             before.unwrap_or_else(|| now() + 1),

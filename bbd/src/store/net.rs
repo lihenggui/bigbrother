@@ -32,7 +32,7 @@ use super::{Reader, Writer};
 /// not every connection is. `refused` are the attempts the sandbox refused.
 ///
 /// A `net_rule` row is a destination an app is kept from, as the user
-/// named it (`netctl::Target`). `net_recording` says since when an app's
+/// named it. `net_recording` says since when an app's
 /// connections are recorded.
 pub const NET_SCHEMA: &str = "
 CREATE TABLE net_dest (
@@ -100,7 +100,7 @@ pub struct NetRow {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetRule {
     pub uid: u32,
-    /// As `netctl::Target` writes it.
+    /// A stored target such as `domain:example.com` or `ip:203.0.113.7:443`.
     pub target: String,
     pub created: i64,
     /// Whether the user typed it rather than chose it among the records.

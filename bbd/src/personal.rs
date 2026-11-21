@@ -20,7 +20,7 @@
 //! authority; the rest of the URI names individual people and messages and
 //! is not kept. A record is stored as `content://<authority>/<collection>`.
 
-use crate::rules::topic;
+use crate::topic;
 
 const SCHEME: &str = "content://";
 

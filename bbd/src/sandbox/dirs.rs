@@ -22,14 +22,18 @@
 
 use std::{
     collections::BTreeMap,
-    ffi::CString,
-    fs, io,
-    os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd},
+    fs,
+    io::{self, Read as _},
+    os::fd::{AsRawFd, FromRawFd, OwnedFd},
     path::{Path, PathBuf},
     sync::Mutex,
 };
 
-use crate::{packages::user_of, sync::lock};
+use crate::{
+    dir::{Dir, component},
+    packages::user_of,
+    sync::lock,
+};
 
 /// Group of the files on shared storage (`media_rw`).
 pub const MEDIA_RW: u32 = 1023;
@@ -67,76 +71,7 @@ const STANDARD: &[&str] = &[
 /// what is created in it keeps the group.
 const SHARED_MODE: libc::mode_t = 0o2770;
 
-/// An open directory.
-pub struct Dir(OwnedFd);
-
 impl Dir {
-    /// Open the directory at `path`, which is trusted up to its last name:
-    /// that one must not be a symbolic link.
-    pub fn open(path: &Path) -> io::Result<Self> {
-        let path = CString::new(path.as_os_str().as_encoded_bytes())
-            .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
-        Self::open_in(libc::AT_FDCWD, &path)
-    }
-
-    fn open_in(parent: RawFd, name: &CString) -> io::Result<Self> {
-        let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
-        let fd = unsafe { libc::openat(parent, name.as_ptr(), flags) };
-        if fd < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        // SAFETY: just opened, and owned by nothing else.
-        Ok(Self(unsafe { OwnedFd::from_raw_fd(fd) }))
-    }
-
-    /// The directory `name` in this one, created if it is not there, and
-    /// whether it was. Anything else by that name (a symbolic link, a file)
-    /// is an error.
-    pub fn make(&self, name: &str) -> io::Result<(Self, bool)> {
-        let name = component(name)?;
-        let created = match unsafe { libc::mkdirat(self.0.as_raw_fd(), name.as_ptr(), 0o700) } {
-            0 => true,
-            _ => {
-                let e = io::Error::last_os_error();
-                if e.kind() != io::ErrorKind::AlreadyExists {
-                    return Err(e);
-                }
-                false
-            }
-        };
-        Ok((Self::open_in(self.0.as_raw_fd(), &name)?, created))
-    }
-
-    /// The directory `name` in this one, which must be there. Anything else
-    /// by that name (a symbolic link, a file) is an error.
-    pub fn open_child(&self, name: &str) -> io::Result<Self> {
-        Self::open_in(self.0.as_raw_fd(), &component(name)?)
-    }
-
-    /// The directory's owner and its permission bits.
-    fn owner_and_mode(&self) -> io::Result<(u32, libc::mode_t)> {
-        let stat = self.stat()?;
-        Ok((stat.st_uid, stat.st_mode & 0o7777))
-    }
-
-    pub fn stat(&self) -> io::Result<libc::stat> {
-        let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
-        if unsafe { libc::fstat(self.0.as_raw_fd(), stat.as_mut_ptr()) } != 0 {
-            return Err(io::Error::last_os_error());
-        }
-        // SAFETY: filled in by the successful call.
-        Ok(unsafe { stat.assume_init() })
-    }
-
-    /// Give the directory to `uid` and `gid`, with `mode`.
-    pub fn own(&self, uid: u32, gid: u32, mode: libc::mode_t) -> io::Result<()> {
-        let fd = self.0.as_raw_fd();
-        if unsafe { libc::fchown(fd, uid, gid) } != 0 || unsafe { libc::fchmod(fd, mode) } != 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(())
-    }
-
     /// As [`Self::make`], for a directory the app is to use: its own, with
     /// the group and mode of shared storage.
     pub fn make_shared(&self, name: &str, uid: u32, gid: u32) -> io::Result<(Self, bool)> {
@@ -154,7 +89,7 @@ impl Dir {
         let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
         let found = unsafe {
             libc::fstatat(
-                self.0.as_raw_fd(),
+                self.as_raw_fd(),
                 name.as_ptr(),
                 stat.as_mut_ptr(),
                 libc::AT_SYMLINK_NOFOLLOW,
@@ -173,7 +108,7 @@ impl Dir {
         let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_NOFOLLOW | libc::O_CLOEXEC;
         let fd = unsafe {
             libc::openat(
-                self.0.as_raw_fd(),
+                self.as_raw_fd(),
                 name.as_ptr(),
                 flags,
                 0o600 as libc::c_uint,
@@ -186,23 +121,6 @@ impl Dir {
         drop(unsafe { OwnedFd::from_raw_fd(fd) });
         Ok(())
     }
-}
-
-impl AsRawFd for Dir {
-    fn as_raw_fd(&self) -> RawFd {
-        self.0.as_raw_fd()
-    }
-}
-
-/// One name of a path: not empty, not `.` or `..`, and without a slash.
-fn component(name: &str) -> io::Result<CString> {
-    if name.is_empty() || name == "." || name == ".." || name.contains('/') {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "not a single file name",
-        ));
-    }
-    CString::new(name).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))
 }
 
 /// A missing directory can belong to a temporarily unavailable Android user.
@@ -230,7 +148,7 @@ pub fn pin_install(
 ) -> io::Result<(Dir, String)> {
     let create = || {
         if create {
-            super::random_bytes().map(Some)
+            random_bytes().map(Some)
         } else {
             Ok(None)
         }
@@ -454,9 +372,16 @@ fn is_not_a_directory(e: &io::Error) -> bool {
         || matches!(e.raw_os_error(), Some(libc::ENOTDIR | libc::ELOOP))
 }
 
+/// `N` random bytes, from the kernel's generator.
+pub(super) fn random_bytes<const N: usize>() -> std::io::Result<[u8; N]> {
+    let mut bytes = [0; N];
+    fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+    Ok(bytes)
+}
+
 /// A hidden name, drawn at random: one dot and eight hex digits.
 fn draw_name() -> io::Result<String> {
-    let bytes = super::random_bytes::<4>()?;
+    let bytes = random_bytes::<4>()?;
     Ok(format!(".{:08x}", u32::from_le_bytes(bytes)))
 }
 
@@ -500,51 +425,6 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
-    }
-
-    #[test]
-    fn a_directory_is_made_once_and_opened_after() {
-        let dir = test_dir("dirs-make");
-        let top = Dir::open(&dir).unwrap();
-        assert!(top.make("a").unwrap().1);
-        let (a, created) = top.make("a").unwrap();
-        assert!(!created);
-        a.make("b").unwrap();
-        assert!(dir.join("a/b").is_dir());
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn a_symbolic_link_is_not_followed() {
-        let dir = test_dir("dirs-link");
-        fs::create_dir(dir.join("real")).unwrap();
-        std::os::unix::fs::symlink(dir.join("real"), dir.join("link")).unwrap();
-        let top = Dir::open(&dir).unwrap();
-        assert!(top.make("link").is_err());
-        assert!(Dir::open(&dir.join("link")).is_err());
-        // Nor one further down, when it is walked a name at a time.
-        let (real, _) = top.make("real").unwrap();
-        std::os::unix::fs::symlink("/", dir.join("real/out")).unwrap();
-        assert!(real.make("out").is_err());
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn a_file_in_place_of_a_directory_is_an_error() {
-        let dir = test_dir("dirs-file");
-        fs::write(dir.join("file"), "").unwrap();
-        assert!(Dir::open(&dir).unwrap().make("file").is_err());
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn only_single_names_are_taken() {
-        let dir = test_dir("dirs-names");
-        let top = Dir::open(&dir).unwrap();
-        for name in ["", ".", "..", "a/b", "/etc", "a\0b"] {
-            assert!(top.make(name).is_err(), "{name:?}");
-        }
-        fs::remove_dir_all(dir).unwrap();
     }
 
     /// The hidden directories in `dir`, by name.

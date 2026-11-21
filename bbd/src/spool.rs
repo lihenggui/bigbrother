@@ -47,7 +47,7 @@ use std::{
 
 use bb_common::PER_USER_RANGE;
 
-use crate::sandbox::dirs::Dir;
+use crate::dir::Dir;
 
 const MAX_FILE: u64 = 4 * 1024 * 1024;
 const MAX_EVENTS: usize = 8192;

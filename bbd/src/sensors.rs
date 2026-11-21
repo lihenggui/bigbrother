@@ -24,11 +24,11 @@
 //! - each time a sensor is turned on, as a call:
 //!   `binder:android.gui.SensorEventConnection/enableDisable@<type>`, with
 //!   `:fast` after the type when the rate asked for is high (see
-//!   [`HIGH_RATE_PERIOD_NS`]). `<type>` is the sensor type's name, such as
-//!   `android.sensor.accelerometer`. A sensor that could not be identified
+//!   [`crate::record::HIGH_RATE_PERIOD_NS`]). `<type>` is the sensor type's
+//!   name, such as `android.sensor.accelerometer`. An unidentified sensor
 //!   has no `@<type>`. The `@` keeps the type from being read as the
 //!   `#<package>` of other calls, which the app reads as another app;
-//! - each period a sensor was on, as a session (`store::SensorSession`):
+//! - each period a sensor was on, as a session (`record::SensorSession`):
 //!   from the call that turned it on to the one that turned it off, the
 //!   connection closing, or the app's process ending.
 //!
@@ -74,86 +74,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{binder, store};
+use crate::{
+    binder::{self, CONNECTION, ENABLE_DISABLE, SENSOR_MARK, SensorRequest},
+    record::{self, is_high_rate},
+};
 
-/// The sensor connection's interface.
-pub const CONNECTION: &str = "android.gui.SensorEventConnection";
-/// `enableDisable(handle, enabled, samplingPeriodNs, maxBatchReportLatencyNs, reservedFlags)`.
-pub const ENABLE_DISABLE: &str = "enableDisable";
-/// `setEventRate(handle, samplingPeriodNs)`.
-pub const SET_EVENT_RATE: &str = "setEventRate";
-/// `destroy()`, sent when the app lets go of the connection.
-pub const DESTROY: &str = "destroy";
-
-/// Put before the sensor's type in a stored call.
-pub const SENSOR_MARK: char = '@';
 /// Put after the type when the rate asked for is high.
 const FAST: &str = ":fast";
-
-/// Sampling periods at or below this are a high rate: 5 ms, 200 Hz. It is
-/// the rate Android 12 and later hold apps to unless they have the
-/// HIGH_SAMPLING_RATE_SENSORS permission, since motion sampled faster can
-/// pick up speech from the device's own speaker and what is typed on its
-/// screen. Asking for the fastest rate the sensor has (a period of 0, which
-/// `SENSOR_DELAY_FASTEST` sends) is a high rate too; `SENSOR_DELAY_GAME`
-/// (20 ms, 50 Hz) is not.
-pub const HIGH_RATE_PERIOD_NS: i64 = 5_000_000;
-
-/// Whether a sampling period asked of a sensor is a high rate. Only
-/// sensors that report at a steady rate have one; the others report on
-/// change or once, whatever period they are given.
-pub fn is_high_rate(continuous: bool, period_ns: i64) -> bool {
-    continuous && period_ns <= HIGH_RATE_PERIOD_NS
-}
-
-// ---- calls ------------------------------------------------------------------
-
-/// What a call to a sensor connection asks for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Request {
-    /// Turn a sensor on, with one sample every `period_ns` (0: as fast as
-    /// the sensor goes).
-    Enable {
-        handle: i32,
-        period_ns: i64,
-    },
-    Disable {
-        handle: i32,
-    },
-    /// Change the rate of a sensor that is on.
-    Rate {
-        handle: i32,
-        period_ns: i64,
-    },
-    /// The connection closes, and every sensor on it with it.
-    Close,
-}
-
-/// The request in a call to `method`, from its arguments: 32-bit and 64-bit
-/// little-endian integers, one after the other. `None` if they can't be
-/// read.
-pub fn request(method: &str, args: &[u8]) -> Option<Request> {
-    let int = |at: usize| Some(i32::from_le_bytes(args.get(at..at + 4)?.try_into().ok()?));
-    let long = |at: usize| Some(i64::from_le_bytes(args.get(at..at + 8)?.try_into().ok()?));
-    match method {
-        ENABLE_DISABLE => {
-            let handle = int(0)?;
-            if int(4)? == 0 {
-                return Some(Request::Disable { handle });
-            }
-            Some(Request::Enable {
-                handle,
-                period_ns: long(8)?.max(0),
-            })
-        }
-        SET_EVENT_RATE => Some(Request::Rate {
-            handle: int(0)?,
-            period_ns: long(4)?.max(0),
-        }),
-        DESTROY => Some(Request::Close),
-        _ => None,
-    }
-}
 
 /// What to store for a sensor turned on: the call, with the sensor's type
 /// if it is known, marked when the rate is high.
@@ -507,17 +434,17 @@ pub struct Call {
     /// The calling process's own uid: for an isolated process, not its
     /// app's. The sensor service knows connections by it.
     pub process_uid: u32,
-    /// What to store the call with when it is recorded (`store::MODE_*`).
-    pub mode: store::Mode,
+    /// What to store the call with when it is recorded (`record::MODE_*`).
+    pub mode: record::Mode,
     pub pid: u32,
     /// The caller's binder handle for the connection.
     pub connection: u32,
-    pub request: Request,
+    pub request: SensorRequest,
     pub ts: i64,
 }
 
 /// A call to store: (uid, mode, subject, ts).
-pub type CallRecord = (u32, store::Mode, String, i64);
+pub type CallRecord = (u32, record::Mode, String, i64);
 
 /// Most sessions open at once, and most sensors turned on waiting for the
 /// list to say what they are, per app. Handles come from apps, and an app
@@ -539,7 +466,7 @@ struct Key {
 
 #[derive(Clone, Debug)]
 struct Session {
-    row: store::SensorSession,
+    row: record::SensorSession,
     /// The process's own uid (see [`Call::process_uid`]).
     process_uid: u32,
     /// When the call that started it arrived; until the list has been read
@@ -565,7 +492,7 @@ struct Session {
 #[derive(Debug)]
 struct TurnedOn {
     uid: u32,
-    mode: store::Mode,
+    mode: record::Mode,
     handle: i32,
     period_ns: i64,
     ts: i64,
@@ -579,7 +506,7 @@ pub struct Settled {
     pub calls: Vec<CallRecord>,
     /// Sessions started, changed or ended since the last time, in the order
     /// to write them: a later row of the same session overwrites an earlier.
-    pub sessions: Vec<store::SensorSession>,
+    pub sessions: Vec<record::SensorSession>,
 }
 
 /// The sensors apps have on, and what is to be written about them.
@@ -640,7 +567,7 @@ impl Sensors {
     /// latest when the previous run was last known to be up, `last_up`.
     pub fn adopt(
         &mut self,
-        rows: Vec<store::SensorSession>,
+        rows: Vec<record::SensorSession>,
         process_uid: impl Fn(u32, u64) -> Option<u32>,
         last_up: i64,
         now: Instant,
@@ -696,7 +623,7 @@ impl Sensors {
             handle,
         };
         match call.request {
-            Request::Enable { handle, period_ns } => {
+            SensorRequest::Enable { handle, period_ns } => {
                 let record = self.turned_on(&call, handle, period_ns, now);
                 let key = key(handle);
                 let start = start_of(call.pid);
@@ -719,7 +646,7 @@ impl Sensors {
                 self.insert(
                     key,
                     Session {
-                        row: store::SensorSession {
+                        row: record::SensorSession {
                             uid: call.uid,
                             pid: call.pid,
                             // A process gone already has 0, which no
@@ -745,7 +672,7 @@ impl Sensors {
                 );
                 record
             }
-            Request::Disable { handle } => {
+            SensorRequest::Disable { handle } => {
                 let key = key(handle);
                 if self.open.contains_key(&key)
                     && !self.end_if_other_process(key, start_of(call.pid))
@@ -754,7 +681,7 @@ impl Sensors {
                 }
                 None
             }
-            Request::Rate { handle, period_ns } => {
+            SensorRequest::Rate { handle, period_ns } => {
                 let key = key(handle);
                 if self.open.contains_key(&key)
                     && !self.end_if_other_process(key, start_of(call.pid))
@@ -766,7 +693,7 @@ impl Sensors {
                 }
                 None
             }
-            Request::Close => {
+            SensorRequest::Close => {
                 let closed: Vec<Key> = self
                     .open
                     .keys()
@@ -1041,7 +968,7 @@ impl Sensors {
 
 impl Session {
     /// The row to write, if it has changed and its sensor has been looked up.
-    fn ready(&mut self) -> Option<store::SensorSession> {
+    fn ready(&mut self) -> Option<record::SensorSession> {
         let sensor = self.sensor.as_ref()?;
         if !self.dirty {
             return None;
@@ -1149,42 +1076,6 @@ BMI160 accelerometer| Bosch     | version=1 |android.sensor.accelerometer| 0x000
     }
 
     #[test]
-    fn calls_are_read_from_their_arguments() {
-        let args = |values: &[&[u8]]| values.concat();
-        let enable = args(&[
-            &7i32.to_le_bytes(),
-            &1i32.to_le_bytes(),
-            &20_000_000i64.to_le_bytes(),
-            &0i64.to_le_bytes(),
-            &0i32.to_le_bytes(),
-        ]);
-        assert_eq!(
-            request(ENABLE_DISABLE, &enable),
-            Some(Request::Enable {
-                handle: 7,
-                period_ns: 20_000_000
-            })
-        );
-        let disable = args(&[&7i32.to_le_bytes(), &0i32.to_le_bytes(), &[0; 20]]);
-        assert_eq!(
-            request(ENABLE_DISABLE, &disable),
-            Some(Request::Disable { handle: 7 })
-        );
-        let rate = args(&[&(-2i32).to_le_bytes(), &5_000_000i64.to_le_bytes()]);
-        assert_eq!(
-            request(SET_EVENT_RATE, &rate),
-            Some(Request::Rate {
-                handle: -2,
-                period_ns: 5_000_000
-            })
-        );
-        assert_eq!(request(DESTROY, &[]), Some(Request::Close));
-        // Too short to hold the period.
-        assert_eq!(request(ENABLE_DISABLE, &enable[..12]), None);
-        assert_eq!(request("flush", &enable), None);
-    }
-
-    #[test]
     fn subjects_name_the_type_and_mark_a_high_rate() {
         let accelerometer = sensor("android.sensor.accelerometer", true);
         let light = sensor("android.sensor.light", false);
@@ -1217,10 +1108,7 @@ BMI160 accelerometer| Bosch     | version=1 |android.sensor.accelerometer| 0x000
             format!("{base}@android.sensor.accelerometer:fast"),
             base.to_string(),
         ] {
-            assert_eq!(
-                binder::topic_of(&subject),
-                Some(crate::rules::topic::SENSORS)
-            );
+            assert_eq!(binder::topic_of(&subject), Some(crate::topic::SENSORS));
             assert_eq!(binder::asked_package(&subject), None);
         }
     }
@@ -1244,11 +1132,11 @@ BMI160 accelerometer| Bosch     | version=1 |android.sensor.accelerometer| 0x000
         Ok(ANDROID_15.replace("uid 10100", "uid 99012"))
     }
 
-    fn call(connection: u32, request: Request, ts: i64) -> Call {
+    fn call(connection: u32, request: SensorRequest, ts: i64) -> Call {
         Call {
             uid: UID,
             process_uid: UID,
-            mode: store::MODE_CALL,
+            mode: record::MODE_CALL,
             pid: PID,
             connection,
             request,
@@ -1256,8 +1144,8 @@ BMI160 accelerometer| Bosch     | version=1 |android.sensor.accelerometer| 0x000
         }
     }
 
-    fn on(handle: i32, period_ns: i64) -> Request {
-        Request::Enable { handle, period_ns }
+    fn on(handle: i32, period_ns: i64) -> SensorRequest {
+        SensorRequest::Enable { handle, period_ns }
     }
 
     fn running(_pid: u32) -> Option<u64> {
@@ -1297,7 +1185,7 @@ BMI160 accelerometer| Bosch     | version=1 |android.sensor.accelerometer| 0x000
         let settled = sensors.settle(now, 5000, WAIT);
         assert_eq!(
             settled.calls,
-            [(UID, store::MODE_CALL, GYROSCOPE_FAST.to_string(), 1000)]
+            [(UID, record::MODE_CALL, GYROSCOPE_FAST.to_string(), 1000)]
         );
         // Written while it is on, then again when it ends.
         assert_eq!(
@@ -1306,19 +1194,27 @@ BMI160 accelerometer| Bosch     | version=1 |android.sensor.accelerometer| 0x000
         );
         assert!(settled.sessions[0].continuous);
         assert_eq!(sensors.settle(now, 5000, WAIT), Settled::default());
-        sensors.on_call(call(9, Request::Disable { handle: 1 }, 1060), running, now);
+        sensors.on_call(
+            call(9, SensorRequest::Disable { handle: 1 }, 1060),
+            running,
+            now,
+        );
         assert_eq!(
             spans(&sensors.settle(now, 5000, WAIT)),
             [("android.sensor.gyroscope".into(), 0, 1000, Some(1060))]
         );
         assert!(!sensors.any_on());
         // Turning off what is not on changes nothing.
-        sensors.on_call(call(9, Request::Disable { handle: 1 }, 1070), running, now);
+        sensors.on_call(
+            call(9, SensorRequest::Disable { handle: 1 }, 1070),
+            running,
+            now,
+        );
         assert_eq!(sensors.settle(now, 5000, WAIT), Settled::default());
         // A sensor the list has is recorded at once.
         assert_eq!(
             sensors.on_call(call(9, on(1, 0), 1080), running, now),
-            Some((UID, store::MODE_CALL, GYROSCOPE_FAST.to_string(), 1080))
+            Some((UID, record::MODE_CALL, GYROSCOPE_FAST.to_string(), 1080))
         );
     }
 
@@ -1327,7 +1223,11 @@ BMI160 accelerometer| Bosch     | version=1 |android.sensor.accelerometer| 0x000
         let mut sensors = Sensors::new(list);
         let now = Instant::now();
         sensors.on_call(call(9, on(1, 0), 1000), running, now);
-        sensors.on_call(call(9, Request::Disable { handle: 1 }, 1000), running, now);
+        sensors.on_call(
+            call(9, SensorRequest::Disable { handle: 1 }, 1000),
+            running,
+            now,
+        );
         sensors.on_call(call(9, on(1, 0), 1000), running, now);
         let settled = sensors.settle(now, 5000, WAIT);
         // Both rows have the same key; the one written last is on.
@@ -1347,7 +1247,7 @@ BMI160 accelerometer| Bosch     | version=1 |android.sensor.accelerometer| 0x000
             );
         }
         assert_eq!(sensors.settle(now, 5000, WAIT).sessions.len(), 3);
-        sensors.on_call(call(9, Request::Close, 1100), running, now);
+        sensors.on_call(call(9, SensorRequest::Close, 1100), running, now);
         let ended = sensors.settle(now, 5000, WAIT);
         assert_eq!(
             spans(&ended),
@@ -1369,7 +1269,7 @@ BMI160 accelerometer| Bosch     | version=1 |android.sensor.accelerometer| 0x000
         // The other connection's accelerometer is still on.
         assert!(sensors.any_on());
         // A closing call to a connection not known is someone else's.
-        sensors.on_call(call(33, Request::Close, 1200), running, now);
+        sensors.on_call(call(33, SensorRequest::Close, 1200), running, now);
         assert_eq!(sensors.settle(now, 5000, WAIT), Settled::default());
     }
 
@@ -1381,12 +1281,16 @@ BMI160 accelerometer| Bosch     | version=1 |android.sensor.accelerometer| 0x000
         // Within the first second, the rate is updated in place.
         sensors.on_call(call(9, on(0, 20_000_000), 1000), running, now);
         sensors.on_call(call(9, on(0, 20_000_000), 1010), running, now);
-        let rate = Request::Rate {
+        let rate = SensorRequest::Rate {
             handle: 0,
             period_ns: 66_667_000,
         };
         sensors.on_call(call(9, rate, 1030), running, now);
-        sensors.on_call(call(9, Request::Disable { handle: 0 }, 1090), running, now);
+        sensors.on_call(
+            call(9, SensorRequest::Disable { handle: 0 }, 1090),
+            running,
+            now,
+        );
         let settled = sensors.settle(now, 5000, WAIT);
         let accelerometer = || "android.sensor.accelerometer".to_string();
         assert_eq!(
@@ -1464,7 +1368,11 @@ BMI160 accelerometer| Bosch     | version=1 |android.sensor.accelerometer| 0x000
         // Another process with the same pid, and the same handle for its
         // own connection, turns the sensor off: not the first one's.
         let reused = |_pid| Some(START + 1);
-        sensors.on_call(call(9, Request::Disable { handle: 0 }, 2000), reused, now);
+        sensors.on_call(
+            call(9, SensorRequest::Disable { handle: 0 }, 2000),
+            reused,
+            now,
+        );
         assert_eq!(
             spans(&sensors.settle(now, 5000, WAIT)),
             [(
@@ -1488,7 +1396,7 @@ BMI160 accelerometer| Bosch     | version=1 |android.sensor.accelerometer| 0x000
     fn sessions_left_open_go_on_while_their_process_runs() {
         let mut sensors = Sensors::new(list);
         let now = Instant::now();
-        let row = |pid, start_ts| store::SensorSession {
+        let row = |pid, start_ts| record::SensorSession {
             uid: UID,
             pid,
             proc_start: START,
@@ -1502,7 +1410,7 @@ BMI160 accelerometer| Bosch     | version=1 |android.sensor.accelerometer| 0x000
         };
         // The accelerometer was turned off while no calls were seen: the
         // sensor service has only the gyroscope on for this app.
-        let accelerometer = store::SensorSession {
+        let accelerometer = record::SensorSession {
             connection: 12,
             handle: 0,
             sensor: "android.sensor.accelerometer".into(),
@@ -1534,7 +1442,11 @@ BMI160 accelerometer| Bosch     | version=1 |android.sensor.accelerometer| 0x000
             spans(&sensors.settle(now, 5100, WAIT)),
             [("android.sensor.accelerometer".into(), 0, 1000, Some(5100))]
         );
-        sensors.on_call(call(9, Request::Disable { handle: 1 }, 6000), running, now);
+        sensors.on_call(
+            call(9, SensorRequest::Disable { handle: 1 }, 6000),
+            running,
+            now,
+        );
         assert_eq!(
             spans(&sensors.settle(now, 6000, WAIT)),
             [("android.sensor.gyroscope".into(), 0, 1000, Some(6000))]
@@ -1546,7 +1458,7 @@ BMI160 accelerometer| Bosch     | version=1 |android.sensor.accelerometer| 0x000
         // Recorded under its app, known to the sensor service by its own.
         let mut sensors = Sensors::new(isolated_list);
         let now = Instant::now();
-        let row = store::SensorSession {
+        let row = record::SensorSession {
             uid: UID,
             pid: PID,
             proc_start: START,
@@ -1627,7 +1539,7 @@ Connection Number: 0
         let hour = now + Duration::from_secs(3600);
         assert_eq!(
             sensors.on_call(call(9, on(99, 0), 4600), running, hour),
-            Some((UID, store::MODE_CALL, untyped.to_string(), 4600))
+            Some((UID, record::MODE_CALL, untyped.to_string(), 4600))
         );
         assert_eq!(sensors.settle(hour, 5000, WAIT), Settled::default());
         assert_eq!(sensors.list.started, read);
@@ -1679,7 +1591,7 @@ Connection Number: 0
         assert_eq!(settled.calls.len(), MAX_WAITING_PER_APP + 1);
         assert!(sensors.waiting_per_app.is_empty());
         // Ending the sessions frees the app's share.
-        sensors.on_call(call(9, Request::Close, 1100), running, now);
+        sensors.on_call(call(9, SensorRequest::Close, 1100), running, now);
         assert_eq!(sensors.open_per_app.get(&UID), None);
         assert_eq!(sensors.open_per_app.get(&10_200), Some(&1));
     }

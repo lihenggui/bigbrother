@@ -73,15 +73,11 @@ use std::{
 
 use anyhow::Context as _;
 
-use crate::{netctl, sync::lock};
-
-/// Where netd listens for the lookups of apps.
-const NETD: &str = "/dev/socket/dnsproxyd";
-
-/// Where the daemon listens for them. Beside netd's, in the filesystem
-/// every mount namespace has; the name says nothing of the sandbox, as an
-/// app can read its own mounts.
-pub const SOCKET: &str = "/dev/socket/dnsproxyd_relay";
+use super::{
+    resolver::{RELAY_SOCKET, SOCKET as NETD},
+    target,
+};
+use crate::sync::lock;
 
 /// The label of netd's processes, and of the file of its socket.
 const NETD_LABEL: &str = "u:r:netd:s0";
@@ -363,20 +359,22 @@ pub fn start(
 fn listen() -> anyhow::Result<UnixListener> {
     std::fs::write("/proc/thread-self/attr/sockcreate", NETD_LABEL)
         .context("labelling the socket")?;
-    match std::fs::remove_file(SOCKET) {
+    match std::fs::remove_file(RELAY_SOCKET) {
         Err(e) if e.kind() != io::ErrorKind::NotFound => {
             return Err(e).context("removing the socket of the daemon before");
         }
         _ => {}
     }
-    let listener = UnixListener::bind(SOCKET).context("binding the socket")?;
+    let listener = UnixListener::bind(RELAY_SOCKET).context("binding the socket")?;
     // To whom netd's own is open: root, and the group of the apps with
     // the network permission.
-    std::os::unix::fs::chown(SOCKET, Some(0), Some(INET_GID))
-        .and_then(|()| std::fs::set_permissions(SOCKET, std::fs::Permissions::from_mode(0o660)))
+    std::os::unix::fs::chown(RELAY_SOCKET, Some(0), Some(INET_GID))
+        .and_then(|()| {
+            std::fs::set_permissions(RELAY_SOCKET, std::fs::Permissions::from_mode(0o660))
+        })
         .context("opening the socket to the apps with the network permission")?;
     let (path, name, label) = (
-        CString::new(SOCKET)?,
+        CString::new(RELAY_SOCKET)?,
         c"security.selinux",
         CString::new(SOCKET_LABEL)?,
     );
@@ -584,7 +582,7 @@ fn named(word: Option<&str>, asked: impl Fn(String) -> Asked) -> Asked {
     let Some(word) = word else {
         return Asked::Unreadable;
     };
-    if let Some(name) = netctl::name(word) {
+    if let Some(name) = target::name(word) {
         return asked(name);
     }
     // No name given (`^`), an address, or one label: rules name at least
@@ -682,7 +680,7 @@ fn question(query: &[u8]) -> Option<String> {
         name.push_str(std::str::from_utf8(label).ok()?);
         at += 1 + len;
     }
-    netctl::name(&name)
+    target::name(&name)
 }
 
 /// What can be read of an answer to `getaddrinfo` so far.

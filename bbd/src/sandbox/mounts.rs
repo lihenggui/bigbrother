@@ -38,11 +38,8 @@ use std::{
 
 use anyhow::Context as _;
 
-use super::{
-    dirs::{self, Dir},
-    resolver::Cover,
-};
-use crate::packages::user_of;
+use super::{dirs, resolver::Cover};
+use crate::{dir::Dir, packages::user_of};
 
 /// The app's own directories on shared storage, by what they are for.
 const OWN_KINDS: &[&str] = &["data", "obb", "media"];

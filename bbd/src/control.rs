@@ -39,7 +39,7 @@ use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 use tokio::net::{UnixListener, UnixStream};
 
-use crate::sandbox::items::{Item, Mode};
+use crate::sandbox_item::{Item, Mode};
 
 /// The longest a query waits for the daemon to write.
 const FLUSH_WAIT: Duration = Duration::from_secs(1);
@@ -210,7 +210,7 @@ pub enum Request {
     /// Turn that on or off.
     #[serde(rename = "sandbox.set_auto")]
     SandboxSetAuto { on: bool },
-    /// Keep an app from a destination (`netctl::Target`).
+    /// Keep an app from a destination (`sandbox::target::Target`).
     #[serde(rename = "net.block")]
     NetBlock {
         package: String,

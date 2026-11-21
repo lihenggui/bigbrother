@@ -38,11 +38,10 @@ use anyhow::Context as _;
 use aya::maps::{HashMap as BpfHashMap, MapData};
 use bb_common::NetRuleKey;
 
-use super::{Effect, Entry, Resumed, Status, items::Settings, names::Names, network::Listed};
-use crate::{
-    netctl::Target,
-    sync::{lock, read},
+use super::{
+    Effect, Entry, Resumed, Status, items::Settings, names::Names, network::Listed, target::Target,
 };
+use crate::sync::{lock, read};
 
 /// The destinations each uid is kept from, as the user named them: shared
 /// between what changes them (the commands) and what carries them out.
@@ -381,11 +380,8 @@ impl Effect for Destinations {
 mod tests {
     use super::*;
     use crate::{
-        sandbox::{
-            Sandbox,
-            items::{Item, Mode},
-            tests::Fixture as SandboxFixture,
-        },
+        sandbox::{Sandbox, tests::Fixture as SandboxFixture},
+        sandbox_item::{Item, Mode},
         store::{
             Counters, Reader, Writer,
             net::{NetKey, NetSeen},
