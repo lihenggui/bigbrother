@@ -27,6 +27,18 @@ import org.gradle.kotlin.dsl.configure
  * what it can; `spotlessCheck` fails on what is left.
  */
 internal fun Project.configureSpotlessForAndroid() {
+    configureSpotlessForJvm()
+    extensions.configure<SpotlessExtension> {
+        format("xml") {
+            target("src/**/*.xml")
+            // The header goes before the first element, after the XML declaration.
+            licenseHeaderFile(rootDir.resolve("spotless/copyright.xml"), "(<[^!?])")
+            endWithNewline()
+        }
+    }
+}
+
+internal fun Project.configureSpotlessForJvm() {
     apply(plugin = "com.diffplug.spotless")
     extensions.configure<SpotlessExtension> {
         kotlin {
@@ -43,12 +55,6 @@ internal fun Project.configureSpotlessForAndroid() {
             target("*.kts")
             // The header goes before the first line that is neither a comment nor blank.
             licenseHeaderFile(rootDir.resolve("spotless/copyright.kts"), "(^(?![\\/ ]\\*)(?!$).*$)")
-            endWithNewline()
-        }
-        format("xml") {
-            target("src/**/*.xml")
-            // The header goes before the first element, after the XML declaration.
-            licenseHeaderFile(rootDir.resolve("spotless/copyright.xml"), "(<[^!?])")
             endWithNewline()
         }
     }

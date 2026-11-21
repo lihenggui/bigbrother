@@ -83,5 +83,9 @@ gradlePlugin {
             id = libs.plugins.bigbrother.flashable.module.get().pluginId
             implementationClass = "FlashableModuleConventionPlugin"
         }
+        register("jvmLibrary") {
+            id = libs.plugins.bigbrother.jvm.library.get().pluginId
+            implementationClass = "JvmLibraryConventionPlugin"
+        }
     }
 }

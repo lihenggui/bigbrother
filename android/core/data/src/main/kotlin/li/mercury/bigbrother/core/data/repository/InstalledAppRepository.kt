@@ -17,14 +17,12 @@
 package li.mercury.bigbrother.core.data.repository
 
 import android.content.Context
-import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.IO
 import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
-import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.InstalledApp
 import javax.inject.Inject
 
@@ -54,11 +52,7 @@ internal class PackageManagerInstalledAppRepository @Inject constructor(
             InstalledApp(
                 packageName = packageInfo.packageName,
                 uid = info.uid,
-                info = AppInfo(
-                    label = packageManager.getApplicationLabel(info).toString(),
-                    packageInfo = packageInfo,
-                    isSystem = info.flags and ApplicationInfo.FLAG_SYSTEM != 0,
-                ),
+                info = packageManager.toAppInfo(packageInfo, info),
             )
         }
     }

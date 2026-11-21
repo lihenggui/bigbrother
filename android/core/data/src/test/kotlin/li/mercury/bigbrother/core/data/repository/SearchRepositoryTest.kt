@@ -16,7 +16,6 @@
 
 package li.mercury.bigbrother.core.data.repository
 
-import android.content.pm.PackageInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -25,6 +24,7 @@ import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.root.CommandResult
 import li.mercury.bigbrother.core.data.root.RootShell
+import li.mercury.bigbrother.core.model.AppIconSource
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.PackageDetails
 import li.mercury.bigbrother.core.model.TimeRange
@@ -80,8 +80,8 @@ class SearchRepositoryTest {
 
     private class SearchAppInfoRepository : AppInfoRepository {
         private val apps = mapOf(
-            "com.example.photos" to AppInfo("Camera roll", PackageInfo(), isSystem = false),
-            "com.example.system" to AppInfo("Camera service", PackageInfo(), isSystem = true),
+            "com.example.photos" to AppInfo("Camera roll", AppIconSource("com.example.photos", 10001, 0), isSystem = false),
+            "com.example.system" to AppInfo("Camera service", AppIconSource("com.example.system", 10003, 0), isSystem = true),
         )
 
         override suspend fun getAppInfo(packageName: String): AppInfo? = apps[packageName]
