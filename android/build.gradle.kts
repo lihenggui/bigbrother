@@ -58,11 +58,16 @@ if (providers.environmentVariable("CI").orNull == "true") {
     }
 }
 
-// This build's own scripts and build-logic's settings; each module's
-// sources are covered by its convention plugin (build-logic: Spotless.kt).
+// Android modules get their own formatting from build-logic's Spotless.kt.
 spotless {
+    kotlin {
+        target("lint/src/**/*.kt")
+        ktlint(libs.versions.ktlint.get()).editorConfigOverride(mapOf("android" to "true"))
+        licenseHeaderFile(rootDir.resolve("spotless/copyright.kt"))
+        endWithNewline()
+    }
     format("kts") {
-        target("*.kts", "build-logic/*.kts")
+        target("*.kts", "build-logic/*.kts", "lint/*.kts")
         licenseHeaderFile(rootDir.resolve("spotless/copyright.kts"), "(^(?![\\/ ]\\*)(?!$).*$)")
         endWithNewline()
     }
