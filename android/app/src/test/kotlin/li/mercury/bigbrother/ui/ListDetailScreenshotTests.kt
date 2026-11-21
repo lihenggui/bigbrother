@@ -61,6 +61,8 @@ import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.Dispatchers
 import li.mercury.bigbrother.core.data.repository.AppInfoRepository
 import li.mercury.bigbrother.core.designsystem.theme.BigBrotherTheme
+import li.mercury.bigbrother.core.domain.GetAppRecordsUseCase
+import li.mercury.bigbrother.core.domain.GetAppVisibilityUseCase
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.PackageDetails
 import li.mercury.bigbrother.core.model.TimeRange
@@ -73,8 +75,8 @@ import li.mercury.bigbrother.core.screenshottesting.captureStoreScreenshot
 import li.mercury.bigbrother.core.testing.repository.TestAccessRepository
 import li.mercury.bigbrother.core.testing.repository.TestInstalledAppRepository
 import li.mercury.bigbrother.core.testing.repository.TestSandboxRepository
-import li.mercury.bigbrother.core.testing.repository.TestSearchRepository
 import li.mercury.bigbrother.core.testing.repository.TestUserDataRepository
+import li.mercury.bigbrother.core.testing.repository.testSearchRecordsUseCase
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.feature.appdetail.api.navigation.AppDetailNavKey
 import li.mercury.bigbrother.feature.appdetail.api.navigation.navigateToAppDetail
@@ -325,7 +327,12 @@ class ListDetailScreenshotTests {
         val records = remember { DemoRecords(clock) }
         val appInfoRepository = remember { DemoAppInfoRepository(records) }
         val listViewModel = remember {
-            AppListViewModel(TestAccessRepository(apps = records.apps), appInfoRepository, TestUserDataRepository())
+            val settings = TestUserDataRepository()
+            AppListViewModel(
+                GetAppRecordsUseCase(TestAccessRepository(apps = records.apps), appInfoRepository),
+                GetAppVisibilityUseCase(settings, ApplicationProvider.getApplicationContext<Application>().packageName),
+                settings,
+            )
         }
         val detailViewModel = remember {
             AppDetailViewModel(
@@ -413,7 +420,7 @@ class ListDetailScreenshotTests {
 @Composable
 private fun SearchBar() {
     val viewModel = remember {
-        SearchViewModel(TestSearchRepository(), Dispatchers.Unconfined)
+        SearchViewModel(testSearchRecordsUseCase(Dispatchers.Unconfined), Dispatchers.Unconfined)
     }
     GlobalSearchBar(
         onOpenApp = { _, _, _ -> },

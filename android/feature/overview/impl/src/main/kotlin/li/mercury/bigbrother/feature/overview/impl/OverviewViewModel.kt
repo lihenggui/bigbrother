@@ -31,22 +31,21 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import li.mercury.bigbrother.core.common.di.AppPackageName
 import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.DEFAULT
 import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.AccessRepository
-import li.mercury.bigbrother.core.data.repository.AppInfoRepository
 import li.mercury.bigbrother.core.data.repository.InstalledModule
 import li.mercury.bigbrother.core.data.repository.ModuleRepository
 import li.mercury.bigbrother.core.data.repository.UserDataRepository
 import li.mercury.bigbrother.core.data.repository.UserSettingsWriter
 import li.mercury.bigbrother.core.data.toLoadFailure
+import li.mercury.bigbrother.core.domain.AppRecords
+import li.mercury.bigbrother.core.domain.GetAppRecordsUseCase
+import li.mercury.bigbrother.core.domain.GetAppVisibilityUseCase
 import li.mercury.bigbrother.core.model.AppInfo
-import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.TimeRange
-import li.mercury.bigbrother.core.ui.isShown
 import timber.log.Timber
 import javax.inject.Inject
 
@@ -111,10 +110,10 @@ data class OverviewUiState(
 
 @HiltViewModel
 class OverviewViewModel @Inject constructor(
-    @AppPackageName private val ownPackage: String,
     private val accessRepository: AccessRepository,
     private val moduleRepository: ModuleRepository,
-    private val appInfoRepository: AppInfoRepository,
+    private val getAppRecords: GetAppRecordsUseCase,
+    private val getAppVisibility: GetAppVisibilityUseCase,
     private val userDataRepository: UserDataRepository,
     @Dispatcher(DEFAULT) private val defaultDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
@@ -126,10 +125,7 @@ class OverviewViewModel @Inject constructor(
 
     private var loadJob: Job? = null
 
-    /** The apps last loaded, before the system apps setting is applied. */
-    private class Loaded(val apps: List<AppSummary>, val appInfo: Map<String, AppInfo>)
-
-    private var loaded: Loaded? = null
+    private var loaded: AppRecords? = null
 
     /** When the last load finished, on the elapsed realtime clock. */
     private var loadedAt = 0L
@@ -154,9 +150,9 @@ class OverviewViewModel @Inject constructor(
         }
         // The system apps setting only changes which of the loaded apps count.
         viewModelScope.launch {
-            userDataRepository.userData.map { it.showSystemApps }.distinctUntilChanged().collect { show ->
+            getAppVisibility().collect { visibility ->
                 val loaded = loaded ?: return@collect
-                val (files, categories) = overviewOf(visibleApps(loaded.apps, loaded.appInfo, show))
+                val (files, categories) = overviewOf(visibility.visibleApps(loaded).apps)
                 _uiState.update { it.copy(files = files, categories = categories) }
             }
         }
@@ -188,23 +184,20 @@ class OverviewViewModel @Inject constructor(
             _uiState.update { it.copy(refreshing = true) }
             try {
                 val userData = userDataRepository.userData.first()
-                val apps = accessRepository.getApps(userData.timeRange)
+                val records = getAppRecords(userData.timeRange)
                 val status = accessRepository.getRecorderStatus()
                 val pending = moduleRepository.isUpdatePending()
-                val appInfo = appInfoRepository.getAppInfo(
-                    apps.map { it.packageName }.filter { it.isNotEmpty() }.toSet(),
-                )
-                loaded = Loaded(apps, appInfo)
+                loaded = records
                 loadedAt = SystemClock.elapsedRealtime()
                 // The setting as it is now: it may have changed during the load.
-                val showSystemApps = userDataRepository.userData.first().showSystemApps
-                val (files, categories) = overviewOf(visibleApps(apps, appInfo, showSystemApps))
+                val visibility = getAppVisibility().first()
+                val (files, categories) = overviewOf(visibility.visibleApps(records).apps)
                 _uiState.update {
                     it.copy(
                         range = userData.timeRange,
                         files = files,
                         categories = categories,
-                        appInfo = appInfo,
+                        appInfo = records.appInfo,
                         recording = status.recording,
                         refreshing = false,
                         failure = null,
@@ -217,7 +210,7 @@ class OverviewViewModel @Inject constructor(
                         modulePendingReboot = pending,
                     )
                 }
-                Timber.i("Overview loaded in %d ms: %d apps", SystemClock.elapsedRealtime() - start, apps.size)
+                Timber.i("Overview loaded in %d ms: %d apps", SystemClock.elapsedRealtime() - start, records.apps.size)
             } catch (e: RecordsException) {
                 val failure = e.toLoadFailure()
                 Timber.w("Overview not loaded: %s", failure)
@@ -279,12 +272,6 @@ class OverviewViewModel @Inject constructor(
             refresh()
         }
     }
-
-    private fun visibleApps(
-        apps: List<AppSummary>,
-        appInfo: Map<String, AppInfo>,
-        showSystemApps: Boolean,
-    ): List<AppSummary> = apps.filter { isShown(it, appInfo, showSystemApps, ownPackage) }
 
     fun setRange(range: TimeRange) = settingsWriter.setTimeRange(range)
 

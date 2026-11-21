@@ -21,6 +21,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
+import li.mercury.bigbrother.core.domain.GetAppVisibilityUseCase
 import li.mercury.bigbrother.core.model.UserData
 import li.mercury.bigbrother.core.testing.MainDispatcherRule
 import li.mercury.bigbrother.core.testing.repository.TestInstalledAppRepository
@@ -63,9 +64,8 @@ class AddAppsViewModelTest {
         return AddAppsViewModel(
             installedAppRepository = installedAppRepository,
             sandboxRepository = sandboxRepository,
-            userDataRepository = TestUserDataRepository(UserData(showSystemApps = showSystemApps)),
+            getAppVisibility = GetAppVisibilityUseCase(TestUserDataRepository(UserData(showSystemApps = showSystemApps)), OWN_PACKAGE),
             savedStateHandle = savedStateHandle,
-            ownPackage = OWN_PACKAGE,
             defaultDispatcher = mainDispatcherRule.testDispatcher,
         )
     }

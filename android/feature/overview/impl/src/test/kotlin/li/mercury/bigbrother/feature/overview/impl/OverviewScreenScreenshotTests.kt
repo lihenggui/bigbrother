@@ -21,6 +21,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import kotlinx.coroutines.Dispatchers
+import li.mercury.bigbrother.core.domain.AppRecords
+import li.mercury.bigbrother.core.domain.AppVisibility
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.TimeRange
@@ -35,8 +37,7 @@ import li.mercury.bigbrother.core.screenshottesting.captureForDevice
 import li.mercury.bigbrother.core.screenshottesting.captureMultiDevice
 import li.mercury.bigbrother.core.screenshottesting.captureStoreScreenshot
 import li.mercury.bigbrother.core.screenshottesting.screenshotName
-import li.mercury.bigbrother.core.testing.repository.TestSearchRepository
-import li.mercury.bigbrother.core.ui.isShown
+import li.mercury.bigbrother.core.testing.repository.testSearchRecordsUseCase
 import li.mercury.bigbrother.core.ui.readFiles
 import li.mercury.bigbrother.feature.search.impl.GlobalSearchBar
 import li.mercury.bigbrother.feature.search.impl.SearchViewModel
@@ -97,7 +98,7 @@ class OverviewScreenScreenshotTests {
         capturePhone("OverviewLookedOnly") {
             Overview { _ ->
                 val records = DemoRecords(clock)
-                val shown = records.apps.filter { isShown(it, records.appInfo, showSystemApps = false, ownPackage = "") }
+                val shown = AppVisibility(showSystemApps = false, ownPackage = "li.mercury.bigbrother").visibleApps(AppRecords(records.apps, records.appInfo)).apps
                 overviewState(records, shown.filter { !it.readFiles })
             }
         }
@@ -190,7 +191,7 @@ class OverviewScreenScreenshotTests {
     private fun Overview(state: (OverviewUiState) -> OverviewUiState) {
         val records = remember { DemoRecords(clock) }
         val shown = remember(records) {
-            records.apps.filter { isShown(it, records.appInfo, showSystemApps = false, ownPackage = "") }
+            AppVisibility(showSystemApps = false, ownPackage = "li.mercury.bigbrother").visibleApps(AppRecords(records.apps, records.appInfo)).apps
         }
         SearchScaffold(topBar = { SearchBar() }) {
             OverviewScreen(
@@ -246,7 +247,7 @@ class OverviewScreenScreenshotTests {
 @Composable
 private fun SearchBar() {
     val viewModel = remember {
-        SearchViewModel(TestSearchRepository(), Dispatchers.Unconfined)
+        SearchViewModel(testSearchRecordsUseCase(Dispatchers.Unconfined), Dispatchers.Unconfined)
     }
     GlobalSearchBar(
         onOpenApp = { _, _, _ -> },

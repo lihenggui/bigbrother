@@ -24,15 +24,13 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.AccessRepository
 import li.mercury.bigbrother.core.data.repository.AppInfoRepository
-import li.mercury.bigbrother.core.data.repository.UserDataRepository
 import li.mercury.bigbrother.core.data.toLoadFailure
+import li.mercury.bigbrother.core.domain.GetAppVisibilityUseCase
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.TimeRange
@@ -40,7 +38,7 @@ import li.mercury.bigbrother.core.model.TimelineEntry
 import javax.inject.Inject
 
 data class TimelineUiState(
-    /** Everything loaded so far, most recent first; null until the first page is in. */
+    /** Visible entries loaded so far, most recent first; null until the first page is in. */
     val entries: List<TimelineEntry>? = null,
     /** Where the next, older, page starts; null when everything is loaded. */
     val nextBefore: Long? = null,
@@ -49,7 +47,6 @@ data class TimelineUiState(
     val loadMoreFailed: Boolean = false,
     val refreshing: Boolean = false,
     val appInfo: Map<String, AppInfo> = emptyMap(),
-    val showSystemApps: Boolean = false,
     val failure: LoadFailure? = null,
 )
 
@@ -57,20 +54,25 @@ data class TimelineUiState(
 class TimelineViewModel @Inject constructor(
     private val accessRepository: AccessRepository,
     private val appInfoRepository: AppInfoRepository,
-    userDataRepository: UserDataRepository,
+    getAppVisibility: GetAppVisibilityUseCase,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(TimelineUiState())
     val uiState: StateFlow<TimelineUiState> = _uiState.asStateFlow()
 
     private var loadJob: Job? = null
+    private var loadedEntries: List<TimelineEntry>? = null
+    private var visibility = getAppVisibility.default
 
     /** When the most recent page was loaded, in milliseconds since boot. */
     private var loadedAt = 0L
 
     init {
         viewModelScope.launch {
-            userDataRepository.userData.map { it.showSystemApps }.distinctUntilChanged().collect { show ->
-                _uiState.update { it.copy(showSystemApps = show) }
+            getAppVisibility().collect { updated ->
+                visibility = updated
+                _uiState.update { state ->
+                    state.copy(entries = loadedEntries?.let { updated.visibleEntries(it, state.appInfo) })
+                }
             }
         }
     }
@@ -92,9 +94,10 @@ class TimelineViewModel @Inject constructor(
             try {
                 val page = accessRepository.getTimeline(TimeRange.ALL, before = null, limit = PAGE_SIZE)
                 val appInfo = appInfoFor(page.entries)
+                loadedEntries = page.entries
                 _uiState.update {
                     it.copy(
-                        entries = page.entries,
+                        entries = visibility.visibleEntries(page.entries, appInfo),
                         nextBefore = page.nextBefore,
                         appInfo = appInfo,
                         refreshing = false,
@@ -120,11 +123,14 @@ class TimelineViewModel @Inject constructor(
             try {
                 val page = accessRepository.getTimeline(TimeRange.ALL, before = before, limit = PAGE_SIZE)
                 val appInfo = appInfoFor(page.entries)
+                val entries = loadedEntries.orEmpty() + page.entries
+                loadedEntries = entries
                 _uiState.update {
+                    val allAppInfo = it.appInfo + appInfo
                     it.copy(
-                        entries = it.entries.orEmpty() + page.entries,
+                        entries = visibility.visibleEntries(entries, allAppInfo),
                         nextBefore = page.nextBefore,
-                        appInfo = it.appInfo + appInfo,
+                        appInfo = allAppInfo,
                         loadingMore = false,
                     )
                 }

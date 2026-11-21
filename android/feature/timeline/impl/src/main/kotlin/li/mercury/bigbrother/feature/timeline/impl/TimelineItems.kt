@@ -16,13 +16,11 @@
 
 package li.mercury.bigbrother.feature.timeline.impl
 
-import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.model.TimelineEntry
 import li.mercury.bigbrother.core.ui.DataCategory
 import li.mercury.bigbrother.core.ui.dataCategoryOf
-import li.mercury.bigbrother.core.ui.isShown
 
 /** What the timeline shows. */
 data class TimelineFilter(
@@ -39,7 +37,7 @@ data class TimelineFilter(
 /** The data category of a timeline entry. */
 val TimelineEntry.dataCategory: DataCategory get() = dataCategoryOf(topic, category)
 
-/** The app of an entry, as the list rows and the hidden-app rules know apps. */
+/** The app of an entry, as the list rows show it. */
 fun TimelineEntry.toAppSummary(): AppSummary = AppSummary(uid = uid, packageName = packageName, counts = emptyMap(), lastSeen = lastSeen)
 
 /** One row of the timeline, in order: a day, an hour within it, or an entry. */
@@ -67,21 +65,16 @@ sealed interface TimelineItem {
 }
 
 /**
- * The entries [filter] lets through, minus this app's own and, unless
- * [showSystemApps], the apps hidden by default; arranged under a header per
+ * The visible entries [filter] lets through, arranged under a header per
  * day and per hour. [dayStartOf] gives the start of the local day of a time.
  */
 fun timelineItems(
     entries: List<TimelineEntry>,
     filter: TimelineFilter,
-    appInfo: Map<String, AppInfo>,
-    showSystemApps: Boolean,
-    ownPackage: String,
     dayStartOf: (Long) -> Long,
 ): List<TimelineItem> {
     val shown = entries.filter { entry ->
-        isShown(entry.toAppSummary(), appInfo, showSystemApps, ownPackage) &&
-            (filter.category == null || entry.dataCategory == filter.category) &&
+        (filter.category == null || entry.dataCategory == filter.category) &&
             (filter.includeLookups || !entry.onlyLookedForFiles)
     }
     return buildList {

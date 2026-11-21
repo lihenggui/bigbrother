@@ -49,7 +49,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -72,7 +71,6 @@ import li.mercury.bigbrother.core.ui.appDisplayName
 import li.mercury.bigbrother.core.ui.categoriesSummary
 import li.mercury.bigbrother.core.ui.categoryDetail
 import li.mercury.bigbrother.core.ui.dataCategories
-import li.mercury.bigbrother.core.ui.isShown
 import li.mercury.bigbrother.core.ui.label
 import li.mercury.bigbrother.core.ui.readFiles
 import li.mercury.bigbrother.core.ui.rememberSettingsWriteSnackbar
@@ -137,14 +135,7 @@ internal fun AppListScreen(
     settingsWriteFailure: UserSettingsWriter.Failure? = null,
     onSettingsWriteResult: (UserSettingsWriter.Failure, Boolean) -> Unit = { _, _ -> },
 ) {
-    // This app's own probes are not what the user is looking for.
-    val ownPackage = LocalContext.current.packageName
-    val entries = remember(state.apps, state.appInfo, state.showSystemApps, ownPackage) {
-        state.apps
-            ?.filter { isShown(it, state.appInfo, state.showSystemApps, ownPackage) }
-            ?.map { Entry(it, it.dataCategories()) }
-    }
-    val hiddenApps = state.apps.orEmpty().count { it.packageName != ownPackage } - entries.orEmpty().size
+    val entries = remember(state.apps) { state.apps?.map { Entry(it, it.dataCategories()) } }
     var sort by rememberSaveable { mutableStateOf(SortOrder.SENSITIVITY) }
     var category by rememberSaveable { mutableStateOf<DataCategory?>(null) }
     val snackbar = rememberSettingsWriteSnackbar(settingsWriteFailure, onSettingsWriteResult)
@@ -186,7 +177,7 @@ internal fun AppListScreen(
                         appInfo = state.appInfo,
                         sort = sort,
                         category = category,
-                        hiddenApps = hiddenApps,
+                        hiddenApps = state.hiddenApps,
                         showSystemApps = state.showSystemApps,
                         selectedUid = selectedUid,
                         onOpen = { app -> onOpen(app, state.range, category) },

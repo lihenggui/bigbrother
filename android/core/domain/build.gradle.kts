@@ -14,13 +14,19 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-package li.mercury.bigbrother.core.testing.repository
+plugins {
+    alias(libs.plugins.bigbrother.android.library)
+    alias(libs.plugins.bigbrother.android.hilt)
+}
 
-import li.mercury.bigbrother.core.data.repository.SearchRepository
-import li.mercury.bigbrother.core.data.repository.SearchResult
+android {
+    namespace = "li.mercury.bigbrother.core.domain"
+}
 
-class TestSearchRepository(
-    var results: suspend (String) -> SearchResult = { SearchResult() },
-) : SearchRepository {
-    override suspend fun search(text: String): SearchResult = results(text)
+dependencies {
+    implementation(projects.core.data)
+    implementation(projects.core.model)
+    implementation(libs.kotlinx.coroutines.android)
+
+    testImplementation(projects.core.testing)
 }

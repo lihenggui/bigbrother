@@ -8,7 +8,8 @@ Hilt, Compose with Material 3 Expressive, and Navigation 3.
 
 - `app/`: the application, navigation and adaptive layout (`ui/BigBrotherApp.kt`),
   and the helper programs the daemon runs (`catalog/`).
-- `core/model`: data types. `core/data`: repositories; `root/RootShell.kt` is
+- `core/model` holds data types. `core/domain` holds use cases shared across features.
+  `core/data`: repositories; `root/RootShell.kt` is
   the only place the app runs root commands. `core/datastore`: settings.
   `core/ui`, `core/designsystem`: shared UI. `core/navigation`: navigator and
   scene strategies. `core/common`: dispatchers, DI qualifiers, logging.
@@ -81,8 +82,9 @@ Assembling `:app` needs the daemons in `../out/` (`../scripts/build.sh`).
 - Copy is short and factual, for semi-technical users: no chatty tone, no
   internals such as uids, mode bits or raw paths unless the screen is about
   them. In Chinese, do not address the user with "你的".
-- System apps and isolated processes are hidden by default (`isShown` in
-  `core/ui`); new lists of apps must respect that setting.
+- System apps and unattributed isolated processes are hidden by default
+  (`GetAppVisibilityUseCase` in `core/domain`). New lists of apps must
+  respect that setting.
 
 ## Tests
 
