@@ -120,6 +120,22 @@ class AppOpsGuardProtocolTest {
     }
 
     @Test
+    fun givenBoundLines_whenParsed_thenOnlyValidEnvelopesKeepTheirCommandText() {
+        val bindings = protocolCases(
+            "appops-bound.txt",
+            types = setOf("bound", "bound-bad"),
+            keys = setOf("package", "token", "command"),
+        )
+        for (case in bindings.ofType("bound")) {
+            val expected = AppOpsGuardProtocol.Bound(case.get("package")!!, case.get("token")!!, case.get("command")!!)
+            assertEquals(expected, AppOpsGuardProtocol.parseBound(case.line), case.line)
+        }
+        for (case in bindings.ofType("bound-bad")) {
+            assertNull(AppOpsGuardProtocol.parseBound(case.line), case.line)
+        }
+    }
+
+    @Test
     fun givenEveryAnswerOfTheCases_whenWritten_thenTheLineTheDaemonReads() {
         for (case in cases.ofType("answer")) {
             val uid = case.uid()
