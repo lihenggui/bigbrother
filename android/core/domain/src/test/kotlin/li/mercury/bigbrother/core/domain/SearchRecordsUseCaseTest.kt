@@ -16,13 +16,13 @@
 
 package li.mercury.bigbrother.core.domain
 
-import android.content.pm.PackageInfo
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.model.Access
 import li.mercury.bigbrother.core.model.Action
+import li.mercury.bigbrother.core.model.AppIconSource
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.Category
@@ -53,8 +53,8 @@ class SearchRecordsUseCaseTest {
     )
     private val info = TestAppInfoRepository(
         mapOf(
-            "com.example.photos" to AppInfo("Camera roll", PackageInfo(), isSystem = false),
-            "com.example.system" to AppInfo("Camera service", PackageInfo(), isSystem = true),
+            "com.example.photos" to AppInfo("Camera roll", AppIconSource("com.example.photos", 10001, 0), isSystem = false),
+            "com.example.system" to AppInfo("Camera service", AppIconSource("com.example.system", 10003, 0), isSystem = true),
         ),
     )
 

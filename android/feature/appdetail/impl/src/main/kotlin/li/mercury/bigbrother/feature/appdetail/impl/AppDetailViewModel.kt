@@ -170,7 +170,7 @@ class AppDetailViewModel @AssistedInject constructor(
         val info = appInfoRepository.getAppInfo(packageName)
         // The package manager describes this user's copy, which may be a different app.
         val details = if (userIdOf(uid) == currentUserId) appInfoRepository.getPackageDetails(packageName) else null
-        val canOpenJail = packageName != ownPackage && isNonCoreUid(uid) && info?.packageInfo?.applicationInfo?.uid == uid
+        val canOpenJail = packageName != ownPackage && isNonCoreUid(uid) && info?.uid == uid
         currentCoroutineContext().ensureActive()
         mutableUiState.update {
             it.copy(appInfo = info, packageDetails = details, canOpenJail = canOpenJail && it.app.packageName == packageName)

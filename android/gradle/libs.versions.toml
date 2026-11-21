@@ -108,6 +108,7 @@ baselineprofile = { id = "androidx.baselineprofile", version.ref = "androidxBenc
 compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 dependencyGuard = { id = "com.dropbox.dependency-guard", version.ref = "dependencyGuard" }
 hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 licensee = { id = "app.cash.licensee", version.ref = "licensee" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
@@ -125,3 +126,4 @@ bigbrother-android-library-compose = { id = "bigbrother.android.library.compose"
 bigbrother-android-lint = { id = "bigbrother.android.lint" }
 bigbrother-android-test = { id = "bigbrother.android.test" }
 bigbrother-flashable-module = { id = "bigbrother.flashable.module" }
+bigbrother-jvm-library = { id = "bigbrother.jvm.library" }

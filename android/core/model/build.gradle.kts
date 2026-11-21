@@ -15,11 +15,7 @@
  */
 
 plugins {
-    alias(libs.plugins.bigbrother.android.library)
-}
-
-android {
-    namespace = "li.mercury.bigbrother.core.model"
+    alias(libs.plugins.bigbrother.jvm.library)
 }
 
 dependencies {

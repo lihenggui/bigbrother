@@ -18,7 +18,10 @@ package li.mercury.bigbrother.core.ui.coil
 
 import android.content.Context
 import android.content.pm.ApplicationInfo
-import android.content.pm.PackageInfo
+import android.content.pm.LauncherApps
+import android.content.pm.PackageManager
+import android.os.Process
+import android.os.UserHandle
 import androidx.annotation.Px
 import coil3.ImageLoader
 import coil3.asImage
@@ -27,22 +30,41 @@ import coil3.fetch.FetchResult
 import coil3.fetch.Fetcher
 import coil3.fetch.ImageFetchResult
 import coil3.request.Options
+import li.mercury.bigbrother.core.model.AppIconSource
 import me.zhanghai.android.appiconloader.AppIconLoader
 
 /**
- * Loads an app's icon for Coil from its [PackageInfo], drawn the way a
- * launcher draws it. Coil runs this off the main thread and keeps the result
- * in memory, keyed by [AppIconKeyer].
+ * Draws an app's icon the way a launcher does. The package lookup happens
+ * in [fetch] so a Coil memory cache hit avoids calling the package manager.
  */
 class AppIconFetcher private constructor(
     private val loader: AppIconLoader,
-    private val applicationInfo: ApplicationInfo,
+    private val context: Context,
+    private val source: AppIconSource,
 ) : Fetcher {
-    override suspend fun fetch(): FetchResult = ImageFetchResult(
-        image = loader.loadIcon(applicationInfo).asImage(),
-        isSampled = true,
-        dataSource = DataSource.DISK,
-    )
+    override suspend fun fetch(): FetchResult {
+        val applicationInfo = checkNotNull(resolveApplicationInfo()?.takeIf { it.uid == source.uid }) {
+            "App icon unavailable"
+        }
+        return ImageFetchResult(
+            image = loader.loadIcon(applicationInfo).asImage(),
+            isSampled = true,
+            dataSource = DataSource.DISK,
+        )
+    }
+
+    private fun resolveApplicationInfo(): ApplicationInfo? = try {
+        val user = UserHandle.getUserHandleForUid(source.uid)
+        if (user == Process.myUserHandle()) {
+            context.packageManager.getApplicationInfo(source.packageName, 0)
+        } else {
+            context.getSystemService(LauncherApps::class.java)?.getApplicationInfo(source.packageName, 0, user)
+        }
+    } catch (_: PackageManager.NameNotFoundException) {
+        null
+    } catch (_: SecurityException) {
+        null
+    }
 
     /**
      * @param iconSize the size icons are drawn at, in pixels.
@@ -53,12 +75,10 @@ class AppIconFetcher private constructor(
         @Px iconSize: Int,
         shrinkNonAdaptiveIcons: Boolean,
         context: Context,
-    ) : Fetcher.Factory<PackageInfo> {
-        private val loader = AppIconLoader(iconSize, shrinkNonAdaptiveIcons, context.applicationContext)
+    ) : Fetcher.Factory<AppIconSource> {
+        private val context = context.applicationContext
+        private val loader = AppIconLoader(iconSize, shrinkNonAdaptiveIcons, this.context)
 
-        override fun create(data: PackageInfo, options: Options, imageLoader: ImageLoader): Fetcher? {
-            val applicationInfo = data.applicationInfo ?: return null
-            return AppIconFetcher(loader, applicationInfo)
-        }
+        override fun create(data: AppIconSource, options: Options, imageLoader: ImageLoader): Fetcher = AppIconFetcher(loader, context, data)
     }
 }

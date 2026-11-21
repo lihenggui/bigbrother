@@ -16,7 +16,6 @@
 
 package li.mercury.bigbrother.feature.timeline.impl
 
-import android.content.pm.PackageInfo
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -24,6 +23,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.repository.AccessRepository
 import li.mercury.bigbrother.core.domain.GetAppVisibilityUseCase
+import li.mercury.bigbrother.core.model.AppIconSource
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.Category
 import li.mercury.bigbrother.core.model.TimeRange
@@ -55,7 +55,8 @@ class TimelineViewModelTest {
                 return if (before == null) TimelinePage(listOf(system, own), 7200L) else TimelinePage(listOf(isolated, user), null)
             }
         }
-        val info = TestAppInfoRepository(mapOf(system.packageName to AppInfo("System", PackageInfo(), isSystem = true)))
+        val systemInfo = AppInfo("System", AppIconSource(system.packageName, system.uid, lastUpdateTime = 0), isSystem = true)
+        val info = TestAppInfoRepository(mapOf(system.packageName to systemInfo))
         val settings = TestUserDataRepository()
         val viewModel = TimelineViewModel(access, info, GetAppVisibilityUseCase(settings, OWN_PACKAGE), mainDispatcherRule.testDispatcher)
 
