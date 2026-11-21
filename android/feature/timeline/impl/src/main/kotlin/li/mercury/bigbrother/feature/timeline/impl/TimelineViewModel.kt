@@ -20,17 +20,22 @@ import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.DEFAULT
+import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.AccessRepository
 import li.mercury.bigbrother.core.data.repository.AppInfoRepository
@@ -40,6 +45,7 @@ import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.model.TimelineEntry
+import java.time.ZoneId
 import javax.inject.Inject
 
 data class TimelineUiState(
@@ -60,6 +66,7 @@ class TimelineViewModel @Inject constructor(
     private val accessRepository: AccessRepository,
     private val appInfoRepository: AppInfoRepository,
     getAppVisibility: GetAppVisibilityUseCase,
+    @Dispatcher(DEFAULT) private val defaultDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
     private val load = MutableStateFlow(TimelineUiState())
     private val requests = MutableStateFlow(PageRequest())
@@ -78,6 +85,9 @@ class TimelineViewModel @Inject constructor(
             state.copy(entries = state.entries?.let { visibility.visibleEntries(it, state.appInfo) })
         }.collect { send(it) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TimelineUiState())
+
+    internal fun present(filters: Flow<TimelineFilter>, zone: ZoneId): Flow<TimelinePresentation> = combine(uiState, filters) { state, filter -> state.present(filter, zone) }
+        .flowOn(defaultDispatcher)
 
     /**
      * Reloading drops the older pages, and with them the user's place in a

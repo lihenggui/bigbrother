@@ -16,12 +16,15 @@
 
 package li.mercury.bigbrother.feature.applist.impl
 
+import android.content.res.Resources
 import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -29,10 +32,13 @@ import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.DEFAULT
+import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.UserDataRepository
 import li.mercury.bigbrother.core.data.toLoadFailure
@@ -67,6 +73,7 @@ class AppListViewModel @Inject constructor(
     private val getAppRecords: GetAppRecordsUseCase,
     getAppVisibility: GetAppVisibilityUseCase,
     private val userDataRepository: UserDataRepository,
+    @Dispatcher(DEFAULT) private val defaultDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
     private val settingsWriter = UserSettingsWriter(viewModelScope) { Timber.w(it) }
     private val refreshes = MutableStateFlow(0L)
@@ -90,6 +97,9 @@ class AppListViewModel @Inject constructor(
             state.copy(message = message)
         }.collect { send(it) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppListUiState())
+
+    internal fun present(filters: Flow<AppListFilter>, resources: Resources): Flow<AppListPresentation> = combine(uiState, filters) { state, filter -> state.present(filter, resources) }
+        .flowOn(defaultDispatcher)
 
     /** Reload when the screen is shown again and the data is stale. */
     fun refreshIfStale() {

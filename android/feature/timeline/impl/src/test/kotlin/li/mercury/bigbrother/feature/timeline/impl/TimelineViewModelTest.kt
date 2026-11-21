@@ -57,7 +57,7 @@ class TimelineViewModelTest {
         }
         val info = TestAppInfoRepository(mapOf(system.packageName to AppInfo("System", PackageInfo(), isSystem = true)))
         val settings = TestUserDataRepository()
-        val viewModel = TimelineViewModel(access, info, GetAppVisibilityUseCase(settings, OWN_PACKAGE))
+        val viewModel = TimelineViewModel(access, info, GetAppVisibilityUseCase(settings, OWN_PACKAGE), mainDispatcherRule.testDispatcher)
 
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
         advanceUntilIdle()

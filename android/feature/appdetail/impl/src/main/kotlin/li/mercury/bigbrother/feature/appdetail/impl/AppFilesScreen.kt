@@ -40,6 +40,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -127,38 +128,7 @@ internal fun AppFilesScreen(
     Scaffold(
         containerColor = background,
         topBar = {
-            PredictiveSearchTopBar(
-                searching = state.searching,
-                query = state.query,
-                onQueryChange = onQueryChange,
-                placeholder = stringResource(R.string.search_paths),
-                onClose = onCloseSearch,
-            ) {
-                TopAppBar(
-                    title = { Text(stringResource(R.string.files_title), maxLines = 1) },
-                    subtitle = {
-                        val app = AppSummary(uid, state.packageName, emptyMap(), 0)
-                        Text(appDisplayName(app, state.appInfo), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = onBack) {
-                            Icon(
-                                if (beside) Icons.Filled.Close else Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = stringResource(if (beside) R.string.close else UiR.string.back),
-                            )
-                        }
-                    },
-                    actions = {
-                        IconButton(onClick = onOpenSearch) {
-                            Icon(Icons.Filled.Search, contentDescription = stringResource(UiR.string.search))
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = background,
-                        scrolledContainerColor = background,
-                    ),
-                )
-            }
+            AppFilesTopBar(state, uid, background, beside, onBack, onOpenSearch, onCloseSearch, onQueryChange)
         },
     ) { padding ->
         Box(Modifier.padding(padding)) {
@@ -179,5 +149,51 @@ internal fun AppFilesScreen(
                 )
             }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun AppFilesTopBar(
+    state: AppFilesUiState,
+    uid: Int,
+    background: Color,
+    beside: Boolean,
+    onBack: () -> Unit,
+    onOpenSearch: () -> Unit,
+    onCloseSearch: () -> Unit,
+    onQueryChange: (String) -> Unit,
+) {
+    PredictiveSearchTopBar(
+        searching = state.searching,
+        query = state.query,
+        onQueryChange = onQueryChange,
+        placeholder = stringResource(R.string.search_paths),
+        onClose = onCloseSearch,
+    ) {
+        TopAppBar(
+            title = { Text(stringResource(R.string.files_title), maxLines = 1) },
+            subtitle = {
+                val app = AppSummary(uid, state.packageName, emptyMap(), 0)
+                Text(appDisplayName(app, state.appInfo), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            },
+            navigationIcon = {
+                IconButton(onClick = onBack) {
+                    Icon(
+                        if (beside) Icons.Filled.Close else Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = stringResource(if (beside) R.string.close else UiR.string.back),
+                    )
+                }
+            },
+            actions = {
+                IconButton(onClick = onOpenSearch) {
+                    Icon(Icons.Filled.Search, contentDescription = stringResource(UiR.string.search))
+                }
+            },
+            colors = TopAppBarDefaults.topAppBarColors(
+                containerColor = background,
+                scrolledContainerColor = background,
+            ),
+        )
     }
 }

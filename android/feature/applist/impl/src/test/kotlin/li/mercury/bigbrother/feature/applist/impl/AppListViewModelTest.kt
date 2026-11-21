@@ -38,7 +38,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
-import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AppListViewModelTest {
@@ -48,7 +47,7 @@ class AppListViewModelTest {
     @Test
     fun givenUnsavedFilters_whenRangeRetriedAndOtherDismissed_thenOnlyRangeChanges() = runTest {
         val settings = TestUserDataRepository()
-        val viewModel = AppListViewModel(GetAppRecordsUseCase(TestAccessRepository(), TestAppInfoRepository()), GetAppVisibilityUseCase(settings, OWN_PACKAGE), settings)
+        val viewModel = AppListViewModel(GetAppRecordsUseCase(TestAccessRepository(), TestAppInfoRepository()), GetAppVisibilityUseCase(settings, OWN_PACKAGE), settings, mainDispatcherRule.testDispatcher)
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
         settings.writeFailure = IOException("Storage unavailable")
 
@@ -79,7 +78,7 @@ class AppListViewModelTest {
         val access = TestAccessRepository(apps = listOf(system, own))
         val info = TestAppInfoRepository(mapOf(system.packageName to AppInfo("System", PackageInfo(), isSystem = true)))
         val settings = TestUserDataRepository()
-        val viewModel = AppListViewModel(GetAppRecordsUseCase(access, info), GetAppVisibilityUseCase(settings, OWN_PACKAGE), settings)
+        val viewModel = AppListViewModel(GetAppRecordsUseCase(access, info), GetAppVisibilityUseCase(settings, OWN_PACKAGE), settings, mainDispatcherRule.testDispatcher)
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
         advanceUntilIdle()
 

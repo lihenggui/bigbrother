@@ -19,6 +19,7 @@ package li.mercury.bigbrother.feature.applist.impl
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import kotlinx.coroutines.Dispatchers
 import li.mercury.bigbrother.core.domain.AppRecords
@@ -115,8 +116,11 @@ class AppListScreenScreenshotTests {
             AppVisibility(showSystemApps, ownPackage = "li.mercury.bigbrother").visibleApps(AppRecords(records.apps, records.appInfo))
         }
         SearchScaffold(topBar = { SearchBar() }) {
+            val uiState = state(AppListUiState(apps = shown.apps, appInfo = records.appInfo, hiddenApps = shown.hiddenCount, showSystemApps = showSystemApps))
             AppListScreen(
-                state = state(AppListUiState(apps = shown.apps, appInfo = records.appInfo, hiddenApps = shown.hiddenCount, showSystemApps = showSystemApps)),
+                presentation = uiState.present(AppListFilter(), LocalResources.current),
+                onSort = {},
+                onCategory = {},
                 selectedUid = null,
                 onRange = {},
                 onRefresh = {},

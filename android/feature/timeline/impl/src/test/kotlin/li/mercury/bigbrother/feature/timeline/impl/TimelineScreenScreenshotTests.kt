@@ -43,6 +43,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.annotation.LooperMode
+import java.time.ZoneId
 
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -136,8 +137,11 @@ class TimelineScreenScreenshotTests {
         val page = state(TimelineUiState(entries = records.timeline, appInfo = records.appInfo))
         val visibility = AppVisibility(showSystemApps, ownPackage = "li.mercury.bigbrother")
         SearchScaffold(topBar = { SearchBar() }) {
+            val uiState = page.copy(entries = page.entries?.let { visibility.visibleEntries(it, page.appInfo) })
             TimelineScreen(
-                state = page.copy(entries = page.entries?.let { visibility.visibleEntries(it, page.appInfo) }),
+                presentation = uiState.present(TimelineFilter(), ZoneId.systemDefault()),
+                onCategory = {},
+                onIncludeLookups = {},
                 selectedUid = null,
                 onRefresh = {},
                 onLoadMore = {},

@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
@@ -130,57 +131,69 @@ internal fun RecordScreen(
             }
 
             else -> {
-                val details = recordDetails(group.accesses.map { it.path }, titled = topicTitle(group.topic) != null)
-                    .filterIsInstance<RecordDetail.Plain>()
-                if (details.isNotEmpty()) {
-                    item(key = "details-header") { SectionHeader(stringResource(R.string.record_details)) }
-                    item(key = "details") { Details(details) }
-                }
-                val sessions = state.sensorSessions
-                if (state.sensorSessionsFailure != null) {
-                    item(key = "sensors-failure") {
-                        InlineMessage(
-                            title = stringResource(R.string.sensor_sessions),
-                            body = failureReason(state.sensorSessionsFailure),
-                            actionLabel = stringResource(UiR.string.retry),
-                            onAction = onRetry,
-                        )
-                    }
-                } else if (!sessions.isNullOrEmpty()) {
-                    val groups = groupSessions(sessions)
-                    // A few are shown open; many, each sensor folded.
-                    val open = sessions.size <= SESSIONS_SHOWN_OPEN
-                    item(key = "sensors-header") { SectionHeader(stringResource(R.string.sensor_sessions)) }
-                    for (sensorGroup in groups) {
-                        item(key = "sensor:${sensorGroup.sensor}") {
-                            SensorGroup(sensorGroup, now, initiallyExpanded = open, modifier = Modifier.padding(bottom = 8.dp))
-                        }
-                    }
-                    item(key = "sensors-note") { SensorSessionsNote() }
-                }
-                val periods = state.periods
-                item(key = "history-header") { SectionHeader(stringResource(R.string.record_history)) }
-                if (state.historyFailure != null) {
-                    item(key = "history-failure") { HistoryFailure(onRetry) }
-                } else if (periods == null) {
-                    item(key = "history-loading") {
-                        BigBrotherLoadingIndicator(Modifier.fillMaxWidth().padding(vertical = 24.dp))
-                    }
-                } else {
-                    itemsIndexed(periods, key = { index, _ -> "period:$index" }) { index, period ->
-                        PeriodItem(period, group.fromPermissions, index, periods.size)
-                    }
-                    if (state.partialHistory) {
-                        item(key = "partial") {
-                            Text(
-                                text = stringResource(R.string.record_history_partial),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                            )
-                        }
-                    }
-                }
+                recordDetailsSection(group)
+                sensorSessionsSection(state, now, onRetry)
+                recordHistorySection(state, group.fromPermissions, onRetry)
+            }
+        }
+    }
+}
+
+private fun LazyListScope.recordDetailsSection(group: TopicGroup) {
+    val details = recordDetails(group.accesses.map { it.path }, titled = topicTitle(group.topic) != null)
+        .filterIsInstance<RecordDetail.Plain>()
+    if (details.isNotEmpty()) {
+        item(key = "details-header") { SectionHeader(stringResource(R.string.record_details)) }
+        item(key = "details") { Details(details) }
+    }
+}
+
+private fun LazyListScope.sensorSessionsSection(state: RecordUiState, now: Long, onRetry: () -> Unit) {
+    val sessions = state.sensorSessions
+    if (state.sensorSessionsFailure != null) {
+        item(key = "sensors-failure") {
+            InlineMessage(
+                title = stringResource(R.string.sensor_sessions),
+                body = failureReason(state.sensorSessionsFailure),
+                actionLabel = stringResource(UiR.string.retry),
+                onAction = onRetry,
+            )
+        }
+    } else if (!sessions.isNullOrEmpty()) {
+        val groups = groupSessions(sessions)
+        // A few are shown open; many, each sensor folded.
+        val open = sessions.size <= SESSIONS_SHOWN_OPEN
+        item(key = "sensors-header") { SectionHeader(stringResource(R.string.sensor_sessions)) }
+        for (sensorGroup in groups) {
+            item(key = "sensor:${sensorGroup.sensor}") {
+                SensorGroup(sensorGroup, now, initiallyExpanded = open, modifier = Modifier.padding(bottom = 8.dp))
+            }
+        }
+        item(key = "sensors-note") { SensorSessionsNote() }
+    }
+}
+
+private fun LazyListScope.recordHistorySection(state: RecordUiState, fromPermissions: Boolean, onRetry: () -> Unit) {
+    val periods = state.periods
+    item(key = "history-header") { SectionHeader(stringResource(R.string.record_history)) }
+    if (state.historyFailure != null) {
+        item(key = "history-failure") { HistoryFailure(onRetry) }
+    } else if (periods == null) {
+        item(key = "history-loading") {
+            BigBrotherLoadingIndicator(Modifier.fillMaxWidth().padding(vertical = 24.dp))
+        }
+    } else {
+        itemsIndexed(periods, key = { index, _ -> "period:$index" }) { index, period ->
+            PeriodItem(period, fromPermissions, index, periods.size)
+        }
+        if (state.partialHistory) {
+            item(key = "partial") {
+                Text(
+                    text = stringResource(R.string.record_history_partial),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                )
             }
         }
     }
