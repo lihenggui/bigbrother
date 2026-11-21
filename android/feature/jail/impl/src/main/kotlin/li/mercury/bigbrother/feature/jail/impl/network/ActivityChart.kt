@@ -45,6 +45,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.res.pluralStringResource
@@ -96,82 +97,113 @@ internal fun ActivityChart(
             Modifier
                 .fillMaxWidth()
                 .height(height)
-                .then(
-                    if (onSelect != null && buckets.isNotEmpty()) {
-                        Modifier
-                            .clickable(role = Role.Button) { choosing = true }
-                            .semantics {
-                                contentDescription = choosePeriod
-                                stateDescription = currentPeriod
-                            }
-                            .pointerInput(buckets, selected) {
-                                detectTapGestures { offset ->
-                                    val index = (offset.x / size.width * buckets.size).toInt().coerceIn(0, buckets.lastIndex)
-                                    val start = buckets[index].start
-                                    onSelect(start.takeIf { it != selected })
-                                }
-                            }
-                    } else {
-                        Modifier
-                    },
-                ),
+                .chartBarSelection(buckets, selected, onSelect, choosePeriod, currentPeriod) { choosing = true },
         ) {
-            if (buckets.isEmpty()) return@Canvas
-            val gap = if (buckets.size > 48) 1.dp.toPx() else 3.dp.toPx()
-            val width = ((size.width - gap * (buckets.size - 1)) / buckets.size).coerceAtLeast(1f)
-            val corner = CornerRadius(minOf(2.dp.toPx(), width / 2))
-            buckets.forEachIndexed { index, bucket ->
-                val x = index * (width + gap)
-                val chosen = bucket.start == selected
-                if (chosen) {
-                    drawRoundRect(band, Offset(x - gap / 2 - 1, 0f), Size(width + gap + 2, size.height), CornerRadius(4.dp.toPx()))
-                }
-                val alpha = if (selected == null || chosen) 1f else faded
-                val made = bucket.connections.toFloat() / max * size.height
-                val refusedHeight = bucket.refused.toFloat() / max * size.height
-                if (made > 0) drawRoundRect(connected, Offset(x, size.height - made), Size(width, made), corner, alpha = alpha)
-                if (refusedHeight > 0) {
-                    val top = size.height - made - refusedHeight - if (made > 0) 1.dp.toPx() else 0f
-                    drawRoundRect(refused, Offset(x, top), Size(width, refusedHeight), corner, alpha = alpha)
-                }
-            }
-            drawLine(axis, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx())
+            drawBars(buckets, selected, faded, max, connected, refused, band, axis)
         }
         if (choosing && onSelect != null && buckets.isNotEmpty()) {
-            val locale = LocalLocale.current.platformLocale
-            val numbers = remember(locale) { NumberFormat.getIntegerInstance(locale) }
-            val allSelected = selected == null
-            DropdownMenu(expanded = true, onDismissRequest = { choosing = false }) {
-                DropdownMenuItem(
-                    text = { Text(allPeriods) },
-                    modifier = Modifier.semantics { this.selected = allSelected },
-                    onClick = {
-                        choosing = false
-                        onSelect(null)
-                    },
-                )
-                buckets.forEach { bucket ->
-                    val isSelected = bucket.start == selected
-                    DropdownMenuItem(
-                        modifier = Modifier.semantics { this.selected = isSelected },
-                        text = {
-                            Column {
-                                Text(periodLabel(bucket.start, bucketSeconds, zone))
-                                Text(
-                                    pluralStringResource(R.plurals.jail_net_facts_counts, bucket.connections, numbers.format(bucket.connections), numbers.format(bucket.refused)),
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
-                            }
-                        },
-                        onClick = {
-                            choosing = false
-                            if (!isSelected) onSelect(bucket.start)
-                        },
-                    )
-                }
-            }
+            PeriodMenu(buckets, selected, bucketSeconds, zone, allPeriods, onSelect, onDismiss = { choosing = false })
         }
         AxisLabels(buckets, bucketSeconds, zone)
+    }
+}
+
+private fun Modifier.chartBarSelection(
+    buckets: List<ActivityBucket>,
+    selected: Long?,
+    onSelect: ((Long?) -> Unit)?,
+    choosePeriod: String,
+    currentPeriod: String,
+    onChoosePeriod: () -> Unit,
+): Modifier {
+    if (onSelect == null || buckets.isEmpty()) return this
+    return clickable(role = Role.Button, onClick = onChoosePeriod)
+        .semantics {
+            contentDescription = choosePeriod
+            stateDescription = currentPeriod
+        }
+        .pointerInput(buckets, selected) {
+            detectTapGestures { offset ->
+                val index = (offset.x / size.width * buckets.size).toInt().coerceIn(0, buckets.lastIndex)
+                val start = buckets[index].start
+                onSelect(start.takeIf { it != selected })
+            }
+        }
+}
+
+private fun DrawScope.drawBars(
+    buckets: List<ActivityBucket>,
+    selected: Long?,
+    faded: Float,
+    max: Int,
+    connected: Color,
+    refused: Color,
+    band: Color,
+    axis: Color,
+) {
+    if (buckets.isEmpty()) return
+    val gap = if (buckets.size > 48) 1.dp.toPx() else 3.dp.toPx()
+    val width = ((size.width - gap * (buckets.size - 1)) / buckets.size).coerceAtLeast(1f)
+    val corner = CornerRadius(minOf(2.dp.toPx(), width / 2))
+    buckets.forEachIndexed { index, bucket ->
+        val x = index * (width + gap)
+        val chosen = bucket.start == selected
+        if (chosen) {
+            drawRoundRect(band, Offset(x - gap / 2 - 1, 0f), Size(width + gap + 2, size.height), CornerRadius(4.dp.toPx()))
+        }
+        val alpha = if (selected == null || chosen) 1f else faded
+        val made = bucket.connections.toFloat() / max * size.height
+        val refusedHeight = bucket.refused.toFloat() / max * size.height
+        if (made > 0) drawRoundRect(connected, Offset(x, size.height - made), Size(width, made), corner, alpha = alpha)
+        if (refusedHeight > 0) {
+            val top = size.height - made - refusedHeight - if (made > 0) 1.dp.toPx() else 0f
+            drawRoundRect(refused, Offset(x, top), Size(width, refusedHeight), corner, alpha = alpha)
+        }
+    }
+    drawLine(axis, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx())
+}
+
+@Composable
+private fun PeriodMenu(
+    buckets: List<ActivityBucket>,
+    selected: Long?,
+    bucketSeconds: Int,
+    zone: ZoneId,
+    allPeriods: String,
+    onSelect: (Long?) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val locale = LocalLocale.current.platformLocale
+    val numbers = remember(locale) { NumberFormat.getIntegerInstance(locale) }
+    val allSelected = selected == null
+    DropdownMenu(expanded = true, onDismissRequest = onDismiss) {
+        DropdownMenuItem(
+            text = { Text(allPeriods) },
+            modifier = Modifier.semantics { this.selected = allSelected },
+            onClick = {
+                onDismiss()
+                onSelect(null)
+            },
+        )
+        buckets.forEach { bucket ->
+            val isSelected = bucket.start == selected
+            DropdownMenuItem(
+                modifier = Modifier.semantics { this.selected = isSelected },
+                text = {
+                    Column {
+                        Text(periodLabel(bucket.start, bucketSeconds, zone))
+                        Text(
+                            pluralStringResource(R.plurals.jail_net_facts_counts, bucket.connections, numbers.format(bucket.connections), numbers.format(bucket.refused)),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                },
+                onClick = {
+                    onDismiss()
+                    if (!isSelected) onSelect(bucket.start)
+                },
+            )
+        }
     }
 }
 

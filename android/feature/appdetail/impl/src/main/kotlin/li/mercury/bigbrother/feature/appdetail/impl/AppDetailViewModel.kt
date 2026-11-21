@@ -16,8 +16,6 @@
 
 package li.mercury.bigbrother.feature.appdetail.impl
 
-import android.os.Process
-import android.os.UserHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.assisted.Assisted
@@ -25,15 +23,20 @@ import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import li.mercury.bigbrother.core.common.di.AppPackageName
+import li.mercury.bigbrother.core.common.di.CurrentUserId
 import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.DEFAULT
 import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.data.RecordsException
@@ -48,6 +51,7 @@ import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.PackageDetails
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.model.isNonCoreUid
+import li.mercury.bigbrother.core.model.userIdOf
 
 internal data class AppDetailUiState(
     /** The app's totals. Until loaded, a placeholder that only carries the uid. */
@@ -71,7 +75,7 @@ internal sealed interface JailAction {
     data object Confirm : JailAction
     data object Isolating : JailAction
     data class Open(val packageName: String) : JailAction
-    data class Failed(val failure: LoadFailure? = null) : JailAction
+    data class Failed(val failure: LoadFailure) : JailAction
 }
 
 @HiltViewModel(assistedFactory = AppDetailViewModel.Factory::class)
@@ -81,6 +85,7 @@ class AppDetailViewModel @AssistedInject constructor(
     private val installedAppRepository: InstalledAppRepository,
     private val sandboxRepository: SandboxRepository,
     @AppPackageName private val ownPackage: String,
+    @CurrentUserId private val currentUserId: Int,
     @Dispatcher(DEFAULT) private val defaultDispatcher: CoroutineDispatcher,
     @Assisted private val uid: Int,
     @Assisted private val packageName: String,
@@ -92,18 +97,27 @@ class AppDetailViewModel @AssistedInject constructor(
             range = range,
         ),
     )
-    internal val uiState: StateFlow<AppDetailUiState> = mutableUiState.asStateFlow()
+    private val refreshes = MutableStateFlow(0L)
+    private var completed: Long? = null
 
-    private var loadJob: Job? = null
+    internal val uiState: StateFlow<AppDetailUiState> = channelFlow {
+        launch {
+            refreshes.collectLatest { request ->
+                if (request != completed) {
+                    load()
+                    completed = request
+                }
+            }
+        }
+        mutableUiState.collect { send(it) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), mutableUiState.value)
 
-    init {
-        load()
+    fun retry() {
+        refreshes.update { it + 1 }
     }
 
-    fun retry() = load()
-
     fun requestJail() {
-        val state = uiState.value
+        val state = mutableUiState.value
         if (!state.canOpenJail || state.jailAction != null) return
         showJailAction(JailAction.Checking)
         viewModelScope.launch {
@@ -118,17 +132,17 @@ class AppDetailViewModel @AssistedInject constructor(
     }
 
     fun confirmIsolation() {
-        if (uiState.value.jailAction != JailAction.Confirm) return
+        if (mutableUiState.value.jailAction != JailAction.Confirm) return
         showJailAction(JailAction.Isolating)
         viewModelScope.launch {
             try {
                 // The records can outlive an installation. Check the live package again
                 // before applying restrictions to its Android user.
                 if (installedAppRepository.getInstalledApps().none { it.uid == uid && it.packageName == packageName }) {
-                    mutableUiState.update { it.copy(canOpenJail = false, jailAction = JailAction.Failed()) }
+                    mutableUiState.update { it.copy(canOpenJail = false, jailAction = JailAction.Failed(LoadFailure.Operation.APP_MISSING)) }
                     return@launch
                 }
-                sandboxRepository.isolate(packageName, uiState.value.app.userId)
+                sandboxRepository.isolate(packageName, mutableUiState.value.app.userId)
                 val entry = sandboxRepository.apps.value?.firstOrNull { it.uid == uid && it.enabled }
                 showJailAction(JailAction.Open(entry?.packageName ?: packageName))
             } catch (e: RecordsException) {
@@ -138,77 +152,51 @@ class AppDetailViewModel @AssistedInject constructor(
     }
 
     fun dismissJailAction() {
-        if (uiState.value.jailAction != JailAction.Isolating) showJailAction(null)
+        if (mutableUiState.value.jailAction != JailAction.Isolating) showJailAction(null)
     }
 
     private fun showJailAction(action: JailAction?) {
         mutableUiState.update { it.copy(jailAction = action) }
     }
 
-    private fun load() {
-        loadSummary()
+    private suspend fun load(): Unit = coroutineScope {
+        // Package facts and totals can still be shown if reading the records fails.
+        if (packageName.isNotEmpty()) launch { loadPackageInfo() }
+        launch { loadSummary() }
         loadAccesses()
     }
 
-    /** The app's totals, name, icon and package facts, for the header and the info section. */
-    private fun loadSummary() {
-        // Name and package facts come from the package manager, so they show
-        // even if the records fail to load; the two are fetched side by side.
-        if (packageName.isNotEmpty()) {
-            viewModelScope.launch {
-                val info = appInfoRepository.getAppInfo(packageName)
-                // The package manager answers for this app's own Android user.
-                // For a clone or a work profile app it would describe, and
-                // its actions would open, another user's copy, so it gives no
-                // package facts there.
-                val details = if (UserHandle.getUserHandleForUid(uid) == Process.myUserHandle()) {
-                    appInfoRepository.getPackageDetails(packageName)
-                } else {
-                    null
-                }
-                val canOpenJail = packageName != ownPackage &&
-                    isNonCoreUid(uid) &&
-                    info?.packageInfo?.applicationInfo?.uid == uid
-                mutableUiState.update {
-                    it.copy(appInfo = info, packageDetails = details, canOpenJail = canOpenJail && it.app.packageName == packageName)
-                }
-            }
-        }
-        viewModelScope.launch {
-            try {
-                val apps = accessRepository.getApps(range)
-                val app = withContext(defaultDispatcher) { apps.firstOrNull { it.uid == uid } } ?: return@launch
-                mutableUiState.update { it.copy(app = app, canOpenJail = it.canOpenJail && app.packageName == packageName) }
-            } catch (_: RecordsException) {
-                // The access list reports the failure; the header keeps its placeholder.
-            }
+    private suspend fun loadPackageInfo() {
+        val info = appInfoRepository.getAppInfo(packageName)
+        // The package manager describes this user's copy, which may be a different app.
+        val details = if (userIdOf(uid) == currentUserId) appInfoRepository.getPackageDetails(packageName) else null
+        val canOpenJail = packageName != ownPackage && isNonCoreUid(uid) && info?.packageInfo?.applicationInfo?.uid == uid
+        currentCoroutineContext().ensureActive()
+        mutableUiState.update {
+            it.copy(appInfo = info, packageDetails = details, canOpenJail = canOpenJail && it.app.packageName == packageName)
         }
     }
 
-    private fun loadAccesses() {
-        loadJob?.cancel()
-        loadJob = viewModelScope.launch {
-            try {
-                val accesses = accessRepository.getAccesses(
-                    uid = uid,
-                    category = null,
-                    range = range,
-                    limit = MAX_ACCESSES,
-                    offset = 0,
-                )
-                val records = withContext(defaultDispatcher) { summarizeAccesses(accesses) }
-                ensureActive()
-                mutableUiState.update {
-                    it.copy(
-                        records = records,
-                        truncated = accesses.size == MAX_ACCESSES,
-                        failure = null,
-                    )
-                }
-            } catch (e: RecordsException) {
-                ensureActive()
-                mutableUiState.update { it.copy(records = null, failure = e.toLoadFailure()) }
+    private suspend fun loadSummary() {
+        try {
+            val apps = accessRepository.getApps(range)
+            val app = withContext(defaultDispatcher) { apps.firstOrNull { it.uid == uid } } ?: return
+            mutableUiState.update { it.copy(app = app, canOpenJail = it.canOpenJail && app.packageName == packageName) }
+        } catch (_: RecordsException) {
+            // The summary only enriches the header. The access list has its own result.
+        }
+    }
+
+    private suspend fun loadAccesses() {
+        try {
+            val accesses = accessRepository.getAccesses(uid, null, range, MAX_ACCESSES, 0)
+            val records = withContext(defaultDispatcher) { summarizeAccesses(accesses) }
+            mutableUiState.update {
+                it.copy(records = records, truncated = accesses.size == MAX_ACCESSES, failure = null)
             }
+        } catch (e: RecordsException) {
+            currentCoroutineContext().ensureActive()
+            mutableUiState.update { it.copy(records = null, failure = e.toLoadFailure()) }
         }
     }
 

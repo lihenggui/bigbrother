@@ -19,8 +19,11 @@ package li.mercury.bigbrother.feature.applist.impl
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import kotlinx.coroutines.Dispatchers
+import li.mercury.bigbrother.core.domain.AppRecords
+import li.mercury.bigbrother.core.domain.AppVisibility
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.screenshottesting.DefaultTestDevices
 import li.mercury.bigbrother.core.screenshottesting.DemoClockRule
@@ -31,7 +34,7 @@ import li.mercury.bigbrother.core.screenshottesting.assertSamplesCover
 import li.mercury.bigbrother.core.screenshottesting.captureForDevice
 import li.mercury.bigbrother.core.screenshottesting.captureMultiDevice
 import li.mercury.bigbrother.core.screenshottesting.screenshotName
-import li.mercury.bigbrother.core.testing.repository.TestSearchRepository
+import li.mercury.bigbrother.core.testing.repository.testSearchRecordsUseCase
 import li.mercury.bigbrother.feature.search.impl.GlobalSearchBar
 import li.mercury.bigbrother.feature.search.impl.SearchViewModel
 import org.junit.Rule
@@ -63,19 +66,19 @@ class AppListScreenScreenshotTests {
 
     @Test
     fun givenSystemAppsShown_whenShown_thenListsThemToo() {
-        capturePhone("AppListSystemApps") { AppList { it.copy(showSystemApps = true) } }
+        capturePhone("AppListSystemApps") { AppList(showSystemApps = true) }
     }
 
     @Test
     fun givenRecordsOnlyOfSystemApps_whenShown_thenOffersToShowThem() {
         capturePhone("AppListOnlySystemApps") {
-            AppList { state -> state.copy(apps = state.apps.orEmpty().filter { app -> state.appInfo[app.packageName]?.isSystem == true }) }
+            AppList { it.copy(apps = emptyList(), hiddenApps = 1) }
         }
     }
 
     @Test
     fun givenNoRecords_whenShown_thenSaysNothingIsRecorded() {
-        capturePhone("AppListEmpty") { AppList { it.copy(apps = emptyList()) } }
+        capturePhone("AppListEmpty") { AppList { it.copy(apps = emptyList(), hiddenApps = 0) } }
     }
 
     @Test
@@ -107,11 +110,17 @@ class AppListScreenScreenshotTests {
 
     /** The list of the demo apps in the state [state] makes of it, with the search bar it has in the app. */
     @Composable
-    private fun AppList(state: (AppListUiState) -> AppListUiState = { it }) {
+    private fun AppList(showSystemApps: Boolean = false, state: (AppListUiState) -> AppListUiState = { it }) {
         val records = remember { DemoRecords(clock) }
+        val shown = remember(records, showSystemApps) {
+            AppVisibility(showSystemApps, ownPackage = "li.mercury.bigbrother").visibleApps(AppRecords(records.apps, records.appInfo))
+        }
         SearchScaffold(topBar = { SearchBar() }) {
+            val uiState = state(AppListUiState(apps = shown.apps, appInfo = records.appInfo, hiddenApps = shown.hiddenCount, showSystemApps = showSystemApps))
             AppListScreen(
-                state = state(AppListUiState(apps = records.apps, appInfo = records.appInfo)),
+                presentation = uiState.present(AppListFilter(), LocalResources.current),
+                onSort = {},
+                onCategory = {},
                 selectedUid = null,
                 onRange = {},
                 onRefresh = {},
@@ -126,7 +135,7 @@ class AppListScreenScreenshotTests {
 @Composable
 private fun SearchBar() {
     val viewModel = remember {
-        SearchViewModel(TestSearchRepository(), Dispatchers.Unconfined)
+        SearchViewModel(testSearchRecordsUseCase(Dispatchers.Unconfined), Dispatchers.Unconfined)
     }
     GlobalSearchBar(
         onOpenApp = { _, _, _ -> },

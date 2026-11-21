@@ -56,12 +56,14 @@ class JailAppViewModelTest {
         permissions = mapOf(PACKAGE to setOf("android.permission.CAMERA")),
     )
 
+    private val networkRepository = TestNetworkRepository(emptyActivity())
+
     private fun TestScope.viewModel(
         uid: Int = UID,
         packageName: String = PACKAGE,
         sandboxRepository: SandboxRepository = this@JailAppViewModelTest.sandboxRepository,
     ): JailAppViewModel {
-        val viewModel = JailAppViewModel(uid, packageName, sandboxRepository, TestAppInfoRepository(), installedAppRepository, TestNetworkRepository(emptyActivity()), currentUserId = 0)
+        val viewModel = JailAppViewModel(uid, packageName, sandboxRepository, TestAppInfoRepository(), installedAppRepository, networkRepository, currentUserId = 0)
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
         viewModel.refresh()
         return viewModel
@@ -259,7 +261,7 @@ class JailAppViewModelTest {
     @Test
     fun givenListUnreadableAfterwards_whenReleased_thenPageLeftWithoutError() = runTest {
         val viewModel = viewModel()
-        sandboxRepository.refreshFailure = RecordsException.CommandFailed("cannot read")
+        sandboxRepository.refreshFailure = RecordsException.CommandFailed()
 
         viewModel.release()
 
@@ -271,7 +273,7 @@ class JailAppViewModelTest {
     @Test
     fun givenListUnreadableAfterwards_whenChanged_thenNoError() = runTest {
         val viewModel = viewModel()
-        sandboxRepository.refreshFailure = RecordsException.CommandFailed("cannot read")
+        sandboxRepository.refreshFailure = RecordsException.CommandFailed()
 
         viewModel.setOn(SandboxItem.CONTACTS, on = false)
 
@@ -288,6 +290,26 @@ class JailAppViewModelTest {
 
         assertEquals(listOf(PACKAGE), sandboxRepository.released)
         assertTrue(sandboxRepository.apps.value.orEmpty().single().settings.isEmpty())
+    }
+
+    @Test
+    fun givenDestinationReadFailure_whenRefreshingApp_thenStateShowsFailureAndKeepsApp() = runTest {
+        val viewModel = viewModel()
+        networkRepository.failure = RecordsException.ModuleOutdated()
+
+        viewModel.setRecording(true)
+        viewModel.refresh()
+
+        assertEquals(LoadFailure.ModuleOutdated, viewModel.uiState.value.destinationsFailure)
+        assertNull(viewModel.uiState.value.destinations)
+        assertNull(viewModel.uiState.value.failure)
+        assertTrue(viewModel.app().enabled)
+
+        networkRepository.failure = null
+        viewModel.refresh()
+
+        assertNull(viewModel.uiState.value.destinationsFailure)
+        assertEquals(0, viewModel.uiState.value.destinations)
     }
 
     @Test

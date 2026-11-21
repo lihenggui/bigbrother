@@ -26,20 +26,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.HourglassEmpty
 import androidx.compose.material.icons.outlined.InstallMobile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.MediumFlexibleTopAppBar
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -72,7 +69,6 @@ import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.feature.jail.impl.network.globalNetworkSection
-import li.mercury.bigbrother.core.ui.R as UiR
 
 /** The global settings of the jail, item by item, and what works on this device. */
 @Composable
@@ -133,18 +129,13 @@ internal fun JailSettingsScreen(
         containerColor = background,
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
-            MediumFlexibleTopAppBar(
-                title = { Text(stringResource(R.string.jail_global_settings)) },
-                subtitle = { Text(stringResource(R.string.jail_settings_subtitle)) },
-                navigationIcon = {
-                    if (showBack) {
-                        IconButton(onClick = onBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(UiR.string.back))
-                        }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = background, scrolledContainerColor = background),
+            JailAppTopBar(
+                title = stringResource(R.string.jail_global_settings),
+                subtitle = stringResource(R.string.jail_settings_subtitle),
+                showBack = showBack,
+                background = background,
                 scrollBehavior = scrollBehavior,
+                onBack = onBack,
             )
         },
     ) { padding ->
@@ -156,93 +147,146 @@ internal fun JailSettingsScreen(
 
             else -> {
                 var expanded by rememberSaveable { mutableStateOf<SandboxItem?>(null) }
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .wrapContentWidth(Alignment.CenterHorizontally)
-                        .widthIn(max = 840.dp),
-                    contentPadding = PaddingValues(
-                        start = 16.dp,
-                        end = 16.dp,
-                        top = padding.calculateTopPadding(),
-                        bottom = 24.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(),
-                    ),
-                    verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
-                ) {
-                    item(key = "auto_isolate") {
-                        SegmentedSwitchRow(
-                            title = stringResource(R.string.jail_auto_isolate),
-                            summary = stringResource(R.string.jail_auto_isolate_summary),
-                            checked = state.autoIsolate,
-                            onCheckedChange = onSetAutoIsolate,
-                            leadingContent = { ShapedIcon(Icons.Outlined.InstallMobile) },
-                            modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
-                            showThumbIcon = true,
-                        )
-                    }
-                    item(key = "summary") { Note(stringResource(R.string.jail_items_summary)) }
-                    for (group in ItemGroup.entries) {
-                        item(key = group.name) { SectionHeader(stringResource(group.title)) }
-                        group.items.forEachIndexed { index, item ->
-                            item(key = item.id) {
-                                val mode = global[item] ?: SandboxMode.ON
-                                ItemRow(
-                                    item = item,
-                                    mode = mode,
-                                    choice = mode,
-                                    globalMode = null,
-                                    unmet = state.status?.unmet(item).orEmpty(),
-                                    expanded = expanded == item,
-                                    onExpandedChange = { open -> expanded = if (open) item else null },
-                                    onCheckedChange = { on -> onSetOn(item, on) },
-                                    onChoose = { chosen -> if (chosen != null) onChoose(item, chosen) },
-                                    index = index,
-                                    count = group.items.size,
-                                )
-                            }
-                        }
-                    }
-                    item(key = "restart") { Note(stringResource(R.string.jail_restart_note), Modifier.padding(top = 8.dp)) }
-                    globalNetworkSection(
-                        mode = global[SandboxItem.NETWORK] ?: SandboxItem.NETWORK.default,
-                        unmet = state.status?.unmet(SandboxItem.NETWORK).orEmpty(),
-                        expanded = expanded == SandboxItem.NETWORK,
-                        onExpandedChange = { open -> expanded = if (open) SandboxItem.NETWORK else null },
-                        onSetAllowed = onAllowNetwork,
-                        onChoose = { mode -> onChoose(SandboxItem.NETWORK, mode) },
-                    )
-                    item(key = "status_header") { SectionHeader(stringResource(R.string.jail_section_status)) }
-                    item(key = "status") { StatusRow(state.status, state.autoIsolate) }
-                    item(key = "release_all") {
-                        LinkRow(
-                            title = stringResource(R.string.jail_release_all),
-                            supporting = stringResource(R.string.jail_release_all_summary),
-                            onClick = { confirming = true },
-                            index = 1,
-                            count = 2,
-                            leading = { ShapedIcon(CageIcons.Open) },
-                        )
-                    }
-                }
+                JailSettingsList(
+                    state = state,
+                    global = global,
+                    padding = padding,
+                    expanded = expanded,
+                    onExpand = { expanded = it },
+                    onSetOn = onSetOn,
+                    onChoose = onChoose,
+                    onSetAutoIsolate = onSetAutoIsolate,
+                    onAllowNetwork = onAllowNetwork,
+                    onConfirmRelease = { confirming = true },
+                )
             }
         }
     }
     if (confirming) {
-        AlertDialog(
-            onDismissRequest = { confirming = false },
-            title = { Text(stringResource(R.string.jail_release_all_title)) },
-            text = { Text(pluralStringResource(R.plurals.jail_release_all_body, state.isolated, state.isolated)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirming = false
-                    onReleaseAll()
-                }) { Text(stringResource(R.string.jail_release)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirming = false }) { Text(stringResource(R.string.jail_cancel)) }
+        ReleaseAllDialog(
+            isolated = state.isolated,
+            onDismiss = { confirming = false },
+            onConfirm = {
+                confirming = false
+                onReleaseAll()
             },
         )
     }
+}
+
+@Composable
+private fun JailSettingsList(
+    state: JailSettingsUiState,
+    global: Map<SandboxItem, SandboxMode>,
+    padding: PaddingValues,
+    expanded: SandboxItem?,
+    onExpand: (SandboxItem?) -> Unit,
+    onSetOn: (SandboxItem, Boolean) -> Unit,
+    onChoose: (SandboxItem, SandboxMode) -> Unit,
+    onSetAutoIsolate: (Boolean) -> Unit,
+    onAllowNetwork: (Boolean) -> Unit,
+    onConfirmRelease: () -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .wrapContentWidth(Alignment.CenterHorizontally)
+            .widthIn(max = 840.dp),
+        contentPadding = PaddingValues(
+            start = 16.dp,
+            end = 16.dp,
+            top = padding.calculateTopPadding(),
+            bottom = 24.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(),
+        ),
+        verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
+    ) {
+        globalItemsSection(state, global, expanded, onExpand, onSetOn, onChoose, onSetAutoIsolate, onAllowNetwork)
+        statusSection(state, onConfirmRelease)
+    }
+}
+
+private fun LazyListScope.globalItemsSection(
+    state: JailSettingsUiState,
+    global: Map<SandboxItem, SandboxMode>,
+    expanded: SandboxItem?,
+    onExpand: (SandboxItem?) -> Unit,
+    onSetOn: (SandboxItem, Boolean) -> Unit,
+    onChoose: (SandboxItem, SandboxMode) -> Unit,
+    onSetAutoIsolate: (Boolean) -> Unit,
+    onAllowNetwork: (Boolean) -> Unit,
+) {
+    item(key = "auto_isolate") {
+        SegmentedSwitchRow(
+            title = stringResource(R.string.jail_auto_isolate),
+            summary = stringResource(R.string.jail_auto_isolate_summary),
+            checked = state.autoIsolate,
+            onCheckedChange = onSetAutoIsolate,
+            leadingContent = { ShapedIcon(Icons.Outlined.InstallMobile) },
+            modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
+            showThumbIcon = true,
+        )
+    }
+    item(key = "summary") { Note(stringResource(R.string.jail_items_summary)) }
+    for (group in ItemGroup.entries) {
+        item(key = group.name) { SectionHeader(stringResource(group.title)) }
+        group.items.forEachIndexed { index, item ->
+            item(key = item.id) {
+                val mode = global[item] ?: SandboxMode.ON
+                ItemRow(
+                    item = item,
+                    mode = mode,
+                    choice = mode,
+                    globalMode = null,
+                    unmet = state.status?.unmet(item).orEmpty(),
+                    expanded = expanded == item,
+                    onExpandedChange = { open -> onExpand(item.takeIf { open }) },
+                    onCheckedChange = { on -> onSetOn(item, on) },
+                    onChoose = { chosen -> if (chosen != null) onChoose(item, chosen) },
+                    index = index,
+                    count = group.items.size,
+                )
+            }
+        }
+    }
+    item(key = "restart") { Note(stringResource(R.string.jail_restart_note), Modifier.padding(top = 8.dp)) }
+    globalNetworkSection(
+        mode = global[SandboxItem.NETWORK] ?: SandboxItem.NETWORK.default,
+        unmet = state.status?.unmet(SandboxItem.NETWORK).orEmpty(),
+        expanded = expanded == SandboxItem.NETWORK,
+        onExpandedChange = { open -> onExpand(SandboxItem.NETWORK.takeIf { open }) },
+        onSetAllowed = onAllowNetwork,
+        onChoose = { mode -> onChoose(SandboxItem.NETWORK, mode) },
+    )
+}
+
+private fun LazyListScope.statusSection(state: JailSettingsUiState, onConfirmRelease: () -> Unit) {
+    item(key = "status_header") { SectionHeader(stringResource(R.string.jail_section_status)) }
+    item(key = "status") { StatusRow(state.status, state.autoIsolate) }
+    item(key = "release_all") {
+        LinkRow(
+            title = stringResource(R.string.jail_release_all),
+            supporting = stringResource(R.string.jail_release_all_summary),
+            onClick = onConfirmRelease,
+            index = 1,
+            count = 2,
+            leading = { ShapedIcon(CageIcons.Open) },
+        )
+    }
+}
+
+@Composable
+private fun ReleaseAllDialog(isolated: Int, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.jail_release_all_title)) },
+        text = { Text(pluralStringResource(R.plurals.jail_release_all_body, isolated, isolated)) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) { Text(stringResource(R.string.jail_release)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.jail_cancel)) }
+        },
+    )
 }
 
 /** Which parts of the sandbox work on this device; until known, neither good nor bad. */

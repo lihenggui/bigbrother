@@ -123,38 +123,14 @@ internal fun FirstLaunchGuide(
             if (ValueAnimator.areAnimatorsEnabled()) pager.animateScrollToPage(target) else pager.scrollToPage(target)
         }
     }
-    PredictiveBackHandler(enabled = page > 0) { events ->
-        try {
-            pager.scroll(MutatePriority.UserInput) {
-                // Keep the same settled page until the gesture commits or rolls back.
-                events.collect { if (page > 0) with(pager) { updateCurrentPage(page, -0.45f * it.progress) } }
-            }
-        } catch (cancelled: CancellationException) {
-            navigate(page)
-            throw cancelled
-        }
-        if (page > 0) navigate(page - 1)
-    }
+    GuideBackHandler(pager, page, ::navigate)
 
     Surface(modifier.fillMaxSize()) {
         Column(
             Modifier.safeDrawingPadding().wrapContentWidth().widthIn(max = 1120.dp).fillMaxSize().padding(horizontal = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Row(
-                Modifier.fillMaxWidth().heightIn(min = 56.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Image(
-                    painterResource(R.drawable.ic_launcher_foreground),
-                    null,
-                    Modifier.size(36.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.primaryContainer),
-                    contentScale = ContentScale.Crop,
-                )
-                Text(stringResource(R.string.app_name), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                TextButton(onClick = onDismiss) { Text(stringResource(R.string.guide_skip)) }
-            }
+            GuideHeader(onDismiss)
             HorizontalDivider()
             BoxWithConstraints(Modifier.fillMaxWidth().weight(1f).padding(vertical = 8.dp)) {
                 val sideBySide = maxWidth >= 740.dp || (maxWidth >= 480.dp && maxHeight < 420.dp)
@@ -184,19 +160,58 @@ internal fun FirstLaunchGuide(
                     }
                 }
             }
-            Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (page > 0) {
-                    OutlinedIconButton(onClick = { navigate(page - 1) }) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, stringResource(R.string.guide_back))
-                    }
-                }
-                Spacer(Modifier.weight(1f))
-                Button(onClick = { if (page == last) onDismiss() else navigate(page + 1) }, modifier = Modifier.heightIn(min = 52.dp)) {
-                    Text(stringResource(if (page == last) R.string.guide_start else R.string.guide_next))
-                    Spacer(Modifier.width(10.dp))
-                    Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, Modifier.size(18.dp))
-                }
+            GuideFooter(page, last, ::navigate, onDismiss)
+        }
+    }
+}
+
+@Composable
+private fun GuideBackHandler(pager: PagerState, page: Int, navigate: (Int) -> Unit) {
+    PredictiveBackHandler(enabled = page > 0) { events ->
+        try {
+            pager.scroll(MutatePriority.UserInput) {
+                // Keep the same settled page until the gesture commits or rolls back.
+                events.collect { if (page > 0) with(pager) { updateCurrentPage(page, -0.45f * it.progress) } }
             }
+        } catch (cancelled: CancellationException) {
+            navigate(page)
+            throw cancelled
+        }
+        if (page > 0) navigate(page - 1)
+    }
+}
+
+@Composable
+private fun GuideHeader(onDismiss: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 56.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Image(
+            painterResource(R.drawable.ic_launcher_foreground),
+            null,
+            Modifier.size(36.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.primaryContainer),
+            contentScale = ContentScale.Crop,
+        )
+        Text(stringResource(R.string.app_name), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+        TextButton(onClick = onDismiss) { Text(stringResource(R.string.guide_skip)) }
+    }
+}
+
+@Composable
+private fun GuideFooter(page: Int, last: Int, navigate: (Int) -> Unit, onDismiss: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (page > 0) {
+            OutlinedIconButton(onClick = { navigate(page - 1) }) {
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, stringResource(R.string.guide_back))
+            }
+        }
+        Spacer(Modifier.weight(1f))
+        Button(onClick = { if (page == last) onDismiss() else navigate(page + 1) }, modifier = Modifier.heightIn(min = 52.dp)) {
+            Text(stringResource(if (page == last) R.string.guide_start else R.string.guide_next))
+            Spacer(Modifier.width(10.dp))
+            Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, Modifier.size(18.dp))
         }
     }
 }

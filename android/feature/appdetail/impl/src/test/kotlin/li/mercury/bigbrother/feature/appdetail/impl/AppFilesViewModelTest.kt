@@ -17,14 +17,20 @@
 package li.mercury.bigbrother.feature.appdetail.impl
 
 import androidx.lifecycle.SavedStateHandle
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.FileAccessRepository
 import li.mercury.bigbrother.core.model.Access
 import li.mercury.bigbrother.core.model.Action
 import li.mercury.bigbrother.core.model.Category
+import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.testing.MainDispatcherRule
 import li.mercury.bigbrother.core.testing.repository.TestAccessRepository
@@ -52,6 +58,7 @@ class AppFilesViewModelTest {
                 access("$FOLDER/favorite.txt") + access("media:images", Action.QUERY, Category.PROVIDER),
             worker,
         )
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
         runCurrent()
         assertNull(viewModel.uiState.value.browser)
         worker.runNext()
@@ -84,12 +91,13 @@ class AppFilesViewModelTest {
             listOf(access("$FOLDER/read.txt"), access("$FOLDER/favorite.txt", Action.PROBE)),
             worker,
         )
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
         runCurrent()
         worker.runNext()
         runCurrent()
         worker.runNext()
         runCurrent()
-        val original = viewModel.uiState.value.browser
+        val original = assertNotNull(viewModel.uiState.value.browser)
 
         viewModel.openSearch()
         viewModel.search("absent")
@@ -114,11 +122,50 @@ class AppFilesViewModelTest {
         assertNull(browser.tree.folder("$FOLDER/read.txt"))
     }
 
-    private fun viewModel(accesses: List<Access>, worker: CoroutineDispatcher) = AppFilesViewModel(
+    @Test
+    fun givenRootDenied_whenOpeningFile_thenStateShowsAccessFailure() = runTest {
+        val viewModel = viewModel(emptyList(), mainDispatcherRule.testDispatcher) { throw RecordsException.NoRoot() }
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
+
+        viewModel.ensureFileAccess("$FOLDER/read.txt")
+        runCurrent()
+
+        assertEquals(FileAccessResult.Failed(LoadFailure.NoRoot), viewModel.uiState.value.fileAccessResult)
+    }
+
+    @Test
+    fun givenFileAccessRequested_whenCollectionStops_thenResultIsAvailableOnReturn() = runTest {
+        val access = CompletableDeferred<Unit>()
+        val viewModel = viewModel(emptyList(), mainDispatcherRule.testDispatcher) { access.await() }
+        val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
+        runCurrent()
+
+        val path = "$FOLDER/read.txt"
+        viewModel.ensureFileAccess(path)
+        collector.cancel()
+        advanceTimeBy(5_001)
+        access.complete(Unit)
+        runCurrent()
+
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
+        runCurrent()
+        val result = assertNotNull(viewModel.uiState.value.fileAccessResult)
+        assertEquals(FileAccessResult.Granted(path), result)
+
+        viewModel.onFileAccessHandled(result)
+        runCurrent()
+        assertNull(viewModel.uiState.value.fileAccessResult)
+    }
+
+    private fun viewModel(
+        accesses: List<Access>,
+        worker: CoroutineDispatcher,
+        ensureAccess: suspend () -> Unit = {},
+    ) = AppFilesViewModel(
         accessRepository = TestAccessRepository(accesses = accesses),
         appInfoRepository = TestAppInfoRepository(),
         fileAccessRepository = object : FileAccessRepository {
-            override suspend fun ensureAllFilesAccess() = true
+            override suspend fun ensureAllFilesAccess() = ensureAccess()
         },
         savedState = SavedStateHandle(),
         defaultDispatcher = worker,

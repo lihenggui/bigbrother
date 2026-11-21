@@ -20,6 +20,8 @@ import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import li.mercury.bigbrother.core.data.bbd.BbdDataSource
+import li.mercury.bigbrother.core.data.bbd.RootShellBbdDataSource
 import li.mercury.bigbrother.core.data.repository.AccessRepository
 import li.mercury.bigbrother.core.data.repository.AppInfoRepository
 import li.mercury.bigbrother.core.data.repository.DataStoreUserDataRepository
@@ -32,14 +34,12 @@ import li.mercury.bigbrother.core.data.repository.ModuleRepository
 import li.mercury.bigbrother.core.data.repository.NetworkRepository
 import li.mercury.bigbrother.core.data.repository.PackageManagerAppInfoRepository
 import li.mercury.bigbrother.core.data.repository.PackageManagerInstalledAppRepository
-import li.mercury.bigbrother.core.data.repository.RecordsSearchRepository
 import li.mercury.bigbrother.core.data.repository.RootAccessRepository
 import li.mercury.bigbrother.core.data.repository.RootFileAccessRepository
 import li.mercury.bigbrother.core.data.repository.RootModuleRepository
 import li.mercury.bigbrother.core.data.repository.RootNetworkRepository
 import li.mercury.bigbrother.core.data.repository.RootSandboxRepository
 import li.mercury.bigbrother.core.data.repository.SandboxRepository
-import li.mercury.bigbrother.core.data.repository.SearchRepository
 import li.mercury.bigbrother.core.data.repository.UserDataRepository
 import li.mercury.bigbrother.core.data.repository.ZipDiagnosticsRepository
 
@@ -47,10 +47,10 @@ import li.mercury.bigbrother.core.data.repository.ZipDiagnosticsRepository
 @InstallIn(SingletonComponent::class)
 internal abstract class DataModule {
     @Binds
-    abstract fun bindsAccessRepository(repository: RootAccessRepository): AccessRepository
+    abstract fun bindsBbdDataSource(dataSource: RootShellBbdDataSource): BbdDataSource
 
     @Binds
-    abstract fun bindsSearchRepository(repository: RecordsSearchRepository): SearchRepository
+    abstract fun bindsAccessRepository(repository: RootAccessRepository): AccessRepository
 
     @Binds
     abstract fun bindsFileAccessRepository(

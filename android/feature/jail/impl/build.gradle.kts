@@ -27,6 +27,7 @@ android {
 
 dependencies {
     implementation(projects.core.data)
+    implementation(projects.core.domain)
     implementation(projects.feature.jail.api)
     implementation(projects.feature.appdetail.api)
 

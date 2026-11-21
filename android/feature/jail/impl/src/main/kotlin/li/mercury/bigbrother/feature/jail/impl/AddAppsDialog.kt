@@ -76,8 +76,12 @@ import androidx.compose.ui.window.DialogWindowProvider
 import androidx.window.core.layout.WindowSizeClass
 import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
 import li.mercury.bigbrother.core.designsystem.component.segmentShape
+import li.mercury.bigbrother.core.model.InstalledApp
 import li.mercury.bigbrother.core.ui.AppIcon
+import li.mercury.bigbrother.core.ui.Message
+import li.mercury.bigbrother.core.ui.failureReason
 import li.mercury.bigbrother.core.ui.rememberPredictiveDismissProgress
+import li.mercury.bigbrother.core.ui.R as UiR
 
 /**
  * The installed apps, to choose those to put in the sandbox. Full-screen on
@@ -91,6 +95,7 @@ internal fun AddAppsDialog(
     onToggle: (String) -> Unit,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
+    onRetry: () -> Unit,
 ) {
     // Material keeps full-screen dialogs to compact windows.
     val compact = !currentWindowAdaptiveInfoV2().windowSizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND)
@@ -111,6 +116,7 @@ internal fun AddAppsDialog(
             onToggle,
             onDismiss,
             onConfirm,
+            onRetry,
             modifier = Modifier.graphicsLayer {
                 val fraction = PredictiveBackEasing.transform(progress)
                 scaleX = 1f - 0.1f * fraction
@@ -132,6 +138,7 @@ internal fun AddAppsSheet(
     onToggle: (String) -> Unit,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
+    onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (compact) SystemBarsOver(MaterialTheme.colorScheme.surfaceContainer)
@@ -148,7 +155,7 @@ internal fun AddAppsSheet(
         color = MaterialTheme.colorScheme.surfaceContainer,
     ) {
         Column(if (compact) Modifier.systemBarsPadding().imePadding() else Modifier) {
-            AddAppsContent(state, query, onToggle, onDismiss, onConfirm)
+            AddAppsContent(state, query, onToggle, onDismiss, onConfirm, onRetry)
         }
     }
 }
@@ -176,7 +183,17 @@ private fun ColumnScope.AddAppsContent(
     onToggle: (String) -> Unit,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
+    onRetry: () -> Unit,
 ) {
+    AddAppsHeader(state.selected.size, onDismiss, onConfirm)
+    AddAppsSearch(query)
+    AddAppsBody(state, onToggle, onRetry)
+    HorizontalDivider()
+    AddAppsFooter()
+}
+
+@Composable
+private fun AddAppsHeader(count: Int, onDismiss: () -> Unit, onConfirm: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -193,16 +210,20 @@ private fun ColumnScope.AddAppsContent(
                 .weight(1f)
                 .padding(start = 4.dp),
         )
-        Button(onClick = onConfirm, enabled = state.selected.isNotEmpty()) {
+        Button(onClick = onConfirm, enabled = count > 0) {
             Text(
-                if (state.selected.isEmpty()) {
+                if (count == 0) {
                     stringResource(R.string.jail_add_confirm_none)
                 } else {
-                    pluralStringResource(R.plurals.jail_add_confirm, state.selected.size, state.selected.size)
+                    pluralStringResource(R.plurals.jail_add_confirm, count, count)
                 },
             )
         }
     }
+}
+
+@Composable
+private fun AddAppsSearch(query: TextFieldState) {
     TextField(
         state = query,
         modifier = Modifier
@@ -218,8 +239,20 @@ private fun ColumnScope.AddAppsContent(
             disabledIndicatorColor = Color.Transparent,
         ),
     )
+}
+
+@Composable
+private fun ColumnScope.AddAppsBody(state: AddAppsUiState, onToggle: (String) -> Unit, onRetry: () -> Unit) {
     val apps = state.apps
     when {
+        state.failure != null -> Message(
+            title = failureReason(state.failure),
+            body = "",
+            modifier = Modifier.weight(1f),
+            actionLabel = stringResource(UiR.string.retry),
+            onAction = onRetry,
+        )
+
         apps == null -> BigBrotherLoadingIndicator(Modifier.weight(1f))
 
         apps.isEmpty() -> Text(
@@ -232,28 +265,37 @@ private fun ColumnScope.AddAppsContent(
                 .padding(32.dp),
         )
 
-        else -> LazyColumn(
-            modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
-        ) {
-            itemsIndexed(apps, key = { _, app -> app.packageName }) { index, app ->
-                val checked = app.packageName in state.selected
-                ListItem(
-                    modifier = Modifier
-                        .clip(segmentShape(index, apps.size))
-                        .toggleable(value = checked, role = Role.Checkbox, onValueChange = { onToggle(app.packageName) }),
-                    shapes = ListItemDefaults.segmentedShapes(index, apps.size),
-                    colors = ListItemDefaults.segmentedColors(),
-                    leadingContent = { AppIcon(app.info, app.info.label, 40.dp) },
-                    supportingContent = { Text(app.packageName) },
-                    trailingContent = { Checkbox(checked = checked, onCheckedChange = null) },
-                    verticalAlignment = Alignment.CenterVertically,
-                ) { Text(app.info.label) }
-            }
+        else -> AddAppsList(apps, state.selected, onToggle, Modifier.weight(1f))
+    }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun AddAppsList(apps: List<InstalledApp>, selected: Set<String>, onToggle: (String) -> Unit, modifier: Modifier = Modifier) {
+    LazyColumn(
+        modifier = modifier,
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
+    ) {
+        itemsIndexed(apps, key = { _, app -> app.packageName }) { index, app ->
+            val checked = app.packageName in selected
+            ListItem(
+                modifier = Modifier
+                    .clip(segmentShape(index, apps.size))
+                    .toggleable(value = checked, role = Role.Checkbox, onValueChange = { onToggle(app.packageName) }),
+                shapes = ListItemDefaults.segmentedShapes(index, apps.size),
+                colors = ListItemDefaults.segmentedColors(),
+                leadingContent = { AppIcon(app.info, app.info.label, 40.dp) },
+                supportingContent = { Text(app.packageName) },
+                trailingContent = { Checkbox(checked = checked, onCheckedChange = null) },
+                verticalAlignment = Alignment.CenterVertically,
+            ) { Text(app.info.label) }
         }
     }
-    HorizontalDivider()
+}
+
+@Composable
+private fun AddAppsFooter() {
     Row(
         modifier = Modifier
             .fillMaxWidth()

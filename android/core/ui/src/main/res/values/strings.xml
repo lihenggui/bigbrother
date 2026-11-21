@@ -214,4 +214,27 @@
     <string name="sensor_pose_6dof">6DoF pose</string>
     <string name="sensor_head_tracker">Head tracker</string>
     <string name="sensor_heading">Heading</string>
+    <string name="command_failed">The operation could not be completed.</string>
+    <string name="daemon_bad_response">The daemon returned an unreadable response.</string>
+    <string name="database_busy">The records database is busy.</string>
+    <string name="daemon_unavailable">The daemon is not running.</string>
+    <string name="destination_missing">The destination is no longer available.</string>
+    <string name="app_missing">This app is no longer installed for this Android user.</string>
+    <string name="timed_out">The operation timed out.</string>
+    <string name="invalid_period">Choose a shorter, nonempty time range.</string>
+    <string name="module_version_unreadable">The module version could not be read.</string>
+    <string name="installer_missing">No module installer found. Use KernelSU, Magisk or APatch.</string>
+    <string name="unsupported_architecture">The module does not support this device architecture.</string>
+    <string name="kernel_btf_missing">The kernel lacks BTF support. GKI 5.10 or newer is required.</string>
+    <string name="kernel_too_old">Kernel 5.10 or newer is required.</string>
+    <string name="module_archive_invalid">The module files could not be read from the app package.</string>
+    <string name="database_incompatible">The records database is incompatible with this module version.</string>
+    <string name="module_install_failed">The root manager could not install the module.</string>
+    <string name="module_update_failed">The module files could not be replaced.</string>
+    <string name="daemon_start_failed">Could not start the daemon.</string>
+    <string name="installed_apps_unavailable">The installed apps could not be read.</string>
+    <string name="module_disabled">The module is disabled. Enable it in the root manager.</string>
+    <string name="daemon_not_reporting">The daemon was started but is not recording. See /data/adb/big_brother/bbd.log.</string>
+    <string name="file_access_denied">Shared storage is not accessible. Check that root access is granted.</string>
+    <string name="export_logs_failed">The logs could not be collected.</string>
 </resources>

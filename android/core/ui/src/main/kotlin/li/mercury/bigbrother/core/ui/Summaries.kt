@@ -19,7 +19,6 @@ package li.mercury.bigbrother.core.ui
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.Category
 import li.mercury.bigbrother.core.model.SubjectCount
@@ -92,17 +91,3 @@ fun categoryDetail(app: AppSummary, category: DataCategory): String? {
         .map { topic -> topicTitle(topic)?.let { stringResource(it) } ?: topic }
     return namedList(titles)
 }
-
-/**
- * Whether an app is left out unless system apps are shown: system apps,
- * whose reading data is how they work, and isolated processes that could not
- * be traced to an app, which are mostly system sandboxes too. An uninstalled
- * app, whose details are unknown, is not assumed to be a system app.
- */
-fun isHiddenByDefault(app: AppSummary, appInfo: Map<String, AppInfo>): Boolean = appInfo[app.packageName]?.isSystem == true || app.isUnattributedIsolated
-
-/**
- * Whether an app's records are shown: never this app's own ([ownPackage])
- * lookups, and those of apps hidden by default only with [showSystemApps].
- */
-fun isShown(app: AppSummary, appInfo: Map<String, AppInfo>, showSystemApps: Boolean, ownPackage: String): Boolean = app.packageName != ownPackage && (showSystemApps || !isHiddenByDefault(app, appInfo))

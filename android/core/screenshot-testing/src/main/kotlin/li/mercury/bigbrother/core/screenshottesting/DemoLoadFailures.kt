@@ -22,12 +22,10 @@ import li.mercury.bigbrother.core.model.LoadFailure
  * The failure the other screens that load records are captured with: the
  * one that shows a message of its own, the longest of them.
  */
-val DemoLoadFailure: LoadFailure = LoadFailure.Other("database is locked")
+val DemoLoadFailure: LoadFailure = LoadFailure.Operation.DATABASE_BUSY
 
 /**
- * One of each reason records can't be shown. Every screen shows them with
- * the same message, so one screen, the app list, is captured with each;
- * its tests fail while a reason has no sample here.
+ * One sample per kind of load failure for the common full-page presentation.
  */
 val DemoLoadFailures: List<LoadFailure> = listOf(
     LoadFailure.NoRoot,

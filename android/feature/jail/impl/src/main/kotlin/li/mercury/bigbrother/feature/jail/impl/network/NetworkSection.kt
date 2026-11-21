@@ -41,11 +41,13 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import li.mercury.bigbrother.core.designsystem.component.SegmentedSwitchRow
 import li.mercury.bigbrother.core.designsystem.component.ShapedIcon
+import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxPart
 import li.mercury.bigbrother.core.model.SandboxedApp
 import li.mercury.bigbrother.core.ui.SectionHeader
+import li.mercury.bigbrother.core.ui.failureReason
 import li.mercury.bigbrother.core.ui.timeWithDateIfNotToday
 import li.mercury.bigbrother.feature.jail.impl.ItemRow
 import li.mercury.bigbrother.feature.jail.impl.LinkRow
@@ -86,6 +88,7 @@ internal fun LazyListScope.networkSection(
     globalMode: SandboxMode,
     requested: Set<String>?,
     destinations: Int?,
+    destinationsFailure: LoadFailure?,
     expanded: Boolean,
     actions: NetworkSectionActions,
 ) {
@@ -129,10 +132,10 @@ internal fun LazyListScope.networkSection(
             val found = destinations ?: 0
             val separator = stringResource(R.string.jail_summary_separator)
             val summary = listOfNotNull(
-                if (found == 0) {
-                    stringResource(R.string.jail_net_empty_title)
-                } else {
-                    pluralStringResource(R.plurals.jail_network_activity_summary, found, found)
+                when {
+                    destinationsFailure != null -> failureReason(destinationsFailure)
+                    found == 0 -> stringResource(R.string.jail_net_empty_title)
+                    else -> pluralStringResource(R.plurals.jail_network_activity_summary, found, found)
                 },
                 pluralStringResource(R.plurals.jail_network_blocked_count, app.networkRules, app.networkRules).takeIf { app.networkRules > 0 },
             ).joinToString(separator)

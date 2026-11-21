@@ -21,6 +21,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import kotlinx.coroutines.Dispatchers
+import li.mercury.bigbrother.core.domain.AppVisibility
+import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.screenshottesting.DefaultTestDevices
 import li.mercury.bigbrother.core.screenshottesting.DemoClockRule
 import li.mercury.bigbrother.core.screenshottesting.DemoLoadFailure
@@ -31,7 +33,7 @@ import li.mercury.bigbrother.core.screenshottesting.captureForDevice
 import li.mercury.bigbrother.core.screenshottesting.captureMultiDevice
 import li.mercury.bigbrother.core.screenshottesting.captureStoreScreenshot
 import li.mercury.bigbrother.core.screenshottesting.screenshotName
-import li.mercury.bigbrother.core.testing.repository.TestSearchRepository
+import li.mercury.bigbrother.core.testing.repository.testSearchRecordsUseCase
 import li.mercury.bigbrother.feature.search.impl.GlobalSearchBar
 import li.mercury.bigbrother.feature.search.impl.SearchViewModel
 import org.junit.Rule
@@ -41,6 +43,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.annotation.LooperMode
+import java.time.ZoneId
 
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -109,12 +112,12 @@ class TimelineScreenScreenshotTests {
 
     @Test
     fun givenOlderPageFailed_whenShown_thenOffersToRetryAtEnd() {
-        capturePhone("TimelineLoadMoreFailed") { Timeline { it.firstPage().copy(loadMoreFailed = true) } }
+        capturePhone("TimelineLoadMoreFailed") { Timeline { it.firstPage().copy(loadMoreFailure = LoadFailure.Operation.COMMAND_FAILED) } }
     }
 
     @Test
     fun givenSystemAppsShown_whenShown_thenListsThemToo() {
-        capturePhone("TimelineSystemApps") { Timeline { it.copy(showSystemApps = true) } }
+        capturePhone("TimelineSystemApps") { Timeline(showSystemApps = true) }
     }
 
     private fun capturePhone(name: String, body: @Composable () -> Unit) {
@@ -129,11 +132,16 @@ class TimelineScreenScreenshotTests {
 
     /** Today's demo records by the hour in the state [state] makes of them, with the search bar the timeline has in the app. */
     @Composable
-    private fun Timeline(state: (TimelineUiState) -> TimelineUiState = { it }) {
+    private fun Timeline(showSystemApps: Boolean = false, state: (TimelineUiState) -> TimelineUiState = { it }) {
         val records = remember { DemoRecords(clock) }
+        val page = state(TimelineUiState(entries = records.timeline, appInfo = records.appInfo))
+        val visibility = AppVisibility(showSystemApps, ownPackage = "li.mercury.bigbrother")
         SearchScaffold(topBar = { SearchBar() }) {
+            val uiState = page.copy(entries = page.entries?.let { visibility.visibleEntries(it, page.appInfo) })
             TimelineScreen(
-                state = state(TimelineUiState(entries = records.timeline, appInfo = records.appInfo)),
+                presentation = uiState.present(TimelineFilter(), ZoneId.systemDefault()),
+                onCategory = {},
+                onIncludeLookups = {},
                 selectedUid = null,
                 onRefresh = {},
                 onLoadMore = {},
@@ -152,7 +160,7 @@ class TimelineScreenScreenshotTests {
 @Composable
 private fun SearchBar() {
     val viewModel = remember {
-        SearchViewModel(TestSearchRepository(), Dispatchers.Unconfined)
+        SearchViewModel(testSearchRecordsUseCase(Dispatchers.Unconfined), Dispatchers.Unconfined)
     }
     GlobalSearchBar(
         onOpenApp = { _, _, _ -> },

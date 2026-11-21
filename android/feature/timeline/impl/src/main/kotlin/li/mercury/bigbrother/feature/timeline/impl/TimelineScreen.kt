@@ -28,6 +28,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyItemScope
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -48,6 +50,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -59,6 +62,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
+import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.Category
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.model.TimelineEntry
@@ -69,6 +73,7 @@ import li.mercury.bigbrother.core.ui.MenuFilterChip
 import li.mercury.bigbrother.core.ui.MenuOption
 import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.dateWithWeekday
+import li.mercury.bigbrother.core.ui.failureTitle
 import li.mercury.bigbrother.core.ui.namedList
 import li.mercury.bigbrother.core.ui.timeOfDay
 import li.mercury.bigbrother.core.ui.topicRecordsSummary
@@ -84,25 +89,40 @@ fun TimelineScreen(
     onOpenEntry: (TimelineEntry, TimeRange) -> Unit,
     viewModel: TimelineViewModel,
 ) {
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    var category by rememberSaveable { mutableStateOf<DataCategory?>(null) }
+    var includeLookups by rememberSaveable { mutableStateOf(false) }
+    val zone = remember { ZoneId.systemDefault() }
+    val lists = remember(viewModel, zone) {
+        viewModel.present(snapshotFlow { TimelineFilter(category, includeLookups) }, zone)
+    }
+    val presentation by lists.collectAsStateWithLifecycle(initialValue = TimelinePresentation())
     LifecycleResumeEffect(Unit) {
         viewModel.refreshIfStale()
         onPauseOrDispose {}
     }
-    TimelineScreen(uiState, selectedUid, viewModel::refresh, viewModel::loadMore, onOpenEntry)
+    TimelineScreen(
+        presentation = presentation,
+        selectedUid = selectedUid,
+        onCategory = { category = it },
+        onIncludeLookups = { includeLookups = it },
+        onRefresh = viewModel::refresh,
+        onLoadMore = viewModel::loadMore,
+        onOpenEntry = onOpenEntry,
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun TimelineScreen(
-    state: TimelineUiState,
+    presentation: TimelinePresentation,
     selectedUid: Int?,
+    onCategory: (DataCategory?) -> Unit,
+    onIncludeLookups: (Boolean) -> Unit,
     onRefresh: () -> Unit,
     onLoadMore: () -> Unit,
     onOpenEntry: (TimelineEntry, TimeRange) -> Unit,
 ) {
-    var category by rememberSaveable { mutableStateOf<DataCategory?>(null) }
-    var includeLookups by rememberSaveable { mutableStateOf(false) }
+    val (state, filter, items) = presentation
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
     ) { padding ->
@@ -112,23 +132,21 @@ internal fun TimelineScreen(
                 .padding(top = padding.calculateTopPadding()),
         ) {
             if (state.failure == null && state.entries != null) {
-                Filters(category, { category = it }, includeLookups, { includeLookups = it })
+                Filters(filter.category, onCategory, filter.includeLookups, onIncludeLookups)
             }
             PullToRefreshBox(
                 isRefreshing = state.refreshing && state.entries != null,
                 onRefresh = onRefresh,
                 modifier = Modifier.fillMaxSize(),
             ) {
-                val entries = state.entries
                 when {
                     state.failure != null -> LoadFailureMessage(state.failure, onRetry = onRefresh)
 
-                    entries == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
+                    items == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
 
                     else -> Timeline(
                         state = state,
-                        entries = entries,
-                        filter = TimelineFilter(category, includeLookups),
+                        items = items,
                         selectedUid = selectedUid,
                         onLoadMore = onLoadMore,
                         onOpenEntry = onOpenEntry,
@@ -178,19 +196,11 @@ private fun Filters(
 @Composable
 private fun Timeline(
     state: TimelineUiState,
-    entries: List<TimelineEntry>,
-    filter: TimelineFilter,
+    items: List<TimelineItem>,
     selectedUid: Int?,
     onLoadMore: () -> Unit,
     onOpenEntry: (TimelineEntry, TimeRange) -> Unit,
 ) {
-    val context = LocalContext.current
-    val zone = remember { ZoneId.systemDefault() }
-    val items = remember(entries, filter, state.appInfo, state.showSystemApps) {
-        timelineItems(entries, filter, state.appInfo, state.showSystemApps, context.packageName) { ts ->
-            Instant.ofEpochSecond(ts).atZone(zone).toLocalDate().atStartOfDay(zone).toEpochSecond()
-        }
-    }
     val listState = rememberLazyListState()
     // Near the end, or with too little shown to scroll, the next page is loaded.
     val nearEnd by remember {
@@ -200,8 +210,8 @@ private fun Timeline(
             last >= info.totalItemsCount - LOAD_AHEAD
         }
     }
-    LaunchedEffect(nearEnd, state.nextBefore, items.size, state.loadMoreFailed) {
-        if (nearEnd && state.nextBefore != null && !state.loadMoreFailed) onLoadMore()
+    LaunchedEffect(nearEnd, state.nextBefore, items.size, state.loadMoreFailure) {
+        if (nearEnd && state.nextBefore != null && state.loadMoreFailure == null) onLoadMore()
     }
     val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     LazyColumn(
@@ -216,63 +226,79 @@ private fun Timeline(
             }
         }
         items(items, key = { it.key }) { item ->
-            when (item) {
-                is TimelineItem.Day -> Text(
-                    text = dayLabel(item.dayStart),
-                    style = MaterialTheme.typography.titleMediumEmphasized,
-                    modifier = Modifier
-                        .padding(start = 16.dp, top = 16.dp, bottom = 4.dp)
-                        .semantics { heading() },
-                )
+            TimelineRow(item, state.appInfo, selectedUid, onOpenEntry)
+        }
+        pagingFooter(state, onLoadMore)
+    }
+}
 
-                is TimelineItem.Hour -> Text(
-                    text = timeOfDay(context, item.hourStart),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 6.dp),
-                )
+@Composable
+private fun LazyItemScope.TimelineRow(
+    item: TimelineItem,
+    appInfo: Map<String, AppInfo>,
+    selectedUid: Int?,
+    onOpenEntry: (TimelineEntry, TimeRange) -> Unit,
+) {
+    val context = LocalContext.current
+    when (item) {
+        is TimelineItem.Day -> Text(
+            text = dayLabel(item.dayStart),
+            style = MaterialTheme.typography.titleMediumEmphasized,
+            modifier = Modifier
+                .padding(start = 16.dp, top = 16.dp, bottom = 4.dp)
+                .semantics { heading() },
+        )
 
-                is TimelineItem.Row -> {
-                    val first = item.first
-                    AppListItem(
-                        app = first.toAppSummary(),
-                        info = state.appInfo[first.packageName],
-                        supporting = rowSummary(item.entries),
-                        trailing = timeOfDay(context, item.lastSeen),
-                        index = item.index,
-                        count = item.count,
-                        // The app open beside the timeline is marked in every hour.
-                        selected = selectedUid == first.uid,
-                        badge = first.dataCategory.icon,
-                        onClick = {
-                            onOpenEntry(first, rangeCovering(first, System.currentTimeMillis() / 1000))
-                        },
-                        modifier = Modifier.animateItem(),
-                    )
-                }
+        is TimelineItem.Hour -> Text(
+            text = timeOfDay(context, item.hourStart),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 6.dp),
+        )
+
+        is TimelineItem.Row -> {
+            val first = item.first
+            AppListItem(
+                app = first.toAppSummary(),
+                info = appInfo[first.packageName],
+                supporting = rowSummary(item.entries),
+                trailing = timeOfDay(context, item.lastSeen),
+                index = item.index,
+                count = item.count,
+                // The app open beside the timeline is marked in every hour.
+                selected = selectedUid == first.uid,
+                badge = first.dataCategory.icon,
+                onClick = {
+                    onOpenEntry(first, rangeCovering(first, System.currentTimeMillis() / 1000))
+                },
+                modifier = Modifier.animateItem(),
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+private fun LazyListScope.pagingFooter(state: TimelineUiState, onLoadMore: () -> Unit) {
+    if (state.loadingMore) {
+        item(key = "loading-more") {
+            Row(Modifier.fillMaxWidth().padding(vertical = 16.dp), horizontalArrangement = Arrangement.Center) {
+                LoadingIndicator()
             }
         }
-        if (state.loadingMore) {
-            item(key = "loading-more") {
-                Row(Modifier.fillMaxWidth().padding(vertical = 16.dp), horizontalArrangement = Arrangement.Center) {
-                    LoadingIndicator()
-                }
-            }
-        }
-        if (state.loadMoreFailed) {
-            item(key = "load-more-failed") {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = stringResource(UiR.string.error_title),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.weight(1f),
-                    )
-                    TextButton(onClick = onLoadMore) { Text(stringResource(UiR.string.retry)) }
-                }
+    }
+    if (state.loadMoreFailure != null) {
+        item(key = "load-more-failed") {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = failureTitle(state.loadMoreFailure),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = onLoadMore) { Text(stringResource(UiR.string.retry)) }
             }
         }
     }

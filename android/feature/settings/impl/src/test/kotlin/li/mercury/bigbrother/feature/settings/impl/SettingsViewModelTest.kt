@@ -21,7 +21,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
+import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.DiagnosticsRepository
+import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.UserData
 import li.mercury.bigbrother.core.testing.MainDispatcherRule
 import li.mercury.bigbrother.core.testing.repository.TestAccessRepository
@@ -31,12 +33,44 @@ import org.junit.Rule
 import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SettingsViewModelTest {
     @get:Rule
     val mainDispatcherRule = MainDispatcherRule()
+
+    @Test
+    fun givenStatusAndVersionReadFailures_whenRefreshing_thenStateShowsBothFailures() = runTest {
+        val records = TestAccessRepository().apply { failure = RecordsException.NoRoot() }
+        val module = TestModuleRepository().apply {
+            versionFailure = RecordsException.CommandFailed(LoadFailure.Operation.MODULE_VERSION_UNREADABLE)
+        }
+        val viewModel = SettingsViewModel(
+            records,
+            module,
+            TestUserDataRepository(),
+            object : DiagnosticsRepository {
+                override suspend fun exportLogs() = error("Logs are not exported by this test")
+            },
+        )
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
+        viewModel.refresh()
+        advanceUntilIdle()
+
+        assertEquals(LoadFailure.Operation.MODULE_VERSION_UNREADABLE, viewModel.uiState.value.moduleVersionFailure)
+        assertEquals(LoadFailure.NoRoot, viewModel.uiState.value.recorderStatusFailure)
+
+        module.versionFailure = null
+        records.failure = null
+        viewModel.refresh()
+        advanceUntilIdle()
+
+        assertNull(viewModel.uiState.value.moduleVersionFailure)
+        assertNull(viewModel.uiState.value.recorderStatusFailure)
+        assertEquals("v0.1.6", viewModel.uiState.value.moduleVersion)
+    }
 
     @Test
     fun givenBothSwitchWritesFail_whenRetried_thenEachChoiceIsSaved() = runTest {
@@ -56,21 +90,20 @@ class SettingsViewModelTest {
         viewModel.setUseDynamicColor(false)
         advanceUntilIdle()
 
-        val failures = viewModel.settingsWriteFailures.value
-        assertEquals(2, failures.size)
+        val systemAppsFailure = assertNotNull(viewModel.uiState.value.message)
         assertEquals(UserData(), viewModel.uiState.value.userData)
 
         settings.writeFailure = null
-        viewModel.resolveSettingsWrite(failures[0], retry = true)
+        viewModel.onMessageShown(systemAppsFailure, retry = true)
         advanceUntilIdle()
 
         assertEquals(UserData(showSystemApps = true), viewModel.uiState.value.userData)
-        assertEquals(listOf(failures[1]), viewModel.settingsWriteFailures.value)
+        val dynamicColorFailure = assertNotNull(viewModel.uiState.value.message)
 
-        viewModel.resolveSettingsWrite(failures[1], retry = true)
+        viewModel.onMessageShown(dynamicColorFailure, retry = true)
         advanceUntilIdle()
 
         assertEquals(UserData(showSystemApps = true, useDynamicColor = false), viewModel.uiState.value.userData)
-        assertTrue(viewModel.settingsWriteFailures.value.isEmpty())
+        assertNull(viewModel.uiState.value.message)
     }
 }

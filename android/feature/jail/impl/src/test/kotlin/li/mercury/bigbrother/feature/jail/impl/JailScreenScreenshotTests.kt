@@ -44,7 +44,7 @@ import li.mercury.bigbrother.core.screenshottesting.assertSamplesCover
 import li.mercury.bigbrother.core.screenshottesting.captureForDevice
 import li.mercury.bigbrother.core.screenshottesting.captureMultiDevice
 import li.mercury.bigbrother.core.screenshottesting.screenshotName
-import li.mercury.bigbrother.core.testing.repository.TestSearchRepository
+import li.mercury.bigbrother.core.testing.repository.testSearchRecordsUseCase
 import li.mercury.bigbrother.feature.search.impl.GlobalSearchBar
 import li.mercury.bigbrother.feature.search.impl.SearchViewModel
 import org.junit.Assert.assertEquals
@@ -178,8 +178,14 @@ class JailScreenScreenshotTests {
                 onToggle = {},
                 onDismiss = {},
                 onConfirm = {},
+                onRetry = {},
             )
         }
+    }
+
+    @Test
+    fun givenInstalledAppsReadFailure_whenPickerShown_thenShowsRetry() {
+        capturePhone("JailAddAppsFailure") { AddApps(AddAppsUiState(failure = LoadFailure.Operation.INSTALLED_APPS_UNAVAILABLE)) }
     }
 
     @Test
@@ -222,8 +228,7 @@ class JailScreenScreenshotTests {
             capturePhone("JailMessage$name") {
                 SearchScaffold(topBar = { SearchBar() }) {
                     JailScreen(
-                        state = JailUiState(apps = isolatedApps(), status = FULL_STATUS),
-                        message = message,
+                        state = JailUiState(apps = isolatedApps(), status = FULL_STATUS, message = message),
                         selectedUid = null,
                         settingsSelected = false,
                         onRefresh = {},
@@ -344,7 +349,7 @@ class JailScreenScreenshotTests {
             "IsolatedPartly" to JailMessage.Isolated(names.take(1), apps.take(1), notIsolated = names.subList(1, 2)),
             "IsolatedPartlyCount" to JailMessage.Isolated(names.take(1), apps.take(1), notIsolated = names.subList(1, 4)),
             "NotIsolated" to JailMessage.NotIsolated(names.take(1), LoadFailure.ModuleOutdated),
-            "NotIsolatedCount" to JailMessage.NotIsolated(names.take(3), LoadFailure.Other("timed out")),
+            "NotIsolatedCount" to JailMessage.NotIsolated(names.take(3), LoadFailure.Operation.TIMED_OUT),
             "NotReleased" to JailMessage.NotReleased(names.take(1), LoadFailure.NoRoot),
         )
     }
@@ -391,6 +396,7 @@ class JailScreenScreenshotTests {
                         onToggle = {},
                         onDismiss = { shown.value = false },
                         onConfirm = {},
+                        onRetry = {},
                     )
                 }
             }
@@ -421,7 +427,7 @@ class JailScreenScreenshotTests {
 
     @Composable
     private fun AddApps(state: AddAppsUiState, compact: Boolean = true) {
-        AddAppsSheet(state = state, query = rememberTextFieldState(), compact = compact, onToggle = {}, onDismiss = {}, onConfirm = {})
+        AddAppsSheet(state = state, query = rememberTextFieldState(), compact = compact, onToggle = {}, onDismiss = {}, onConfirm = {}, onRetry = {})
     }
 
     /** Three apps put in the sandbox over the last days, one with settings of its own. */
@@ -451,7 +457,6 @@ class JailScreenScreenshotTests {
         SearchScaffold(topBar = { SearchBar() }) {
             JailScreen(
                 state = state,
-                message = null,
                 selectedUid = null,
                 settingsSelected = false,
                 onRefresh = {},
@@ -537,7 +542,7 @@ class JailScreenScreenshotTests {
 @Composable
 private fun SearchBar() {
     val viewModel = remember {
-        SearchViewModel(TestSearchRepository(), Dispatchers.Unconfined)
+        SearchViewModel(testSearchRecordsUseCase(Dispatchers.Unconfined), Dispatchers.Unconfined)
     }
     GlobalSearchBar(
         onOpenApp = { _, _, _ -> },

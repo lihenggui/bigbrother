@@ -34,8 +34,8 @@ import kotlinx.coroutines.flow.update
 import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.DEFAULT
 import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.data.RecordsException
-import li.mercury.bigbrother.core.data.repository.SearchRepository
 import li.mercury.bigbrother.core.data.toLoadFailure
+import li.mercury.bigbrother.core.domain.SearchRecordsUseCase
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.LoadFailure
@@ -62,7 +62,7 @@ internal data class SearchUiState(
 @OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class SearchViewModel @Inject constructor(
-    private val searchRepository: SearchRepository,
+    private val searchRecords: SearchRecordsUseCase,
     @Dispatcher(DEFAULT) defaultDispatcher: CoroutineDispatcher,
 ) : ViewModel() {
     private val request = MutableStateFlow(SearchRequest())
@@ -109,7 +109,7 @@ class SearchViewModel @Inject constructor(
     }
 
     private suspend fun search(current: SearchRequest): SearchUiState = try {
-        val results = searchRepository.search(current.text)
+        val results = searchRecords(current.text)
         SearchUiState(
             query = current.text,
             apps = results.apps,

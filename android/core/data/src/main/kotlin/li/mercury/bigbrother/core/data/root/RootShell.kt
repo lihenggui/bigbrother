@@ -18,6 +18,7 @@ package li.mercury.bigbrother.core.data.root
 
 import android.os.SystemClock
 import com.topjohnwu.superuser.Shell
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.IO
@@ -32,7 +33,7 @@ class CommandResult(val isSuccess: Boolean, val code: Int, val output: String, v
 
 /**
  * Runs commands in a root shell. The single place the app touches root;
- * open so that the repositories' tests can answer in its place.
+ * open so data source tests can answer in its place.
  */
 @Singleton
 open class RootShell @Inject constructor(
@@ -78,6 +79,8 @@ open class RootShell @Inject constructor(
             if (cached.isRoot) return cached
             cached.close()
             Shell.getShell()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (_: Exception) {
             // libsu could not start a shell at all.
             throw RecordsException.NoRoot()

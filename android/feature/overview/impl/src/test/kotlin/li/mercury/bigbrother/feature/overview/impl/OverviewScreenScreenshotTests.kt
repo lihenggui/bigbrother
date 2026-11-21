@@ -21,6 +21,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import kotlinx.coroutines.Dispatchers
+import li.mercury.bigbrother.core.data.repository.ModuleUpdate
+import li.mercury.bigbrother.core.domain.AppRecords
+import li.mercury.bigbrother.core.domain.AppVisibility
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.TimeRange
@@ -35,8 +38,7 @@ import li.mercury.bigbrother.core.screenshottesting.captureForDevice
 import li.mercury.bigbrother.core.screenshottesting.captureMultiDevice
 import li.mercury.bigbrother.core.screenshottesting.captureStoreScreenshot
 import li.mercury.bigbrother.core.screenshottesting.screenshotName
-import li.mercury.bigbrother.core.testing.repository.TestSearchRepository
-import li.mercury.bigbrother.core.ui.isShown
+import li.mercury.bigbrother.core.testing.repository.testSearchRecordsUseCase
 import li.mercury.bigbrother.core.ui.readFiles
 import li.mercury.bigbrother.feature.search.impl.GlobalSearchBar
 import li.mercury.bigbrother.feature.search.impl.SearchViewModel
@@ -97,7 +99,7 @@ class OverviewScreenScreenshotTests {
         capturePhone("OverviewLookedOnly") {
             Overview { _ ->
                 val records = DemoRecords(clock)
-                val shown = records.apps.filter { isShown(it, records.appInfo, showSystemApps = false, ownPackage = "") }
+                val shown = AppVisibility(showSystemApps = false, ownPackage = "li.mercury.bigbrother").visibleApps(AppRecords(records.apps, records.appInfo)).apps
                 overviewState(records, shown.filter { !it.readFiles })
             }
         }
@@ -140,8 +142,8 @@ class OverviewScreenScreenshotTests {
 
     @Test
     fun givenEachStartFailure_whenShown_thenSaysWhy() {
-        for (failure in START_FAILURES) {
-            capturePhone("OverviewStopped${failure.screenshotName}") {
+        for ((name, failure) in START_FAILURES) {
+            capturePhone("OverviewStopped$name") {
                 Overview { it.copy(recording = false, daemonStartError = failure) }
             }
         }
@@ -154,8 +156,8 @@ class OverviewScreenScreenshotTests {
 
     @Test
     fun givenEachModuleUpdateStep_whenShown_thenMatchesGolden() {
-        for (update in MODULE_UPDATES) {
-            capturePhone("OverviewModuleUpdate${update.screenshotName}") { Overview { it.copy(moduleUpdate = update) } }
+        for ((name, update) in MODULE_UPDATES) {
+            capturePhone("OverviewModuleUpdate$name") { Overview { it.copy(moduleUpdate = update) } }
         }
     }
 
@@ -165,14 +167,9 @@ class OverviewScreenScreenshotTests {
     }
 
     @Test
-    fun givenStartFailureCases_whenChecked_thenEveryKindHasOne() {
-        assertSamplesCover(StartFailure::class.java, START_FAILURES)
-    }
-
-    @Test
     fun givenModuleUpdateCases_whenChecked_thenEveryStepHasOne() {
         // Idle is the overview without a card, as in every other case.
-        assertSamplesCover(ModuleUpdate::class.java, MODULE_UPDATES, excluded = setOf(ModuleUpdate.Idle::class.java))
+        assertSamplesCover(ModuleUpdate::class.java, MODULE_UPDATES.values, excluded = setOf(ModuleUpdate.Idle::class.java))
     }
 
     private fun capturePhone(name: String, body: @Composable () -> Unit) {
@@ -190,7 +187,7 @@ class OverviewScreenScreenshotTests {
     private fun Overview(state: (OverviewUiState) -> OverviewUiState) {
         val records = remember { DemoRecords(clock) }
         val shown = remember(records) {
-            records.apps.filter { isShown(it, records.appInfo, showSystemApps = false, ownPackage = "") }
+            AppVisibility(showSystemApps = false, ownPackage = "li.mercury.bigbrother").visibleApps(AppRecords(records.apps, records.appInfo)).apps
         }
         SearchScaffold(topBar = { SearchBar() }) {
             OverviewScreen(
@@ -217,27 +214,24 @@ class OverviewScreenScreenshotTests {
     }
 
     private companion object {
-        /** What Magisk prints when an installation fails: progress, then the errors marked with "!". */
-        const val INSTALLER_OUTPUT = "- Copying zip to temp directory\n- Installing big_brother.zip\n! Unsupported kernel: no BTF\n! Installation failed"
-
         val MODULE_SETUPS = listOf(
             ModuleSetup.Idle,
             ModuleSetup.Installing,
             ModuleSetup.NeedsReboot,
-            ModuleSetup.Failed(INSTALLER_OUTPUT),
+            ModuleSetup.Failed(LoadFailure.Operation.KERNEL_BTF_MISSING),
         )
 
-        val START_FAILURES = listOf(
-            StartFailure.ModuleDisabled,
-            StartFailure.NotReporting,
-            StartFailure.Failed("bbd: loading the eBPF programs failed: Operation not permitted"),
+        val START_FAILURES = mapOf(
+            "ModuleDisabled" to LoadFailure.Operation.MODULE_DISABLED,
+            "NotReporting" to LoadFailure.Operation.DAEMON_NOT_REPORTING,
+            "Failed" to LoadFailure.Operation.DAEMON_START_FAILED,
         )
 
-        val MODULE_UPDATES = listOf(
-            ModuleUpdate.Updating,
-            ModuleUpdate.Disabled,
-            ModuleUpdate.NotReporting,
-            ModuleUpdate.Failed(INSTALLER_OUTPUT),
+        val MODULE_UPDATES = mapOf(
+            "Updating" to ModuleUpdate.Updating,
+            "Disabled" to ModuleUpdate.Failed(LoadFailure.Operation.MODULE_DISABLED),
+            "NotReporting" to ModuleUpdate.Failed(LoadFailure.Operation.DAEMON_NOT_REPORTING),
+            "Failed" to ModuleUpdate.Failed(LoadFailure.Operation.KERNEL_BTF_MISSING),
         )
     }
 }
@@ -246,7 +240,7 @@ class OverviewScreenScreenshotTests {
 @Composable
 private fun SearchBar() {
     val viewModel = remember {
-        SearchViewModel(TestSearchRepository(), Dispatchers.Unconfined)
+        SearchViewModel(testSearchRecordsUseCase(Dispatchers.Unconfined), Dispatchers.Unconfined)
     }
     GlobalSearchBar(
         onOpenApp = { _, _, _ -> },

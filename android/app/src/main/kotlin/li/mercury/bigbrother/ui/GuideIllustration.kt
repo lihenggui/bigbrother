@@ -164,17 +164,7 @@ private fun Artwork(motion: () -> GuideMotion, playedOpening: Boolean, onOpening
     val showWeather by remember(motion) { derivedStateOf { motion().weather > 0f } }
     val inJail by remember(motion) { derivedStateOf { motion().travel > .5f } }
     Box(modifier) {
-        Box(
-            Modifier.size(364.dp, 291.dp).graphicsLayer {
-                val frame = motion()
-                transformOrigin = TransformOrigin(0f, 0f)
-                translationX = lerp(frame.x - 18, 18f, frame.reveal).dp.toPx()
-                translationY = lerp(frame.y - 18, 16f, frame.reveal).dp.toPx()
-                scaleX = lerp(36f / 364, 1f, frame.reveal)
-                scaleY = lerp(36f / 291, 1f, frame.reveal)
-                alpha = frame.panelOpacity
-            }.background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(24.dp)),
-        )
+        TimelineBackdrop(motion)
         if (showTimeline) {
             TimelineExcerpt(
                 Modifier.graphicsLayer {
@@ -192,54 +182,79 @@ private fun Artwork(motion: () -> GuideMotion, playedOpening: Boolean, onOpening
             )
         }
         if (showPortrait) {
-            val preview = LocalInspectionMode.current
-            AndroidView(
-                factory = { context ->
-                    ImageView(context).apply {
-                        val animate = !preview && !playedOpening && ValueAnimator.areAnimatorsEnabled()
-                        setImageResource(if (animate) R.drawable.guide_guard_flex else R.drawable.guide_guard)
-                        if (animate) (drawable as Animatable).start()
-                        onOpeningStart()
-                    }
-                },
-                modifier = Modifier.size(280.dp).graphicsLayer {
-                    val frame = motion()
-                    translationX = (frame.x - 140).dp.toPx()
-                    translationY = (frame.y - 140).dp.toPx()
-                    scaleX = .15f * frame.scale
-                    scaleY = scaleX
-                    alpha = frame.guardOpacity
-                },
-            )
+            GuardPortrait(motion, playedOpening, onOpeningStart)
         }
         if (showWeather) {
-            Box(
-                Modifier.size(36.dp).graphicsLayer {
-                    val frame = motion()
-                    translationX = (frame.x - 18).dp.toPx()
-                    translationY = (frame.y - 18).dp.toPx()
-                    scaleX = frame.scale
-                    scaleY = scaleX
-                    alpha = frame.weather * (1 - frame.setup)
-                },
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(Modifier.fillMaxSize().background(Color(0xFF249DE9), CircleShape), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Filled.WbSunny, null, Modifier.fillMaxSize(.56f), tint = Color(0xFFFFF59D))
-                }
-                Box(
-                    Modifier.align(Alignment.BottomEnd).size(16.dp).graphicsLayer { alpha = motion().badgeOpacity }
-                        .background(if (inJail) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.secondaryContainer, CircleShape),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        if (inJail) CageIcons.Filled else Icons.Outlined.Folder,
-                        null,
-                        Modifier.size(11.dp),
-                        tint = if (inJail) MaterialTheme.colorScheme.onTertiary else MaterialTheme.colorScheme.onSecondaryContainer,
-                    )
-                }
+            WeatherIcon(motion, inJail)
+        }
+    }
+}
+
+@Composable
+private fun TimelineBackdrop(motion: () -> GuideMotion) {
+    Box(
+        Modifier.size(364.dp, 291.dp).graphicsLayer {
+            val frame = motion()
+            transformOrigin = TransformOrigin(0f, 0f)
+            translationX = lerp(frame.x - 18, 18f, frame.reveal).dp.toPx()
+            translationY = lerp(frame.y - 18, 16f, frame.reveal).dp.toPx()
+            scaleX = lerp(36f / 364, 1f, frame.reveal)
+            scaleY = lerp(36f / 291, 1f, frame.reveal)
+            alpha = frame.panelOpacity
+        }.background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(24.dp)),
+    )
+}
+
+@Composable
+private fun GuardPortrait(motion: () -> GuideMotion, playedOpening: Boolean, onOpeningStart: () -> Unit) {
+    val preview = LocalInspectionMode.current
+    AndroidView(
+        factory = { context ->
+            ImageView(context).apply {
+                val animate = !preview && !playedOpening && ValueAnimator.areAnimatorsEnabled()
+                setImageResource(if (animate) R.drawable.guide_guard_flex else R.drawable.guide_guard)
+                if (animate) (drawable as Animatable).start()
+                onOpeningStart()
             }
+        },
+        modifier = Modifier.size(280.dp).graphicsLayer {
+            val frame = motion()
+            translationX = (frame.x - 140).dp.toPx()
+            translationY = (frame.y - 140).dp.toPx()
+            scaleX = .15f * frame.scale
+            scaleY = scaleX
+            alpha = frame.guardOpacity
+        },
+    )
+}
+
+@Composable
+private fun WeatherIcon(motion: () -> GuideMotion, inJail: Boolean) {
+    Box(
+        Modifier.size(36.dp).graphicsLayer {
+            val frame = motion()
+            translationX = (frame.x - 18).dp.toPx()
+            translationY = (frame.y - 18).dp.toPx()
+            scaleX = frame.scale
+            scaleY = scaleX
+            alpha = frame.weather * (1 - frame.setup)
+        },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(Modifier.fillMaxSize().background(Color(0xFF249DE9), CircleShape), contentAlignment = Alignment.Center) {
+            Icon(Icons.Filled.WbSunny, null, Modifier.fillMaxSize(.56f), tint = Color(0xFFFFF59D))
+        }
+        Box(
+            Modifier.align(Alignment.BottomEnd).size(16.dp).graphicsLayer { alpha = motion().badgeOpacity }
+                .background(if (inJail) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.secondaryContainer, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                if (inJail) CageIcons.Filled else Icons.Outlined.Folder,
+                null,
+                Modifier.size(11.dp),
+                tint = if (inJail) MaterialTheme.colorScheme.onTertiary else MaterialTheme.colorScheme.onSecondaryContainer,
+            )
         }
     }
 }

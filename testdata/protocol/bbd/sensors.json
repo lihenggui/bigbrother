@@ -1,0 +1,4 @@
+[
+  {"sensor":"android.sensor.accelerometer","high_rate":true,"period_ns":1000000,"rate_hz":1000.0,"start_ts":10,"end_ts":null},
+  {"sensor":"android.sensor.light","high_rate":false,"period_ns":null,"rate_hz":null,"start_ts":5,"end_ts":9}
+]

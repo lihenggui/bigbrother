@@ -20,16 +20,20 @@ import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.IO
 import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
+import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.InstalledApp
+import li.mercury.bigbrother.core.model.LoadFailure
 import javax.inject.Inject
 
 /** The apps installed for the calling user, whether or not they left records. */
 interface InstalledAppRepository {
+    /** Throws [RecordsException] if Android cannot supply the installed apps. */
     suspend fun getInstalledApps(): List<InstalledApp>
 
     /**
@@ -49,18 +53,27 @@ internal class PackageManagerInstalledAppRepository @Inject constructor(
     private val packageManager = context.packageManager
 
     override suspend fun getInstalledApps(): List<InstalledApp> = withContext(ioDispatcher) {
-        packageManager.getInstalledPackages(0).mapNotNull { packageInfo ->
-            val info = packageInfo.applicationInfo ?: return@mapNotNull null
-            InstalledApp(
-                packageName = packageInfo.packageName,
-                uid = info.uid,
-                info = AppInfo(
-                    label = packageManager.getApplicationLabel(info).toString(),
-                    packageInfo = packageInfo,
-                    isSystem = info.flags and ApplicationInfo.FLAG_SYSTEM != 0,
-                ),
-            )
+        try {
+            readInstalledApps()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: RuntimeException) {
+            // PackageManager rethrows Binder failures as runtime exceptions.
+            throw RecordsException.CommandFailed(LoadFailure.Operation.INSTALLED_APPS_UNAVAILABLE)
         }
+    }
+
+    private fun readInstalledApps(): List<InstalledApp> = packageManager.getInstalledPackages(0).mapNotNull { packageInfo ->
+        val info = packageInfo.applicationInfo ?: return@mapNotNull null
+        InstalledApp(
+            packageName = packageInfo.packageName,
+            uid = info.uid,
+            info = AppInfo(
+                label = packageManager.getApplicationLabel(info).toString(),
+                packageInfo = packageInfo,
+                isSystem = info.flags and ApplicationInfo.FLAG_SYSTEM != 0,
+            ),
+        )
     }
 
     override suspend fun getRequestedPermissions(packageName: String): Set<String>? = withContext(ioDispatcher) {

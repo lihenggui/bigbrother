@@ -16,13 +16,11 @@
 
 package li.mercury.bigbrother.core.data.root
 
-import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.withContext
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.root.ModulePaths.BBD
-import org.json.JSONException
+import li.mercury.bigbrother.core.model.LoadFailure
 
-internal const val BBD_MISSING_MARKER = "bbd-not-installed"
+private const val BBD_MISSING_MARKER = "bbd-not-installed"
 
 internal fun CommandResult.bbdFailure(): RecordsException? {
     if (isSuccess) return null
@@ -37,32 +35,39 @@ internal fun CommandResult.bbdFailure(): RecordsException? {
         headline.startsWith("error: unexpected argument ") ||
         (headline.startsWith("error: the argument ") && headline.endsWith(" cannot be used multiple times"))
     if (cliRejectedRequest || headline == "unknown command") return RecordsException.ModuleOutdated()
-    return RecordsException.CommandFailed(reason.ifBlank { "bbd exited with $code" })
+    return daemonCommandFailure(error)
+}
+
+/** Recognizes daemon errors without retaining output that can include paths or package names. */
+internal fun daemonCommandFailure(error: String): RecordsException.CommandFailed {
+    val headline = error.removePrefix("Error: ").lineSequence().firstOrNull().orEmpty()
+    val reason = when {
+        headline == "the daemon is not running" -> LoadFailure.Operation.DAEMON_UNAVAILABLE
+        headline == "database is locked" -> LoadFailure.Operation.DATABASE_BUSY
+        headline.startsWith("unsupported database schema ") -> LoadFailure.Operation.DATABASE_INCOMPATIBLE
+        headline.endsWith(" is not installed") -> LoadFailure.Operation.APP_MISSING
+        headline == "no such destination" -> LoadFailure.Operation.DESTINATION_MISSING
+        headline == "timed out" -> LoadFailure.Operation.TIMED_OUT
+        else -> LoadFailure.Operation.COMMAND_FAILED
+    }
+    return RecordsException.CommandFailed(reason)
 }
 
 /**
- * Runs `bbd <command> <args> --json` as root and returns what it printed.
- * Everything in [args] that comes from an app or the user must be quoted
- * already. Only [command] and the first word of [args] are logged.
- *
- * @throws RecordsException.ModuleMissing if the daemon is not installed.
- * @throws RecordsException.ModuleOutdated if it does not know the command or an option.
- * @throws RecordsException.CommandFailed with the daemon's reason otherwise.
+ * Runs a daemon command and returns what it printed. Arguments from apps or
+ * users must already be quoted. [args] starts with a space when present.
+ * With [json], the first argument is a static subcommand that can be logged.
  */
-internal suspend fun RootShell.bbd(command: String, args: String): String {
+internal suspend fun RootShell.bbd(command: String, args: String = "", json: Boolean = false): String {
+    val format = if (json) " --json" else ""
+    val label = if (json) "bbd $command ${args.trimStart().substringBefore(' ')}" else "bbd $command"
     val result = run(
-        "if [ -x $BBD ]; then $BBD $command $args --json; else echo $BBD_MISSING_MARKER >&2; false; fi",
-        label = "bbd $command ${args.substringBefore(' ')}",
+        "if [ -x $BBD ]; then $BBD $command$args$format; else echo $BBD_MISSING_MARKER >&2; false; fi",
+        label = label,
     )
     result.bbdFailure()?.let { throw it }
     return result.output
 }
 
-/** Decode and map the daemon's response on the CPU dispatcher, even when called from the UI. */
-internal suspend fun <T> CoroutineDispatcher.parseBbdOutput(block: suspend () -> T): T = withContext(this) {
-    try {
-        block()
-    } catch (e: JSONException) {
-        throw RecordsException.CommandFailed("unexpected output from bbd: ${e.message}")
-    }
-}
+/** Keep combined output in the archive even when the command exits with an error. */
+internal suspend fun RootShell.bbdStatsForDiagnostics(): String = run("$BBD stats 2>&1", label = "bbd stats").output
