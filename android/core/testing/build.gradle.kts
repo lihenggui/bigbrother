@@ -26,6 +26,7 @@ android {
 // core:testing.
 dependencies {
     api(projects.core.data)
+    api(projects.core.domain)
     api(libs.kotlin.test.junit)
     api(libs.kotlinx.coroutines.test)
 }

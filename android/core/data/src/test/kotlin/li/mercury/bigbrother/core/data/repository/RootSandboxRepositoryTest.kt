@@ -88,11 +88,11 @@ class RootSandboxRepositoryTest {
 
     @Test
     fun givenMalformedReleaseCount_whenAllReleased_thenRefreshesBeforeReportingFailure() = runTest {
-        val failure = RecordsException.CommandFailed("bad count")
-        val dataSource = SandboxDataSource(failing = emptySet(), releaseCount = Result.failure(failure))
+        val failure = RecordsException.BadResponse()
+        val dataSource = SandboxDataSource(failing = emptySet(), releaseFailure = failure)
         val repository = RootSandboxRepository(dataSource, StandardTestDispatcher(testScheduler))
 
-        assertEquals(failure, assertFailsWith<RecordsException.CommandFailed> { repository.releaseAll() })
+        assertEquals(failure, assertFailsWith<RecordsException.BadResponse> { repository.releaseAll() })
         assertEquals(listOf("disable all", "list", "get global"), dataSource.calls)
     }
 
@@ -120,7 +120,7 @@ class RootSandboxRepositoryTest {
 
     private class SandboxDataSource(
         private val failing: Set<String> = setOf("list"),
-        private val releaseCount: Result<BbdSandboxReleaseResult> = Result.success(BbdSandboxReleaseResult(0)),
+        private val releaseFailure: RecordsException? = null,
     ) : TestBbdDataSource() {
         val calls = mutableListOf<String>()
 
@@ -138,9 +138,10 @@ class RootSandboxRepositoryTest {
 
         override suspend fun disableSandbox(packageName: String, userId: Int) = record("disable")
 
-        override suspend fun disableAllSandboxes(): Result<BbdSandboxReleaseResult> {
+        override suspend fun disableAllSandboxes(): BbdSandboxReleaseResult {
             record("disable all")
-            return releaseCount
+            releaseFailure?.let { throw it }
+            return BbdSandboxReleaseResult(failedCount = 0)
         }
 
         override suspend fun setSandboxItems(packageName: String, userId: Int, changes: Map<SandboxItem, SandboxMode?>) = record("set")
@@ -151,7 +152,7 @@ class RootSandboxRepositoryTest {
 
         private fun record(call: String) {
             calls += call
-            if (call in failing) throw RecordsException.CommandFailed("cannot read the sandbox")
+            if (call in failing) throw RecordsException.CommandFailed()
         }
     }
 }

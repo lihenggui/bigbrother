@@ -160,6 +160,20 @@ class DemoRecords(
 
     /** The day's accesses, app by app. Times are of today. */
     private fun MutableList<Event>.record() {
+        recordWeather()
+        recordFlashlight()
+        recordShopping()
+        recordNotes()
+        recordPhotoEditor()
+        recordChat()
+        recordStepCounter()
+        recordKeyboard()
+        recordNews()
+        recordPuzzle()
+        recordBackgroundApps()
+    }
+
+    private fun MutableList<Event>.recordWeather() {
         // The weather app checks the location all day; after noon it read photos.
         at(WEATHER, 8, 30) {
             call(LOCATION, "location", times = 2)
@@ -194,7 +208,9 @@ class DemoRecords(
             call(WIFI_SCAN, "wifi_info", times = 2)
             call(ANDROID_ID, "android_id", times = 3)
         }
+    }
 
+    private fun MutableList<Event>.recordFlashlight() {
         // A flashlight has no need for any of this.
         at(FLASHLIGHT, 9, 12) {
             personal(CONTACTS, "contacts", items = 412)
@@ -209,7 +225,9 @@ class DemoRecords(
             call("binder:android.accounts.IAccountManager/getAccountsAsUser", "accounts")
             readDevice(MAC_ADDRESS, "mac_address", allowed = 0, denied = 1)
         }
+    }
 
+    private fun MutableList<Event>.recordShopping() {
         at(SHOPPING, 11, 5) { call(CLIPBOARD_READ, "clipboard") }
         at(SHOPPING, 13, 30) {
             probe("$STORAGE/.device_id")
@@ -220,12 +238,16 @@ class DemoRecords(
             call(ANDROID_ID, "android_id")
             connect("net://224.0.0.251:5353", "device_discovery", times = 4)
         }
+    }
 
+    private fun MutableList<Event>.recordNotes() {
         at(NOTES, 13, 48) {
             list("$STORAGE/Download")
             read("$STORAGE/Download/tax_return_2025.pdf", times = 2)
         }
+    }
 
+    private fun MutableList<Event>.recordPhotoEditor() {
         // Photos picked through the media library, as a photo editor should.
         at(PHOTO_EDITOR, 11, 40) {
             query(IMAGES, items = 1284)
@@ -235,7 +257,9 @@ class DemoRecords(
             query(IMAGES, items = 1284)
             read("$STORAGE/DCIM/Camera/${CAMERA_LATER[1]}", viaProvider = true, times = 2)
         }
+    }
 
+    private fun MutableList<Event>.recordChat() {
         at(CHAT, 10, 40) { personal(CONTACTS_LIST, "contacts", items = 412) }
         at(CHAT, 14, 5) {
             personal(CONTACTS_LIST, "contacts", items = 412)
@@ -244,7 +268,9 @@ class DemoRecords(
             permission("android:camera", "camera")
             permission("android:record_audio", "microphone")
         }
+    }
 
+    private fun MutableList<Event>.recordStepCounter() {
         at(STEP_COUNTER, 8, 5) {
             call(SENSOR_CONNECTION, "sensors")
             call("$SENSOR_ON@$ACCELEROMETER", "sensors")
@@ -257,7 +283,9 @@ class DemoRecords(
             call(LOCATION, "location", times = 3)
         }
         at(STEP_COUNTER, 14, 2) { call("$SENSOR_ON@$ACCELEROMETER", "sensors") }
+    }
 
+    private fun MutableList<Event>.recordKeyboard() {
         // A keyboard offers what was copied, and copies too.
         at(KEYBOARD, 11, 20) {
             call(CLIPBOARD_LISTEN, "clipboard")
@@ -267,7 +295,9 @@ class DemoRecords(
             call(CLIPBOARD_READ, "clipboard", times = 2)
             call(CLIPBOARD_WRITE, "clipboard")
         }
+    }
 
+    private fun MutableList<Event>.recordNews() {
         at(NEWS, 12, 20) {
             list("$STORAGE/Download")
             call(ANDROID_ID, "android_id", times = 2)
@@ -276,7 +306,9 @@ class DemoRecords(
             call("binder:android.net.IConnectivityManager/getActiveNetwork", "network_state", times = 2)
             exec("exec:getprop ro.product.model", "system_properties")
         }
+    }
 
+    private fun MutableList<Event>.recordPuzzle() {
         // A game that wants to know whether the device is rooted or emulated.
         at(PUZZLE, 10, 2) {
             exec("exec:which su", "root_check")
@@ -287,7 +319,9 @@ class DemoRecords(
             call(ANDROID_ID, "android_id")
             call("binder:android.app.IActivityManager/getRunningAppProcesses", "running_apps")
         }
+    }
 
+    private fun MutableList<Event>.recordBackgroundApps() {
         // Hidden by default: system apps, which read files as their job, and
         // an isolated process that could not be traced to its app.
         at(MEDIA_INDEXER, 14, 30) {

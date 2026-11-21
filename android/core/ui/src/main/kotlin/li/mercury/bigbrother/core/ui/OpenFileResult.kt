@@ -32,9 +32,6 @@ enum class OpenFileResult {
 
     /** No installed app can display this kind of file. */
     NO_VIEWER,
-
-    /** This app could not obtain access to shared storage. */
-    NO_ACCESS,
 }
 
 /**

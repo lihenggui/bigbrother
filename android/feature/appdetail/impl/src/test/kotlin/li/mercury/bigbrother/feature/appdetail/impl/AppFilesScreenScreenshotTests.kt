@@ -121,7 +121,7 @@ class AppFilesScreenScreenshotTests {
     @Test
     fun givenFileDetailsFailed_whenShown_thenSheetSaysWhy() {
         capturePhone("AppFilesDetailsFailure") {
-            Files { it.copy(fileDetails = FileDetails(PHOTO, failure = LoadFailure.Other("database is locked"))) }
+            Files { it.copy(fileDetails = FileDetails(PHOTO, failure = LoadFailure.Operation.DATABASE_BUSY)) }
         }
     }
 

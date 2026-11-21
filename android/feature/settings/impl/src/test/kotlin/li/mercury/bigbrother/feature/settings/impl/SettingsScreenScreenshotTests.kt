@@ -19,6 +19,7 @@ package li.mercury.bigbrother.feature.settings.impl
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.RecorderStatus
 import li.mercury.bigbrother.core.model.UserData
 import li.mercury.bigbrother.core.screenshottesting.DefaultTestDevices
@@ -91,6 +92,18 @@ class SettingsScreenScreenshotTests {
     }
 
     @Test
+    fun givenRecordingDetailsReadFailure_whenShown_thenShowsReason() {
+        capturePhone("SettingsRecordingDetailsFailure") {
+            Settings(
+                SettingsUiState(
+                    moduleVersionFailure = LoadFailure.Operation.MODULE_VERSION_UNREADABLE,
+                    recorderStatusFailure = LoadFailure.Operation.DAEMON_UNAVAILABLE,
+                ),
+            )
+        }
+    }
+
+    @Test
     fun givenEachLogExportStep_whenShown_thenSaysHowItGoes() {
         for (export in LOG_EXPORTS) {
             capturePhone("SettingsLogExport${export.screenshotName}") {
@@ -126,6 +139,6 @@ class SettingsScreenScreenshotTests {
         const val APP_VERSION = "1.2.3"
         const val VERSION = "v$APP_VERSION"
         val RECORDING = RecorderStatus(recording = true)
-        val LOG_EXPORTS = listOf(LogExport.Idle, LogExport.Collecting, LogExport.Failed)
+        val LOG_EXPORTS = listOf(LogExport.Idle, LogExport.Collecting, LogExport.Failed(LoadFailure.Operation.LOG_EXPORT_FAILED))
     }
 }

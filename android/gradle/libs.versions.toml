@@ -30,6 +30,7 @@ ktlint = "1.8.0"
 libsu = "6.0.0"
 licensee = "1.14.1"
 libxposed = "102.0.0"
+lint = "32.5.1" # Match the lint version used by AGP.
 robolectric = "4.18"
 roborazzi = "1.79.0"
 spotless = "8.11.0"
@@ -78,6 +79,8 @@ kotlin-metadata = { group = "org.jetbrains.kotlin", name = "kotlin-metadata-jvm"
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "kotlinxCoroutines" }
 libsu-core = { group = "com.github.topjohnwu.libsu", name = "core", version.ref = "libsu" }
 libxposed-api = { group = "io.github.libxposed", name = "api", version.ref = "libxposed" }
+lint-api = { group = "com.android.tools.lint", name = "lint-api", version.ref = "lint" }
+lint-tests = { group = "com.android.tools.lint", name = "lint-tests", version.ref = "lint" }
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
 # Instrumented SDKs selected by Robolectric 4.18 for library and app tests.
 robolectricAndroid24 = { group = "org.robolectric", name = "android-all-instrumented", version = "7.0.0_r1-robolectric-r1-i7" }

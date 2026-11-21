@@ -23,9 +23,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
-import li.mercury.bigbrother.core.data.repository.FirstLaunchRepository
 import li.mercury.bigbrother.core.testing.MainDispatcherRule
 import li.mercury.bigbrother.core.testing.repository.TestAccessRepository
+import li.mercury.bigbrother.core.testing.repository.TestFirstLaunchRepository
 import li.mercury.bigbrother.core.testing.repository.TestUserDataRepository
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -39,7 +39,7 @@ class MainActivityViewModelTest {
     @Test
     fun givenPendingFirstLaunch_whenUserLeaves_thenGuideStaysDismissed() = runTest {
         val decision = CompletableDeferred<Boolean>()
-        val viewModel = MainActivityViewModel(TestUserDataRepository(), TestAccessRepository(), FirstLaunchRepository { decision.await() })
+        val viewModel = MainActivityViewModel(TestUserDataRepository(), TestAccessRepository(), TestFirstLaunchRepository { decision.await() })
         try {
             runCurrent()
             assertEquals(MainActivityUiState.Loading, viewModel.uiState.value)
@@ -55,7 +55,7 @@ class MainActivityViewModelTest {
     @Test
     fun givenFreshInstall_whenGuideIsDismissed_thenSettingsChangesKeepItDismissed() = runTest {
         val settings = TestUserDataRepository()
-        val viewModel = MainActivityViewModel(settings, TestAccessRepository(), FirstLaunchRepository { true })
+        val viewModel = MainActivityViewModel(settings, TestAccessRepository(), TestFirstLaunchRepository { true })
         try {
             runCurrent()
             assertEquals(true, (viewModel.uiState.value as MainActivityUiState.Ready).showGuide)

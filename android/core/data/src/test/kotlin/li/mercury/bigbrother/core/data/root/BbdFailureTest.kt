@@ -17,6 +17,8 @@
 package li.mercury.bigbrother.core.data.root
 
 import li.mercury.bigbrother.core.data.RecordsException
+import li.mercury.bigbrother.core.data.toLoadFailure
+import li.mercury.bigbrother.core.model.LoadFailure
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -40,10 +42,10 @@ class BbdFailureTest {
     }
 
     @Test
-    fun givenInvalidValue_whenClassified_thenCommandFailedWithDiagnostic() {
+    fun givenInvalidValue_whenClassified_thenCommandFailureWithoutDiagnostic() {
         for (kind in listOf("invalid-number", "invalid-enum")) {
             val failure = assertIs<RecordsException.CommandFailed>(clapFailure(kind))
-            assertEquals(clapDiagnostic(kind), failure.message)
+            assertEquals(LoadFailure.Operation.COMMAND_FAILED, failure.toLoadFailure())
         }
     }
 
@@ -65,17 +67,17 @@ class BbdFailureTest {
     }
 
     @Test
-    fun givenGenericError_whenClassified_thenCommandFailedWithReason() {
+    fun givenDaemonNotRunning_whenClassified_thenDaemonUnavailable() {
         val result = CommandResult(isSuccess = false, code = 1, output = "", error = "Error: the daemon is not running")
 
-        assertEquals("the daemon is not running", assertIs<RecordsException.CommandFailed>(result.bbdFailure()).message)
+        assertEquals(LoadFailure.Operation.DAEMON_UNAVAILABLE, assertIs<RecordsException.CommandFailed>(result.bbdFailure()).toLoadFailure())
     }
 
     @Test
-    fun givenSilentFailure_whenClassified_thenCommandFailedWithExitCode() {
+    fun givenSilentFailure_whenClassified_thenGenericCommandFailure() {
         val result = CommandResult(isSuccess = false, code = 126, output = "", error = "")
 
-        assertEquals("bbd exited with 126", assertIs<RecordsException.CommandFailed>(result.bbdFailure()).message)
+        assertEquals(LoadFailure.Operation.COMMAND_FAILED, assertIs<RecordsException.CommandFailed>(result.bbdFailure()).toLoadFailure())
     }
 
     @Test

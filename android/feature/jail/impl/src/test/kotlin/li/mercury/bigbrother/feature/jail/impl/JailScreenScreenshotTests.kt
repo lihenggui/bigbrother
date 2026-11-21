@@ -26,7 +26,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
-import kotlinx.coroutines.Dispatchers
 import li.mercury.bigbrother.core.designsystem.theme.BigBrotherTheme
 import li.mercury.bigbrother.core.model.InstalledApp
 import li.mercury.bigbrother.core.model.LoadFailure
@@ -44,9 +43,6 @@ import li.mercury.bigbrother.core.screenshottesting.assertSamplesCover
 import li.mercury.bigbrother.core.screenshottesting.captureForDevice
 import li.mercury.bigbrother.core.screenshottesting.captureMultiDevice
 import li.mercury.bigbrother.core.screenshottesting.screenshotName
-import li.mercury.bigbrother.core.testing.repository.TestSearchRepository
-import li.mercury.bigbrother.feature.search.impl.GlobalSearchBar
-import li.mercury.bigbrother.feature.search.impl.SearchViewModel
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -178,8 +174,14 @@ class JailScreenScreenshotTests {
                 onToggle = {},
                 onDismiss = {},
                 onConfirm = {},
+                onRetry = {},
             )
         }
+    }
+
+    @Test
+    fun givenInstalledAppsReadFailure_whenPickerShown_thenShowsRetry() {
+        capturePhone("JailAddAppsFailure") { AddApps(AddAppsUiState(failure = LoadFailure.Operation.INSTALLED_APPS_UNAVAILABLE)) }
     }
 
     @Test
@@ -220,10 +222,9 @@ class JailScreenScreenshotTests {
     fun givenEachMessage_whenShown_thenSnackbarSaysWhatHappened() {
         for ((name, message) in messages()) {
             capturePhone("JailMessage$name") {
-                SearchScaffold(topBar = { SearchBar() }) {
+                SearchScaffold {
                     JailScreen(
-                        state = JailUiState(apps = isolatedApps(), status = FULL_STATUS),
-                        message = message,
+                        state = JailUiState(apps = isolatedApps(), status = FULL_STATUS, message = message),
                         selectedUid = null,
                         settingsSelected = false,
                         onRefresh = {},
@@ -344,7 +345,7 @@ class JailScreenScreenshotTests {
             "IsolatedPartly" to JailMessage.Isolated(names.take(1), apps.take(1), notIsolated = names.subList(1, 2)),
             "IsolatedPartlyCount" to JailMessage.Isolated(names.take(1), apps.take(1), notIsolated = names.subList(1, 4)),
             "NotIsolated" to JailMessage.NotIsolated(names.take(1), LoadFailure.ModuleOutdated),
-            "NotIsolatedCount" to JailMessage.NotIsolated(names.take(3), LoadFailure.Other("timed out")),
+            "NotIsolatedCount" to JailMessage.NotIsolated(names.take(3), LoadFailure.Operation.TIMED_OUT),
             "NotReleased" to JailMessage.NotReleased(names.take(1), LoadFailure.NoRoot),
         )
     }
@@ -391,6 +392,7 @@ class JailScreenScreenshotTests {
                         onToggle = {},
                         onDismiss = { shown.value = false },
                         onConfirm = {},
+                        onRetry = {},
                     )
                 }
             }
@@ -421,7 +423,7 @@ class JailScreenScreenshotTests {
 
     @Composable
     private fun AddApps(state: AddAppsUiState, compact: Boolean = true) {
-        AddAppsSheet(state = state, query = rememberTextFieldState(), compact = compact, onToggle = {}, onDismiss = {}, onConfirm = {})
+        AddAppsSheet(state = state, query = rememberTextFieldState(), compact = compact, onToggle = {}, onDismiss = {}, onConfirm = {}, onRetry = {})
     }
 
     /** Three apps put in the sandbox over the last days, one with settings of its own. */
@@ -448,10 +450,9 @@ class JailScreenScreenshotTests {
 
     @Composable
     private fun Jail(state: JailUiState) {
-        SearchScaffold(topBar = { SearchBar() }) {
+        SearchScaffold {
             JailScreen(
                 state = state,
-                message = null,
                 selectedUid = null,
                 settingsSelected = false,
                 onRefresh = {},
@@ -531,19 +532,4 @@ class JailScreenScreenshotTests {
         /** A phone tall enough for the whole of the global settings, down to the status at their end. */
         const val WHOLE_PAGE = "spec:shape=Normal,width=412,height=2600,unit=dp,dpi=480"
     }
-}
-
-/** The search bar the top-level screens have as their top bar, idle. */
-@Composable
-private fun SearchBar() {
-    val viewModel = remember {
-        SearchViewModel(TestSearchRepository(), Dispatchers.Unconfined)
-    }
-    GlobalSearchBar(
-        onOpenApp = { _, _, _ -> },
-        onOpenCategory = {},
-        onOpenSettings = {},
-        settingsBadge = false,
-        viewModel = viewModel,
-    )
 }

@@ -59,10 +59,9 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.Dispatchers
-import li.mercury.bigbrother.core.data.repository.AppInfoRepository
 import li.mercury.bigbrother.core.designsystem.theme.BigBrotherTheme
-import li.mercury.bigbrother.core.model.AppInfo
-import li.mercury.bigbrother.core.model.PackageDetails
+import li.mercury.bigbrother.core.domain.GetAppRecordsUseCase
+import li.mercury.bigbrother.core.domain.GetAppVisibilityUseCase
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.screenshottesting.DemoApp
 import li.mercury.bigbrother.core.screenshottesting.DemoClockRule
@@ -71,10 +70,11 @@ import li.mercury.bigbrother.core.screenshottesting.StoreScreenshotType
 import li.mercury.bigbrother.core.screenshottesting.captureMultiDevice
 import li.mercury.bigbrother.core.screenshottesting.captureStoreScreenshot
 import li.mercury.bigbrother.core.testing.repository.TestAccessRepository
+import li.mercury.bigbrother.core.testing.repository.TestAppInfoRepository
 import li.mercury.bigbrother.core.testing.repository.TestInstalledAppRepository
 import li.mercury.bigbrother.core.testing.repository.TestSandboxRepository
-import li.mercury.bigbrother.core.testing.repository.TestSearchRepository
 import li.mercury.bigbrother.core.testing.repository.TestUserDataRepository
+import li.mercury.bigbrother.core.testing.repository.testSearchRecordsUseCase
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.feature.appdetail.api.navigation.AppDetailNavKey
 import li.mercury.bigbrother.feature.appdetail.api.navigation.navigateToAppDetail
@@ -323,9 +323,17 @@ class ListDetailScreenshotTests {
     @Composable
     private fun ListDetail(fitWindow: Boolean = false, hinge: Rect? = null) {
         val records = remember { DemoRecords(clock) }
-        val appInfoRepository = remember { DemoAppInfoRepository(records) }
+        val appInfoRepository = remember {
+            TestAppInfoRepository(records.appInfo, details = mapOf(DemoApp.WEATHER.packageName to records.packageDetails))
+        }
         val listViewModel = remember {
-            AppListViewModel(TestAccessRepository(apps = records.apps), appInfoRepository, TestUserDataRepository())
+            val settings = TestUserDataRepository()
+            AppListViewModel(
+                GetAppRecordsUseCase(TestAccessRepository(apps = records.apps), appInfoRepository),
+                GetAppVisibilityUseCase(settings, ApplicationProvider.getApplicationContext<Application>().packageName),
+                settings,
+                Dispatchers.Unconfined,
+            )
         }
         val detailViewModel = remember {
             AppDetailViewModel(
@@ -334,6 +342,7 @@ class ListDetailScreenshotTests {
                 installedAppRepository = TestInstalledAppRepository(),
                 sandboxRepository = TestSandboxRepository(),
                 ownPackage = ApplicationProvider.getApplicationContext<Application>().packageName,
+                currentUserId = 0,
                 defaultDispatcher = Dispatchers.Unconfined,
                 uid = DemoApp.WEATHER.uid,
                 packageName = DemoApp.WEATHER.packageName,
@@ -413,7 +422,7 @@ class ListDetailScreenshotTests {
 @Composable
 private fun SearchBar() {
     val viewModel = remember {
-        SearchViewModel(TestSearchRepository(), Dispatchers.Unconfined)
+        SearchViewModel(testSearchRecordsUseCase(Dispatchers.Unconfined), Dispatchers.Unconfined)
     }
     GlobalSearchBar(
         onOpenApp = { _, _, _ -> },
@@ -422,13 +431,4 @@ private fun SearchBar() {
         settingsBadge = false,
         viewModel = viewModel,
     )
-}
-
-/** The demo apps, as installed, with package details for the app whose page is open. */
-private class DemoAppInfoRepository(private val records: DemoRecords) : AppInfoRepository {
-    override suspend fun getAppInfo(packageName: String): AppInfo? = records.appInfo[packageName]
-
-    override suspend fun getAppInfo(packageNames: Collection<String>): Map<String, AppInfo> = records.appInfo.filterKeys { it in packageNames }
-
-    override suspend fun getPackageDetails(packageName: String): PackageDetails? = records.packageDetails.takeIf { packageName == DemoApp.WEATHER.packageName }
 }

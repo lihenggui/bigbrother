@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -162,8 +163,6 @@ internal fun ItemRow(
     val bottom by animateDpAsState(segmentCornerSize(outer = expanded || index == count - 1), spatial, label = "bottom")
     val turn by animateFloatAsState(if (expanded) 180f else 0f, MaterialTheme.motionScheme.fastSpatialSpec(), label = "turn")
     val title = stringResource(item.title)
-    val state = stringResource(if (expanded) R.string.jail_choices_shown else R.string.jail_choices_hidden)
-    val action = stringResource(if (expanded) R.string.jail_hide_choices else R.string.jail_show_choices)
     Surface(
         modifier = modifier.padding(vertical = if (expanded) 6.dp else 0.dp),
         shape = RoundedCornerShape(topStart = top, topEnd = top, bottomStart = bottom, bottomEnd = bottom),
@@ -171,51 +170,9 @@ internal fun ItemRow(
     ) {
         Column {
             Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), verticalAlignment = Alignment.CenterVertically) {
-                Row(
-                    modifier = Modifier
-                        .weight(1f)
-                        .heightIn(min = 72.dp)
-                        .clickable(onClickLabel = action, onClick = { onExpandedChange(!expanded) })
-                        .semantics { stateDescription = state }
-                        .padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                ) {
-                    ShapedIcon(item.icon)
-                    Column(Modifier.weight(1f)) {
-                        TitleWithTag(title, tagged = globalMode != null && choice != null)
-                        val inEffect = unmet.isEmpty() || !mode.isOn
-                        val checking = appOpsChecking && unmet == setOf(SandboxPart.APP_OPS) && mode.isOn
-                        Text(
-                            text = when {
-                                inEffect -> modeLabel(item, mode)
-                                checking -> stringResource(R.string.jail_checking_app_ops)
-                                else -> stringResource(notInEffect(item, unmet))
-                            },
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = if (inEffect || checking) {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            } else {
-                                MaterialTheme.colorScheme.error
-                            },
-                        )
-                    }
-                    Icon(
-                        Icons.Outlined.ExpandMore,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.rotate(turn),
-                    )
-                }
+                ItemRowHeader(item, title, mode, globalMode != null && choice != null, unmet, expanded, turn, appOpsChecking, onExpandedChange)
                 VerticalDivider(Modifier.fillMaxHeight().padding(vertical = 20.dp))
-                Switch(
-                    checked = checked,
-                    onCheckedChange = onCheckedChange,
-                    modifier = Modifier
-                        .padding(horizontal = 16.dp)
-                        .semantics { contentDescription = title },
-                    thumbContent = { SwitchStateIcon(checked) },
-                )
+                ItemSwitch(title, checked, onCheckedChange)
             }
             AnimatedVisibility(
                 visible = expanded,
@@ -228,6 +185,70 @@ internal fun ItemRow(
             }
         }
     }
+}
+
+@Composable
+private fun RowScope.ItemRowHeader(
+    item: SandboxItem,
+    title: String,
+    mode: SandboxMode,
+    tagged: Boolean,
+    unmet: Set<SandboxPart>,
+    expanded: Boolean,
+    turn: Float,
+    appOpsChecking: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+) {
+    val state = stringResource(if (expanded) R.string.jail_choices_shown else R.string.jail_choices_hidden)
+    val action = stringResource(if (expanded) R.string.jail_hide_choices else R.string.jail_show_choices)
+    Row(
+        modifier = Modifier
+            .weight(1f)
+            .heightIn(min = 72.dp)
+            .clickable(onClickLabel = action, onClick = { onExpandedChange(!expanded) })
+            .semantics { stateDescription = state }
+            .padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        ShapedIcon(item.icon)
+        Column(Modifier.weight(1f)) {
+            TitleWithTag(title, tagged = tagged)
+            val inEffect = unmet.isEmpty() || !mode.isOn
+            val checking = appOpsChecking && unmet == setOf(SandboxPart.APP_OPS) && mode.isOn
+            Text(
+                text = when {
+                    inEffect -> modeLabel(item, mode)
+                    checking -> stringResource(R.string.jail_checking_app_ops)
+                    else -> stringResource(notInEffect(item, unmet))
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (inEffect || checking) {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                } else {
+                    MaterialTheme.colorScheme.error
+                },
+            )
+        }
+        Icon(
+            Icons.Outlined.ExpandMore,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.rotate(turn),
+        )
+    }
+}
+
+@Composable
+private fun ItemSwitch(title: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Switch(
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        modifier = Modifier
+            .padding(horizontal = 16.dp)
+            .semantics { contentDescription = title },
+        thumbContent = { SwitchStateIcon(checked) },
+    )
 }
 
 /** Every mode an item can be set to, one to be chosen. */

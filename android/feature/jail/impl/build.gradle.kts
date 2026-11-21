@@ -27,6 +27,7 @@ android {
 
 dependencies {
     implementation(projects.core.data)
+    implementation(projects.core.domain)
     implementation(projects.feature.jail.api)
     implementation(projects.feature.appdetail.api)
 
@@ -36,6 +37,4 @@ dependencies {
     testImplementation(libs.robolectric)
     testImplementation(projects.core.screenshotTesting)
     testImplementation(projects.core.testing)
-    // The top bar the jail has in the app, in the screenshots.
-    testImplementation(projects.feature.search.impl)
 }

@@ -47,9 +47,6 @@
     <string name="status_stopped">Recording stopped</string>
     <string name="daemon_stopped">The recording daemon is not running. Access in the meantime is not recorded.</string>
     <string name="daemon_starting">Starting the recording daemon…</string>
-    <string name="daemon_not_reporting">The daemon was started but is not recording. See /data/adb/big_brother/bbd.log.</string>
-    <string name="daemon_start_failed">Could not start the daemon: %s</string>
-    <string name="module_disabled">The module is disabled. Enable it in the root manager.</string>
     <string name="start_daemon">Start recording</string>
     <string name="install_module">Install module</string>
     <string name="updating_module">Updating the module…</string>

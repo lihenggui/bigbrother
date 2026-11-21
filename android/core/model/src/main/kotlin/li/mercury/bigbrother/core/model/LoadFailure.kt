@@ -16,7 +16,7 @@
 
 package li.mercury.bigbrother.core.model
 
-/** Why records can't be shown. */
+/** Why a load or action could not be completed. */
 sealed interface LoadFailure {
     /** The app has not been granted root. */
     data object NoRoot : LoadFailure
@@ -27,5 +27,29 @@ sealed interface LoadFailure {
     /** The installed daemon predates what this screen asks of it. */
     data object ModuleOutdated : LoadFailure
 
-    data class Other(val message: String) : LoadFailure
+    enum class Operation : LoadFailure {
+        COMMAND_FAILED,
+        BAD_RESPONSE,
+        DATABASE_BUSY,
+        DAEMON_UNAVAILABLE,
+        DESTINATION_MISSING,
+        APP_MISSING,
+        TIMED_OUT,
+        INVALID_PERIOD,
+        MODULE_DISABLED,
+        MODULE_VERSION_UNREADABLE,
+        INSTALLER_MISSING,
+        UNSUPPORTED_ARCHITECTURE,
+        KERNEL_BTF_MISSING,
+        KERNEL_TOO_OLD,
+        MODULE_ARCHIVE_INVALID,
+        DATABASE_INCOMPATIBLE,
+        MODULE_INSTALL_FAILED,
+        MODULE_UPDATE_FAILED,
+        DAEMON_START_FAILED,
+        DAEMON_NOT_REPORTING,
+        FILE_ACCESS_DENIED,
+        INSTALLED_APPS_UNAVAILABLE,
+        LOG_EXPORT_FAILED,
+    }
 }

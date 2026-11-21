@@ -22,26 +22,25 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.mapLatest
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
-import li.mercury.bigbrother.core.common.di.AppPackageName
 import li.mercury.bigbrother.core.data.RecordsException
-import li.mercury.bigbrother.core.data.repository.AccessRepository
-import li.mercury.bigbrother.core.data.repository.AppInfoRepository
 import li.mercury.bigbrother.core.data.repository.UserDataRepository
 import li.mercury.bigbrother.core.data.toLoadFailure
+import li.mercury.bigbrother.core.domain.GetAppRecordsUseCase
+import li.mercury.bigbrother.core.domain.GetAppVisibilityUseCase
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.ui.DataCategory
 import li.mercury.bigbrother.core.ui.dataCategories
-import li.mercury.bigbrother.core.ui.isShown
 import li.mercury.bigbrother.core.ui.readFiles
 
 data class CategoryUiState(
@@ -53,44 +52,38 @@ data class CategoryUiState(
     val failure: LoadFailure? = null,
 )
 
+@OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel(assistedFactory = CategoryViewModel.Factory::class)
 class CategoryViewModel @AssistedInject constructor(
-    @AppPackageName private val ownPackage: String,
-    private val accessRepository: AccessRepository,
-    private val appInfoRepository: AppInfoRepository,
+    private val getAppRecords: GetAppRecordsUseCase,
+    private val getAppVisibility: GetAppVisibilityUseCase,
     private val userDataRepository: UserDataRepository,
-    @Assisted category: DataCategory,
+    @Assisted private val category: DataCategory,
 ) : ViewModel() {
-    private val _uiState = MutableStateFlow(CategoryUiState(category))
-    val uiState: StateFlow<CategoryUiState> = _uiState.asStateFlow()
+    private val refreshes = MutableStateFlow(0L)
 
-    private var loadJob: Job? = null
+    val uiState: StateFlow<CategoryUiState> = refreshes
+        .mapLatest { load() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), CategoryUiState(category))
 
     fun refresh() {
-        loadJob?.cancel()
-        loadJob = viewModelScope.launch {
-            try {
-                val userData = userDataRepository.userData.first()
-                val category = _uiState.value.category
-                val apps = accessRepository.getApps(userData.timeRange)
-                val appInfo = appInfoRepository.getAppInfo(
-                    apps.map { it.packageName }.filter { it.isNotEmpty() }.toSet(),
-                )
-                val shown = apps
-                    .filter { isShown(it, appInfo, userData.showSystemApps, ownPackage) }
-                    .filter { category in it.dataCategories() }
-                    // For files, apps that read some come before those that only looked.
-                    .sortedWith(
-                        compareByDescending<AppSummary> { category == DataCategory.FILES && it.readFiles }
-                            .thenByDescending { it.lastSeen },
-                    )
-                _uiState.update {
-                    it.copy(range = userData.timeRange, apps = shown, appInfo = appInfo, failure = null)
-                }
-            } catch (e: RecordsException) {
-                _uiState.update { it.copy(apps = emptyList(), failure = e.toLoadFailure()) }
-            }
-        }
+        refreshes.update { it + 1 }
+    }
+
+    private suspend fun load(): CategoryUiState = try {
+        val userData = userDataRepository.userData.first()
+        val visibility = getAppVisibility.forSettings(userData)
+        val records = getAppRecords(userData.timeRange)
+        val shown = visibility.visibleApps(records).apps
+            .filter { category in it.dataCategories() }
+            // For files, apps that read some come before those that only looked.
+            .sortedWith(
+                compareByDescending<AppSummary> { category == DataCategory.FILES && it.readFiles }
+                    .thenByDescending { it.lastSeen },
+            )
+        CategoryUiState(category, userData.timeRange, shown, records.appInfo)
+    } catch (e: RecordsException) {
+        uiState.value.copy(apps = emptyList(), failure = e.toLoadFailure())
     }
 
     @AssistedFactory

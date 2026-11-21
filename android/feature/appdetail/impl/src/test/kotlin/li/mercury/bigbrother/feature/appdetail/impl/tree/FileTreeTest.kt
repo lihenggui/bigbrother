@@ -16,33 +16,21 @@
 
 package li.mercury.bigbrother.feature.appdetail.impl.tree
 
-import li.mercury.bigbrother.core.model.Access
 import li.mercury.bigbrother.core.model.Action
-import li.mercury.bigbrother.core.model.Category
+import li.mercury.bigbrother.core.testing.data.testAccess
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class FileTreeTest {
-    private fun access(path: String, action: Action = Action.READ) = Access(
-        category = Category.STORAGE,
-        path = path,
-        action = action,
-        viaProvider = false,
-        items = 0,
-        allowed = 1,
-        denied = 0,
-        lastSeen = 0,
-    )
-
     private val root = "/storage/emulated/0"
 
     @Test
     fun givenChainOfUntouchedFolders_whenBuilt_thenCollapsesIntoOneRow() {
         val tree = buildFileTree(
             listOf(
-                access("$root/DCIM/Camera/a.jpg"),
-                access("$root/DCIM/Camera/b.jpg"),
-                access("$root/Download/x.pdf"),
+                testAccess("$root/DCIM/Camera/a.jpg"),
+                testAccess("$root/DCIM/Camera/b.jpg"),
+                testAccess("$root/Download/x.pdf"),
             ),
         )
         // /storage, /emulated and /0 hold nothing else, so they share a row.
@@ -60,8 +48,8 @@ class FileTreeTest {
     fun givenTouchedFolderInChain_whenBuilt_thenKeepsItsOwnRow() {
         val tree = buildFileTree(
             listOf(
-                access("$root/DCIM", Action.LIST),
-                access("$root/DCIM/Camera/a.jpg"),
+                testAccess("$root/DCIM", Action.LIST),
+                testAccess("$root/DCIM/Camera/a.jpg"),
             ),
         )
         val dcim = tree.single().children.single()
@@ -77,8 +65,8 @@ class FileTreeTest {
     fun givenSeveralActionsOnOnePath_whenBuilt_thenShareOneNode() {
         val tree = buildFileTree(
             listOf(
-                access("$root/notes.txt", Action.PROBE),
-                access("$root/notes.txt", Action.READ),
+                testAccess("$root/notes.txt", Action.PROBE),
+                testAccess("$root/notes.txt", Action.READ),
             ),
         )
         val file = tree.single().children.single()
@@ -90,10 +78,10 @@ class FileTreeTest {
     fun givenFoldersAndFiles_whenBuilt_thenFoldersFirstAndCaseIgnored() {
         val tree = buildFileTree(
             listOf(
-                access("$root/zeta.txt"),
-                access("$root/Alpha.txt"),
-                access("$root/music/a.mp3"),
-                access("$root/music/b.mp3"),
+                testAccess("$root/zeta.txt"),
+                testAccess("$root/Alpha.txt"),
+                testAccess("$root/music/a.mp3"),
+                testAccess("$root/music/b.mp3"),
             ),
         )
         assertEquals(listOf("music", "Alpha.txt", "zeta.txt"), tree.single().children.map { it.name })
@@ -102,7 +90,7 @@ class FileTreeTest {
     @Test
     fun givenPathsOnTwoVolumes_whenBuilt_thenEachVolumeIsARoot() {
         val tree = buildFileTree(
-            listOf(access("$root/a.txt"), access("$root/b.txt"), access("/storage/1A2B-3C4D/c.txt")),
+            listOf(testAccess("$root/a.txt"), testAccess("$root/b.txt"), testAccess("/storage/1A2B-3C4D/c.txt")),
         )
         assertEquals("/storage", tree.single().name)
         assertEquals(listOf("1A2B-3C4D", "emulated/0"), tree.single().children.map { it.name })

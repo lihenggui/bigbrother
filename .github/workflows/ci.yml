@@ -73,12 +73,18 @@ jobs:
         working-directory: android
         run: ./gradlew :app:lintRelease
 
-      - name: Upload the lint report
+      - name: Check Kotlin test names
+        working-directory: android
+        run: ./gradlew lintDebug -PlintTestNamesOnly
+
+      - name: Upload the lint reports
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: lint-report
-          path: android/app/build/reports/lint-results-release.html
+          path: |
+            android/app/build/reports/lint-results-release.html
+            android/**/build/reports/lint-results-debug.html
           if-no-files-found: ignore
 
       # Signed with the debug key; release builds come from release.yml.

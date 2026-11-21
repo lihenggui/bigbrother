@@ -68,11 +68,10 @@ class BbdAccessTest {
     }
 
     @Test
-    fun givenMalformedApps_whenRead_thenReportsCommandFailure() = runTest {
+    fun givenMalformedApps_whenRead_thenReportsBadResponse() = runTest {
         val source = RootShellBbdDataSource(TestBbdRootShell(bbdFixture("apps-malformed")), Dispatchers.Unconfined)
 
-        val failure = assertFailsWith<RecordsException.CommandFailed> { source.getApps(TimeRange.ALL) }
-        assertContains(failure.message.orEmpty(), "unexpected output from bbd:")
+        assertFailsWith<RecordsException.BadResponse> { source.getApps(TimeRange.ALL) }
     }
 
     @Test

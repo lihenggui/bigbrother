@@ -26,6 +26,7 @@ import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.bbd.BbdDataSource
 import li.mercury.bigbrother.core.data.bbd.asExternalModel
+import li.mercury.bigbrother.core.data.toLoadFailure
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxStatus
@@ -110,9 +111,15 @@ internal class RootSandboxRepository @Inject constructor(
     }
 
     override suspend fun releaseAll(): Int {
-        val answer = bbd.disableAllSandboxes()
+        val answer = try {
+            bbd.disableAllSandboxes()
+        } catch (e: RecordsException.BadResponse) {
+            // The command ran and may have released apps even though the count is unreadable.
+            refreshAfter("disable --all")
+            throw e
+        }
         refreshAfter("disable --all")
-        return answer.getOrThrow().failedCount
+        return answer.failedCount
     }
 
     override suspend fun setItems(packageName: String, userId: Int, changes: Map<SandboxItem, SandboxMode?>) {
@@ -142,8 +149,7 @@ internal class RootSandboxRepository @Inject constructor(
         try {
             refresh()
         } catch (e: RecordsException) {
-            // The reason is left out: the daemon's error can name packages.
-            Timber.w("bbd sandbox %s made, lists not read again: %s", command, e.javaClass.simpleName)
+            Timber.w("bbd sandbox %s made, lists not read again: %s", command, e.toLoadFailure())
         }
     }
 }

@@ -166,15 +166,15 @@ data class AppSummary(
      * trace is recorded under the app's own uid.
      */
     val isUnattributedIsolated: Boolean
-        get() = packageName.isEmpty() && appIdOf(uid) >= FIRST_ISOLATED_APP_ID
+        get() = isUnattributedIsolated(uid, packageName)
 
     fun count(category: Category): Int = counts[category] ?: 0
-
-    private companion object {
-        /** Isolated processes, with or without an app zygote, have app ids from here up. */
-        const val FIRST_ISOLATED_APP_ID = 90_000
-    }
 }
+
+/** Isolated processes, with or without an app zygote, have app ids from here up. */
+private const val FIRST_ISOLATED_APP_ID = 90_000
+
+private fun isUnattributedIsolated(uid: Int, packageName: String): Boolean = packageName.isEmpty() && appIdOf(uid) >= FIRST_ISOLATED_APP_ID
 
 /** One path an app touched, aggregated over the selected time range. */
 data class Access(
@@ -254,6 +254,9 @@ data class TimelineEntry(
      */
     val subjects: List<SubjectCount> = emptyList(),
 ) {
+    /** Whether the daemon could not trace this isolated process to an app. */
+    val isUnattributedIsolated: Boolean get() = isUnattributedIsolated(uid, packageName)
+
     /** Whether the only file accesses were listings, probes or watches: nothing was read. */
     val onlyLookedForFiles: Boolean get() = category == Category.STORAGE && filesRead == 0
 

@@ -28,6 +28,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.lifecycle.SavedStateHandle
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
+import li.mercury.bigbrother.core.domain.GetAppVisibilityUseCase
 import li.mercury.bigbrother.core.testing.repository.TestInstalledAppRepository
 import li.mercury.bigbrother.core.testing.repository.TestSandboxRepository
 import li.mercury.bigbrother.core.testing.repository.TestUserDataRepository
@@ -54,9 +55,8 @@ class AddAppsDialogTest {
                 apps = listOf(installed(10187, "com.example.weather", "Weather"), installed(10156, "com.example.notes", "Notes")),
             ),
             sandboxRepository = sandboxRepository,
-            userDataRepository = TestUserDataRepository(),
+            getAppVisibility = GetAppVisibilityUseCase(TestUserDataRepository(), "li.mercury.bigbrother"),
             savedStateHandle = SavedStateHandle(),
-            ownPackage = "li.mercury.bigbrother",
             defaultDispatcher = filtering,
         )
         composeTestRule.setContent { AddAppsDialog(onDismiss = {}, onIsolate = {}, viewModel = viewModel) }

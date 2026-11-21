@@ -20,7 +20,12 @@ import androidx.lifecycle.SavedStateHandle
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import li.mercury.bigbrother.core.data.RecordsException
+import li.mercury.bigbrother.core.data.repository.InstalledAppRepository
+import li.mercury.bigbrother.core.domain.GetAppVisibilityUseCase
+import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.UserData
 import li.mercury.bigbrother.core.testing.MainDispatcherRule
 import li.mercury.bigbrother.core.testing.repository.TestInstalledAppRepository
@@ -29,6 +34,7 @@ import li.mercury.bigbrother.core.testing.repository.TestUserDataRepository
 import org.junit.Rule
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -63,11 +69,58 @@ class AddAppsViewModelTest {
         return AddAppsViewModel(
             installedAppRepository = installedAppRepository,
             sandboxRepository = sandboxRepository,
-            userDataRepository = TestUserDataRepository(UserData(showSystemApps = showSystemApps)),
+            getAppVisibility = GetAppVisibilityUseCase(TestUserDataRepository(UserData(showSystemApps = showSystemApps)), OWN_PACKAGE),
             savedStateHandle = savedStateHandle,
-            ownPackage = OWN_PACKAGE,
             defaultDispatcher = mainDispatcherRule.testDispatcher,
         )
+    }
+
+    @Test
+    fun givenUncollectedPicker_whenCleared_thenReadsInstalledAppsOnlyOnCollection() = runTest {
+        var reads = 0
+        val repository = object : InstalledAppRepository by installedAppRepository {
+            override suspend fun getInstalledApps() = installedAppRepository.getInstalledApps().also { reads++ }
+        }
+        sandboxRepository.refresh()
+        val viewModel = AddAppsViewModel(
+            installedAppRepository = repository,
+            sandboxRepository = sandboxRepository,
+            getAppVisibility = GetAppVisibilityUseCase(TestUserDataRepository(), OWN_PACKAGE),
+            savedStateHandle = SavedStateHandle(),
+            defaultDispatcher = mainDispatcherRule.testDispatcher,
+        )
+
+        viewModel.clear()
+        runCurrent()
+
+        assertEquals(0, reads)
+        assertNull(viewModel.uiState.value.apps)
+
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
+        runCurrent()
+
+        assertEquals(1, reads)
+        assertEquals(listOf("Notes", "Weather"), viewModel.uiState.value.apps?.map { it.info.label })
+    }
+
+    @Test
+    fun givenInstalledAppsReadFailure_whenOpeningPicker_thenStateShowsFailureAndRetryRecovers() = runTest {
+        installedAppRepository.failure = RecordsException.CommandFailed(LoadFailure.Operation.INSTALLED_APPS_UNAVAILABLE)
+        val viewModel = viewModel(sandboxLoaded = false)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
+        runCurrent()
+
+        assertEquals(LoadFailure.Operation.INSTALLED_APPS_UNAVAILABLE, viewModel.uiState.value.failure)
+        assertNull(viewModel.uiState.value.apps)
+        assertTrue(viewModel.chosen().isEmpty())
+
+        installedAppRepository.failure = null
+        sandboxRepository.refresh()
+        viewModel.retry()
+        runCurrent()
+
+        assertNull(viewModel.uiState.value.failure)
+        assertEquals(listOf("Notes", "Weather"), viewModel.uiState.value.apps?.map { it.info.label })
     }
 
     @Test

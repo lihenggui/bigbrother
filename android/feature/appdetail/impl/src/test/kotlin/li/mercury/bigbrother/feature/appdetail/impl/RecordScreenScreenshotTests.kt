@@ -79,6 +79,15 @@ class RecordScreenScreenshotTests {
     }
 
     @Test
+    fun givenSensorSessionsReadFailure_whenShown_thenShowsRetryWithHistory() {
+        capturePhone("SensorsRecordSessionsFailure") {
+            Record(DemoApp.STEP_COUNTER, SENSORS) {
+                it.copy(sensorSessions = null, sensorSessionsFailure = LoadFailure.Operation.DAEMON_UNAVAILABLE)
+            }
+        }
+    }
+
+    @Test
     fun givenRecordOpening_whenShown_thenShowsLoadingIndicator() {
         capturePhone("RecordLoading") { Record(DemoApp.STEP_COUNTER, SENSORS) { RecordUiState(appInfo = it.appInfo) } }
     }
@@ -104,7 +113,7 @@ class RecordScreenScreenshotTests {
     @Test
     fun givenHistoryFailed_whenShown_thenOffersToRetry() {
         capturePhone("RecordHistoryFailure") {
-            Record(DemoApp.KEYBOARD, CLIPBOARD) { it.copy(periods = null, historyFailure = LoadFailure.Other("database is locked")) }
+            Record(DemoApp.KEYBOARD, CLIPBOARD) { it.copy(periods = null, historyFailure = LoadFailure.Operation.DATABASE_BUSY) }
         }
     }
 
