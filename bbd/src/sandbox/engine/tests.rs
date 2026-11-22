@@ -568,7 +568,13 @@ fn check_status_and_errors(ask: &mut impl FnMut(&str) -> serde_json::Value) {
         serde_json::json!({
             "ok": true, "gate": false, "appops": false, "network": false,
             "net_record": false, "dns_names": false, "traffic": false,
-            "hook": {"android_id": false, "app_list": false, "uri_grants": false, "ad_id": false},
+            "hook": {
+                "android_id": false, "app_list": false, "uri_grants": false, "ad_id": false,
+                "health": {
+                    "android_id_hook": "not_loaded", "app_list_hook": "not_loaded",
+                    "uri_grants_hook": "not_loaded", "ad_id_hook": "not_loaded",
+                },
+            },
             "admitted": 0, "failed": 0, "new_apps_stopped": 0, "new_apps_pending": 0,
             "new_apps_held": false, "new_apps_failed": 0, "hold_p95_us": 0,
         })

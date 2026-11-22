@@ -62,6 +62,7 @@ import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndica
 import li.mercury.bigbrother.core.designsystem.component.SegmentedSwitchRow
 import li.mercury.bigbrother.core.designsystem.component.ShapedIcon
 import li.mercury.bigbrother.core.designsystem.icon.CageIcons
+import li.mercury.bigbrother.core.model.SandboxHookState
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxStatus
@@ -239,6 +240,7 @@ private fun LazyListScope.globalItemsSection(
                     choice = mode,
                     globalMode = null,
                     unmet = state.status?.unmet(item).orEmpty(),
+                    hookHealth = state.status?.hookHealth.orEmpty(),
                     expanded = expanded == item,
                     onExpandedChange = { open -> onExpand(item.takeIf { open }) },
                     onCheckedChange = { on -> onSetOn(item, on) },
@@ -296,7 +298,18 @@ private fun ReleaseAllDialog(isolated: Int, onDismiss: () -> Unit, onConfirm: ()
 private fun StatusRow(status: SandboxStatus?, holdExpected: Boolean) {
     val problems = buildList {
         if (status != null && !status.gate) add(stringResource(R.string.jail_status_gate_missing))
-        if (status != null && (!status.androidIdHook || !status.appListHook)) add(stringResource(R.string.jail_status_hook_missing))
+        if (status != null) {
+            val unmet = status.unmetHooks()
+            if (unmet.isNotEmpty()) {
+                val text = when (hookFailure(unmet, status.hookHealth)) {
+                    SandboxHookState.NOT_LOADED -> R.string.jail_status_hook_missing
+                    SandboxHookState.INCOMPATIBLE -> R.string.jail_hook_incompatible
+                    SandboxHookState.DEGRADED -> R.string.jail_hook_degraded
+                    else -> R.string.jail_hook_unavailable
+                }
+                add(stringResource(text))
+            }
+        }
         if (status != null && !status.appOps) add(stringResource(R.string.jail_status_appops_missing))
         if (status != null && !status.network) add(stringResource(R.string.jail_status_network_missing))
         val pending = status?.newAppsPending ?: 0

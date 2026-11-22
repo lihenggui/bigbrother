@@ -31,7 +31,7 @@ class SandboxRulesTest {
             "com.android.server.pm.PackageSetting",
             "int",
         )
-        assertEquals(FilterArguments(callingUid = 0, target = 2), locateFilterArguments(types))
+        assertEquals(FilterArguments(callingUid = 0, target = 2), locateFilterArguments(HookSignature("boolean", types)))
     }
 
     @Test
@@ -43,7 +43,7 @@ class SandboxRulesTest {
             "com.android.server.pm.pkg.PackageStateInternal",
             "int",
         )
-        assertEquals(FilterArguments(callingUid = 1, target = 3), locateFilterArguments(types))
+        assertEquals(FilterArguments(callingUid = 1, target = 3), locateFilterArguments(HookSignature("boolean", types)))
     }
 
     @Test
@@ -54,14 +54,25 @@ class SandboxRulesTest {
             "com.android.server.pm.PackageSetting",
             "int",
         )
-        assertEquals(FilterArguments(callingUid = 0, target = 2), locateFilterArguments(types))
+        assertEquals(FilterArguments(callingUid = 0, target = 2), locateFilterArguments(HookSignature("boolean", types)))
     }
 
     @Test
-    fun givenSignatureWithoutTargetOrUid_whenLocated_thenNull() {
-        assertNull(locateFilterArguments(listOf("int", "java.lang.Object", "int")))
-        assertNull(locateFilterArguments(listOf("com.android.server.pm.PackageSetting", "long")))
-        assertNull(locateFilterArguments(emptyList()))
+    fun givenLeadingIntegerOrWrongReturnType_whenLocatingFilterArguments_thenRejectsSignature() {
+        val known = listOf("com.android.server.pm.snapshot.PackageDataSnapshot", "int", "java.lang.Object", "com.android.server.pm.pkg.PackageStateInternal", "int")
+        assertNull(locateFilterArguments(HookSignature("boolean", listOf("int") + known)))
+        assertNull(locateFilterArguments(HookSignature("int", known)))
+    }
+
+    @Test
+    fun givenUnknownSettingsOverloads_whenValidatingSignatures_thenRejectsThem() {
+        val call = HookSignature("android.os.Bundle", listOf("android.content.AttributionSource", "java.lang.String", "java.lang.String", "java.lang.String", "android.os.Bundle"))
+        val query = HookSignature("android.database.Cursor", listOf("android.content.AttributionSource", "android.net.Uri", "java.lang.String[]", "android.os.Bundle", "android.os.ICancellationSignal"))
+        assertTrue(isSettingsCall(call))
+        assertTrue(isSettingsQuery(query))
+        assertFalse(isSettingsCall(call.copy(returns = "java.lang.Object")))
+        assertFalse(isSettingsCall(call.copy(parameters = call.parameters + "int")))
+        assertFalse(isSettingsQuery(query.copy(parameters = listOf("android.net.Uri") + query.parameters)))
     }
 
     @Test
@@ -107,10 +118,10 @@ class SandboxRulesTest {
 
     @Test
     fun givenSettingsCallArguments_whenAndroidIdRead_thenRecognised() {
-        assertTrue(isAndroidIdRequest(listOf(null, "settings", "GET_secure", "android_id", null)))
-        assertFalse(isAndroidIdRequest(listOf(null, "settings", "GET_secure", "bluetooth_name", null)))
-        assertFalse(isAndroidIdRequest(listOf(null, "settings", "GET_global", "android_id", null)))
-        assertFalse(isAndroidIdRequest(emptyList()))
+        assertTrue(isAndroidIdRequest("settings", "GET_secure", "android_id"))
+        assertFalse(isAndroidIdRequest("settings", "GET_secure", "bluetooth_name"))
+        assertFalse(isAndroidIdRequest("settings", "GET_global", "android_id"))
+        assertFalse(isAndroidIdRequest("other", "GET_secure", "android_id"))
     }
 
     @Test
@@ -150,14 +161,14 @@ class SandboxRulesTest {
         val cases = protocolCases(
             "sandbox-status.txt",
             types = setOf("line", "read"),
-            keys = setOf("android_id", "app_list", "uri_grants", "ad_id", "api", "list", "boot", "in_place", "now"),
+            keys = setOf("android_id", "app_list", "uri_grants", "ad_id", "api", "list", "boot", "ack", "now"),
         )
         for (case in cases.ofType("line")) {
             val text = sandboxStatusText(
-                androidId = case.get("android_id") == "1",
-                appList = case.get("app_list") == "1",
-                uriGrants = case.get("uri_grants") == "1",
-                adId = case.get("ad_id") == "1",
+                androidId = writtenState(case.line, "android_id"),
+                appList = writtenState(case.line, "app_list"),
+                uriGrants = writtenState(case.line, "uri_grants"),
+                adId = writtenState(case.line, "ad_id"),
                 api = case.get("api")!!.toInt(),
                 listReadable = case.get("list") == "1",
                 bootId = case.get("boot")!!,
@@ -166,22 +177,26 @@ class SandboxRulesTest {
         }
     }
 
+    private fun writtenState(text: String, key: String): HookState = HookState.entries.single { "${key}_health=${it.id}" in text.lineSequence() }
+
     @Test
-    fun givenEveryKnownShapeOfACheckByPackage_whenTheAdIdIsChecked_thenThePackageAndUserAreFound() {
-        val expected = PackageCheck("com.example", 10)
-        // Android 12, 13, 14, and 15 on.
-        assertEquals(expected, adIdCheckByPackage(listOf(AD_ID_PERMISSION, "com.example", 10)))
-        assertEquals(expected, adIdCheckByPackage(listOf("com.example", AD_ID_PERMISSION, 10)))
-        assertEquals(expected, adIdCheckByPackage(listOf("com.example", AD_ID_PERMISSION, 0, 10)))
-        assertEquals(expected, adIdCheckByPackage(listOf("com.example", AD_ID_PERMISSION, "default:0", 10)))
+    fun givenKnownPermissionChecks_whenLocatingArguments_thenFindsSubjectAndPermission() {
+        assertEquals(PermissionArguments(1, 0, 2), locatePackagePermission(HookSignature("int", listOf("java.lang.String", "java.lang.String", "int"))))
+        assertEquals(PermissionArguments(1, 0, 3), locatePackagePermission(HookSignature("int", listOf("java.lang.String", "java.lang.String", "int", "int"))))
+        assertEquals(PermissionArguments(1, 0, 3), locatePackagePermission(HookSignature("int", listOf("java.lang.String", "java.lang.String", "java.lang.String", "int"))))
+        assertEquals(PermissionArguments(1, 0), locateUidPermission(HookSignature("int", listOf("int", "java.lang.String", "int"))))
     }
 
     @Test
-    fun givenEveryKnownShapeOfACheckByUid_whenTheAdIdIsChecked_thenTheUidIsFound() {
-        // Android 12, 13, and 14 on.
-        assertEquals(10123, adIdCheckByUid(listOf(AD_ID_PERMISSION, 10123)))
-        assertEquals(10123, adIdCheckByUid(listOf(10123, AD_ID_PERMISSION)))
-        assertEquals(10123, adIdCheckByUid(listOf(10123, AD_ID_PERMISSION, 0)))
+    fun givenUnknownIdentifierOverloads_whenValidatingSignatures_thenRejectsThem() {
+        val provider = HookSignature("android.app.ContentProviderHolder", listOf("android.app.IApplicationThread", "java.lang.String", "java.lang.String", "int", "boolean"))
+        val bind = HookSignature("int", listOf("android.app.IApplicationThread", "android.os.IBinder", "android.content.Intent", "java.lang.String", "android.app.IServiceConnection", "int", "java.lang.String", "java.lang.String", "int"))
+        assertTrue(isIdentifierProvider(provider))
+        assertTrue(isIdentifierBind(bind))
+        assertFalse(isIdentifierProvider(provider.copy(returns = "int")))
+        assertFalse(isIdentifierBind(bind.copy(parameters = bind.parameters + "android.content.Intent")))
+        assertNull(locateUidPermission(HookSignature("int", listOf("int", "int", "java.lang.String", "int"))))
+        assertNull(locatePackagePermission(HookSignature("boolean", listOf("java.lang.String", "java.lang.String", "int"))))
     }
 
     @Test
@@ -224,11 +239,5 @@ class SandboxRulesTest {
         assertTrue(isIdProvider("com.miui.idprovider"))
         assertFalse(isIdProvider("settings"))
         assertFalse(isIdProvider("com.example.provider"))
-    }
-
-    @Test
-    fun givenAnotherPermission_whenChecked_thenItIsNotLookedAt() {
-        assertNull(adIdCheckByPackage(listOf("com.example", "android.permission.CAMERA", "default:0", 0)))
-        assertNull(adIdCheckByUid(listOf(10123, "android.permission.CAMERA", 0)))
     }
 }

@@ -49,6 +49,7 @@ use std::{
 
 use anyhow::Context as _;
 
+use super::answers::{HookHealth, HookState};
 use super::{
     Effect, Entry, Global, HookStatus, Resumed, Snapshot, Status, items::Settings, items_of,
 };
@@ -149,11 +150,13 @@ impl Identity {
             return None;
         }
         let comm = fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
-        (comm.trim() == "system_server" && text.lines().any(|l| l == "list=1")).then_some(text)
+        (comm.trim() == "system_server").then_some(text)
     }
 
     fn acknowledged(&self, text: &str) -> bool {
-        text.lines().find_map(|l| l.strip_prefix("revision=")) == Some(self.revision.as_str())
+        text.lines().any(|line| line == "list=1")
+            && text.lines().find_map(|l| l.strip_prefix("revision="))
+                == Some(self.revision.as_str())
     }
 
     /// Write the list with `line` as the line of `uid`, or without one.
@@ -164,7 +167,9 @@ impl Identity {
             Some(line) => listed.insert(uid, line),
             None => listed.remove(&uid),
         };
-        let active = self.live_status().is_some();
+        let active = self
+            .live_status()
+            .is_some_and(|text| text.lines().any(|line| line == "list=1"));
         let revision = self.write_list(&listed)?;
         self.revision = revision;
         if active {
@@ -317,33 +322,46 @@ impl Effect for Identity {
         let boot = fs::read_to_string(BOOT_ID).unwrap_or_default();
         status.hook = self
             .live_status()
-            .filter(|text| self.acknowledged(text))
-            .map(|text| parse_status(&text, boot.trim()))
+            .map(|text| parse_status(&text, boot.trim(), self.acknowledged(&text)))
             .unwrap_or_default();
     }
 }
 
-/// What the hook wrote about itself (`sandboxStatusText` in
-/// `SandboxRules.kt`): `android_id=1`, `app_list=1`, `uri_grants=1`,
-/// `ad_id=1`, `list=1`, `boot=<id>`,
-/// one per line. Nothing is in place unless it was written in this boot (a
-/// file left from an earlier one says what was then) and the hook could
-/// read the list.
-fn parse_status(text: &str, boot_id: &str) -> HookStatus {
+/// A live hook can report installation errors before it acknowledges a list.
+fn parse_status(text: &str, boot_id: &str, acknowledged: bool) -> HookStatus {
     let value = |key: &str| {
         text.lines()
             .filter_map(|line| line.split_once('='))
             .find(|(name, _)| name.trim() == key)
             .map(|(_, value)| value.trim())
     };
-    let on = |key: &str| value(key) == Some("1");
-    let current = !boot_id.is_empty() && value("boot") == Some(boot_id) && on("list");
-    HookStatus {
-        android_id: current && on("android_id"),
-        app_list: current && on("app_list"),
-        uri_grants: current && on("uri_grants"),
-        ad_id: current && on("ad_id"),
+    if boot_id.is_empty() || value("boot") != Some(boot_id) {
+        return HookStatus::default();
     }
+
+    let ready = acknowledged && value("list") == Some("1");
+    let state = |key: &str| {
+        let installed = match value(&format!("{key}_health")) {
+            Some("working") => HookState::Working,
+            Some("degraded") => HookState::Degraded,
+            Some(_) => HookState::Incompatible,
+            // A current legacy writer has loaded the scope, even if its hook did not attach.
+            None if value(key) == Some("1") => HookState::Working,
+            None => HookState::Incompatible,
+        };
+        if installed == HookState::Working && !ready {
+            HookState::Degraded
+        } else {
+            installed
+        }
+    };
+    HookHealth {
+        android_id_hook: state("android_id"),
+        app_list_hook: state("app_list"),
+        uri_grants_hook: state("uri_grants"),
+        ad_id_hook: state("ad_id"),
+    }
+    .into()
 }
 
 #[cfg(test)]
@@ -583,15 +601,22 @@ mod tests {
             .chain(crate::protocol_cases::of(&cases, &["read"]))
         {
             let now = case.get("now").or(case.get("boot")).unwrap();
-            let in_place: Vec<&str> = case.get("in_place").unwrap().split('/').collect();
+            let expected = |key: &str| match case.get(key).unwrap() {
+                "working" => HookState::Working,
+                "incompatible" => HookState::Incompatible,
+                "degraded" => HookState::Degraded,
+                "not_loaded" => HookState::NotLoaded,
+                state => panic!("unexpected hook state {state}"),
+            };
             assert_eq!(
-                parse_status(&case.line, now),
-                HookStatus {
-                    android_id: in_place.contains(&"android_id"),
-                    app_list: in_place.contains(&"app_list"),
-                    uri_grants: in_place.contains(&"uri_grants"),
-                    ad_id: in_place.contains(&"ad_id"),
-                },
+                parse_status(&case.line, now, case.get("ack") != Some("0")),
+                HookHealth {
+                    android_id_hook: expected("android_id"),
+                    app_list_hook: expected("app_list"),
+                    uri_grants_hook: expected("uri_grants"),
+                    ad_id_hook: expected("ad_id"),
+                }
+                .into(),
                 "{:?}",
                 case.line
             );

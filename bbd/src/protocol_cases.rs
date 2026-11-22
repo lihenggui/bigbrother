@@ -158,7 +158,7 @@ pub fn sandbox_status() -> Vec<Case> {
             "api",
             "list",
             "boot",
-            "in_place",
+            "ack",
             "now",
         ],
     )

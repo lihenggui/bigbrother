@@ -93,6 +93,10 @@
     <string name="jail_show_choices">Show choices</string>
     <string name="jail_hide_choices">Hide choices</string>
     <string name="jail_not_in_effect_hook">Not in effect: enable System Framework in LSPosed and restart</string>
+    <string name="jail_hook_unavailable">System Framework restrictions unavailable</string>
+    <string name="jail_hook_incompatible">Not supported on this Android version</string>
+    <string name="jail_hook_degraded">Stopped working. Restart the device.</string>
+    <string name="jail_hook_status_unknown">The status of the System Framework restrictions is unknown.</string>
     <string name="jail_not_in_effect_mounts">Not in effect: storage isolation is not running</string>
     <string name="jail_checking_app_ops">Checking Android restriction…</string>
     <string name="jail_not_in_effect_app_ops">Restriction unavailable. The app may still have access.</string>

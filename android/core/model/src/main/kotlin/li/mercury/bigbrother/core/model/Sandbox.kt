@@ -167,6 +167,19 @@ enum class SandboxPart(val id: String) {
     }
 }
 
+/** Health reported by system_server for each sandbox hook part. */
+enum class SandboxHookState(val id: String) {
+    NOT_LOADED("not_loaded"),
+    INCOMPATIBLE("incompatible"),
+    DEGRADED("degraded"),
+    WORKING("working"),
+    ;
+
+    companion object {
+        fun fromId(id: String): SandboxHookState? = entries.firstOrNull { it.id == id }
+    }
+}
+
 /** What an item does to the app. */
 enum class SandboxMode(val id: String) {
     /** The app gets what the system gives it. */
@@ -212,6 +225,7 @@ data class SandboxedApp(
     val recordingSince: Long? = null,
     /** Whether the daemon is still checking this app's Android restrictions. */
     val appOpsChecking: Boolean = false,
+    val hookHealth: Map<SandboxPart, SandboxHookState> = emptyMap(),
 ) {
     val userId: Int get() = userIdOf(uid)
 
@@ -253,6 +267,7 @@ data class SandboxStatus(
     val traffic: Boolean = false,
     /** Newly installed apps allowed to start after automatic isolation failed. */
     val newAppsFailed: Int = 0,
+    val hookHealth: Map<SandboxPart, SandboxHookState> = emptyMap(),
 ) {
     /** The parts of [item] not in place on this device, for every app. */
     fun unmet(item: SandboxItem): Set<SandboxPart> = item.parts.filterTo(mutableSetOf()) { part ->

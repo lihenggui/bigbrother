@@ -301,6 +301,7 @@ mod tests {
         print_list(
             &mut out,
             &Listed {
+                hook_health: Default::default(),
                 apps: vec![
                     ListedApp {
                         uid: 10100,
@@ -334,7 +335,14 @@ mod tests {
             },
         )
         .unwrap();
-        print_list(&mut out, &Listed { apps: vec![] }).unwrap();
+        print_list(
+            &mut out,
+            &Listed {
+                apps: vec![],
+                hook_health: Default::default(),
+            },
+        )
+        .unwrap();
         assert_eq!(
             String::from_utf8(out).unwrap(),
             "Sandbox enabled for com.shared.one (uid 10200).\n\

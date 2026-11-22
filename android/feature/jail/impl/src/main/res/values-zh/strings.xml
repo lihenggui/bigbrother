@@ -76,6 +76,10 @@
     <string name="jail_show_choices">显示选项</string>
     <string name="jail_hide_choices">隐藏选项</string>
     <string name="jail_not_in_effect_hook">未生效：请在 LSPosed 中启用系统框架并重启</string>
+    <string name="jail_hook_unavailable">系统框架限制不可用</string>
+    <string name="jail_hook_incompatible">当前 Android 版本不支持此限制</string>
+    <string name="jail_hook_degraded">限制已停止生效，请重启设备。</string>
+    <string name="jail_hook_status_unknown">无法确定系统框架限制的状态。</string>
     <string name="jail_not_in_effect_mounts">未生效：存储隔离未运行</string>
     <string name="jail_checking_app_ops">正在验证 Android 限制…</string>
     <string name="jail_not_in_effect_app_ops">限制未生效，应用仍可能访问此数据。</string>

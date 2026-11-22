@@ -29,6 +29,7 @@ import androidx.compose.ui.test.onNodeWithText
 import li.mercury.bigbrother.core.designsystem.theme.BigBrotherTheme
 import li.mercury.bigbrother.core.model.InstalledApp
 import li.mercury.bigbrother.core.model.LoadFailure
+import li.mercury.bigbrother.core.model.SandboxHookState
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxPart
@@ -91,7 +92,7 @@ class JailScreenScreenshotTests {
     @Test
     fun givenHookNotActive_whenShown_thenSaysWhatIsNotInEffect() {
         composeTestRule.captureForDevice("phone", DefaultTestDevices.PHONE.spec, "JailHookMissing") {
-            Jail(isolatedApps(), SandboxStatus(gate = true, appOps = true, androidIdHook = false, appListHook = false, uriGrantsHook = false, adIdHook = false))
+            Jail(isolatedApps(), SandboxStatus(gate = true, appOps = true, androidIdHook = false, appListHook = false, uriGrantsHook = false, adIdHook = false, hookHealth = HOOKS_NOT_LOADED))
         }
     }
 
@@ -119,6 +120,7 @@ class JailScreenScreenshotTests {
                     SandboxItem.DEVICE_IDS to setOf(SandboxPart.ANDROID_ID_HOOK),
                     SandboxItem.STORAGE to setOf(SandboxPart.APP_OPS),
                 ),
+                hookHealth = HOOKS_NOT_LOADED,
                 expanded = null,
             )
         }
@@ -133,6 +135,7 @@ class JailScreenScreenshotTests {
                     SandboxItem.DEVICE_IDS to setOf(SandboxPart.ANDROID_ID_HOOK),
                     SandboxItem.STORAGE to setOf(SandboxPart.APP_OPS),
                 ),
+                hookHealth = HOOKS_NOT_LOADED,
                 expanded = null,
             )
         }
@@ -468,6 +471,7 @@ class JailScreenScreenshotTests {
     @Composable
     private fun JailApp(
         unmet: Map<SandboxItem, Set<SandboxPart>> = emptyMap(),
+        hookHealth: Map<SandboxPart, SandboxHookState> = emptyMap(),
         expanded: SandboxItem? = SandboxItem.LOCATION,
         state: (JailAppUiState) -> JailAppUiState = { it },
     ) {
@@ -477,7 +481,7 @@ class JailScreenScreenshotTests {
             state = state(
                 JailAppUiState(
                     packageName = app.packageName,
-                    app = sandboxedApp(app, clock.todayAt(9, 12) - 2 * 24 * 60 * 60L, settings).copy(unmet = unmet),
+                    app = sandboxedApp(app, clock.todayAt(9, 12) - 2 * 24 * 60 * 60L, settings).copy(unmet = unmet, hookHealth = hookHealth),
                     info = app.appInfo(demoLocale()),
                     requested = setOf("android.permission.ACCESS_FINE_LOCATION", "android.permission.ACCESS_COARSE_LOCATION"),
                     loading = false,
@@ -524,7 +528,9 @@ class JailScreenScreenshotTests {
             dnsNames = true,
             traffic = true,
         )
-        val NOTHING_IN_PLACE = SandboxStatus(gate = false, appOps = false, androidIdHook = false, appListHook = false, uriGrantsHook = false, adIdHook = false)
+        val HOOKS_NOT_LOADED = setOf(SandboxPart.ANDROID_ID_HOOK, SandboxPart.APP_LIST_HOOK, SandboxPart.URI_GRANTS_HOOK, SandboxPart.AD_ID_HOOK)
+            .associateWith { SandboxHookState.NOT_LOADED }
+        val NOTHING_IN_PLACE = SandboxStatus(gate = false, appOps = false, androidIdHook = false, appListHook = false, uriGrantsHook = false, adIdHook = false, hookHealth = HOOKS_NOT_LOADED)
 
         /** An Android user other than the one the app runs as: a work profile. */
         const val OTHER_USER = 10
