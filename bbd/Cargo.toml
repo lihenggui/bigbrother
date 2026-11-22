@@ -29,6 +29,9 @@ bb-ebpf = { path = "../bb-ebpf" }
 name = "bbd"
 path = "src/main.rs"
 
+[lints.clippy]
+too_many_lines = "warn"
+
 [lints.cargo]
 # bb-ebpf is listed only so cargo tracks it for rebuilds (see build-dependencies).
 unused_dependencies = "allow"

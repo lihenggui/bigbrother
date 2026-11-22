@@ -21,6 +21,9 @@ which = { workspace = true }
 name = "bb-ebpf"
 path = "src/main.rs"
 
+[lints.clippy]
+too_many_lines = "warn"
+
 [lints.rust]
 # Set by aya-build to the architecture the eBPF object is being built for.
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bpf_target_arch, values("aarch64", "x86_64"))'] }

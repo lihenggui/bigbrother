@@ -24,30 +24,36 @@ import org.gradle.kotlin.dsl.configure
 class AndroidLintConventionPlugin : Plugin<Project> {
     override fun apply(target: Project) {
         with(target) {
-            val testNamesOnly = providers.gradleProperty("lintTestNamesOnly").isPresent
+            val structureOnly = providers.gradleProperty("lintStructureOnly").isPresent
+            val application = pluginManager.hasPlugin("com.android.application")
+            val library = pluginManager.hasPlugin("com.android.library")
             when {
-                pluginManager.hasPlugin("com.android.application") ->
-                    configure<ApplicationExtension> { lint { configure(testNamesOnly) } }
+                application ->
+                    configure<ApplicationExtension> { lint { configure(structureOnly) } }
 
-                pluginManager.hasPlugin("com.android.library") ->
-                    configure<LibraryExtension> { lint { configure(testNamesOnly) } }
+                library ->
+                    configure<LibraryExtension> { lint { configure(structureOnly) } }
 
                 else -> {
                     pluginManager.apply("com.android.lint")
-                    configure<Lint> { configure(testNamesOnly) }
+                    configure<Lint> { configure(structureOnly) }
                 }
             }
             dependencies.add("lintChecks", project(":lint"))
+            if (structureOnly) {
+                val lintTask = if (application || library) "lintDebug" else "lint"
+                tasks.register("lintStructure") { dependsOn(lintTask) }
+            }
         }
     }
 }
 
-private fun Lint.configure(testNamesOnly: Boolean) {
-    // The naming run selects each module directly, including test-only dependencies.
-    checkDependencies = !testNamesOnly
-    if (testNamesOnly) {
+private fun Lint.configure(structureOnly: Boolean) {
+    // The structure run selects each module directly, including test-only dependencies.
+    checkDependencies = !structureOnly
+    if (structureOnly) {
         checkTestSources = true
-        checkOnly += "TestMethodName"
+        checkOnly += listOf("TestMethodName", "LongFunction", "LongComposeFile", "LongSourceFile")
     }
     // Dependabot proposes newer versions.
     disable += "GradleDependency"

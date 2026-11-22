@@ -93,6 +93,8 @@ fn try_binder_ioctl(ctx: &RawTracePointContext) -> Result<(), i32> {
 }
 
 #[inline(always)]
+// Splitting this further risks changing what the BPF verifier sees.
+#[allow(clippy::too_many_lines)]
 fn binder_transaction(transaction: u64, uid: u32) -> Result<(), i32> {
     // struct binder_transaction_data: target and cookie (8 bytes each),
     // code and flags (4 each), sender pid and euid (4 each), data_size,

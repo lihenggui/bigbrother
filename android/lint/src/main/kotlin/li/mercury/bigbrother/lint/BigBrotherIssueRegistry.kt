@@ -23,6 +23,11 @@ import com.android.tools.lint.detector.api.CURRENT_API
 class BigBrotherIssueRegistry : IssueRegistry() {
     override val api = CURRENT_API
     override val minApi = CURRENT_API
-    override val issues = listOf(TestMethodNameDetector.ISSUE)
+    override val issues = listOf(
+        TestMethodNameDetector.ISSUE,
+        LongFunctionDetector.ISSUE,
+        LongSourceFileDetector.COMPOSE_ISSUE,
+        LongSourceFileDetector.SOURCE_ISSUE,
+    )
     override val vendor = Vendor(vendorName = "Big Brother")
 }

@@ -180,11 +180,40 @@ baseline being updated in the same pull request:
 | Permissions and other manifest facts | `android/app/release-badging.txt` | `./gradlew :app:updateReleaseBadging` |
 | Licenses of dependencies | allow-list in `build-logic/.../Licensee.kt` | edit the list |
 
-CI runs `./gradlew :app:lintRelease` and `./gradlew lintDebug -PlintTestNamesOnly`
-from `android/`. The naming check uses the debug variant because it owns the
-test sources and runs in every Android module, including test-only libraries.
-It requires `givenState_whenAction_thenOutcome` for Kotlin tests, including
-screenshot tests. CI also checks that every Rust and shell file has a license header.
+Run the source checks locally.
+
+```sh
+cargo fmt --all --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+(cd android && ./gradlew lintStructure -PlintStructureOnly)
+(cd android && ./gradlew :app:lintRelease)
+```
+
+Clippy checks Rust functions against an 80-line threshold. Nightly Clippy
+checks both eBPF syscall-state backends with the x86_64 configuration.
+
+```sh
+rustup component add --toolchain nightly clippy
+for features in "" task-storage; do
+  RUSTFLAGS='--cfg bpf_target_arch="x86_64"' cargo +nightly clippy \
+    -Z build-std=core --target bpfel-unknown-none -p bb-ebpf --features "$features" \
+    -- -A clippy::all -D clippy::too_many_lines
+done
+```
+
+`cargo test` checks daemon module cycles at the top level and between
+siblings by following production source paths. To run that check alone,
+use `cargo test -p bbd --test module_cycles`.
+
+The Kotlin structure run checks functions over 80 lines, files with
+composable functions over 500 lines and other Kotlin files over
+800 lines. It excludes tests and generated code from those limits and
+checks test names against `givenState_whenAction_thenOutcome`. It uses
+the debug variant for Android app and library modules, which includes
+their test sources. JVM modules using the lint convention run the same
+structure checks.
+CI checks that every Rust and shell file has a license header.
 
 ## Releasing
 
