@@ -9,7 +9,7 @@ Hilt, Compose with Material 3 Expressive, and Navigation 3.
 - `app/`: the application, navigation and adaptive layout (`ui/BigBrotherApp.kt`).
 - `helper/` (`:helper`): standalone `app_process` programs run as root by the
   daemon and packaged in the app APK.
-- `core/model` holds data types. `core/domain` holds use cases shared across features.
+- `core/model` holds data types. `core/domain` holds use cases.
   `core/data`: repositories; `root/RootShell.kt` is
   the only place the app runs root commands. `core/datastore`: settings.
   `core/ui`, `core/designsystem`: shared UI. `core/navigation`: navigator and
@@ -58,15 +58,38 @@ Assembling `:app` needs the daemons in `../out/` (`../scripts/build.sh`).
   `bbd/src/spool.rs`), are listed with their meaning in `../testdata/protocol/`,
   which the tests of both sides read. A change to a format changes its cases.
 
+## Architecture
+
+- UI (composables and ViewModels) uses `core:data` repositories directly or
+  through `core:domain` use cases. Keep the Gradle module graph acyclic.
+- Keep data sources, `RootShell`, `PackageManager` and DataStore out of UI code.
+- Reach the daemon only through `BbdDataSource` (`core/data/.../bbd/`), which
+  builds commands and parses JSON. Repositories cache, merge and map.
+- Use `core:domain` only for logic shared by several ViewModels, as in
+  `GetAppVisibilityUseCase`. Otherwise call the repository.
+- Name use cases `<Verb><Noun>UseCase` and expose `operator fun invoke`.
+- Keep Android types out of the JVM library `core:model`. Among project
+  modules, `core:ui` depends only on `core:model` and `core:designsystem`.
+- Each ViewModel exposes one `uiState: StateFlow<<Screen>UiState>` using
+  `stateIn(viewModelScope, WhileSubscribed(5_000), …)`.
+- Keep launches out of `init`. Put messages and failures in UI state fields
+  and keep `Channel` and `SharedFlow` events out of the UI contract.
+- Keep `Context` out of ViewModels. Use `@Dispatcher` and `@AppPackageName`
+  for injected dispatchers and the app package name.
+- Keep ViewModels at screen entry points. Pass state and `on…` lambdas to
+  child composables.
+- Repositories expose suspend functions or flows. Classify data-layer errors
+  as `RecordsException` and map them to `LoadFailure` in ViewModels.
+- Keep raw command and installer output out of the UI. Use only
+  `core/ui/.../Messages.kt` for failure text. Rethrow `CancellationException`.
+- Reuse uid math in `core/model/.../Uids.kt` and time formatting in `core/ui/.../Format.kt`.
+- Reuse settings rows such as `SegmentedSwitchRow` in `core:designsystem`.
+
 ## Code
 
 - Root commands go through `RootShell.run(command, label)`. Quote every value
   that comes from an app or the user with `shellQuoted()`. The label is what
   gets logged; never put paths or search text in it.
-- Repositories expose suspend functions or flows and throw `RecordsException`;
-  view models map it to `LoadFailure`. View models expose a `StateFlow` of a
-  UI state data class, take dispatchers through `@Dispatcher`, and take the
-  app's package name through `@AppPackageName`, not a `Context`.
 - Keep work off the main thread: loads run on the injected default or IO
   dispatcher, and app icons load through Coil (`AppIcon`).
 - Log with Timber. The persisted log (`ReleaseTree`) must not contain paths,
@@ -89,8 +112,11 @@ Assembling `:app` needs the daemons in `../out/` (`../scripts/build.sh`).
 
 ## Tests
 
-- Unit tests run on the JVM with Android calls returning defaults. Use the
-  fakes in `core:testing` rather than mocks.
+- Unit tests run on the JVM with Android calls returning defaults.
+- Use one shared `Test*` fake per repository interface in `core:testing` in
+  place of mocks. Put shared fixtures in `core/testing/.../data/`.
+- Verify with `CI=true ./gradlew test`. Offline Robolectric has only SDKs 24
+  (the library default) and 37. Use `@Config(sdk = [37])` for newer APIs.
 - Screenshot tests compare with checked-in images (`roborazzi.test.verify=true`),
   so a UI change fails `./gradlew test` until the images are recorded again.
   Sample data uses made-up apps under `com.example.*` only.
