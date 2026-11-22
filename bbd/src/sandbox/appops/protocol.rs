@@ -80,6 +80,22 @@ pub(super) fn parse_line(line: &str) -> Option<(u32, Option<Answer>)> {
     Some((uid, answer))
 }
 
+pub(super) fn request_line(request: u64, command: &str) -> String {
+    format!("request {request} {command}")
+}
+
+/// The installation binding and request number must match before a mutation can settle.
+pub(super) fn parse_reply(line: &str) -> Option<(u32, u64, &str, Answer)> {
+    let mut words = line.splitn(4, ' ');
+    if words.next()? != "reply" {
+        return None;
+    }
+    let request = words.next()?.parse().ok()?;
+    let token = words.next()?;
+    let (uid, answer) = parse_line(words.next()?)?;
+    Some((uid, request, token, answer?))
+}
+
 /// `unheld <uid> <op>,...` (or `-` for none): the ops of a guarded uid that
 /// the system did not keep at the mode the uid is held to, after the
 /// helper set them. Ops this Android version does not have are not named.
@@ -176,7 +192,10 @@ pub(super) enum Command<'a> {
     Capture(u32, u64, &'a str),
     Set(u32, &'a str),
     Verify(u32, &'a str),
+    #[cfg(test)]
     Release(u32),
+    Undo(u32, &'a str),
+    CheckUndo(u32, &'a str),
     Restore(u32, &'a str),
     Kind(u32, u64, &'a str),
     /// The targets, then what to set back; nothing to set back is `-`.
@@ -189,7 +208,20 @@ impl std::fmt::Display for Command<'_> {
             Self::Capture(uid, request, targets) => write!(f, "capture {uid} {request} {targets}"),
             Self::Set(uid, targets) => write!(f, "set {uid} {targets}"),
             Self::Verify(uid, targets) => write!(f, "verify {uid} {targets}"),
+            #[cfg(test)]
             Self::Release(uid) => write!(f, "release {uid}"),
+            Self::Undo(uid, values) | Self::CheckUndo(uid, values) => {
+                let verb = if matches!(self, Self::Undo(..)) {
+                    "undo"
+                } else {
+                    "check-undo"
+                };
+                write!(
+                    f,
+                    "{verb} {uid} {}",
+                    if values.is_empty() { "-" } else { values }
+                )
+            }
             Self::Restore(uid, values) => write!(f, "restore {uid} {values}"),
             Self::Kind(uid, request, package) => write!(f, "kind {uid} {request} {package}"),
             Self::Apply(uid, targets, resets) => {
@@ -338,6 +370,26 @@ mod tests {
             .to_string();
             assert_eq!(line, case.line);
         }
+    }
+
+    #[test]
+    fn mutating_requests_and_replies_keep_the_request_and_installation() {
+        let cases = crate::protocol_cases::appops_transactions();
+        for case in crate::protocol_cases::of(&cases, &["request"]) {
+            let request = case.get("request").unwrap().parse().unwrap();
+            let command = case.get("command").unwrap();
+            assert_eq!(request_line(request, command), case.line);
+        }
+        for case in crate::protocol_cases::of(&cases, &["reply"]) {
+            let request = case.get("request").unwrap().parse().unwrap();
+            let token = case.get("token").unwrap();
+            let (uid, answer) = parse_line(case.get("answer").unwrap()).unwrap();
+            assert_eq!(
+                parse_reply(&case.line),
+                Some((uid, request, token, answer.unwrap()))
+            );
+        }
+        assert!(parse_reply("restored 10100").is_none());
     }
 
     #[test]

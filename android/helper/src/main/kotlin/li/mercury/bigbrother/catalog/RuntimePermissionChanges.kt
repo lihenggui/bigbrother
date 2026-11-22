@@ -121,7 +121,9 @@ internal class RuntimePermissionChanges(private val system: AppOpsSystem) : Taki
     /** The state of [name] for [uid], `null` if no package of it requests it. */
     override fun state(uid: Int, name: String): PermissionState? {
         val connected = permissions()
-        val first = connected.requesting(uid, name).packages.firstOrNull() ?: return null
+        val requests = connected.requesting(uid, name)
+        check(requests.complete) { "permission requests are unavailable" }
+        val first = requests.packages.firstOrNull() ?: return null
         return PermissionState(connected.isGranted(uid, name), connected.flags(first, name, uid) and USER_FLAGS)
     }
 
@@ -131,7 +133,9 @@ internal class RuntimePermissionChanges(private val system: AppOpsSystem) : Taki
      */
     override fun hold(uid: Int, name: String, mayChange: () -> Boolean): HoldResult {
         val connected = permissions()
-        val requesting = connected.requesting(uid, name).packages
+        val requests = connected.requesting(uid, name)
+        check(requests.complete) { "permission requests are unavailable" }
+        val requesting = requests.packages
         val first = requesting.firstOrNull() ?: return HoldResult.HELD
         var changed = false
         for (pkg in requesting) {
@@ -161,7 +165,9 @@ internal class RuntimePermissionChanges(private val system: AppOpsSystem) : Taki
      */
     override fun putBack(uid: Int, name: String, state: PermissionState?) {
         val connected = permissions()
-        val requesting = connected.requesting(uid, name).packages
+        val requests = connected.requesting(uid, name)
+        check(requests.complete) { "permission requests are unavailable" }
+        val requesting = requests.packages
         for (pkg in requesting) {
             system.requireOwner(uid)
             if (state == null) {

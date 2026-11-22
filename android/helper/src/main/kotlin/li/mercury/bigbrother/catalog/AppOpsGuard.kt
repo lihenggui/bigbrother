@@ -141,7 +141,11 @@ object AppOpsGuard {
     /** Held by each command and each check, so that they run one at a time and their output lines stay whole. */
     private val lock = Any()
 
-    private val handler = AppOpsGuardHandler(Framework)
+    private val handler = AppOpsGuardHandler(Framework, supervised = true)
+
+    private var reply: AppOpsGuardProtocol.Request? = null
+
+    private var boundToken: String? = null
 
     private var journal: File? = null
 
@@ -173,6 +177,7 @@ object AppOpsGuard {
         val lines = readInput()
         try {
             Framework.connect()
+            if (journal == null) emit("ready")
             thread(isDaemon = true, name = "check") { Framework.checkLoop(lock, handler) }
         } catch (e: Throwable) {
             System.err.println(describeFailure(e))
@@ -186,12 +191,12 @@ object AppOpsGuard {
     }
 
     private fun readInput(): LinkedBlockingQueue<Line> {
-        val lines = LinkedBlockingQueue<Line>()
+        val lines = LinkedBlockingQueue<Line>(128)
         thread(isDaemon = true, name = "input") {
             try {
                 System.`in`.bufferedReader().forEachLine { lines.put(Line.Text(it)) }
             } catch (e: Throwable) {
-                System.err.println("reading input: $e")
+                System.err.println("reading input: ${describeFailure(e)}")
             }
             inputClosed = true
             lines.put(Line.End)
@@ -206,32 +211,44 @@ object AppOpsGuard {
             return
         }
         val bound = AppOpsGuardProtocol.parseBound(line) ?: return
-        val command = AppOpsGuardProtocol.parseCommand(bound.commandLine)
+        val request = AppOpsGuardProtocol.parseRequest(bound.commandLine)
+        val command = AppOpsGuardProtocol.parseCommand(request?.commandLine ?: bound.commandLine)
         if (command == null) {
             System.err.println("invalid helper command")
             return
         }
         val owner = Installation(bound.packageName, bound.token)
-        synchronized(lock) { handleBound(owner, command) }
+        synchronized(lock) {
+            reply = request
+            boundToken = bound.token
+            try {
+                handleBound(owner, command, request != null)
+            } finally {
+                reply = null
+                boundToken = null
+            }
+        }
     }
 
-    private fun handleBound(owner: Installation, command: Command) {
+    private fun handleBound(owner: Installation, command: Command, transaction: Boolean) {
         val uid = command.uid
         try {
+            if (command is Command.Verify) emit("checking $uid")
             val current = owner.isCurrent(uid)
-            if (!current && journal != null && command is Command.Restore) {
+            if (!current && journal != null && (command is Command.Restore || command is Command.Undo)) {
                 emit("retired $uid")
                 return
             }
             check(current) { "installation changed" }
             if (owners.put(uid, owner) != owner) handler.forget(uid)
-            handler.handle(command)
-            if (!handler.isGuarded(uid)) owners.remove(uid)
+            handler.handle(command, transaction)
+            if (!handler.needsOwner(uid)) owners.remove(uid)
         } catch (e: Throwable) {
             System.err.println("bound $uid: ${describeFailure(e)}")
             emit(
                 when (command) {
                     is Command.Capture -> AppOpsGuardProtocol.captureFailedLine(uid, command.request)
+                    is Command.Verify -> "unknown-readback $uid"
                     else -> AppOpsGuardProtocol.failedLine(uid)
                 },
             )
@@ -254,7 +271,22 @@ object AppOpsGuard {
 
     internal fun emit(line: String) {
         synchronized(lock) {
-            println(line)
+            val kind = line.substringBefore(' ')
+            val request = reply
+            val bound = boundToken
+            val output = when (kind) {
+                "captured", "capture-failed", "saved", "restored", "applied", "failed" ->
+                    if (request != null && bound != null) AppOpsGuardProtocol.replyLine(request, bound, line) else line
+
+                "checking", "unknown-readback", "unheld", "reverted" -> {
+                    val uid = line.substringAfter(' ').substringBefore(' ').toIntOrNull()
+                    val token = bound ?: uid?.let(owners::get)?.token
+                    if (token != null && journal == null) "report $token $line" else line
+                }
+
+                else -> line
+            }
+            println(output)
             System.out.flush()
         }
     }

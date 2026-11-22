@@ -49,6 +49,33 @@ internal class DaemonDouble(private val android: FakeAndroid) {
     /** The permissions the helper found changed, not yet kept in the entry. */
     private val found = mutableListOf<String>()
 
+    private var pendingUndo: String? = null
+    private var delayedReply: String? = null
+
+    fun enterWithInterruptedReply(targets: String, delayed: Boolean) {
+        check(pendingUndo == null)
+        val from = android.printed.size
+        sendTransaction("capture $UID 1 $targets")
+        val saved = android.printed.drop(from).single().removePrefix("captured $UID 1 ")
+        pendingUndo = "undo $UID $saved"
+        sendTransaction("set $UID $targets")
+        if (delayed) delayedReply = android.printed.last()
+    }
+
+    fun recoverInterruptedChange() {
+        val command = checkNotNull(pendingUndo)
+        val from = android.printed.size
+        sendTransaction(command)
+        val replies = listOfNotNull(delayedReply) + android.printed.drop(from)
+        check(replies.last() == "restored $UID")
+        pendingUndo = null
+        delayedReply = null
+    }
+
+    private fun sendTransaction(line: String) {
+        helper.handle(checkNotNull(AppOpsGuardProtocol.parseCommand(line)), transaction = true)
+    }
+
     fun enable() = command {
         enableEffect(items)
         sandboxed = true
@@ -125,21 +152,40 @@ internal class DaemonDouble(private val android: FakeAndroid) {
         found.clear()
     }
 
+    /** The daemon saves newly held modes from the transaction preimage. */
+    private fun prepareChange(held: String, holding: String) {
+        val capture = (pairs(held) + pairs(holding)).toMap().toMutableMap()
+        if (holding.isEmpty()) {
+            for (permission in namesIn(savedPermissions)) capture[permission] = "revoked"
+        }
+        val targets = capture.entries.joinToString(",") { (name, mode) -> "$name=$mode" }
+        val reply = answer(send("capture $UID 1 $targets", transaction = true), "captured")
+        val preimage = pairs(reply.substringAfter(' ', missingDelimiterValue = ""))
+        val old = namesIn(held).toSet()
+        val next = namesIn(holding).toSet()
+        savedOps = (
+            pairs(savedOps).filter { (name, _) -> name in old } +
+                preimage.filter { (name, _) -> !isPermission(name) && name in next && name !in old }
+            )
+            .joinToString(",") { (name, mode) -> "$name=$mode" }
+    }
+
     private fun enableEffect(items: Map<String, String>) {
         val targets = targetsOf(items)
         if (targets.isEmpty()) return
-        val saved = answer(send("set $UID $targets"), "saved")
+        prepareChange("", targets)
+        val saved = answer(send("set $UID $targets", transaction = true), "saved")
         guarded = targets
-        val (ops, permissions) = saved.split(',').filter { it.isNotEmpty() }.partition { !isPermission(it.substringBefore('=')) }
-        savedOps = ops.joinToString(",")
-        keepFound(permissions.joinToString(","))
+        keepFound(saved)
+        tellGuarded()
     }
 
     private fun disableEffect(items: Map<String, String>) {
         val held = guarded ?: targetsOf(items)
         val names = toGiveBack(held)
         if (names.isEmpty()) return
-        answer(send("restore $UID ${savedValuesOf(names)}"), "restored")
+        prepareChange(held, "")
+        answer(send("restore $UID ${savedValuesOf(names)}", transaction = true), "restored")
         guarded = null
         unsure = emptySet()
         savedPermissions = ""
@@ -150,20 +196,22 @@ internal class DaemonDouble(private val android: FakeAndroid) {
         if (held == holding) return
         if (held.isEmpty()) return enableEffect(after)
         if (holding.isEmpty()) return disableEffect(before)
+        prepareChange(held, holding)
         val letGo = namesIn(held) - namesIn(holding).toSet()
         val resets = if (letGo.isEmpty()) "-" else savedValuesOf(letGo)
-        val found = answer(send("apply $UID $holding $resets"), "applied")
+        val found = answer(send("apply $UID $holding $resets", transaction = true), "applied")
         guarded = holding
         savedPermissions = pairs(savedPermissions).filter { (name, _) -> name !in letGo }.joinToString(",") { (name, state) -> "$name=$state" }
         keepFound(found)
+        tellGuarded()
     }
 
     /** Send [line] and return what the helper printed for it. */
-    private fun send(line: String): List<String> {
+    private fun send(line: String, transaction: Boolean = false): List<String> {
         val from = android.printed.size
         val command = checkNotNull(AppOpsGuardProtocol.parseCommand(line)) { line }
         try {
-            helper.handle(command)
+            helper.handle(command, transaction)
         } catch (e: Throwable) {
             android.emit(AppOpsGuardProtocol.failedLine(command.uid))
         }
@@ -185,7 +233,7 @@ internal class DaemonDouble(private val android: FakeAndroid) {
     private fun answer(lines: List<String>, kind: String): String {
         val answer = lines.lastOrNull { it.startsWith("$kind $UID") || it.startsWith("failed $UID") }
         check(answer != null && answer.startsWith(kind)) { "the helper answered ${answer ?: "nothing"} to the daemon" }
-        return answer.split(' ').getOrElse(2) { "" }
+        return answer.split(' ', limit = 3).getOrElse(2) { "" }
     }
 
     /** `targets_of` and `Settings::op_targets`, for the items played with. */
@@ -200,10 +248,7 @@ internal class DaemonDouble(private val android: FakeAndroid) {
         }
         when (items["location"]) {
             "on" -> ops += listOf("android:coarse_location=1", "android:fine_location=1", "android:wifi_scan=1")
-
-            // The Wi-Fi scan op is held through the coarse location one.
-            "foreground" -> ops += listOf("android:coarse_location=4", "android:fine_location=4")
-
+            "foreground" -> ops += listOf("android:coarse_location=4", "android:fine_location=4", "android:wifi_scan=4")
             "coarse" -> permissions += "${FakeAndroid.FINE}=revoked"
         }
         when (items["camera"]) {

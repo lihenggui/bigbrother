@@ -136,6 +136,21 @@ class AppOpsGuardProtocolTest {
     }
 
     @Test
+    fun givenMutatingRequestsAndReplies_whenExchanged_thenTheyCarryTheRequestAndInstallation() {
+        val cases = appOpsTransactionCases()
+        for (case in cases.ofType("request")) {
+            val request = AppOpsGuardProtocol.Request(case.get("request")!!.toLong(), case.get("command")!!)
+            assertEquals(request, AppOpsGuardProtocol.parseRequest(case.line))
+            checkNotNull(AppOpsGuardProtocol.parseCommand(request.commandLine))
+        }
+        for (case in cases.ofType("reply")) {
+            val request = AppOpsGuardProtocol.Request(case.get("request")!!.toLong(), "")
+            assertEquals(case.line, AppOpsGuardProtocol.replyLine(request, case.get("token")!!, case.get("answer")!!))
+        }
+        assertNull(AppOpsGuardProtocol.parseRequest("request nope set 10100 android:camera=1"))
+    }
+
+    @Test
     fun givenEveryAnswerOfTheCases_whenWritten_thenTheLineTheDaemonReads() {
         for (case in cases.ofType("answer")) {
             val uid = case.uid()

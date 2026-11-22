@@ -144,6 +144,8 @@ pub struct Status {
     pub held_ops: BTreeMap<u32, BTreeSet<String>>,
     #[serde(skip)]
     pub checking_appops: BTreeSet<u32>,
+    #[serde(skip)]
+    pub unknown_appops: BTreeSet<u32>,
 }
 
 /// What the system server hook reports it has in place.

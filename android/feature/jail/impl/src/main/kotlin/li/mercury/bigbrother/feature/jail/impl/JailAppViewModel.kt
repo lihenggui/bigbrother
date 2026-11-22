@@ -150,7 +150,7 @@ class JailAppViewModel @AssistedInject constructor(
         }
     }
 
-    private fun appWithUnheldOps(apps: List<SandboxedApp>?): SandboxedApp? = apps?.firstOrNull { it.uid == uid && it.enabled && it.unmet.values.any { parts -> SandboxPart.APP_OPS in parts } }
+    private fun appWithUnheldOps(apps: List<SandboxedApp>?): SandboxedApp? = apps?.firstOrNull { it.uid == uid && it.enabled && it.unmet.values.any { parts -> SandboxPart.APP_OPS in parts || SandboxPart.APP_OPS_UNKNOWN in parts } }
 
     /**
      * Turns [item] on or off. On, it takes the global mode if that is on

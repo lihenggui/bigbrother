@@ -99,6 +99,7 @@
     <string name="jail_hook_status_unknown">The status of the System Framework restrictions is unknown.</string>
     <string name="jail_not_in_effect_mounts">Not in effect: storage isolation is not running</string>
     <string name="jail_checking_app_ops">Checking Android restriction…</string>
+    <string name="jail_app_ops_unknown">Android restriction could not be verified.</string>
     <string name="jail_not_in_effect_app_ops">Restriction unavailable. The app may still have access.</string>
 
     <!-- The global settings. -->

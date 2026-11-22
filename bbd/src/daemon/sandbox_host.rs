@@ -436,12 +436,16 @@ async fn run_sandbox(
         // A new app left out of the sandbox is tried again then; no timer
         // while none is.
         let next_look = live.sandbox.auto_next_look();
+        let next_recovery = live.sandbox.next_appops_recovery();
         tokio::select! {
             _ = &mut stopped => break,
             _ = tick.tick() => live.sandbox.retry_net_refresh(),
             _ = found.notified() => {}
             _ = helper_restarted.notified() => live.sandbox.auto_helper_restarted(&writer, &mut packages),
             _ = names_stopped.notified() => stop_relay(&mut live, &writer),
+            _ = sleep_until(next_recovery), if next_recovery.is_some() => {
+                live.sandbox.recover_appops(&writer, &mut packages);
+            }
             // A command is read without holding up the others, and carried
             // out once it has arrived.
             stream = next_request(commands.as_ref()) => {

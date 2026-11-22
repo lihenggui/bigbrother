@@ -125,6 +125,14 @@ pub fn appops() -> Vec<Case> {
     )
 }
 
+pub fn appops_transactions() -> Vec<Case> {
+    cases(
+        include_str!("../../testdata/protocol/appops-transaction.txt"),
+        &["request", "reply"],
+        &["request", "command", "token", "answer"],
+    )
+}
+
 /// `spool.txt`.
 pub fn spool() -> Vec<Case> {
     cases(

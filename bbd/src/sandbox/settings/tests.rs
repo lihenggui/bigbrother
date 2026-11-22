@@ -59,54 +59,6 @@ impl Effect for Witness {
     }
 }
 
-/// Takes the precise location permission as the app ops helper does,
-/// finding it granted, and reads, as it does, what the app's row names
-/// as perhaps taken.
-struct Taker {
-    db: PathBuf,
-    seen: Rc<RefCell<Vec<String>>>,
-}
-
-impl Taker {
-    fn take(&self, entry: &mut Entry, items: &Settings) -> anyhow::Result<()> {
-        let row = Writer::open(&self.db)?
-            .sandbox_entry(entry.uid)?
-            .context("no row")?;
-        self.seen.borrow_mut().push(row.saved_permissions);
-        if items.taken_permissions().is_empty() {
-            entry.saved_permissions.clear();
-        } else if entry.saved_permissions.is_empty() {
-            entry.saved_permissions = format!("{}=granted", items::PRECISE_LOCATION);
-        }
-        Ok(())
-    }
-}
-
-impl Effect for Taker {
-    fn name(&self) -> &'static str {
-        "taker"
-    }
-
-    fn enable(&mut self, entry: &mut Entry, _: &[String], items: &Settings) -> anyhow::Result<()> {
-        self.take(entry, items)
-    }
-
-    fn disable(&mut self, entry: &mut Entry, _: &[String], _: &Settings) -> anyhow::Result<()> {
-        entry.saved_permissions.clear();
-        Ok(())
-    }
-
-    fn update(
-        &mut self,
-        entry: &mut Entry,
-        _: &[String],
-        _: &Settings,
-        after: &Settings,
-    ) -> anyhow::Result<()> {
-        self.take(entry, after)
-    }
-}
-
 fn camera(mode: Option<Mode>) -> BTreeMap<Item, Option<Mode>> {
     BTreeMap::from([(Item::Camera, mode)])
 }
@@ -248,18 +200,25 @@ fn a_change_of_items_that_fails_is_undone() {
 }
 
 #[test]
-fn what_is_written_while_items_change_covers_them_before_and_after() {
-    let mut f = Fixture::new("sandbox-items-covered");
+fn item_changes_keep_the_committed_policy_visible_until_commit() {
+    let mut f = Fixture::new("sandbox-items-committed");
     let seen = Rc::new(RefCell::new(Vec::new()));
-    let witness = || {
-        Box::new(Witness {
-            db: f.dir.join("bb.db"),
-            seen: seen.clone(),
-        })
-    };
-    let mut sandbox = f.sandbox_with(vec![witness()]);
+    f.writer
+        .put_sandbox_global(&[("location", "foreground")])
+        .unwrap();
+    let mut sandbox = f.sandbox_with(vec![Box::new(Witness {
+        db: f.dir.join("bb.db"),
+        seen: seen.clone(),
+    })]);
     sandbox
         .enable(&f.writer, &mut f.packages, "com.app", 0, 1000)
+        .unwrap();
+    sandbox
+        .set_global(
+            &f.writer,
+            &mut f.packages,
+            &BTreeMap::from([(Item::Location, Mode::Coarse)]),
+        )
         .unwrap();
     sandbox
         .configure(
@@ -267,275 +226,19 @@ fn what_is_written_while_items_change_covers_them_before_and_after() {
             &mut f.packages,
             "com.app",
             0,
-            &camera(Some(Mode::Off)),
+            &BTreeMap::from([(Item::Location, Some(Mode::Off))]),
         )
         .unwrap();
-    let held = |seen: &Settings| -> std::collections::BTreeSet<&str> {
-        seen.op_targets().into_iter().map(|(op, _)| op).collect()
-    };
-    let both = ["android:camera", "android:record_audio"];
-
-    // The camera held anew and the microphone let go: both stay named
-    // until the change is carried out.
-    let change = BTreeMap::from([
-        (Item::Camera, Some(Mode::On)),
-        (Item::Microphone, Some(Mode::Off)),
-    ]);
-    seen.borrow_mut().clear();
-    sandbox
-        .configure(&f.writer, &mut f.packages, "com.app", 0, &change)
-        .unwrap();
-    assert!(both.iter().all(|op| held(&seen.borrow()[0]).contains(op)));
-    let row = || f.writer.sandbox_entry(10100).unwrap().unwrap().settings;
-    assert_eq!(row(), "camera=on,microphone=off");
-
-    // The same for the global settings, which the app follows again.
-    let follow = BTreeMap::from([(Item::Camera, None), (Item::Microphone, None)]);
-    sandbox
-        .configure(&f.writer, &mut f.packages, "com.app", 0, &follow)
-        .unwrap();
-    let global = |item, mode| BTreeMap::from([(item, mode)]);
-    sandbox
-        .set_global(&f.writer, &mut f.packages, &global(Item::Camera, Mode::Off))
-        .unwrap();
-    seen.borrow_mut().clear();
-    let change = BTreeMap::from([(Item::Camera, Mode::On), (Item::Microphone, Mode::Off)]);
-    sandbox
-        .set_global(&f.writer, &mut f.packages, &change)
-        .unwrap();
-    assert!(both.iter().all(|op| held(&seen.borrow()[0]).contains(op)));
+    let modes: Vec<_> = seen
+        .borrow()
+        .iter()
+        .map(|settings| settings.mode(Item::Location))
+        .collect();
+    assert_eq!(modes, [Mode::Foreground, Mode::Coarse]);
     assert_eq!(
-        f.writer.sandbox_global().unwrap(),
-        "camera=on,microphone=off"
+        f.writer.sandbox_entry(10100).unwrap().unwrap().settings,
+        "location=off"
     );
-
-    let witness = witness();
-    check_failed_item_changes(&mut f, witness, &seen);
-}
-
-fn check_failed_item_changes(
-    f: &mut Fixture,
-    witness: Box<Witness>,
-    seen: &RefCell<Vec<Settings>>,
-) {
-    let row = || f.writer.sandbox_entry(10100).unwrap().unwrap().settings;
-    // A change that fails is written down as it was again.
-    let log = Rc::new(RefCell::new(Vec::new()));
-    let mut failing = Recorder::new("gate", &log);
-    failing.fail_update = true;
-    let mut sandbox = f.sandbox_with(vec![witness, failing]);
-    let microphone_on = BTreeMap::from([(Item::Microphone, Some(Mode::On))]);
-    assert!(
-        sandbox
-            .configure(&f.writer, &mut f.packages, "com.app", 0, &microphone_on)
-            .is_err()
-    );
-    assert_eq!(row(), "");
-    assert!(
-        sandbox
-            .set_global(
-                &f.writer,
-                &mut f.packages,
-                &BTreeMap::from([(Item::Microphone, Mode::On)])
-            )
-            .is_err()
-    );
-    assert_eq!(
-        f.writer.sandbox_global().unwrap(),
-        "camera=on,microphone=off"
-    );
-    // Both were seen covering the change while it ran.
-    assert!(seen.borrow()[1..].iter().all(|seen| {
-        seen.op_targets()
-            .iter()
-            .any(|(op, _)| *op == "android:record_audio")
-    }));
-}
-
-#[test]
-fn a_permission_is_named_in_the_row_before_it_is_taken() {
-    let mut f = Fixture::new("sandbox-permission-named");
-    let seen = Rc::new(RefCell::new(Vec::new()));
-    let taker = || {
-        Box::new(Taker {
-            db: f.dir.join("bb.db"),
-            seen: seen.clone(),
-        })
-    };
-    let fine = items::PRECISE_LOCATION;
-    let (unknown, granted) = (format!("{fine}=default"), format!("{fine}=granted"));
-    let row = |uid| {
-        f.writer
-            .sandbox_entry(uid)
-            .unwrap()
-            .unwrap()
-            .saved_permissions
-    };
-    let global = |mode| BTreeMap::from([(Item::Location, mode)]);
-    let mut sandbox = f.sandbox_with(vec![taker()]);
-    // Only location takes a permission here.
-    let others_off = BTreeMap::from([
-        (Item::NotificationContent, Mode::Off),
-        (Item::ScreenContent, Mode::Off),
-    ]);
-    sandbox
-        .set_global(&f.writer, &mut f.packages, &others_off)
-        .unwrap();
-
-    // Put in with location coarse: named before the state is known,
-    // and written down with it after.
-    sandbox
-        .set_global(&f.writer, &mut f.packages, &global(Mode::Coarse))
-        .unwrap();
-    sandbox
-        .enable(&f.writer, &mut f.packages, "com.app", 0, 1000)
-        .unwrap();
-    assert_eq!(*seen.borrow(), std::slice::from_ref(&unknown));
-    assert_eq!(row(10100), granted);
-
-    // Precise again gives it back. Returning to coarse names it again
-    // before the effect runs, even though the covering mode takes nothing.
-    for (mode, saved) in [(Mode::On, ""), (Mode::Coarse, granted.as_str())] {
-        seen.borrow_mut().clear();
-        let location = BTreeMap::from([(Item::Location, Some(mode))]);
-        sandbox
-            .configure(&f.writer, &mut f.packages, "com.app", 0, &location)
-            .unwrap();
-        assert_eq!(row(10100), saved);
-    }
-    assert_eq!(*seen.borrow(), std::slice::from_ref(&unknown));
-    assert_eq!(row(10100), granted);
-
-    // The same for an app made coarse by the global settings.
-    sandbox
-        .enable(&f.writer, &mut f.packages, "com.shared.one", 0, 1000)
-        .unwrap();
-    sandbox
-        .set_global(&f.writer, &mut f.packages, &global(Mode::On))
-        .unwrap();
-    assert_eq!(row(10200), "");
-    seen.borrow_mut().clear();
-    sandbox
-        .set_global(&f.writer, &mut f.packages, &global(Mode::Coarse))
-        .unwrap();
-    assert_eq!(*seen.borrow(), std::slice::from_ref(&unknown));
-    assert_eq!(row(10200), granted);
-    // The app with its own coarse was not changed, and still names its own.
-    assert_eq!(row(10100), granted);
-
-    let taker = taker();
-    check_failed_permission_changes(&mut f, taker, &granted);
-}
-
-fn check_failed_permission_changes(f: &mut Fixture, taker: Box<Taker>, granted: &str) {
-    let row = |uid| {
-        f.writer
-            .sandbox_entry(uid)
-            .unwrap()
-            .unwrap()
-            .saved_permissions
-    };
-    let location = BTreeMap::from([(Item::Location, Some(Mode::On))]);
-    let global = BTreeMap::from([(Item::Location, Mode::On)]);
-    // A change that fails is written down as it was.
-    let log = Rc::new(RefCell::new(Vec::new()));
-    let mut failing = Recorder::new("gate", &log);
-    failing.fail_update = true;
-    let mut sandbox = f.sandbox_with(vec![taker, failing]);
-    sandbox
-        .configure(&f.writer, &mut f.packages, "com.app", 0, &location)
-        .unwrap_err();
-    assert_eq!(row(10100), granted);
-    sandbox
-        .set_global(&f.writer, &mut f.packages, &global)
-        .unwrap_err();
-    assert_eq!(row(10200), granted);
-    sandbox
-        .configure(&f.writer, &mut f.packages, "com.shared.one", 0, &location)
-        .unwrap_err();
-    assert_eq!(row(10200), granted);
-    sandbox
-        .disable(&f.writer, &mut f.packages, "com.app", 0)
-        .unwrap();
-    assert_eq!(row(10100), "");
-}
-
-#[test]
-fn a_change_between_coarse_and_foreground_is_written_down_as_on() {
-    let mut f = Fixture::new("sandbox-coarse-foreground");
-    let (covered, named) = (
-        Rc::new(RefCell::new(Vec::new())),
-        Rc::new(RefCell::new(Vec::new())),
-    );
-    let mut sandbox = f.sandbox_with(vec![
-        Box::new(Witness {
-            db: f.dir.join("bb.db"),
-            seen: covered.clone(),
-        }),
-        Box::new(Taker {
-            db: f.dir.join("bb.db"),
-            seen: named.clone(),
-        }),
-    ]);
-    let fine = items::PRECISE_LOCATION;
-    let location = |mode| BTreeMap::from([(Item::Location, Some(mode))]);
-    let row = || f.writer.sandbox_entry(10100).unwrap().unwrap();
-    // Only location takes a permission here.
-    let others_off = BTreeMap::from([
-        (Item::NotificationContent, Mode::Off),
-        (Item::ScreenContent, Mode::Off),
-    ]);
-    sandbox
-        .set_global(&f.writer, &mut f.packages, &others_off)
-        .unwrap();
-    sandbox
-        .enable(&f.writer, &mut f.packages, "com.app", 0, 1000)
-        .unwrap();
-    sandbox
-        .configure(
-            &f.writer,
-            &mut f.packages,
-            "com.app",
-            0,
-            &location(Mode::Coarse),
-        )
-        .unwrap();
-    assert_eq!(row().saved_permissions, format!("{fine}=granted"));
-
-    // While it runs, the app is held to on: neither keeps all the other
-    // does. The permission taken stays named until it is given back.
-    named.borrow_mut().clear();
-    sandbox
-        .configure(
-            &f.writer,
-            &mut f.packages,
-            "com.app",
-            0,
-            &location(Mode::Foreground),
-        )
-        .unwrap();
-    assert_eq!(covered.borrow()[0].mode(Item::Location), Mode::On);
-    assert_eq!(*named.borrow(), [format!("{fine}=granted")]);
-    assert_eq!(row().settings, "location=foreground");
-    assert_eq!(row().saved_permissions, "");
-
-    // And back: on while it runs, the permission named before it is
-    // taken.
-    covered.borrow_mut().clear();
-    named.borrow_mut().clear();
-    sandbox
-        .configure(
-            &f.writer,
-            &mut f.packages,
-            "com.app",
-            0,
-            &location(Mode::Coarse),
-        )
-        .unwrap();
-    assert_eq!(covered.borrow()[0].mode(Item::Location), Mode::On);
-    assert_eq!(*named.borrow(), [format!("{fine}=default")]);
-    assert_eq!(row().settings, "location=coarse");
-    assert_eq!(row().saved_permissions, format!("{fine}=granted"));
 }
 
 #[test]
@@ -640,7 +343,7 @@ fn watch_camera_updates(f: &mut Fixture) -> (Sandbox, Rc<RefCell<Vec<CameraUpdat
 }
 
 #[test]
-fn a_failed_app_write_undoes_effects_before_restoring_the_snapshot() {
+fn a_failed_app_write_restores_the_snapshot_before_undoing_effects() {
     let mut f = Fixture::new("sandbox-app-write-failed");
     let (mut sandbox, seen) = watch_camera_updates(&mut f);
     let previous = f.writer.sandbox_entry(10200).unwrap().unwrap();
@@ -658,7 +361,7 @@ fn a_failed_app_write_undoes_effects_before_restoring_the_snapshot() {
     assert!(format!("{error:#}").contains("cannot save camera mode"));
     assert_eq!(
         *seen.borrow(),
-        [(10200, Mode::On, Mode::On), (10200, Mode::On, Mode::Off)]
+        [(10200, Mode::On, Mode::On), (10200, Mode::Off, Mode::Off)]
     );
     assert_eq!(sandbox.snapshot_read()[&10200], previous);
     assert_eq!(f.writer.sandbox_entry(10200).unwrap(), Some(previous));
@@ -678,7 +381,7 @@ fn a_failed_global_write_restores_global_settings_before_undoing_each_app() {
         )
         .unwrap_err();
 
-    assert!(format!("{error:#}").contains("uid 10200: cannot save camera mode"));
+    assert!(format!("{error:#}").contains("cannot save camera mode"));
     assert_eq!(
         *seen.borrow(),
         [
@@ -694,4 +397,98 @@ fn a_failed_global_write_restores_global_settings_before_undoing_each_app() {
     for entry in previous {
         assert_eq!(sandbox.snapshot_read()[&entry.uid], entry);
     }
+}
+
+#[test]
+fn a_failed_global_commit_preserves_every_installs_undo_for_restart() {
+    use std::sync::{Arc, Mutex};
+
+    use crate::sandbox::appops::tests::{FINE, recording_helper};
+
+    let mut f = Fixture::new("sandbox-global-undo");
+    f.writer
+        .put_sandbox_global(&[("location", "foreground")])
+        .unwrap();
+    let mut sandbox = f.sandbox();
+    for name in ["com.app", "com.shared.one"] {
+        sandbox
+            .enable(&f.writer, &mut f.packages, name, 0, 0)
+            .unwrap();
+    }
+    let before = f.writer.sandbox_entries().unwrap();
+    let changed = Arc::new(Mutex::new(std::collections::BTreeSet::new()));
+    let (effect, applied) = recording_helper({
+        let changed = changed.clone();
+        move |uid, command| {
+            if command.starts_with("apply ") {
+                changed.lock().unwrap().insert(uid);
+            }
+        }
+    });
+    sandbox.add_effect(effect);
+    sandbox.resume(&f.writer, &mut f.packages);
+
+    let fault = rusqlite::Connection::open(f.dir.join("bb.db")).unwrap();
+    fault
+        .execute_batch(
+            "CREATE TRIGGER fail_global BEFORE INSERT ON sandbox_global
+         BEGIN SELECT RAISE(ABORT, 'injected global commit failure'); END;",
+        )
+        .unwrap();
+    assert!(
+        sandbox
+            .set_global(
+                &f.writer,
+                &mut f.packages,
+                &BTreeMap::from([(Item::Location, Mode::Coarse)]),
+            )
+            .is_err()
+    );
+    assert_eq!(f.writer.sandbox_global().unwrap(), "location=foreground");
+    assert_eq!(f.writer.sandbox_entries().unwrap(), before);
+    let pending = f.writer.appops_undo().unwrap();
+    assert_eq!(pending.len(), 2);
+    assert!(
+        pending
+            .iter()
+            .all(|undo| undo.preimage.ends_with(&format!("{FINE}=granted+user_set")))
+    );
+    assert_eq!(changed.lock().unwrap().len(), 2);
+    drop(sandbox);
+    assert_eq!(
+        applied
+            .join()
+            .unwrap()
+            .iter()
+            .filter(|line| line.starts_with("apply "))
+            .count(),
+        2
+    );
+    fault.execute_batch("DROP TRIGGER fail_global").unwrap();
+
+    let (effect, recovered) = recording_helper({
+        let changed = changed.clone();
+        move |uid, command| {
+            assert!(command.starts_with("undo "));
+            assert!(command.ends_with(&format!("{FINE}=granted+user_set")));
+            changed.lock().unwrap().remove(&uid);
+        }
+    });
+    let mut sandbox = f.sandbox_with(vec![effect]);
+    sandbox.resume(&f.writer, &mut f.packages);
+    sandbox.recover_appops(&f.writer, &mut f.packages);
+    assert!(changed.lock().unwrap().is_empty());
+    assert!(f.writer.appops_undo().unwrap().is_empty());
+    assert_eq!(f.writer.sandbox_entries().unwrap(), before);
+    assert_eq!(f.writer.sandbox_global().unwrap(), "location=foreground");
+    drop(sandbox);
+    assert_eq!(
+        recovered
+            .join()
+            .unwrap()
+            .iter()
+            .filter(|line| line.starts_with("undo "))
+            .count(),
+        2
+    );
 }

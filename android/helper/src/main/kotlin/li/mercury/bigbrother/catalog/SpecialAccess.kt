@@ -23,6 +23,9 @@ import android.content.pm.PackageManager
 import android.os.IBinder
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.PermissionState
 import li.mercury.bigbrother.catalog.Taking.HoldResult
+import java.util.concurrent.FutureTask
+import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 
 private const val NOTIFICATION_ACCESS = "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
 
@@ -151,8 +154,14 @@ internal class SpecialAccess(private val packages: Any) : Taking {
     /** Run the `settings` command; what it printed. */
     private fun settings(vararg args: String): String {
         val process = ProcessBuilder(listOf(CMD, "settings") + args).redirectErrorStream(true).start()
-        val printed = process.inputStream.bufferedReader().readText().trim()
-        check(process.waitFor() == 0) { "settings ${args.first()} failed" }
-        return printed
+        // Drain the pipe while waiting so a full buffer cannot hold the child open.
+        val printed = FutureTask { process.inputStream.bufferedReader().use { it.readText().trim() } }
+        thread(isDaemon = true, name = "settings-output") { printed.run() }
+        try {
+            check(process.waitFor(2, TimeUnit.SECONDS) && process.exitValue() == 0) { "settings ${args.first()} failed" }
+            return printed.get(250, TimeUnit.MILLISECONDS)
+        } finally {
+            if (process.isAlive) process.destroyForcibly()
+        }
     }
 }

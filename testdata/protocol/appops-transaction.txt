@@ -1,0 +1,11 @@
+# The request sits inside the installation binding. A reply echoes both identifiers.
+request	request 41 set 10100 android:camera=1	request=41	command=set 10100 android:camera=1
+reply	reply 41 0123456789abcdef0123456789abcdef saved 10100 android:camera=4	request=41	token=0123456789abcdef0123456789abcdef	answer=saved 10100 android:camera=4
+request	request 42 apply 10100 android:camera=4 -	request=42	command=apply 10100 android:camera=4 -
+reply	reply 42 0123456789abcdef0123456789abcdef applied 10100	request=42	token=0123456789abcdef0123456789abcdef	answer=applied 10100
+request	request 43 restore 10100 android:camera=4	request=43	command=restore 10100 android:camera=4
+reply	reply 43 0123456789abcdef0123456789abcdef restored 10100	request=43	token=0123456789abcdef0123456789abcdef	answer=restored 10100
+request	request 44 undo 10100 android:camera=4	request=44	command=undo 10100 android:camera=4
+reply	reply 44 0123456789abcdef0123456789abcdef failed 10100	request=44	token=0123456789abcdef0123456789abcdef	answer=failed 10100
+request	request 45 check-undo 10100 android:camera=4	request=45	command=check-undo 10100 android:camera=4
+reply	reply 45 0123456789abcdef0123456789abcdef restored 10100	request=45	token=0123456789abcdef0123456789abcdef	answer=restored 10100
