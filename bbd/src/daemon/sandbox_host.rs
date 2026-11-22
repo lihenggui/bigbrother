@@ -31,7 +31,7 @@ use super::{FLUSH_INTERVAL, Options, next_request, sleep_until};
 use crate::{
     control,
     log::{Limited, Policy, RECURRING_INTERVAL},
-    packages::Packages,
+    packages::{PackageVersions, Packages},
     probes::{Probes, attach_feature, attach_traffic},
     sandbox::{
         self, Sandbox,
@@ -72,17 +72,20 @@ pub(super) fn start(
     let found = Arc::new(Notify::new());
     let helper_restarted = Arc::new(Notify::new());
     let names_stopped = Arc::new(Notify::new());
+    let storage_ready = Arc::new(Notify::new());
     let sandbox = if opts.sandbox {
         start_sandbox(SandboxStart {
             probes,
             tracer,
             db: opts.db,
             new_starts: new_starts_sender,
+            storage_ready: storage_ready.clone(),
             found: &found,
             helper_restarted: &helper_restarted,
             names_stopped: names_stopped.clone(),
         })
     } else {
+        release_orphaned_starts();
         None
     };
     // Commands from `bbd sandbox` (see `control`) are listened for on the
@@ -98,6 +101,7 @@ pub(super) fn start(
             found,
             helper_restarted,
             names_stopped,
+            storage_ready,
             net_cleared: net_cleared_sender,
         })
         .inspect_err(|e| eprintln!("bbd: warning: the sandbox is off: {e:#}"))
@@ -114,12 +118,13 @@ struct SandboxStart<'a> {
     found: &'a Arc<Notify>,
     helper_restarted: &'a Arc<Notify>,
     names_stopped: Arc<Notify>,
+    storage_ready: Arc<Notify>,
 }
 
 /// Load the sandbox, attach its gate and put the apps that were sandboxed
 /// back in. `None`, with a warning, if the sandbox's entries cannot be
-/// read; a gate that cannot be attached leaves a sandbox that refuses to
-/// take apps in. The gate sends `new_starts` the uid of each new app whose
+/// read. A gate that cannot be attached leaves mount policies unavailable.
+/// The gate sends `new_starts` the uid of each new app whose
 /// start it ended (see `sandbox::auto`), and the app ops helper wakes
 /// `found` when it finds a permission changed by the user.
 fn start_sandbox(context: SandboxStart<'_>) -> Option<LiveSandbox> {
@@ -131,17 +136,32 @@ fn start_sandbox(context: SandboxStart<'_>) -> Option<LiveSandbox> {
         found,
         helper_restarted,
         names_stopped,
+        storage_ready,
     } = context;
     let user_data = Path::new(USER_DATA);
     let mut sandbox = match Sandbox::load(&tracer.writer, Vec::new(), Some(user_data)) {
         Ok(sandbox) => sandbox,
         Err(e) => {
             eprintln!("bbd: warning: the sandbox is off: {e:#}");
+            release_orphaned_starts();
             return None;
         }
     };
     let relay = Serving::default();
-    let storage = attach_gate(probes, tracer, db, sandbox.book(), relay.clone());
+    let storage = Storage::recover(Some(&sandbox)).and_then(|()| {
+        attach_gate(
+            probes,
+            tracer,
+            db,
+            sandbox.book(),
+            relay.clone(),
+            storage_ready,
+        )
+    });
+    let restart = storage
+        .as_ref()
+        .map(|gate| sandbox::sweep::Restart::new(gate.mount_readiness()))
+        .unwrap_or_default();
     let appops = AppOps::start();
     // Whether an app is kept from single destinations: what the one effect
     // finds out and the other needs the packet filter's rules for.
@@ -179,7 +199,7 @@ fn start_sandbox(context: SandboxStart<'_>) -> Option<LiveSandbox> {
     // Adding the UID to the storage gate lets a held start proceed. Its
     // other policies must already be in place at that point.
     sandbox.add_effect(storage);
-    sandbox.add_effect(Box::new(sandbox::sweep::Restart));
+    sandbox.add_effect(Box::new(restart));
     sandbox.resume(&tracer.writer, &mut tracer.packages);
     sandbox.note_recording(&tracer.writer);
     sandbox.resume_auto(new_apps, &tracer.writer, &mut tracer.packages);
@@ -190,12 +210,19 @@ fn start_sandbox(context: SandboxStart<'_>) -> Option<LiveSandbox> {
     })
 }
 
+fn release_orphaned_starts() {
+    if let Err(e) = Storage::recover(None) {
+        eprintln!("bbd: sandbox: cannot recover pending gate starts: {e:#}");
+    }
+}
+
 fn attach_gate(
     probes: &mut Probes,
     tracer: &mut Tracer,
     db: &Path,
     book: sandbox::destinations::Book,
     relay: Serving,
+    storage_ready: Arc<Notify>,
 ) -> anyhow::Result<Storage> {
     // Attached while no uid is listed for it, so it holds nothing yet. The
     // uids are listed next, and what started in between is ended last
@@ -207,7 +234,20 @@ fn attach_gate(
         probes.selinux,
         &probes.offsets,
     )
-    .and_then(|_| Storage::start(&mut probes.ebpf, &db.with_file_name("scratch"), book, relay));
+    .and_then(|_| {
+        Storage::start(
+            &mut probes.ebpf,
+            &db.with_file_name("scratch"),
+            book,
+            relay,
+            storage_ready,
+        )
+    });
+    if storage.is_ok()
+        && let Err(e) = Storage::watch_unlock(&mut probes.ebpf)
+    {
+        eprintln!("bbd: sandbox: cannot watch for storage unlock: {e:#}");
+    }
     tracer.write_coverage(
         &format!("coverage_{}", syscalls::GATE.name),
         i64::from(storage.is_ok()),
@@ -355,6 +395,7 @@ struct SandboxParts {
     found: Arc<Notify>,
     helper_restarted: Arc<Notify>,
     names_stopped: Arc<Notify>,
+    storage_ready: Arc<Notify>,
     /// The apps whose network records the sandbox cleared, for the event
     /// loop to drop what it holds of them.
     net_cleared: mpsc::Sender<u32>,
@@ -411,6 +452,7 @@ async fn run_sandbox(
         found,
         helper_restarted,
         names_stopped,
+        storage_ready,
         net_cleared,
     } = parts;
     let commands = listen_commands(&db);
@@ -423,19 +465,20 @@ async fn run_sandbox(
     let mut packages = Packages::new(&packages_list);
     let mut command_reads = tokio::task::JoinSet::new();
     let mut command_read_errors = Limited::new(RECURRING_INTERVAL, Policy::ResetOnChange);
-    // The package list, watched while newly installed apps are sandboxed.
+    // Package updates can make a failed mount work on the next launch.
     let mut package_watch = auto::watch::Watch::default();
+    let mut package_versions = PackageVersions::default();
+    packages.updated_app_ids(&mut package_versions);
     let mut tick = interval(FLUSH_INTERVAL);
     tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
     loop {
-        if package_watch.arm(
-            live.sandbox.auto_on(),
-            Path::new(auto::watch::PACKAGE_DIR),
-            Path::new(USER_DATA),
-        ) {
-            // What was installed before the watch began.
-            live.sandbox.isolate_new(&writer, &mut packages);
-        }
+        watch_package_updates(
+            &mut package_watch,
+            &mut live.sandbox,
+            &writer,
+            &mut packages,
+            &mut package_versions,
+        );
         // A new app left out of the sandbox is tried again then; no timer
         // while none is.
         let next_look = live.sandbox.auto_next_look();
@@ -446,6 +489,7 @@ async fn run_sandbox(
             _ = found.notified() => {}
             _ = helper_restarted.notified() => live.sandbox.auto_helper_restarted(&writer, &mut packages),
             _ = names_stopped.notified() => stop_relay(&mut live, &writer),
+            _ = storage_ready.notified() => live.sandbox.storage_ready(),
             _ = sleep_until(next_recovery), if next_recovery.is_some() => {
                 live.sandbox.recover_appops(&writer, &mut packages);
             }
@@ -463,20 +507,18 @@ async fn run_sandbox(
                 respond_to_command(read, &mut live.sandbox, &writer, &mut packages, &mut command_read_errors);
             }
             // An app was installed, updated or removed.
-            changed = package_watch.changed(), if package_watch.armed() => match changed {
-                Ok(()) => live.sandbox.auto_packages_changed(&writer, &mut packages),
-                Err(e) => package_watch.give_up(&e),
-            },
+            changed = package_watch.changed(), if package_watch.armed() => {
+                handle_package_change(
+                    changed, &mut package_watch, &mut live.sandbox,
+                    &writer, &mut packages, &mut package_versions,
+                );
+            }
             _ = sleep_until(next_look), if next_look.is_some() => {
                 live.sandbox.isolate_new(&writer, &mut packages);
             }
             // The gate ended a start for a new app or a stale entry.
             Some(uid) = new_starts.recv() => {
-                let mut starts = BTreeSet::from([uid]);
-                while let Ok(uid) = new_starts.try_recv() {
-                    starts.insert(uid);
-                }
-                live.sandbox.auto_started(&writer, &mut packages, starts);
+                handle_new_starts(uid, &mut new_starts, &mut live.sandbox, &writer, &mut packages);
             }
         }
         live.sandbox.release_reassigned(&writer, &mut packages);
@@ -485,6 +527,58 @@ async fn run_sandbox(
     stop_relay(&mut live, &writer);
     control::unlisten_commands(&db);
     live.sandbox.keep_found(&writer);
+}
+
+fn watch_package_updates(
+    watch: &mut auto::watch::Watch,
+    sandbox: &mut Sandbox,
+    writer: &Writer,
+    packages: &mut Packages,
+    versions: &mut PackageVersions,
+) {
+    let auto = sandbox.auto_on();
+    if watch.arm(
+        auto || sandbox.watches_package_updates(),
+        Path::new(auto::watch::PACKAGE_DIR),
+        auto.then_some(Path::new(USER_DATA)),
+    ) {
+        // Read changes that happened before inotify could report them.
+        sandbox.note_package_update(packages, versions);
+        sandbox.isolate_new(writer, packages);
+    }
+}
+
+fn handle_package_change(
+    changed: std::io::Result<auto::watch::Change>,
+    watch: &mut auto::watch::Watch,
+    sandbox: &mut Sandbox,
+    writer: &Writer,
+    packages: &mut Packages,
+    versions: &mut PackageVersions,
+) {
+    match changed {
+        Ok(change) => {
+            if change.packages {
+                sandbox.note_package_update(packages, versions);
+            }
+            sandbox.auto_packages_changed(writer, packages);
+        }
+        Err(e) => watch.give_up(&e),
+    }
+}
+
+fn handle_new_starts(
+    uid: u32,
+    new_starts: &mut tokio::sync::mpsc::Receiver<u32>,
+    sandbox: &mut Sandbox,
+    writer: &Writer,
+    packages: &mut Packages,
+) {
+    let mut starts = BTreeSet::from([uid]);
+    while let Ok(uid) = new_starts.try_recv() {
+        starts.insert(uid);
+    }
+    sandbox.auto_started(writer, packages, starts);
 }
 
 fn stop_relay(live: &mut LiveSandbox, writer: &Writer) {

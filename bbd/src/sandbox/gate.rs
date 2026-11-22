@@ -21,26 +21,12 @@
 //! makes the mounts of the sandbox (`mounts`), and lets the process go on.
 //! An app is held for about a millisecond.
 //!
-//! The thread does nothing else and never waits for the rest of the daemon:
-//! an app must not be kept from starting by a database write. It is also
-//! the only thread that can do this. A thread may move to another mount
-//! namespace only if it shares its root and working directory with no other
-//! thread, so this one gives up sharing them when it starts.
-//!
-//! A start that cannot be given a required mount is killed. An optional
-//! recording cover is attempted without stopping the app when it needs
-//! no other mounts. If the thread
-//! itself gets stuck or ends, the kernel side kills such starts on its own
-//! (`GATE_WAITING_SINCE`).
-//!
-//! While newly installed apps are put in the sandbox (`auto`), the kernel
-//! side also stops a start of an app the daemon has not dealt with yet: one
-//! installed and started before the daemon got to it. That start cannot be
-//! given a sandbox either. It is killed, and the main loop told, which puts
-//! the app in the sandbox: its next start is held as any sandboxed one.
+//! The mount worker gives up sharing its root and working directory so it
+//! can enter another mount namespace. A separate reader owns the stopped
+//! starts and their deadlines, even if the mount worker stops responding.
 
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{BTreeSet, HashMap, HashSet, VecDeque},
     fs,
     os::unix::fs::PermissionsExt as _,
     path::Path,
@@ -66,10 +52,15 @@ use super::{
 };
 use crate::{
     log::{Limited, Policy, SANDBOX_INTERVAL},
+    packages::app_id_of,
     sync::{lock, read, write},
 };
 
 mod admission;
+mod health;
+mod watchdog;
+
+use health::AdmissionHealth;
 
 /// Hold times kept for the 95th percentile `bbd sandbox status` reports.
 const HOLDS_KEPT: usize = 256;
@@ -110,6 +101,10 @@ const NOT_HELD: Hold = (
 );
 
 /// Whether starts are held at all for this.
+fn adds_mounts(before: Mounts, after: Mounts) -> bool {
+    (!before.storage && after.storage) || (!before.cpu_info && after.cpu_info)
+}
+
 fn held(hold: Hold) -> bool {
     hold.0.any() || hold.1 != Resolver::None
 }
@@ -119,7 +114,6 @@ type Told = Box<dyn Fn(u32) + Send>;
 
 /// A uid held at the gate: what the thread needs to know to mount its
 /// sandbox.
-#[derive(Clone)]
 struct Gated {
     package: String,
     install_id: String,
@@ -129,13 +123,14 @@ struct Gated {
     /// What it finds at the socket of the system's resolver (`resolver`).
     resolver: Resolver,
     relay_failed: Option<Arc<AtomicBool>>,
+    health: Mutex<AdmissionHealth>,
 }
 
 /// What the gate thread and the daemon's main loop share. Each update
 /// takes a single call, so the guards can be recovered after a panic.
 struct Shared {
     /// The uids held at the gate.
-    apps: RwLock<HashMap<u32, Gated>>,
+    apps: RwLock<HashMap<u32, Arc<Gated>>>,
     auto: Arc<RwLock<Admission>>,
     stats: Mutex<Stats>,
     /// False once the thread has ended.
@@ -145,6 +140,16 @@ struct Shared {
     admitted: Mutex<Option<Told>>,
     /// Told the uid of each new app whose start was ended.
     unknown: Mutex<Option<Told>>,
+}
+
+/// Read whether a registered mount policy is ready for an app restart.
+#[derive(Clone)]
+pub struct MountReadiness(Arc<Shared>);
+
+impl MountReadiness {
+    pub(super) fn ready(&self, entry: &Entry, mounts: Mounts) -> bool {
+        self.0.mounts_ready(entry, mounts)
+    }
 }
 
 #[derive(Default)]
@@ -181,6 +186,7 @@ impl Stats {
 /// mount for each.
 pub struct Storage {
     uids: BpfHashMap<MapData, u32, u32>,
+    _watchdog: watchdog::Running,
     release_errors: Limited,
     shared: Arc<Shared>,
     /// Whether the packet filter can enforce the Network item.
@@ -199,13 +205,19 @@ impl Storage {
         scratch: &Path,
         book: Book,
         relay: Serving,
+        storage_ready: Arc<tokio::sync::Notify>,
     ) -> anyhow::Result<Self> {
         let mut map = |name: &str| {
             ebpf.take_map(name)
                 .with_context(|| format!("{name} map missing"))
         };
         let uids = BpfHashMap::try_from(map("SANDBOX_UIDS")?)?;
-        let waiting: Array<MapData, u64> = Array::try_from(map("GATE_WAITING_SINCE")?)?;
+        let open = Array::try_from(map("GATE_OPEN")?)?;
+        let pending = map("GATE_PENDING")?;
+        pending
+            .pin(watchdog::PIN)
+            .context("pinning pending gate starts")?;
+        let pending = watchdog::Journal::try_from(pending)?;
         let ring = RingBuf::try_from(map("GATE")?)?;
         fs::create_dir_all(scratch)
             .and_then(|()| fs::set_permissions(scratch, fs::Permissions::from_mode(0o700)))
@@ -220,15 +232,35 @@ impl Storage {
             admitted: Mutex::new(None),
             unknown: Mutex::new(None),
         });
-        admission::start(ring, waiting, &shared, scratch)?;
+        let worker = admission::start(&shared, scratch)?;
+        let watchdog = watchdog::start(ring, open, pending, &shared, worker, storage_ready)?;
         Ok(Self {
             uids,
+            _watchdog: watchdog,
             release_errors: Limited::new(SANDBOX_INTERVAL, Policy::Shared),
             shared,
             network: false,
             book,
             resolver_unknown: HashSet::new(),
         })
+    }
+
+    pub fn recover(sandbox: Option<&Sandbox>) -> anyhow::Result<()> {
+        watchdog::recover(sandbox)
+    }
+
+    pub fn watch_unlock(ebpf: &mut aya::Ebpf) -> anyhow::Result<()> {
+        let probe: &mut aya::programs::KProbe = ebpf
+            .program_mut("gate_storage_ready")
+            .context("storage unlock program missing")?
+            .try_into()?;
+        probe.load()?;
+        probe.attach("fscrypt_ioctl_add_key", 0)?;
+        Ok(())
+    }
+
+    pub fn mount_readiness(&self) -> MountReadiness {
+        MountReadiness(self.shared.clone())
     }
 
     pub(super) fn auto_admission(&self) -> Arc<RwLock<Admission>> {
@@ -261,6 +293,7 @@ impl Storage {
 
     /// Stop holding starts of `uid`, if they were held.
     fn release(&mut self, uid: u32) {
+        let mut apps = write(&self.shared.apps);
         if let Err(e) = self.uids.remove(&uid)
             && !missing_gate_key(&e)
         {
@@ -268,7 +301,7 @@ impl Storage {
                 "bbd: sandbox: cannot remove uid {uid} from the gate: {e:?}"
             ));
         }
-        write(&self.shared.apps).remove(&uid);
+        apps.remove(&uid);
     }
 
     /// Have `told` called, on the gate thread, with the uid of each app
@@ -294,10 +327,30 @@ impl Storage {
         resolver: Resolver,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
-            self.shared.open.load(Ordering::Relaxed),
+            self.shared.open.load(Ordering::Acquire),
             "the gate has stopped; restart the daemon"
         );
         let uid = entry.uid;
+        let mut apps = write(&self.shared.apps);
+        if apps.get(&uid).is_some_and(|app| {
+            app.package == entry.package
+                && app.install_id == entry.install_id
+                && app.packages == packages
+                && app.mounts == mounts
+                && app.resolver == resolver
+        }) {
+            return Ok(());
+        }
+        let health = apps
+            .get(&uid)
+            .filter(|app| {
+                mounts.any()
+                    && app.install_id == entry.install_id
+                    && app.package == entry.package
+                    && app.packages == packages
+                    && app.mounts == mounts
+            })
+            .map_or_else(AdmissionHealth::default, |app| *lock(&app.health));
         let gated = Gated {
             package: entry.package.clone(),
             install_id: entry.install_id.clone(),
@@ -306,8 +359,8 @@ impl Storage {
             resolver,
             relay_failed: (resolver.cover() == Cover::Relay)
                 .then(|| Arc::new(AtomicBool::new(false))),
+            health: Mutex::new(health),
         };
-        let mut apps = write(&self.shared.apps);
         let kind = if recording_only((mounts, resolver)) {
             GATE_RECORD
         } else {
@@ -316,7 +369,7 @@ impl Storage {
         self.uids
             .insert(&uid, &kind, 0)
             .context("adding the uid to the gate")?;
-        apps.insert(uid, gated);
+        apps.insert(uid, Arc::new(gated));
         Ok(())
     }
 }
@@ -492,6 +545,12 @@ impl Effect for Storage {
         if was == wanted {
             return Ok(());
         }
+        if !self.shared.open.load(Ordering::Acquire)
+            && !adds_mounts(was.0, wanted.0)
+            && was.1 == wanted.1
+        {
+            return Ok(());
+        }
         self.change(entry, packages, was, wanted)
     }
 
@@ -560,6 +619,41 @@ impl Effect for Storage {
         );
     }
 
+    fn watches_package_updates(&self) -> bool {
+        self.shared.open.load(Ordering::Acquire)
+            && read(&self.shared.apps)
+                .values()
+                .any(|app| !recording_only((app.mounts, app.resolver)))
+    }
+
+    fn packages_updated(&mut self, app_ids: &BTreeSet<u32>) {
+        for (&uid, policy) in read(&self.shared.apps).iter() {
+            if app_ids.contains(&app_id_of(uid)) {
+                lock(&policy.health).recover();
+            }
+        }
+    }
+
+    fn storage_ready(&mut self, apps: &[Resumed]) {
+        for app in apps {
+            let uid = app.entry.uid;
+            let policy = read(&self.shared.apps).get(&uid).cloned();
+            let Some(policy) = policy.filter(|policy| lock(&policy.health).refuses_start()) else {
+                continue;
+            };
+            if !policy.mounts.storage
+                || dirs::open_sandbox(
+                    Path::new(&mounts::media_of(uid)),
+                    uid,
+                    &format!("{uid}-{}", app.entry.install_id),
+                )
+                .is_ok()
+            {
+                lock(&policy.health).recover();
+            }
+        }
+    }
+
     fn relay_stopped(&mut self) {
         let only_recorded: Vec<_> = read(&self.shared.apps)
             .iter()
@@ -576,26 +670,27 @@ impl Effect for Storage {
     }
 
     fn report(&self, status: &mut Status) {
-        let apps = read(&self.shared.apps);
-        status.gated_uids.extend(apps.keys().copied());
-        let stats = lock(&self.shared.stats);
-        status.gate = self.shared.open.load(Ordering::Relaxed);
-        status.dns_names = status.gate && self.shared.relay.alive();
+        self.shared.report_gate(status);
         if status.gate {
             status
                 .network_dns_uids
-                .extend(apps.iter().filter_map(|(&uid, app)| {
+                .extend(read(&self.shared.apps).iter().filter_map(|(&uid, app)| {
                     (app.resolver == Resolver::Block && !self.resolver_unknown.contains(&uid))
                         .then_some(uid)
                 }));
         }
         if status.dns_names {
-            status.dns_uids.extend(apps.iter().filter_map(|(uid, app)| {
-                let failed = app.relay_failed.as_ref()?;
-                (!failed.load(Ordering::Relaxed) && !self.resolver_unknown.contains(uid))
+            status
+                .dns_uids
+                .extend(read(&self.shared.apps).iter().filter_map(|(uid, app)| {
+                    let failed = app.relay_failed.as_ref()?;
+                    (!failed.load(Ordering::Relaxed)
+                        && !self.resolver_unknown.contains(uid)
+                        && lock(&app.health).cause().is_none())
                     .then_some(*uid)
-            }));
+                }));
         }
+        let stats = lock(&self.shared.stats);
         status.admitted = stats.admitted;
         status.failed = stats.failed;
         status.new_apps_stopped = stats.unknown;
@@ -604,7 +699,7 @@ impl Effect for Storage {
 }
 
 /// Stands in for [`Storage`] on a kernel where the gate cannot be attached:
-/// nothing can be put in the sandbox there.
+/// the mount policies remain unavailable.
 pub struct Unavailable(pub Book);
 
 impl Effect for Unavailable {
@@ -626,12 +721,16 @@ impl Effect for Unavailable {
 
     fn update(
         &mut self,
-        entry: &mut Entry,
-        packages: &[String],
-        _: &Settings,
+        _: &mut Entry,
+        _: &[String],
+        before: &Settings,
         after: &Settings,
     ) -> anyhow::Result<()> {
-        self.enable(entry, packages, after)
+        anyhow::ensure!(
+            !adds_mounts(before.mounts(), after.mounts()),
+            "this kernel cannot hold starting apps; storage and CPU information cannot be sandboxed"
+        );
+        Ok(())
     }
 
     fn resume(&mut self, apps: &[Resumed]) {

@@ -13,7 +13,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
+    collections::{BTreeSet, HashMap, VecDeque},
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
     time::{Duration, Instant},
@@ -30,13 +30,15 @@ use crate::{
 };
 
 use super::{
-    Effect, Entry, Status,
-    answers::{Disabled, DisabledAll, Enabled, GlobalItems, Listed, ListedApp},
+    Effect, Entry,
+    answers::{Disabled, DisabledAll, Enabled, GlobalItems},
     appops, auto, destinations, dirs,
     effect::Change,
-    items::{InPlace, Settings},
+    items::Settings,
     target::Target,
 };
+
+mod listing;
 
 /// Packages that are never sandboxed: the app, whose own reads of the
 /// device would be cut off from what it reports on. The canary test app
@@ -718,82 +720,6 @@ impl Sandbox {
                 );
             }
         }
-    }
-
-    pub fn status(&self) -> Status {
-        let mut status = Status::default();
-        for effect in &self.effects {
-            effect.report(&mut status);
-        }
-        self.auto.report(&mut status);
-        status
-    }
-
-    /// Every entry, enabled or not.
-    fn list(&self, writer: &Writer) -> anyhow::Result<Listed> {
-        let global = self.global_read();
-        let status = self.status();
-        let (rules, recording) = (writer.net_rule_counts()?, writer.net_recording()?);
-        let apps = writer
-            .sandbox_entries()?
-            .into_iter()
-            .map(|entry| {
-                let in_place = InPlace {
-                    mounts: status.gate && status.gated_uids.contains(&entry.uid),
-                    android_id_hook: status.hook.android_id,
-                    app_list_hook: status.hook.app_list,
-                    uri_grants_hook: status.hook.uri_grants,
-                    ad_id_hook: status.hook.ad_id,
-                    packet_filter: status.network_uids.contains(&entry.uid),
-                    network_dns: status.network_dns_uids.contains(&entry.uid),
-                    recording: status.recording_uids.contains(&entry.uid),
-                    dns_names: status.dns_uids.contains(&entry.uid),
-                };
-                let settings = Settings::parse(&entry.settings);
-                let items = settings.over(&global);
-                let unmet = if entry.enabled {
-                    let held = status.held_ops.get(&entry.uid);
-                    let mut unmet =
-                        items.unmet(&in_place, |op| held.is_some_and(|held| held.contains(op)));
-                    if status.unknown_appops.contains(&entry.uid) {
-                        for part in unmet.values_mut().flatten() {
-                            if *part == super::items::Part::AppOps {
-                                *part = super::items::Part::AppOpsUnknown;
-                            }
-                        }
-                    }
-                    unmet
-                } else {
-                    BTreeMap::new()
-                };
-                ListedApp {
-                    unmet,
-                    appops_checking: entry.enabled && status.checking_appops.contains(&entry.uid),
-                    items,
-                    network_rules: rules.get(&entry.uid).copied().unwrap_or(0),
-                    name_rules_not_in_effect: if entry.enabled && !in_place.dns_names {
-                        lock(&self.book).get(&entry.uid).map_or(0, |targets| {
-                            targets
-                                .iter()
-                                .filter(|target| !matches!(target, Target::Ip(..)))
-                                .count() as u32
-                        })
-                    } else {
-                        0
-                    },
-                    recording_since: recording.get(&entry.uid).copied(),
-                    uid: entry.uid,
-                    package: entry.package,
-                    enabled: entry.enabled,
-                    created: entry.created,
-                    settings,
-                }
-            })
-            .collect();
-        Ok(Listed {
-            apps,
-            hook_health: status.hook.health,
-        })
     }
 
     /// Every item, with its global mode.

@@ -222,8 +222,17 @@ private fun RowScope.ItemRowHeader(
             Text(
                 text = when {
                     inEffect -> modeLabel(item, mode)
+
                     checking -> stringResource(R.string.jail_checking_app_ops)
-                    else -> stringResource(notInEffect(item, unmet, hookHealth))
+
+                    else -> {
+                        val reason = stringResource(notInEffect(item, unmet, hookHealth))
+                        if (SandboxPart.MOUNT_LAUNCH_REFUSED in unmet) {
+                            stringResource(R.string.jail_mount_launch_refused, reason)
+                        } else {
+                            reason
+                        }
+                    }
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (inEffect || checking) {

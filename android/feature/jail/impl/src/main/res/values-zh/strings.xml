@@ -31,7 +31,7 @@
     <string name="jail_hook_missing_title">设备标识符和应用列表未隐藏</string>
     <string name="jail_hook_missing">在 LSPosed 中为 Big Brother 启用系统框架作用域，然后重启设备。</string>
     <string name="jail_gate_missing_title">无法隔离存储和处理器信息</string>
-    <string name="jail_gate_missing">此内核不支持在应用启动时进行拦截。</string>
+    <string name="jail_gate_missing">应用启动时无法启用隔离。</string>
     <string name="jail_appops_missing_title">无法隔离通讯录、位置、相机等</string>
     <string name="jail_appops_missing">负责隔离这些项目的组件未运行，会自动重新启动。</string>
 
@@ -81,6 +81,10 @@
     <string name="jail_hook_degraded">限制已停止生效，请重启设备。</string>
     <string name="jail_hook_status_unknown">无法确定系统框架限制的状态。</string>
     <string name="jail_not_in_effect_mounts">未生效：存储隔离未运行</string>
+    <string name="jail_mount_start_failed">无法在启动时暂停应用。</string>
+    <string name="jail_mount_setup_failed">启动时未能启用隔离。</string>
+    <string name="jail_mount_timed_out">应用启动时隔离超时。</string>
+    <string name="jail_mount_launch_refused">%1$s 此隔离开启时，应用无法启动。关闭受影响的项目，或将应用移出隔离区即可启动。</string>
     <string name="jail_checking_app_ops">正在验证 Android 限制…</string>
     <string name="jail_app_ops_unknown">无法验证 Android 限制。</string>
     <string name="jail_not_in_effect_app_ops">限制未生效，应用仍可能访问此数据。</string>
@@ -98,7 +102,7 @@
     <string name="jail_status_network_missing">此内核不支持网络过滤</string>
     <string name="jail_status_checking">正在检查…</string>
     <string name="jail_status_hook_missing">系统框架钩子未加载</string>
-    <string name="jail_status_gate_missing">此内核不支持存储隔离</string>
+    <string name="jail_status_gate_missing">存储隔离不可用</string>
     <string name="jail_status_appops_missing">通讯录、位置等未生效</string>
     <string name="jail_status_new_apps_not_held">新安装的应用可能在隔离前启动</string>
     <plurals name="jail_status_new_apps_held">

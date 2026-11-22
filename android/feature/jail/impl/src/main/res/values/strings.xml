@@ -34,7 +34,7 @@
     <string name="jail_hook_missing_title">Device identifiers and the app list are not hidden</string>
     <string name="jail_hook_missing">Enable the System Framework scope for Big Brother in LSPosed, then restart the device.</string>
     <string name="jail_gate_missing_title">Storage and processor information cannot be isolated</string>
-    <string name="jail_gate_missing">This kernel cannot hold starting apps.</string>
+    <string name="jail_gate_missing">Isolation is unavailable when apps start.</string>
     <string name="jail_appops_missing_title">Contacts, location, camera and more are not isolated</string>
     <string name="jail_appops_missing">The part of Big Brother that holds them back is not running. It starts again automatically.</string>
 
@@ -98,6 +98,10 @@
     <string name="jail_hook_degraded">Stopped working. Restart the device.</string>
     <string name="jail_hook_status_unknown">The status of the System Framework restrictions is unknown.</string>
     <string name="jail_not_in_effect_mounts">Not in effect: storage isolation is not running</string>
+    <string name="jail_mount_start_failed">Could not hold the app at startup.</string>
+    <string name="jail_mount_setup_failed">Could not apply isolation at startup.</string>
+    <string name="jail_mount_timed_out">Isolation timed out at startup.</string>
+    <string name="jail_mount_launch_refused">%1$s The app can’t start while this isolation is on. Turn off the affected items or remove the app from Jail to let it start.</string>
     <string name="jail_checking_app_ops">Checking Android restriction…</string>
     <string name="jail_app_ops_unknown">Android restriction could not be verified.</string>
     <string name="jail_not_in_effect_app_ops">Restriction unavailable. The app may still have access.</string>
@@ -116,7 +120,7 @@
     <string name="jail_status_network_missing">Network filtering not available on this kernel</string>
     <string name="jail_status_checking">Checking…</string>
     <string name="jail_status_hook_missing">System framework hook not loaded</string>
-    <string name="jail_status_gate_missing">Storage isolation not available on this kernel</string>
+    <string name="jail_status_gate_missing">Storage isolation unavailable</string>
     <string name="jail_status_appops_missing">Contacts, location and more not in effect</string>
     <string name="jail_status_new_apps_not_held">New apps may start before isolation</string>
     <!-- Newly installed apps the daemon could not isolate yet. -->

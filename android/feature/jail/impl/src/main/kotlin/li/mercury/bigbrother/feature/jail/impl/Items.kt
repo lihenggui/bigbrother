@@ -180,6 +180,12 @@ internal fun notInEffect(item: SandboxItem, unmet: Set<SandboxPart>, hookHealth:
 
     item == SandboxItem.NETWORK -> R.string.jail_not_in_effect_resolver
 
+    SandboxPart.MOUNT_START_FAILED in unmet -> R.string.jail_mount_start_failed
+
+    SandboxPart.MOUNT_SETUP_FAILED in unmet -> R.string.jail_mount_setup_failed
+
+    SandboxPart.MOUNT_TIMED_OUT in unmet -> R.string.jail_mount_timed_out
+
     SandboxPart.MOUNTS in unmet -> R.string.jail_not_in_effect_mounts
 
     unmet.any { it in HOOK_PARTS } -> when (hookFailure(unmet, hookHealth)) {

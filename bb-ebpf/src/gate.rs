@@ -17,13 +17,13 @@ use aya_ebpf::{
     helpers::{
         bpf_get_current_comm, bpf_get_current_pid_tgid, bpf_get_current_uid_gid, bpf_ktime_get_ns,
     },
-    macros::{kprobe, map},
+    macros::{kprobe, kretprobe, map},
     maps::{Array, HashMap, RingBuf},
-    programs::ProbeContext,
+    programs::{ProbeContext, RetProbeContext},
 };
 use bb_common::{
-    GATE_CLOSED, GATE_NEW, GATE_RECORD, GATE_REQUIRED, GATE_STALE_NS, GateEvent, KNOWN_APP_WORDS,
-    PER_USER_RANGE, known_app_bit,
+    GATE_MISSED, GATE_NEW, GATE_RECORD, GATE_REQUIRED, GATE_STORAGE_READY, GateEvent,
+    KNOWN_APP_WORDS, PER_USER_RANGE, known_app_bit,
 };
 
 use crate::common::{BPF_RB_FORCE_WAKEUP, OFFSETS, arch, read_at};
@@ -37,16 +37,14 @@ static SANDBOX_UIDS: HashMap<u32, u32> = HashMap::with_max_entries(1024, 0);
 #[map]
 static GATE: RingBuf = RingBuf::with_byte_size(64 * 1024, 0);
 
-/// Slot 0: since when (`bpf_ktime_get_ns`) a stopped process has been
-/// waiting for the daemon, 0 while none is. The daemon clears it after each
-/// process it lets go. A time that stays for `GATE_STALE_NS` means the
-/// daemon's gate thread is stuck; `GATE_CLOSED` that it has ended.
-///
-/// This is how a stuck daemon is noticed without it having to say that it is
-/// alive on a timer, which would wake the device for as long as any app is
-/// sandboxed.
+/// Open only after userspace can supervise the stops.
 #[map]
-static GATE_WAITING_SINCE: Array<u64> = Array::with_max_entries(1, 0);
+static GATE_OPEN: Array<u32> = Array::with_max_entries(1, 0);
+
+/// Written before asking for SIGSTOP, and pinned by userspace across daemon
+/// restarts. A ring event on its own would be lost with the daemon.
+#[map]
+static GATE_PENDING: HashMap<[u32; 3], [u32; 4]> = HashMap::with_max_entries(1024, 0);
 
 /// Slot 0: 1 while newly installed apps are put in the sandbox (`bbd sandbox
 /// auto`). A start of an app the daemon has not dealt with yet is then held
@@ -66,7 +64,6 @@ static KNOWN_APP_IDS: Array<u64> = Array::with_max_entries(KNOWN_APP_WORDS, 0);
 #[map]
 static KNOWN_UIDS: HashMap<u32, u32> = HashMap::with_max_entries(1024, 0);
 
-const SIGKILL: u32 = 9;
 const SIGSTOP: u32 = 19;
 
 /// Entry of `setresuid`. zygote's child calls it once, as root, to become
@@ -76,8 +73,8 @@ const SIGSTOP: u32 = 19;
 /// and mounts the sandbox in the child's namespace. A child that only
 /// needs a recording cover is reported without stopping it.
 ///
-/// A child that needs a required mount is stopped. If the daemon cannot
-/// be told or is not letting starts through, the child is killed.
+/// A child that needs a required mount is stopped only once the request
+/// can be supervised.
 ///
 /// While newly installed apps are put in the sandbox, a child taking the uid
 /// of an app the daemon has not dealt with yet is stopped and reported the
@@ -86,6 +83,7 @@ const SIGSTOP: u32 = 19;
 /// next.
 #[kprobe]
 pub fn gate_setresuid(ctx: ProbeContext) -> u32 {
+    // The probe leaves the syscall alone when it cannot read a candidate.
     let _ = try_gate(&ctx);
     0
 }
@@ -105,6 +103,9 @@ fn try_gate(ctx: &ProbeContext) -> Result<(), i32> {
     } else {
         return Ok(());
     };
+    if !open() {
+        return Ok(());
+    }
     // A child of zygote still has zygote's thread name here ("main"), or
     // that of the pool of spare processes it was taken from ("usap32",
     // "usap64"). Anything else taking the uid (`su`, `run-as`) is not an app
@@ -121,68 +122,99 @@ fn try_gate(ctx: &ProbeContext) -> Result<(), i32> {
         return Ok(());
     }
 
-    // Read before the clock: a time another CPU stored in between would be
-    // later than `now`, and the difference would pass for a very long wait.
-    let waiting = GATE_WAITING_SINCE.get_ptr_mut(0).ok_or(-1)?;
-    let since = unsafe { *waiting };
-    let now = unsafe { bpf_ktime_get_ns() };
-    let required = kind == GATE_REQUIRED;
     let task = unsafe { aya_ebpf::helpers::bpf_get_current_task() } as *const u8;
-    let Ok(start) = (unsafe { read_at::<u64>(task, OFFSETS.load()[bb_common::OFF_TASK_START]) })
-    else {
-        if required {
-            kill();
-        }
-        return Ok(());
-    };
-    let event = GateEvent {
-        start_low: start as u32,
-        start_high: (start >> 32) as u32,
+    let start = unsafe { read_at::<u64>(task, OFFSETS.load()[bb_common::OFF_TASK_START]) };
+    let now = unsafe { bpf_ktime_get_ns() };
+    let mut event = GateEvent {
+        start_low: 0,
+        start_high: 0,
         pid: task_id as u32,
         uid,
         at_ns_low: now as u32,
         at_ns_high: (now >> 32) as u32,
         kind,
     };
-    let stale = since == GATE_CLOSED || (since != 0 && now.wrapping_sub(since) > GATE_STALE_NS);
+    let Ok(start) = start else {
+        if kind == GATE_REQUIRED {
+            event.kind = GATE_MISSED;
+            if GATE.output(&event, BPF_RB_FORCE_WAKEUP).is_err() {
+                close();
+            }
+        }
+        return Ok(());
+    };
+    event.start_low = start as u32;
+    event.start_high = (start >> 32) as u32;
     if kind == GATE_RECORD {
-        // Recording can miss a start. Stopping it would make the app
-        // depend on a working gate even if no restriction needs a mount.
-        if !stale {
-            let _ = GATE.output(&event, BPF_RB_FORCE_WAKEUP);
-        }
-        return Ok(());
-    }
-    if stale {
-        // An unavailable gate cannot end a start without an installed policy.
-        if !required {
-            return Ok(());
-        }
-        // Reported all the same: a daemon that is there after all clears
-        // the time when it reads this, and the next start is held again.
+        // A full ring may lose an optional recording cover.
         let _ = GATE.output(&event, BPF_RB_FORCE_WAKEUP);
-        kill();
-        return Ok(());
-    }
-    // Before the daemon is told, so that it cannot have cleared the time
-    // already when it is set.
-    if since == 0 {
-        unsafe { *waiting = now };
-    }
-    // The one event that wakes its reader every time: a process is stopped
-    // until the daemon has seen it. It happens once per start of a sandboxed
-    // app, or of a new app not dealt with yet, and for nothing else.
-    if GATE.output(&event, BPF_RB_FORCE_WAKEUP).is_err() {
-        if required {
-            kill();
-        }
-        return Ok(());
-    }
-    // Takes effect as the process leaves this system call.
-    if unsafe { aya_ebpf::helpers::generated::bpf_send_signal(SIGSTOP) } != 0 && required {
-        kill();
+    } else {
+        hold_child(event);
     }
     Ok(())
+}
+
+#[inline(always)]
+fn hold_child(event: GateEvent) {
+    // Reserve the notification before stopping anything. Submitting it
+    // afterwards also prevents a reply from racing the stop request.
+    let Some(mut slot) = GATE.reserve::<GateEvent>(0) else {
+        if event.kind == GATE_REQUIRED {
+            close();
+        }
+        return;
+    };
+    let key = event.process_key();
+    let pending = [event.uid, event.at_ns_low, event.at_ns_high, event.kind];
+    let accepted = GATE_PENDING.insert(&key, &pending, 1).is_ok();
+    let stopped = accepted
+        && open()
+        && unsafe { aya_ebpf::helpers::generated::bpf_send_signal(SIGSTOP) } == 0;
+    if accepted && !stopped {
+        // An entry that survives deletion is checked against a stopped PID.
+        let _ = GATE_PENDING.remove(&key);
+    }
+    slot.write(if stopped {
+        event
+    } else {
+        GateEvent {
+            kind: GATE_MISSED,
+            ..event
+        }
+    });
+    slot.submit(BPF_RB_FORCE_WAKEUP);
+}
+
+#[inline(always)]
+fn open() -> bool {
+    GATE_OPEN.get(0).is_some_and(|open| *open != 0)
+}
+
+#[inline(always)]
+fn close() {
+    if let Some(open) = GATE_OPEN.get_ptr_mut(0) {
+        unsafe { *open = 0 };
+    }
+}
+
+/// A key can make a verified sandbox directory accessible without any
+/// change to the directory itself that inotify could report.
+#[kretprobe]
+pub fn gate_storage_ready(ctx: RetProbeContext) -> u32 {
+    if bpf_get_current_uid_gid() as u32 == 0 && ctx.ret::<i64>() == 0 && open() {
+        let event = GateEvent {
+            start_low: 0,
+            start_high: 0,
+            pid: 0,
+            uid: 0,
+            at_ns_low: 0,
+            at_ns_high: 0,
+            kind: GATE_STORAGE_READY,
+        };
+        // A start can use the new storage even if this sweep is missed.
+        let _ = GATE.output(&event, BPF_RB_FORCE_WAKEUP);
+    }
+    0
 }
 
 /// Whether `uid` belongs to an app installed since newly installed apps are
@@ -204,9 +236,4 @@ fn unknown_app(uid: u32) -> bool {
         return false;
     }
     unsafe { KNOWN_UIDS.get(&uid) }.is_none()
-}
-
-#[inline(always)]
-fn kill() {
-    unsafe { aya_ebpf::helpers::generated::bpf_send_signal(SIGKILL) };
 }

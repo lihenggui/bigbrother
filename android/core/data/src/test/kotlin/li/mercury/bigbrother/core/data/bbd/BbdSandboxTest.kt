@@ -46,11 +46,21 @@ class BbdSandboxTest {
         assertEquals(true, app.appOpsChecking)
         assertEquals(mapOf(SandboxItem.CAMERA to SandboxMode.OFF), app.settings)
         assertEquals(
-            mapOf(SandboxItem.CAMERA to SandboxMode.OFF, SandboxItem.NETWORK_RECORD to SandboxMode.ON),
+            mapOf(
+                SandboxItem.CAMERA to SandboxMode.OFF,
+                SandboxItem.NETWORK_RECORD to SandboxMode.ON,
+                SandboxItem.STORAGE to SandboxMode.ON,
+                SandboxItem.CPU_INFO to SandboxMode.ON,
+            ),
             app.items,
         )
         assertEquals(
-            mapOf(SandboxItem.CAMERA to setOf(SandboxPart.APP_OPS), SandboxItem.NETWORK_RECORD to setOf(SandboxPart.DNS_NAMES)),
+            mapOf(
+                SandboxItem.CAMERA to setOf(SandboxPart.APP_OPS),
+                SandboxItem.NETWORK_RECORD to setOf(SandboxPart.DNS_NAMES),
+                SandboxItem.STORAGE to setOf(SandboxPart.MOUNTS, SandboxPart.MOUNT_SETUP_FAILED, SandboxPart.MOUNT_LAUNCH_REFUSED),
+                SandboxItem.CPU_INFO to setOf(SandboxPart.MOUNTS, SandboxPart.MOUNT_TIMED_OUT),
+            ),
             app.unmet,
         )
         assertNull(app.recordingSince)

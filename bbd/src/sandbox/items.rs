@@ -210,6 +210,10 @@ pub struct Settings(BTreeMap<Item, Mode>);
 #[serde(rename_all = "snake_case")]
 pub enum Part {
     Mounts,
+    MountStartFailed,
+    MountSetupFailed,
+    MountTimedOut,
+    MountLaunchRefused,
     AppOps,
     AppOpsUnknown,
     AndroidIdHook,
@@ -225,6 +229,10 @@ impl Part {
     pub fn name(self) -> &'static str {
         match self {
             Part::Mounts => "mounts",
+            Part::MountStartFailed => "mount_start_failed",
+            Part::MountSetupFailed => "mount_setup_failed",
+            Part::MountTimedOut => "mount_timed_out",
+            Part::MountLaunchRefused => "mount_launch_refused",
             Part::AppOps => "app_ops",
             Part::AppOpsUnknown => "app_ops_unknown",
             Part::AndroidIdHook => "android_id_hook",

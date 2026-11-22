@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use super::{Entry, Status, items::Settings};
 
@@ -90,6 +90,16 @@ pub trait Effect: Send {
     /// cannot fail the whole: an effect reports what it could not do and
     /// carries on.
     fn resume(&mut self, _apps: &[Resumed]) {}
+
+    fn watches_package_updates(&self) -> bool {
+        false
+    }
+
+    /// A different installed version may be able to use its mounts.
+    fn packages_updated(&mut self, _app_ids: &BTreeSet<u32>) {}
+
+    /// Revisit verified storage stand-ins when credential-encrypted data opens.
+    fn storage_ready(&mut self, _apps: &[Resumed]) {}
 
     /// Drop optional resolver admission work once the relay stops.
     fn relay_stopped(&mut self) {}

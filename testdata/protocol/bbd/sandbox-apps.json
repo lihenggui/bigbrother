@@ -2,8 +2,8 @@
   "apps": [{
     "uid": 10234, "package": "com.example.notes", "enabled": true, "created": 1,
     "settings": {"camera": "off", "future": "on"},
-    "items": {"camera": "off", "location": "future", "network_record": "on"},
-    "unmet": {"camera": ["app_ops", "future"], "network_record": ["dns_names"], "future": {}},
+    "items": {"camera": "off", "location": "future", "network_record": "on", "storage": "on", "cpu_info": "on"},
+    "unmet": {"camera": ["app_ops", "future"], "network_record": ["dns_names"], "storage": ["mounts", "mount_setup_failed", "mount_launch_refused"], "cpu_info": ["mounts", "mount_timed_out"], "future": {}},
     "appops_checking": true, "network_rules": 2, "name_rules_not_in_effect": 1, "recording_since": null
   }]
 }
