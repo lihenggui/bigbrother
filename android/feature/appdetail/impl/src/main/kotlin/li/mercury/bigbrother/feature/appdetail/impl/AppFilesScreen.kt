@@ -117,7 +117,9 @@ internal fun AppFilesScreen(
     onDismissFileDetails: () -> Unit,
     onOpenFile: (path: String) -> Unit,
 ) {
-    state.fileDetails?.let { details ->
+    // The sheet opens once the history is in. Its stops follow its height, so a long history arriving while it
+    // opened would carry it to full height and drop it back to half.
+    state.fileDetails?.takeIf { it.periods != null || it.failure != null }?.let { details ->
         FileDetailsSheet(details, onOpen = { onOpenFile(details.path) }, onDismiss = onDismissFileDetails)
     }
     var location by rememberSaveable { mutableStateOf(initialLocation ?: Location.ROOT) }

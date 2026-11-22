@@ -33,14 +33,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
 import li.mercury.bigbrother.core.model.AccessPeriod
 import li.mercury.bigbrother.core.model.Action
 import li.mercury.bigbrother.core.ui.exactDateTime
 import li.mercury.bigbrother.core.ui.failureReason
 import li.mercury.bigbrother.core.ui.label
 
-/** When one file was accessed: a line per access, most recent first. */
+/** When one file was accessed: a line per access, most recent first. Shown once the history has loaded. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun FileDetailsSheet(details: FileDetails, onOpen: () -> Unit, onDismiss: () -> Unit) {
@@ -63,16 +62,11 @@ internal fun FileDetailsSheet(details: FileDetails, onOpen: () -> Unit, onDismis
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            val periods = details.periods
-            when {
-                details.failure != null -> Text(
-                    text = failureReason(details.failure),
-                    color = MaterialTheme.colorScheme.error,
-                )
-
-                periods == null -> BigBrotherLoadingIndicator(Modifier.padding(vertical = 24.dp))
-
-                else -> LazyColumn(
+            val periods = details.periods.orEmpty()
+            if (details.failure != null) {
+                Text(text = failureReason(details.failure), color = MaterialTheme.colorScheme.error)
+            } else {
+                LazyColumn(
                     // Leaves room for the button below on a long history.
                     modifier = Modifier.weight(1f, fill = false),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -81,7 +75,7 @@ internal fun FileDetailsSheet(details: FileDetails, onOpen: () -> Unit, onDismis
                 }
             }
             // A folder that was only listed has nothing to show in a viewer.
-            val viewable = periods?.none { it.action == Action.LIST } ?: true
+            val viewable = periods.none { it.action == Action.LIST }
             if (viewable) {
                 FilledTonalButton(onClick = onOpen, modifier = Modifier.fillMaxWidth()) {
                     Text(stringResource(R.string.open_file))
