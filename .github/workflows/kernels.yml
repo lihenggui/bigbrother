@@ -5,11 +5,14 @@ name: Kernels
 # fire is up to the kernel, which the other checks do not have.
 #
 # On every push that changes them, to any branch, so that a branch is
-# checked before there is a pull request; and on pull requests from forks,
-# whose pushes run elsewhere.
+# checked before there is a pull request. Pull requests also check their
+# test merge commit so the required result covers what would merge.
 on:
   push:
-    paths: &paths
+    # The queue also pushes its temporary branch. Publish its result once.
+    branches-ignore: ["gh-readonly-queue/**"]
+    tags: ["**"]
+    paths:
       - bb-ebpf/**
       - bb-common/**
       - bbd/**
@@ -20,7 +23,7 @@ on:
       # A change to the guides alone cannot change what the kernels run.
       - "!**/*.md"
   pull_request:
-    paths: *paths
+  merge_group:
   workflow_dispatch:
 
 permissions:
@@ -31,11 +34,43 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Check changed files
+    runs-on: ubuntu-24.04
+    outputs:
+      run: ${{ steps.paths.outputs.run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Match changed files
+        id: paths
+        shell: bash
+        env:
+          DIFF_RANGE: >-
+            ${{ github.event_name == 'pull_request' &&
+                format('{0}...{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha) ||
+                github.event_name == 'merge_group' &&
+                format('{0}..{1}', github.event.merge_group.base_sha, github.event.merge_group.head_sha) || '' }}
+        run: |
+          run=true
+          if [[ -n "$DIFF_RANGE" ]]; then
+            changed=$(git diff --name-only --no-renames "$DIFF_RANGE" -- \
+              ':(glob)bb-ebpf/**' ':(glob)bb-common/**' ':(glob)bbd/**' Cargo.lock Cargo.toml \
+              scripts/check-kernels.sh .github/workflows/kernels.yml ':(exclude,glob)**/*.md')
+            if [[ -z "$changed" ]]; then
+              run=false
+            fi
+          fi
+          echo "run=$run" >>"$GITHUB_OUTPUT"
+
   selftest:
     name: Self-test on each kernel
-    if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name != github.repository
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -84,3 +119,13 @@ jobs:
         with:
           path: ~/.cache/big_brother/kernels
           key: ${{ steps.kernels.outputs.key }}
+
+  result:
+    name: Kernels result
+    needs: [changes, selftest]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fail when a job failed or was cancelled
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
