@@ -100,6 +100,30 @@ once before `:app` tasks that assemble the APK.
 - Personal data (contacts, messages, call log, calendar) is recorded as the
   collection queried, never the item.
 
+## Sandbox enforcement
+
+- Refuse or end an app only when that is what an item exists for, such as
+  Network on, or a Files and media mount that cannot be made. When anything
+  else is missing, slow, crashed or unsupported, let the app run and report
+  the part as not in effect.
+- Read a mode, permission or setting before writing it, and write only when
+  it differs. When the system or another manager keeps changing it back,
+  stop and report it as not in effect instead of setting it again.
+- Changes that end an app's processes or unbind its services (revoking a
+  runtime permission, changing all-files access, taking a special access)
+  get a small retry budget per app. Ordinary app ops are set again whenever
+  the system resets them.
+- Leave alone an op whose permission no package of the app requests: at its
+  default it already denies the app.
+- Report what is in force now, read back from the system. When it cannot be
+  read, report it as unknown, not as the last result.
+- Save the original state durably before changing it, and give it back when
+  the app leaves Jail, the module is disabled or uninstalled, or a change
+  fails half way.
+- Model each Android behaviour a change relies on in the JVM model
+  (`FakeAndroid`) or the Rust tests first. Assert how often state changed,
+  not only how it ended.
+
 ## Pull requests
 
 Branch from `main`. CI (`.github/workflows/ci.yml`) must pass: Rust format,
