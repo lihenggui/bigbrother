@@ -28,6 +28,8 @@ private const val PER_USER_RANGE = 100_000
 
 internal fun userOf(uid: Int): Int = uid / PER_USER_RANGE
 
+internal fun uidInUser(uid: Int, user: Int): Int = user * PER_USER_RANGE + uid % PER_USER_RANGE
+
 /** `PackageManager.MATCH_STATIC_SHARED_AND_SDK_LIBRARIES`. */
 private const val MATCH_STATIC_SHARED_AND_SDK_LIBRARIES = 0x04000000
 

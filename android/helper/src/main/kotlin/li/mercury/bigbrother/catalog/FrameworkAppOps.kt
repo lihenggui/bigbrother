@@ -55,6 +55,17 @@ internal object Framework : AppOpsSystem {
      */
     private val serviceType by lazy { Class.forName("com.android.internal.app.IAppOpsService") }
 
+    private val activityManagerClass by lazy { Class.forName("android.app.ActivityManager") }
+    private val activityManager by lazy { activityManagerClass.getMethod("getService").invoke(null)!! }
+    private val uidProcessState by lazy { Class.forName("android.app.IActivityManager").getMethod("getUidProcessState", INT, STRING) }
+    private val nonexistentProcessState by lazy { activityManagerClass.getField("PROCESS_STATE_NONEXISTENT").getInt(null) }
+    private val userManager by lazy {
+        val binder = systemService("user") ?: error("no user service")
+        Class.forName("android.os.IUserManager\$Stub").getMethod("asInterface", IBinder::class.java).invoke(null, binder)!!
+    }
+    private val users by lazy { Class.forName("android.os.IUserManager").getMethod("getUsers", BOOLEAN, BOOLEAN, BOOLEAN) }
+    private val userId by lazy { Class.forName("android.content.pm.UserInfo").getField("id") }
+
     override lateinit var ops: List<GuardedOp>
         private set
 
@@ -170,6 +181,15 @@ internal object Framework : AppOpsSystem {
             .getMethod("setUidMode", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
             .invoke(service, code, uid, mode)
     }
+
+    override fun canChangeAllFilesAccess(uid: Int): Boolean = runCatching {
+        val user = userOf(uid)
+        // The running-user list leaves out stopping profiles whose processes may still be alive.
+        val profiles = (users.call(userManager, false, false, false) as List<*>).map { userId.getInt(it) }
+        user in profiles && profiles.all { other ->
+            other == user || uidProcessState.call(activityManager, uidInUser(uid, other), "root") == nonexistentProcessState
+        }
+    }.getOrDefault(false)
 
     override fun emit(line: String) = AppOpsGuard.emit(line)
 

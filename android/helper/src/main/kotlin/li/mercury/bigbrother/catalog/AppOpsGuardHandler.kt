@@ -55,7 +55,15 @@ internal class AppOpsGuardHandler(
         val retries: Retries = Retries(),
     ) {
         /** What to give [permission] back as, the daemon having sent [sent]. */
-        fun toGiveBack(permission: String, sent: PermissionState?): PermissionState? = AppOpsGuardProtocol.stateToGiveBack(sent, tookPermissions[permission], permission in chosen)
+        fun toGiveBack(permission: String, sent: PermissionState?): PermissionState? {
+            val local = tookPermissions[permission]
+            val changedHere = permission in chosen
+            // A replacement helper may only know the services granted since it started.
+            if (changedHere && sent != null && local != null && AppOpsGuardProtocol.isSpecialAccess(permission)) {
+                return PermissionState.ofServices(sent.services + local.services)
+            }
+            return AppOpsGuardProtocol.stateToGiveBack(sent, local, changedHere)
+        }
 
         fun savedValues(): Values = Values(checkNotNull(saved), tookPermissions.toList(), savedGrants)
 
@@ -471,7 +479,7 @@ internal class AppOpsGuardHandler(
                     if (op.name !in unheld) reportUnheld(uid, unheld + op.name, always = false)
                     false
                 } else {
-                    setUidMode(op, uid, mode)
+                    (!destructive || system.canChangeAllFilesAccess(uid)) && setUidMode(op, uid, mode)
                 }
             },
             readMode = { readMode(op, uid) ?: default },
@@ -529,7 +537,9 @@ internal class AppOpsGuardHandler(
             if (current == mode || (attempted && readMode(op, uid) == mode)) {
                 if (destructive) guard.retries.observedHeld(op.name)
                 accepted = true
-            } else if (!destructive || guard.retries.mayWrite(op.name, now())) {
+            } else if (!destructive ||
+                (!guard.retries.suspended(op.name) && system.canChangeAllFilesAccess(uid) && guard.retries.mayWrite(op.name, now()))
+            ) {
                 attempted = true
                 if (setUidMode(op, uid, mode)) {
                     accepted = true
@@ -635,7 +645,7 @@ internal class AppOpsGuardHandler(
     private companion object {
         val LOCATION_OPS = setOf("android:coarse_location", "android:fine_location", "android:wifi_scan")
         val DESTRUCTIVE_OPS = setOf(
-            // StorageManagerService ends the uid's processes on each mode change.
+            // StorageManagerService can end this app ID's processes across users.
             "android:manage_external_storage",
         )
         const val RETRY_LIMIT = 3

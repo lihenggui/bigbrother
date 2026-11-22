@@ -23,7 +23,8 @@ import li.mercury.bigbrother.catalog.FakeAndroid.Companion.UID
  * answers, as `bbd/src/sandbox/appops.rs` does (`enable`, `update`,
  * `disable`, `found`, and `Sandbox::release_reassigned` for an app
  * uninstalled while sandboxed), for the items the permission matrix plays
- * with: contacts, calendar, location and camera, all on at first. What the
+ * with: contacts, calendar, location and camera, all on at first, and
+ * notification and screen content, which tests opt into. What the
  * helper reports found is kept in the entry once the command or check that
  * found it is over, as the daemon's main loop is woken to do. The on-device
  * check of the same matrix runs the daemon itself.
@@ -255,6 +256,8 @@ internal class DaemonDouble(private val android: FakeAndroid) {
             "on" -> ops += "android:camera=1"
             "foreground" -> ops += "android:camera=4"
         }
+        if (items["notification_content"] == "on") permissions += "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE=revoked"
+        if (items["screen_content"] == "on") permissions += "android.permission.BIND_ACCESSIBILITY_SERVICE=revoked"
         return (ops + permissions).joinToString(",")
     }
 
@@ -273,10 +276,21 @@ internal class DaemonDouble(private val android: FakeAndroid) {
         savedPermissions = (pairs(savedPermissions) + kept).joinToString(",") { (name, state) -> "$name=$state" }
     }
 
-    /** `keep_regranted`: in place of what the entry names. */
+    /** `keep_regranted`: the user's latest choice, merged with any other services already saved. */
     private fun keepRegranted(states: List<String>) {
         val found = states.flatMap(::pairs).toMap()
-        savedPermissions = pairs(savedPermissions).joinToString(",") { (name, saved) -> "$name=${found[name] ?: saved}" }
+        savedPermissions = pairs(savedPermissions).joinToString(",") { (name, saved) ->
+            val current = found[name]
+            val kept = when {
+                current == null -> saved
+
+                AppOpsGuardProtocol.isSpecialAccess(name) && saved.startsWith("granted") ->
+                    (saved.split('+') + current.split('+').drop(1)).distinct().joinToString("+")
+
+                else -> current
+            }
+            "$name=$kept"
+        }
     }
 
     private fun pairs(list: String): List<Pair<String, String>> = list.split(',').mapNotNull { pair ->

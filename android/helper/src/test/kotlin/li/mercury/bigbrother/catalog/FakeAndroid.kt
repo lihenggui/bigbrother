@@ -89,6 +89,9 @@ internal class FakeAndroid(wifiScanSharesCoarseLocation: Boolean = true) :
     var permissionServiceAvailable = true
     var packageInfoAvailable = true
 
+    /** A running copy with the same app ID, or `null` when the check fails. */
+    var otherProfileRunning: Boolean? = false
+
     val helperWrites = mutableMapOf<String, Int>()
     val effectiveChanges = mutableMapOf<String, Int>()
     val revocations = mutableMapOf<String, Int>()
@@ -170,6 +173,8 @@ internal class FakeAndroid(wifiScanSharesCoarseLocation: Boolean = true) :
         setModeFromOutside(op.switchCode, mode)
         resetOpsAfterWrite[op.name]?.let { pendingOpResets[op.name] = it }
     }
+
+    override fun canChangeAllFilesAccess(uid: Int): Boolean = otherProfileRunning == false
 
     /** Land the external manager's changes after the helper's readback. */
     fun settleExternalChanges() {

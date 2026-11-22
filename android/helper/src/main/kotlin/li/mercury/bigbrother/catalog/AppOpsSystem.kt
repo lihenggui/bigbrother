@@ -69,6 +69,9 @@ internal interface AppOpsSystem {
     /** Set the uid mode of the op [code]; throws if the service refuses. */
     fun setUidMode(code: Int, uid: Int, mode: Int)
 
+    /** Whether the app ID has no running process in another user as of this check. */
+    fun canChangeAllFilesAccess(uid: Int): Boolean
+
     /** The runtime permissions, `null` if this device does not let them be reached. */
     val permissions: RuntimePermissions?
 

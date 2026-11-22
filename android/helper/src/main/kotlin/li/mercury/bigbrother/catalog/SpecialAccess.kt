@@ -32,6 +32,8 @@ private const val NOTIFICATION_ACCESS = "android.permission.BIND_NOTIFICATION_LI
 /** `Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES`. */
 private const val ACCESSIBILITY_SERVICES = "enabled_accessibility_services"
 
+private const val ACCESSIBILITY_UPDATE_LIMIT = 3
+
 private const val CMD = "/system/bin/cmd"
 
 /**
@@ -145,10 +147,12 @@ internal class SpecialAccess(private val packages: Any) : Taking {
             }
             return
         }
-        // The other services keep their place.
-        val now = accessibilityServices(uid)
-        val after = if (given) now + (services - now.toSet()) else now - services
-        if (after != now) settings("put", "--user", userOf(uid).toString(), "secure", ACCESSIBILITY_SERVICES, after.joinToString(":"))
+        updateAccessibilityServices(
+            services,
+            given,
+            read = { accessibilityServices(uid) },
+            write = { settings("put", "--user", userOf(uid).toString(), "secure", ACCESSIBILITY_SERVICES, it.joinToString(":")) },
+        )
     }
 
     /** Run the `settings` command; what it printed. */
@@ -164,4 +168,25 @@ internal class SpecialAccess(private val packages: Any) : Taking {
             if (process.isAlive) process.destroyForcibly()
         }
     }
+}
+
+internal fun updateAccessibilityServices(services: Set<String>, given: Boolean, read: () -> List<String>, write: (List<String>) -> Unit) {
+    fun updated(current: List<String>): List<String> = if (given) current + (services - current.toSet()) else current - services
+
+    var current = read()
+    repeat(ACCESSIBILITY_UPDATE_LIMIT) {
+        val wanted = updated(current)
+        if (wanted == current) return
+        // Settings replaces the whole list. Confirm the merge's input as
+        // close to the write as possible and keep any observed newer list.
+        val confirmed = read()
+        if (confirmed == current) {
+            write(wanted)
+            current = read()
+            if (current - services == confirmed - services) return
+        } else {
+            current = confirmed
+        }
+    }
+    check(updated(current) == current) { "accessibility services changed during update" }
 }

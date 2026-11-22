@@ -259,8 +259,15 @@ these restrictions, the helper retries at most three times per UID in any
 ten-minute period. If the conflict continues, Jail shows the restriction as
 unavailable. The helper tracks the budget in memory. It resets when the UID's
 targets change, the app leaves Jail, or its installation is replaced.
-All-files access is also shown as unavailable when the helper cannot read
-which packages request it.
+MediaProvider authorizes all-files access in its own process, outside the
+app's storage mounts. Changing that app op can make Android end processes
+with the same app ID in every user. Before a write, the helper checks for
+running processes with that app ID in other users. If a copy is running or
+the check fails, the helper leaves the mode alone and reports the restriction
+as unavailable. A restore that needs a change keeps the saved mode for retry.
+A copy that starts after the check can still be caught by Android's kill.
+Jail also reports all-files access as unavailable if the helper cannot
+read which packages request it.
 
 An item left to the app in the foreground has its ops held at
 "foreground" instead, which the system keeps for the ops of runtime
@@ -343,6 +350,9 @@ notifications of its own: those are not affected.
 
 The access is taken and given back by the helper, through the
 notification service and the `enabled_accessibility_services` setting.
+The helper rereads the accessibility list around a write and merges changes
+it observes. Android replaces the entire setting, so a change made between
+the last read and the write can still be lost.
 Android also takes an app's accessibility services when the app is
 force-stopped.
 
