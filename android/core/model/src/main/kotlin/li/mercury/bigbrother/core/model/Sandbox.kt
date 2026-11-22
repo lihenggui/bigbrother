@@ -143,6 +143,9 @@ enum class SandboxPart(val id: String) {
     /** The app's app ops, held by the daemon. */
     APP_OPS("app_ops"),
 
+    /** The daemon has no current AppOps readback for this installation. */
+    APP_OPS_UNKNOWN("app_ops_unknown"),
+
     /** The LSPosed hook in system_server, answering ANDROID_ID. */
     ANDROID_ID_HOOK("android_id_hook"),
 
@@ -276,6 +279,7 @@ data class SandboxStatus(
         when (part) {
             SandboxPart.MOUNTS -> !gate
             SandboxPart.APP_OPS -> !appOps
+            SandboxPart.APP_OPS_UNKNOWN -> false
             SandboxPart.ANDROID_ID_HOOK -> !androidIdHook
             SandboxPart.APP_LIST_HOOK -> !appListHook
             SandboxPart.URI_GRANTS_HOOK -> !uriGrantsHook

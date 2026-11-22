@@ -26,7 +26,7 @@ mod writer;
 pub mod net;
 
 pub use reader::{Reader, Stats};
-pub use sandbox::{KnownApp, KnownKind, SandboxEntry};
+pub use sandbox::{AppOpsUndo, KnownApp, KnownKind, SandboxEntry};
 pub use schema::check_module_database;
 pub use writer::{Counters, Writer};
 

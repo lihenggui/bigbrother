@@ -31,7 +31,8 @@ import kotlin.system.exitProcess
 @SuppressLint("PrivateApi")
 internal object Framework : AppOpsSystem {
     /** How often to look again for a system service not registered yet. */
-    private const val SERVICE_POLL_MS = 1000L
+    private const val SERVICE_POLL_MS = 250L
+    private const val SERVICE_WAIT_MS = 1500L
 
     /** How often every guarded uid is checked without being asked. */
     private const val CHECK_EVERY_MS = 60_000L
@@ -69,7 +70,7 @@ internal object Framework : AppOpsSystem {
     private var specialAccess: SpecialAccess? = null
 
     fun connect() {
-        val binder = systemService("appops") ?: exitProcess(0)
+        val binder = systemService("appops") ?: error("no app ops service")
         service = Class.forName("com.android.internal.app.IAppOpsService\$Stub")
             .getMethod("asInterface", IBinder::class.java)
             .invoke(null, binder)!!
@@ -88,10 +89,11 @@ internal object Framework : AppOpsSystem {
      */
     fun systemService(name: String): IBinder? {
         val getService = Class.forName("android.os.ServiceManager")
-            .getMethod("getService", String::class.java)
+            .getMethod("checkService", String::class.java)
+        val until = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SERVICE_WAIT_MS)
         var binder = getService.invoke(null, name) as IBinder?
         while (binder == null) {
-            if (AppOpsGuard.inputClosed) return null
+            if (AppOpsGuard.inputClosed || System.nanoTime() >= until) return null
             Thread.sleep(SERVICE_POLL_MS)
             binder = getService.invoke(null, name) as IBinder?
         }
@@ -112,8 +114,8 @@ internal object Framework : AppOpsSystem {
      */
     private fun connectPermissions() {
         try {
-            val permissionManager = systemService("permissionmgr") ?: exitProcess(0)
-            val packageManager = systemService("package") ?: exitProcess(0)
+            val permissionManager = systemService("permissionmgr") ?: error("no permission service")
+            val packageManager = systemService("package") ?: error("no package service")
             val connected = Permissions(
                 Class.forName("android.permission.IPermissionManager\$Stub")
                     .getMethod("asInterface", IBinder::class.java)

@@ -10,6 +10,7 @@ it reads that meaning from it and rejects the lines listed as bad.
 | --- | --- | --- |
 | `appops.txt` | `bbd/src/sandbox/appops.rs` | `AppOpsGuardProtocol.kt` (`:helper`) |
 | `appops-bound.txt` | | `AppOpsGuardProtocol.kt` (`:helper`, binding parser cases) |
+| `appops-transaction.txt` | `bbd/src/sandbox/appops/protocol.rs` | `AppOpsGuardProtocol.kt` (`:helper`) |
 | `spool.txt` | `bbd/src/spool.rs` | `EventSpool.kt` (`:hook`) |
 | `sandbox-list.txt` | `bbd/src/sandbox/identity.rs` | `SandboxRules.kt` (`:hook`) |
 | `sandbox-status.txt` | `bbd/src/sandbox/identity.rs` | `SandboxRules.kt` (`:hook`) |

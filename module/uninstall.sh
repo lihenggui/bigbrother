@@ -71,7 +71,8 @@ stage_restore() (
             cp "$MODDIR/helper.apk" "$stage/helper.apk" || exit 1
             while IFS=' ' read -r bound pkg cookie op uid values; do
                 case "$uid" in ''|*[!0-9]*) exit 1 ;; esac
-                [ "$bound" = bound ] && [ "$op" = restore ] || exit 1
+                [ "$bound" = bound ] || exit 1
+                case "$op" in restore|undo) ;; *) exit 1 ;; esac
                 printf '%s %s %s %s %s %s\n' "$bound" "$pkg" "$cookie" "$op" "$uid" "$values" > "$stage/uid.$uid" || exit 1
             done < "$stage/commands"
         fi

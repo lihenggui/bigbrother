@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use std::{io::Write as _, path::Path};
+use std::{collections::BTreeMap, io::Write as _, path::Path};
 
 use crate::{
     control::{self, Request},
@@ -34,19 +34,31 @@ use super::{
 pub fn restore_lines(db: &Path) -> anyhow::Result<Vec<String>> {
     let reader = crate::store::Reader::open(db)?;
     let global = Settings::parse(&reader.sandbox_global()?);
+    let mut pending: BTreeMap<_, _> = reader
+        .appops_undo()?
+        .into_iter()
+        .map(|undo| (undo.uid, undo))
+        .collect();
     let mut lines = Vec::new();
+    let mut push = |package: &str, token: &str, command: &str| -> anyhow::Result<()> {
+        anyhow::ensure!(
+            token.len() == 32 && token.bytes().all(|c| c.is_ascii_hexdigit()),
+            "recovery record has no verified installation"
+        );
+        lines.push(format!("bound {package} {token} {command}"));
+        Ok(())
+    };
     for entry in reader.sandbox_entries()?.iter().filter(|e| e.enabled) {
-        if let Some(command) = appops::restore_line(entry, &items_of(entry, &global)) {
-            anyhow::ensure!(
-                entry.install_id.len() == 32
-                    && entry.install_id.bytes().all(|c| c.is_ascii_hexdigit()),
-                "recovery record has no verified installation"
-            );
-            lines.push(format!(
-                "bound {} {} {command}",
-                entry.package, entry.install_id
-            ));
+        let items = items_of(entry, &global);
+        let undo = pending
+            .remove(&entry.uid)
+            .filter(|undo| undo.install_id == entry.install_id);
+        if let Some(command) = appops::offline_restore(entry, &items, undo.as_ref()) {
+            push(&entry.package, &entry.install_id, &command)?;
         }
+    }
+    for undo in pending.values() {
+        push(&undo.package, &undo.install_id, &appops::undo_line(undo))?;
     }
     Ok(lines)
 }
@@ -226,6 +238,26 @@ mod tests {
 
     use super::*;
     use crate::sandbox::{Entry, answers::ListedApp, tests::Fixture};
+
+    #[test]
+    fn offline_recovery_includes_a_failed_enable_without_a_sandbox_row() {
+        let f = crate::sandbox::tests::Fixture::new("offline-appops-undo");
+        let token = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let preimage = "android:camera=4,android.permission.ACCESS_FINE_LOCATION=granted+user_set";
+        f.writer
+            .stage_appops(&crate::store::AppOpsUndo {
+                uid: 10100,
+                package: "com.app".into(),
+                install_id: token.into(),
+                preimage: preimage.into(),
+                attempts: 0,
+            })
+            .unwrap();
+        assert_eq!(
+            restore_lines(&f.dir.join("bb.db")).unwrap(),
+            [format!("bound com.app {token} undo 10100 {preimage}")]
+        );
+    }
 
     #[test]
     fn the_restore_lines_give_back_the_ops_and_the_permissions_taken() {

@@ -53,7 +53,7 @@ import li.mercury.bigbrother.catalog.Taking.HoldResult
  *   [allFilesChanges]: the system ends the app's processes on each.
  * - An app uninstalled loses its grants, flags and uid modes.
  */
-internal class FakeAndroid :
+internal class FakeAndroid(wifiScanSharesCoarseLocation: Boolean = true) :
     AppOpsSystem,
     RuntimePermissions {
     /** What the helper printed, in order. */
@@ -108,8 +108,13 @@ internal class FakeAndroid :
         GuardedOp("android:fine_location", FINE_LOCATION_OP, FINE_LOCATION_OP, MODE_ALLOWED, FINE),
         GuardedOp("android:read_contacts", READ_CONTACTS_OP, READ_CONTACTS_OP, MODE_ALLOWED, CONTACTS),
         GuardedOp("android:read_calendar", READ_CALENDAR_OP, READ_CALENDAR_OP, MODE_ALLOWED, CALENDAR),
-        // Kept under the coarse location op.
-        GuardedOp("android:wifi_scan", WIFI_SCAN_OP, COARSE_LOCATION_OP, MODE_ALLOWED, COARSE),
+        GuardedOp(
+            "android:wifi_scan",
+            WIFI_SCAN_OP,
+            if (wifiScanSharesCoarseLocation) COARSE_LOCATION_OP else WIFI_SCAN_OP,
+            MODE_ALLOWED,
+            COARSE.takeIf { wifiScanSharesCoarseLocation },
+        ),
         GuardedOp("android:camera", CAMERA_OP, CAMERA_OP, MODE_ALLOWED, CAMERA),
         GuardedOp(ALL_FILES_OP_NAME, ALL_FILES_OP, ALL_FILES_OP, MODE_DEFAULT, ALL_FILES),
         // As on Android 13 and 14, which do not map usage access back to its op.
@@ -150,7 +155,14 @@ internal class FakeAndroid :
         if (enabledServices.put(name, services).orEmpty() != services) effectiveChanges.countChange(name)
     }
 
-    override fun uidModes(uid: Int, switchCodes: IntArray): Map<Int, Int> = modes.filterKeys { it in switchCodes }
+    var uidModesUnavailable = false
+
+    override fun uidModes(uid: Int, switchCodes: IntArray): Map<Int, Int> {
+        check(!uidModesUnavailable)
+        return modes.filterKeys { it in switchCodes }
+    }
+
+    fun services(name: String): Set<String> = enabledServices[name].orEmpty()
 
     override fun setUidMode(code: Int, uid: Int, mode: Int) {
         val op = ops.first { it.code == code }

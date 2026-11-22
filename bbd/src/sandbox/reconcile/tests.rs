@@ -16,10 +16,7 @@ use std::collections::BTreeMap;
 
 use super::*;
 use crate::{
-    sandbox::{
-        items,
-        tests::{Fixture, Recorder, enabled},
-    },
+    sandbox::tests::{Fixture, Recorder, enabled},
     sandbox_item::{Item, Mode},
     test_sync::{Rc, RefCell},
 };
@@ -53,7 +50,7 @@ fn an_app_stays_in_while_any_package_of_its_uid_is_installed() {
 }
 
 #[test]
-fn what_an_app_is_held_to_is_named_as_the_daemon_starts() {
+fn a_daemon_restart_does_not_stage_unknown_permission_preimages() {
     let mut f = Fixture::new("sandbox-resume-named");
     let mut sandbox = f.sandbox_with(Vec::new());
     sandbox
@@ -72,14 +69,7 @@ fn what_an_app_is_held_to_is_named_as_the_daemon_starts() {
         .unwrap()
         .unwrap()
         .saved_permissions;
-    assert_eq!(
-        named,
-        format!(
-            "{}=default,{}=default",
-            items::NOTIFICATION_ACCESS,
-            items::SCREEN_ACCESS
-        )
-    );
+    assert!(named.is_empty());
     assert_eq!(restarted.snapshot_read()[&10100].saved_permissions, named);
 }
 

@@ -56,7 +56,8 @@ items that are on but not in effect and the part each lacks: the mounts,
 the app ops (read back after they are set, and whenever the system changes
 them), a hook, or the packet filter. While the helper checks an app after
 restarting, `appops_checking` marks its Android restrictions as pending
-readback. An item is in effect only with all its parts: the device
+readback. When readback fails or expires, Jail reports that the Android
+restriction could not be verified. An item is in effect only with all its parts: the device
 identifiers, for one, need the ANDROID_ID and advertising ID hooks and the
 phone-state app ops.
 
@@ -344,6 +345,14 @@ The access is taken and given back by the helper, through the
 notification service and the `enabled_accessibility_services` setting.
 Android also takes an app's accessibility services when the app is
 force-stopped.
+
+Before changing an app's Android restrictions, the daemon saves the
+installation's current AppOps modes, grants and service access in its
+database. It commits the policy and clears this recovery record together.
+If the command is interrupted, a helper restores and reads back the
+saved values before the record can be cleared. The daemon tries a restore
+up to three times, then only checks the values. A new explicit Jail change
+for that app can retry the restore.
 
 ### The packet filter
 

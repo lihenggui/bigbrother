@@ -32,6 +32,7 @@ import java.util.concurrent.TimeUnit
  */
 internal class AppOpsGuardHandler(
     private val system: AppOpsSystem,
+    private val supervised: Boolean = false,
     private val now: () -> Long = System::nanoTime,
 ) {
     /**
@@ -50,6 +51,7 @@ internal class AppOpsGuardHandler(
         val chosen: Set<String> = emptySet(),
         val held: Set<String> = emptySet(),
         val reported: Map<String, PermissionState> = emptyMap(),
+        val persisted: Map<String, PermissionState> = emptyMap(),
         val retries: Retries = Retries(),
     ) {
         /** What to give [permission] back as, the daemon having sent [sent]. */
@@ -107,6 +109,10 @@ internal class AppOpsGuardHandler(
     /** The guarded uids. */
     private val guarded = mutableMapOf<Int, Guard>()
 
+    private data class Prepared(val targets: Targets, val values: Values)
+
+    private val prepared = mutableMapOf<Int, Prepared>()
+
     /** The unheld ops last printed for each guarded uid. */
     private val reported = mutableMapOf<Int, List<String>>()
 
@@ -133,13 +139,17 @@ internal class AppOpsGuardHandler(
         )
     }
 
-    fun handle(command: Command) {
+    fun handle(command: Command, transaction: Boolean = false) {
+        if (transaction && (command is Command.Set || command is Command.Apply || command is Command.Restore)) {
+            val before = checkNotNull(prepared[command.uid]) { "missing transaction preimage" }
+            check(before.values == captureValues(command.uid, before.targets)) { "transaction preimage changed" }
+        }
         when (command) {
-            is Command.Capture -> handleCapture(command)
+            is Command.Capture -> handleCapture(command, transaction)
 
             is Command.Set -> handleSet(command)
 
-            is Command.Apply -> handleApply(command)
+            is Command.Apply -> handleApply(command, transaction)
 
             is Command.Restore -> handleRestore(command)
 
@@ -147,22 +157,88 @@ internal class AppOpsGuardHandler(
 
             is Command.Verify -> handleVerify(command)
 
+            is Command.Undo -> handleUndo(command)
+
+            is Command.Persisted -> {
+                val guard = guarded[command.uid]
+                if (guard?.reported?.get(command.permission) == command.state) {
+                    guarded[command.uid] = guard.copy(persisted = guard.persisted + (command.permission to command.state))
+                }
+            }
+
             // Answered apart from the commands: see AppOpsGuard.
             is Command.Kind -> error("not a command on what the uid is held to")
         }
     }
 
-    private fun handleCapture(command: Command.Capture) {
+    private fun captureValues(uid: Int, targets: Targets): Values {
+        // Changing a precise-location grant can also make Android update its location switches.
+        val location = "android.permission.ACCESS_FINE_LOCATION" in targets.permissions
+        val related = ops.filter { it.name in targets.ops || (location && it.name in LOCATION_OPS) }
+        val modes = system.uidModes(uid, related.map { it.switchCode }.distinct().toIntArray())
+        return Values(
+            related.map { it.name to modes[it.switchCode] },
+            statesBefore(uid, targets.permissions, emptyMap()).toList(),
+            related.mapNotNull { op -> runtimePermissions.grantMode(op, uid)?.let { op.name to it } }.toMap(),
+        )
+    }
+
+    private fun handleCapture(command: Command.Capture, transaction: Boolean) {
         val uid = command.uid
-        val values = beforeSet(uid, command.targets).savedValues()
+        val values = if (transaction) {
+            captureValues(uid, command.targets).also { prepared[uid] = Prepared(command.targets, it) }
+        } else {
+            beforeSet(uid, command.targets).savedValues()
+        }
         system.emit(AppOpsGuardProtocol.capturedLine(uid, command.request, values))
+    }
+
+    private fun handleUndo(command: Command.Undo) {
+        val uid = command.uid
+        // Stop the failed policy before restoring, even if readback fails.
+        guarded.remove(uid)
+        reported.remove(uid)
+        val modes = command.values.ops.mapNotNull { (name, mode) ->
+            val op = ops.find { it.name == name } ?: system.resolve(name) ?: return@mapNotNull null
+            op to mode
+        }.distinctBy { (op, _) -> op.switchCode }
+        if (command.mayWrite) {
+            for ((name, state) in command.values.permissions) {
+                system.restoreItem(name) { taking(name).putBack(uid, name, state) }
+            }
+            for ((op, mode) in modes) {
+                system.restoreItem(op.name) {
+                    check(setBack(op, uid, mode, null, emptySet())) { "app op recovery incomplete" }
+                }
+            }
+        }
+        // Restoring a grant can trigger a permission-policy sync. Check
+        // the full preimage after the last write before acknowledging.
+        for ((name, state) in command.values.permissions) {
+            check(taking(name).state(uid, name) == state) { "permission recovery readback changed" }
+        }
+        for ((op, mode) in modes) {
+            check(readMode(op, uid) == (mode ?: op.defaultMode ?: MODE_DEFAULT)) { "app op recovery readback changed" }
+        }
+        forget(uid)
+        system.emit(AppOpsGuardProtocol.restoredLine(uid))
     }
 
     private fun handleSet(command: Command.Set) {
         val uid = command.uid
         val chosen = takeChosen(uid)
         val targets = command.targets
-        val guard = beforeSet(uid, targets)
+        val captured = prepared[uid]?.values
+        val guard = if (captured == null) {
+            beforeSet(uid, targets)
+        } else {
+            Guard(
+                saved = captured.ops,
+                targets = targets,
+                tookPermissions = captured.permissions.mapNotNull { (name, state) -> state?.let { name to it } }.toMap(),
+                savedGrants = captured.grants,
+            )
+        }
         // Written down first, so that a `release` after a failure
         // below puts back whatever was done.
         guarded[uid] = guard
@@ -174,10 +250,10 @@ internal class AppOpsGuardHandler(
         system.emit(AppOpsGuardProtocol.savedLine(uid, guard.savedValues()))
     }
 
-    private fun handleApply(command: Command.Apply) {
+    private fun handleApply(command: Command.Apply, transaction: Boolean) {
         val uid = command.uid
         val chosen = takeChosen(uid)
-        val guard = guarded[uid] ?: error("not guarded")
+        val guard = guarded[uid] ?: if (transaction) Guard(null, Targets.NONE) else error("not guarded")
         // Permissions taken only below are still as the user has them.
         val held = AppOpsGuardProtocol.heldWhileSettingBack(guard.heldPermissions(), command.resets)
         val restored = command.resets.ops.count { (name, mode) ->
@@ -255,6 +331,7 @@ internal class AppOpsGuardHandler(
 
     private fun handleVerify(command: Command.Verify) {
         val uid = command.uid
+        prepared.remove(uid)
         val guard = guarded[uid]
         // A uid new here was held by the program before this one:
         // the daemon holds it to a permission only once a command
@@ -271,8 +348,11 @@ internal class AppOpsGuardHandler(
     /** Whether [uid] is guarded. */
     fun isGuarded(uid: Int): Boolean = uid in guarded
 
+    fun needsOwner(uid: Int): Boolean = uid in guarded || uid in prepared
+
     /** Stop guarding [uid], forgetting all about it: it is another installation's now, or given back. */
     fun forget(uid: Int) {
+        prepared.remove(uid)
         guarded.remove(uid)
         reported.remove(uid)
     }
@@ -283,9 +363,13 @@ internal class AppOpsGuardHandler(
      */
     fun checkAll() {
         for (uid in guarded.keys.toList()) {
+            if (uid in prepared) continue
+            if (supervised) system.emit("checking $uid")
             try {
-                reportUnheld(uid, verify(uid), always = false)
+                reportUnheld(uid, verify(uid), always = supervised)
             } catch (e: Throwable) {
+                reported.remove(uid)
+                if (supervised) system.emit("unknown-readback $uid")
                 system.warn("checking $uid: ${system.describe(e)}")
             }
         }
@@ -478,17 +562,23 @@ internal class AppOpsGuardHandler(
                 // taken, which is what to give back from now on. Kept and
                 // reported before it is taken again: holding it can revoke
                 // it and then fail on its flags.
-                chosen = guard.findChoice(permission, access.state(uid, permission))
+                val current = access.state(uid, permission)
+                chosen = guard.findChoice(permission, current)
                     ?.let { kept(guard.tookPermissions[permission], it) }
+                if (supervised && chosen == null && permission !in guard.held && current != null) {
+                    chosen = current
+                }
                 if (chosen != null) {
                     guarded[uid] = guard.copy(tookPermissions = guard.tookPermissions + (permission to chosen), chosen = guard.chosen + permission)
                     reportFound(uid, permission, chosen)
+                    if (supervised && guard.persisted[permission] != chosen) return@filter true
                 }
             }
             val result = holdKnown(uid, permission, access)
             if (observeChoices && result == HoldResult.CHANGED && chosen == null) system.emit(AppOpsGuardProtocol.revertedLine(uid, permission))
             result == HoldResult.SUSPENDED
         } catch (e: Throwable) {
+            if (supervised && observeChoices) throw e
             system.warn("holding $permission for $uid: ${system.describe(e)}")
             true
         }
@@ -543,6 +633,7 @@ internal class AppOpsGuardHandler(
     }
 
     private companion object {
+        val LOCATION_OPS = setOf("android:coarse_location", "android:fine_location", "android:wifi_scan")
         val DESTRUCTIVE_OPS = setOf(
             // StorageManagerService ends the uid's processes on each mode change.
             "android:manage_external_storage",

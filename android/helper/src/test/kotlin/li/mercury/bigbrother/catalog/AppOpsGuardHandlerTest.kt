@@ -36,6 +36,73 @@ import kotlin.test.assertTrue
 
 class AppOpsGuardHandlerTest {
     @Test
+    fun givenLostRepliesAndTwoListeners_whenAnotherHelperRecovers_thenBothOriginalServicesReturn() {
+        val access = "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+        val services = setOf("com.example.reader/com.example.reader.First", "com.example.reader/com.example.reader.Second")
+        for (delayed in listOf(false, true)) {
+            val android = FakeAndroid()
+            android.pmGrant(FakeAndroid.CAMERA)
+            val originalCamera = android.mode("android:camera")
+            android.setServices(access, services)
+            val daemon = DaemonDouble(android)
+
+            daemon.enterWithInterruptedReply("android:camera=1,$access=revoked", delayed)
+            assertEquals(MODE_IGNORED, android.mode("android:camera"))
+            assertTrue(android.services(access).isEmpty())
+            daemon.restartHelper()
+            daemon.recoverInterruptedChange()
+
+            assertEquals(originalCamera, android.mode("android:camera"))
+            assertEquals(services, android.services(access))
+        }
+    }
+
+    @Test
+    fun givenARegrantWhileHeld_whenChecked_thenItIsKeptUntilTheDaemonPersistsIt() {
+        val android = FakeAndroid()
+        val handler = AppOpsGuardHandler(android, supervised = true)
+        handler.handle(AppOpsGuardProtocol.parseCommand("verify $UID $FINE=revoked")!!)
+        android.pmGrant(FINE)
+        handler.checkAll()
+
+        assertTrue(android.isGranted(FINE))
+        val found = android.printed.last { it.startsWith("reverted $UID $FINE=") }
+        handler.handle(AppOpsGuardProtocol.parseCommand(found.replaceFirst("reverted", "persisted"))!!)
+        handler.checkAll()
+
+        assertFalse(android.isGranted(FINE))
+    }
+
+    @Test
+    fun givenPreviousSuccess_whenTheNextReadThrows_thenOnlyUnknownIsReported() {
+        val android = FakeAndroid()
+        val handler = AppOpsGuardHandler(android, supervised = true)
+        handler.handle(AppOpsGuardProtocol.parseCommand("verify $UID android:camera=1")!!)
+        assertTrue("unheld $UID -" in android.printed)
+        android.printed.clear()
+        android.uidModesUnavailable = true
+
+        handler.checkAll()
+
+        assertEquals(listOf("checking $UID", "unknown-readback $UID"), android.printed)
+    }
+
+    @Test
+    fun givenAnUndoAtItsRetryLimit_whenReadBack_thenItPerformsNoWrites() {
+        val android = FakeAndroid()
+        android.requestsAllFiles = true
+        android.userSetsMode(ALL_FILES_OP_NAME, MODE_IGNORED)
+        val handler = AppOpsGuardHandler(android)
+        val touched = android.allFilesChanges
+        val command = AppOpsGuardProtocol.parseCommand("check-undo $UID $ALL_FILES_OP_NAME=0")!!
+
+        assertFailsWith<IllegalStateException> { handler.handle(command, transaction = true) }
+
+        assertEquals(touched, android.allFilesChanges)
+        assertEquals(MODE_IGNORED, android.mode(ALL_FILES_OP_NAME))
+    }
+
+    @Test
     fun givenOriginalState_whenCapturedThenRestoredByANewHelper_thenAppOpsAndPermissionFlagsMatch() {
         val android = FakeAndroid()
         android.pmGrant(COARSE)
@@ -157,6 +224,21 @@ class AppOpsGuardHandlerTest {
 
         assertTrue(android.helperWrites.isEmpty(), android.helperWrites.toString())
         assertEquals("restored $UID", android.printed.last())
+    }
+
+    @Test
+    fun givenAnIndependentWifiScanSwitch_whenLocationMovesToForegroundAndOff_thenItsOriginalModeReturns() {
+        val android = FakeAndroid(wifiScanSharesCoarseLocation = false)
+        val daemon = DaemonDouble(android)
+        val scan = "android:wifi_scan"
+        android.userSetsMode(scan, MODE_IGNORED)
+
+        daemon.enable()
+        assertEquals(MODE_IGNORED, android.mode(scan))
+        daemon.set("location", "foreground")
+        assertEquals(AppOpsGuardProtocol.MODE_FOREGROUND, android.mode(scan))
+        daemon.set("location", "off")
+        assertEquals(MODE_IGNORED, android.mode(scan))
     }
 
     @Test

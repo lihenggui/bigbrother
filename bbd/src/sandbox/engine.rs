@@ -16,6 +16,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
+    time::{Duration, Instant},
 };
 
 use anyhow::Context as _;
@@ -24,7 +25,7 @@ use bb_common::{FIRST_APPLICATION_UID, PER_USER_RANGE};
 use crate::{
     control::{self, Request},
     packages::{Packages, app_id_of, user_of},
-    store::Writer,
+    store::{AppOpsUndo, Writer},
     sync::{lock, read, write},
 };
 
@@ -49,11 +50,11 @@ pub(super) const LAST_USER: u32 = (i32::MAX as u32 - (PER_USER_RANGE - 1)) / PER
 
 /// How long after it began taking every app out (or carrying out a change
 /// of the global settings) an app may still be started on. It is checked
-/// before each app, and one app can then wait for the app ops helper for
-/// up to `appops::ANSWER_WAIT`: with a second to spare, the answer still
+/// before each app, which can then wait for two AppOps requests: with
+/// a second to spare, the answer still
 /// reaches the client before it gives up (`control::COMMAND_WAIT`).
 pub(super) const DISABLE_ALL_WAIT: std::time::Duration = control::COMMAND_WAIT
-    .saturating_sub(appops::ANSWER_WAIT)
+    .saturating_sub(appops::ANSWER_WAIT.saturating_mul(2))
     .saturating_sub(std::time::Duration::from_secs(1));
 
 /// The sandboxed uids and their entries, enabled ones only.
@@ -71,6 +72,9 @@ pub fn items_of(entry: &Entry, global: &Settings) -> Settings {
 pub struct Sandbox {
     pub(super) awaiting_storage: BTreeSet<u32>,
     unsaved_permissions: BTreeSet<u32>,
+    appops_undo: BTreeSet<u32>,
+    next_recovery: Option<Instant>,
+    last_recovery: u32,
     snapshot: Snapshot,
     pub(super) global: Global,
     pub(super) effects: Vec<Box<dyn Effect>>,
@@ -126,6 +130,13 @@ impl Sandbox {
             release_logged: None,
             awaiting_storage: BTreeSet::new(),
             unsaved_permissions: BTreeSet::new(),
+            appops_undo: writer
+                .appops_undo()?
+                .into_iter()
+                .map(|undo| undo.uid)
+                .collect(),
+            next_recovery: None,
+            last_recovery: 0,
         })
     }
 
@@ -181,12 +192,17 @@ impl Sandbox {
         }
         let pending = std::mem::take(&mut self.unsaved_permissions);
         for uid in pending.union(&changed) {
-            if let Some(entry) = entries.get(uid)
-                && let Err(e) = writer.put_sandbox(entry)
-            {
+            let Some(entry) = entries.get(uid) else {
+                continue;
+            };
+            if let Err(e) = writer.put_sandbox(entry) {
                 self.unsaved_permissions.insert(*uid);
                 if !pending.contains(uid) {
                     eprintln!("bbd: sandbox: cannot write what was found for uid {uid}: {e:#}");
+                }
+            } else {
+                for effect in &mut self.effects {
+                    effect.found_written(*uid);
                 }
             }
         }
@@ -199,6 +215,23 @@ impl Sandbox {
             Err(e) => return control::failure(&e),
         };
         self.keep_found(writer);
+        if !self.appops_undo.is_empty() {
+            match &request {
+                Request::SandboxEnable { package, user }
+                | Request::SandboxDisable { package, user }
+                | Request::SandboxSet { package, user, .. } => {
+                    if let Ok(uid) = self.uid_of_entry(writer, packages, package, *user) {
+                        self.retry_appops(writer, uid);
+                    }
+                }
+                Request::SandboxDisableAll => {
+                    for uid in self.appops_undo.iter().copied().collect::<Vec<_>>() {
+                        self.retry_appops(writer, uid);
+                    }
+                }
+                _ => {}
+            }
+        }
         if !matches!(request, Request::SandboxStatus) {
             self.release_reassigned(writer, packages);
         }
@@ -274,6 +307,7 @@ impl Sandbox {
         uid: u32,
         now: i64,
     ) -> anyhow::Result<Enabled> {
+        self.require_recovered(uid)?;
         let sharing = packages.packages_of(app_id_of(uid)).to_vec();
         anyhow::ensure!(
             !sharing.iter().any(|p| OWN_PACKAGES.contains(&p.as_str())),
@@ -296,16 +330,25 @@ impl Sandbox {
 
         let mut entry = build_entry(package, uid, now, before.as_ref(), owner, install_id)?;
         let items = self.items(&entry);
-        let written = self.prepare_effects(writer, &mut entry, &items)?;
+        if let Some(root) = &self.user_data {
+            for sibling in sharing.iter().filter(|sibling| *sibling != &entry.package) {
+                let _ = dirs::share_install(root, sibling, uid, &entry.install_id);
+            }
+        }
+        self.stage_change(writer, &mut entry, None, Some(&items))?;
         self.snapshot_write().insert(uid, entry.clone());
-        self.apply_or_restore(
-            writer,
-            &mut entry,
-            &sharing,
-            &items,
-            &written,
-            (uid, before.as_ref()),
-        )?;
+        let change = Change::Enable(&items);
+        let applied = self.run(&mut entry, &sharing, change);
+        if applied.is_err() {
+            self.snapshot_write().remove(&uid);
+        }
+        applied?;
+        if let Err(error) = writer.commit_sandbox(&[&entry], None) {
+            self.snapshot_write().remove(&uid);
+            self.reverse_completed(&mut entry, &sharing, change);
+            return Err(error);
+        }
+        self.complete_change(&entry, Some(&items));
         self.record_packages(writer, uid, &entry, &sharing, before.as_ref(), recorded);
         self.snapshot_write().insert(uid, entry);
         Ok(Enabled { uid, also })
@@ -344,62 +387,181 @@ impl Sandbox {
         Ok((owner, install_id))
     }
 
-    fn prepare_effects(
+    pub(super) fn stage_change(
         &mut self,
         writer: &Writer,
         entry: &mut Entry,
-        items: &Settings,
-    ) -> anyhow::Result<Entry> {
-        let uid = entry.uid;
-        let prepared = (|| {
-            for effect in &mut self.effects {
-                effect
-                    .prepare_enable(entry, items)
-                    .with_context(|| effect.name())?;
-            }
-            let written = appops::naming_taken(entry, items);
-            writer.put_sandbox(&written)?;
-            Ok(written)
-        })();
-        if prepared.is_err() {
-            for effect in &mut self.effects {
-                effect.cancel_enable(uid);
-            }
-        }
-        prepared
-    }
-
-    fn apply_or_restore(
-        &mut self,
-        writer: &Writer,
-        entry: &mut Entry,
-        sharing: &[String],
-        items: &Settings,
-        written: &Entry,
-        previous: (u32, Option<&Entry>),
+        before: Option<&Settings>,
+        after: Option<&Settings>,
     ) -> anyhow::Result<()> {
-        let (uid, before) = previous;
-        let mut applied = self.run(entry, sharing, Change::Enable(items));
-        if applied.is_ok() && entry != written {
-            applied = writer.put_sandbox(entry);
-            if applied.is_err() {
-                // What the effects changed is lost: they cannot stay.
-                if let Err(e) = self.run(&mut entry.clone(), sharing, Change::Disable(items)) {
-                    eprintln!("bbd: sandbox: cannot take uid {uid}'s effects off: {e:#}");
+        let uid = entry.uid;
+        anyhow::ensure!(self.owns(entry), "the installation has changed");
+        self.require_recovered(uid)?;
+        let result = (|| {
+            for effect in &mut self.effects {
+                let preimage = effect
+                    .prepare_change(entry, before, after)
+                    .with_context(|| effect.name())?;
+                if let Some(preimage) = preimage {
+                    let undo = AppOpsUndo {
+                        uid,
+                        package: entry.package.clone(),
+                        install_id: entry.install_id.clone(),
+                        preimage,
+                        attempts: 0,
+                    };
+                    writer.stage_appops(&undo)?;
+                    self.appops_undo.insert(uid);
+                    self.next_recovery = Some(Instant::now());
                 }
             }
+            Ok(())
+        })();
+        if result.is_err() && !self.appops_undo.contains(&uid) {
+            self.finish_effects(entry, before);
         }
-        if let Err(e) = applied {
-            self.snapshot_write().remove(&uid);
-            let restored = match before {
-                Some(old) => writer.put_sandbox(old),
-                None => writer.delete_sandbox(uid),
-            };
-            if let Err(restore) = restored {
-                eprintln!("bbd: sandbox: cannot restore uid {uid}'s entry: {restore:#}");
+        result
+    }
+
+    pub(super) fn complete_change(&mut self, entry: &Entry, items: Option<&Settings>) {
+        self.appops_undo.remove(&entry.uid);
+        if self.appops_undo.is_empty() {
+            self.next_recovery = None;
+        }
+        self.finish_effects(entry, items);
+    }
+
+    fn finish_effects(&mut self, entry: &Entry, items: Option<&Settings>) {
+        for effect in &mut self.effects {
+            effect.finish_change(entry, items);
+        }
+    }
+
+    pub(super) fn require_recovered(&self, uid: u32) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.appops_undo.contains(&uid),
+            "Android restrictions are recovering"
+        );
+        Ok(())
+    }
+
+    fn retry_appops(&mut self, writer: &Writer, uid: u32) {
+        if self.appops_undo.contains(&uid) {
+            match writer.retry_appops_recovery(uid) {
+                Ok(()) => self.next_recovery = Some(Instant::now()),
+                Err(error) => self.log_reconcile_error(uid, &error),
             }
-            return Err(e);
         }
+    }
+
+    pub fn next_appops_recovery(&self) -> Option<Instant> {
+        self.next_recovery
+    }
+
+    pub(super) fn suspend_pending_appops(&mut self) {
+        for uid in self.appops_undo.iter() {
+            for effect in &mut self.effects {
+                effect.suspend(*uid);
+            }
+        }
+        if !self.appops_undo.is_empty() {
+            self.next_recovery = Some(Instant::now());
+        }
+    }
+
+    pub fn recover_appops(&mut self, writer: &Writer, packages: &mut Packages) {
+        self.next_recovery = None;
+        if self.appops_undo.is_empty() {
+            return;
+        }
+        let deadline = Instant::now() + appops::ANSWER_WAIT;
+        let mut failed = false;
+        if packages.refresh() && !packages.is_empty() {
+            let mut pending = match writer.appops_undo() {
+                Ok(pending) => pending,
+                Err(error) => {
+                    self.log_reconcile_error(0, &error);
+                    self.next_recovery = Some(Instant::now() + Duration::from_secs(10));
+                    return;
+                }
+            };
+            let next = pending.partition_point(|undo| undo.uid <= self.last_recovery);
+            if !pending.is_empty() {
+                let count = pending.len();
+                pending.rotate_left(next % count);
+            }
+            for undo in pending {
+                if Instant::now() >= deadline {
+                    break;
+                }
+                self.last_recovery = undo.uid;
+                match self.recover_appops_entry(writer, packages, &undo) {
+                    Ok(()) => {
+                        self.appops_undo.remove(&undo.uid);
+                    }
+                    Err(error) => {
+                        failed = true;
+                        self.log_reconcile_error(undo.uid, &error);
+                    }
+                }
+            }
+        } else {
+            failed = true;
+        }
+        if !self.appops_undo.is_empty() {
+            let delay = if failed {
+                Duration::from_secs(10)
+            } else {
+                Duration::ZERO
+            };
+            self.next_recovery = Some(Instant::now() + delay);
+        }
+    }
+
+    fn recover_appops_entry(
+        &mut self,
+        writer: &Writer,
+        packages: &Packages,
+        undo: &AppOpsUndo,
+    ) -> anyhow::Result<()> {
+        let uid = undo.uid;
+        let committed = writer.sandbox_entry(uid)?;
+        let mut owner = committed
+            .clone()
+            .filter(|entry| entry.install_id == undo.install_id)
+            .unwrap_or_else(|| Entry {
+                uid,
+                package: undo.package.clone(),
+                install_id: undo.install_id.clone(),
+                enabled: false,
+                android_id: String::new(),
+                saved_ops: String::new(),
+                saved_permissions: String::new(),
+                created: 0,
+                settings: String::new(),
+            });
+        let current = packages.packages_of(app_id_of(uid));
+        let candidates = current.iter().cloned().collect();
+        if let Some(package) = self
+            .existing_owner(&owner, current, &candidates)
+            .context("cannot verify the installation for Android restriction recovery")?
+        {
+            owner.package = package;
+            let undo = AppOpsUndo {
+                package: owner.package.clone(),
+                ..undo.clone()
+            };
+            for effect in &mut self.effects {
+                effect.restore_preimage(&undo, writer)?;
+            }
+        }
+        writer.clear_appops_undo(uid)?;
+        let current = self.snapshot_read().get(&uid).cloned();
+        let items = current
+            .as_ref()
+            .filter(|entry| self.owns(entry))
+            .map(|entry| self.items(entry));
+        self.finish_effects(current.as_ref().unwrap_or(&owner), items.as_ref());
         Ok(())
     }
 
@@ -445,24 +607,26 @@ impl Sandbox {
         uid: u32,
         sharing: &[String],
     ) -> anyhow::Result<Disabled> {
-        let Some(mut entry) = self.snapshot_write().remove(&uid) else {
+        self.require_recovered(uid)?;
+        let Some(mut entry) = self.snapshot_read().get(&uid).cloned() else {
             return Ok(Disabled { was_enabled: false });
         };
         let items = self.items(&entry);
         let enabled = entry.clone();
+        self.stage_change(writer, &mut entry, Some(&items), None)?;
+        self.snapshot_write().remove(&uid);
         entry.enabled = false;
-        if let Err(e) = self.run(&mut entry, sharing, Change::Disable(&items)) {
+        let change = Change::Disable(&items);
+        if let Err(error) = self.run(&mut entry, sharing, change) {
             self.snapshot_write().insert(uid, enabled);
-            return Err(e);
+            return Err(error);
         }
-        if let Err(e) = writer.put_sandbox(&entry) {
-            // The row still says the app is sandboxed: so it stays.
-            if let Err(e) = self.run(&mut enabled.clone(), sharing, Change::Enable(&items)) {
-                eprintln!("bbd: sandbox: cannot put uid {uid}'s effects back: {e:#}");
-            }
+        if let Err(error) = writer.commit_sandbox(&[&entry], None) {
             self.snapshot_write().insert(uid, enabled);
-            return Err(e);
+            self.reverse_completed(&mut entry, sharing, change);
+            return Err(error);
         }
+        self.complete_change(&entry, None);
         Ok(Disabled { was_enabled: true })
     }
 
@@ -503,23 +667,57 @@ impl Sandbox {
         change: Change,
     ) -> anyhow::Result<()> {
         for done in 0..self.effects.len() {
-            anyhow::ensure!(self.owns(entry), "the installation has changed");
             let effect = &mut self.effects[done];
-            if let Err(e) = change.apply(effect.as_mut(), entry, packages) {
-                let failed = effect.name();
-                for effect in self.effects[..done].iter_mut().rev() {
-                    if let Err(undo) = change.reversed().apply(effect.as_mut(), entry, packages) {
-                        eprintln!(
-                            "bbd: sandbox: cannot undo {} for uid {}: {undo:#}",
-                            effect.name(),
-                            entry.uid
-                        );
-                    }
-                }
-                return Err(e.context(failed));
+            let owns = self.user_data.as_deref().is_none_or(|root| {
+                dirs::matches_install(root, &entry.package, entry.uid, &entry.install_id)
+                    .unwrap_or(false)
+            });
+            let result = if owns {
+                change.apply(effect.as_mut(), entry, packages)
+            } else {
+                Err(anyhow::anyhow!("the installation has changed"))
+            };
+            if let Err(error) = result {
+                let name = effect.name();
+                self.reverse_effects(done, entry, packages, change);
+                return Err(error.context(name));
             }
         }
         Ok(())
+    }
+
+    pub(super) fn reverse_completed(
+        &mut self,
+        entry: &mut Entry,
+        packages: &[String],
+        change: Change,
+    ) {
+        self.reverse_effects(self.effects.len(), entry, packages, change);
+    }
+
+    fn reverse_effects(
+        &mut self,
+        done: usize,
+        entry: &mut Entry,
+        packages: &[String],
+        change: Change,
+    ) {
+        for index in (0..done).rev() {
+            if !self.owns(entry) {
+                break;
+            }
+            let effect = &mut self.effects[index];
+            if effect.restores_from_preimage() {
+                continue;
+            }
+            if let Err(undo) = change.reversed().apply(effect.as_mut(), entry, packages) {
+                eprintln!(
+                    "bbd: sandbox: cannot undo {} for uid {}: {undo:#}",
+                    effect.name(),
+                    entry.uid
+                );
+            }
+        }
     }
 
     pub fn status(&self) -> Status {
@@ -553,7 +751,16 @@ impl Sandbox {
                 let items = settings.over(&global);
                 let unmet = if entry.enabled {
                     let held = status.held_ops.get(&entry.uid);
-                    items.unmet(&in_place, |op| held.is_some_and(|held| held.contains(op)))
+                    let mut unmet =
+                        items.unmet(&in_place, |op| held.is_some_and(|held| held.contains(op)));
+                    if status.unknown_appops.contains(&entry.uid) {
+                        for part in unmet.values_mut().flatten() {
+                            if *part == super::items::Part::AppOps {
+                                *part = super::items::Part::AppOpsUnknown;
+                            }
+                        }
+                    }
+                    unmet
                 } else {
                     BTreeMap::new()
                 };

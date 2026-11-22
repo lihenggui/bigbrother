@@ -189,6 +189,8 @@ internal fun notInEffect(item: SandboxItem, unmet: Set<SandboxPart>, hookHealth:
         else -> R.string.jail_hook_unavailable
     }
 
+    SandboxPart.APP_OPS_UNKNOWN in unmet -> R.string.jail_app_ops_unknown
+
     else -> R.string.jail_not_in_effect_app_ops
 }
 
