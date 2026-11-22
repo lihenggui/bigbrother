@@ -166,7 +166,9 @@ internal class RootShellBbdDataSource @Inject constructor(
     }
 
     override suspend fun listSandboxApps(): List<BbdSandboxedApp> = decode {
-        JSONObject(sandbox("list")).getJSONArray("apps").mapObjects(JSONObject::toBbdSandboxedApp)
+        val listed = JSONObject(sandbox("list"))
+        val hookHealth = listed.optJSONObject("hook_health").toHookHealth()
+        listed.getJSONArray("apps").mapObjects { it.toBbdSandboxedApp(hookHealth) }
     }
 
     override suspend fun getSandboxGlobal(): BbdSandboxGlobal = decode {

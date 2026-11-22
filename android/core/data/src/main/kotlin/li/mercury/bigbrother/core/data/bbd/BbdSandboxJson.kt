@@ -16,6 +16,7 @@
 
 package li.mercury.bigbrother.core.data.bbd
 
+import li.mercury.bigbrother.core.model.SandboxHookState
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxPart
@@ -42,10 +43,11 @@ internal fun JSONObject.toBbdSandboxStatus(): BbdSandboxStatus {
         netRecord = getBoolean("net_record"),
         dnsNames = getBoolean("dns_names"),
         traffic = getBoolean("traffic"),
+        hookHealth = hook.optJSONObject("health").toHookHealth(),
     )
 }
 
-internal fun JSONObject.toBbdSandboxedApp(): BbdSandboxedApp = BbdSandboxedApp(
+internal fun JSONObject.toBbdSandboxedApp(hookHealth: Map<SandboxPart, SandboxHookState>): BbdSandboxedApp = BbdSandboxedApp(
     uid = getInt("uid"),
     packageName = getString("package"),
     enabled = getBoolean("enabled"),
@@ -54,9 +56,16 @@ internal fun JSONObject.toBbdSandboxedApp(): BbdSandboxedApp = BbdSandboxedApp(
     items = getJSONObject("items").toModes(),
     unmet = optJSONObject("unmet")?.toParts().orEmpty(),
     appOpsChecking = optBoolean("appops_checking"),
+    hookHealth = hookHealth,
     networkRules = getInt("network_rules"),
     recordingSince = if (isNull("recording_since")) null else getLong("recording_since"),
 )
+
+internal fun JSONObject?.toHookHealth(): Map<SandboxPart, SandboxHookState> = this?.keys()?.asSequence()?.mapNotNull { key ->
+    val part = SandboxPart.fromId(key) ?: return@mapNotNull null
+    val state = SandboxHookState.fromId(optString(key)) ?: return@mapNotNull null
+    part to state
+}?.toMap().orEmpty()
 
 /** Items and the parts of each not in place; what this build doesn't know is left out. */
 private fun JSONObject.toParts(): Map<SandboxItem, Set<SandboxPart>> = keys().asSequence().mapNotNull { key ->

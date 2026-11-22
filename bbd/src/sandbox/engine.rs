@@ -570,7 +570,10 @@ impl Sandbox {
                 }
             })
             .collect();
-        Ok(Listed { apps })
+        Ok(Listed {
+            apps,
+            hook_health: status.hook.health,
+        })
     }
 
     /// Every item, with its global mode.

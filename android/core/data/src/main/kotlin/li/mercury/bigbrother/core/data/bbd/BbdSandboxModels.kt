@@ -16,6 +16,7 @@
 
 package li.mercury.bigbrother.core.data.bbd
 
+import li.mercury.bigbrother.core.model.SandboxHookState
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxPart
@@ -40,6 +41,7 @@ internal data class BbdSandboxedApp(
     val appOpsChecking: Boolean,
     val networkRules: Int,
     val recordingSince: Long?,
+    val hookHealth: Map<SandboxPart, SandboxHookState> = emptyMap(),
 )
 
 internal fun BbdSandboxedApp.asExternalModel(): SandboxedApp = SandboxedApp(
@@ -53,6 +55,7 @@ internal fun BbdSandboxedApp.asExternalModel(): SandboxedApp = SandboxedApp(
     appOpsChecking = appOpsChecking,
     networkRules = networkRules,
     recordingSince = recordingSince,
+    hookHealth = hookHealth,
 )
 
 internal data class BbdSandboxStatus(
@@ -69,6 +72,7 @@ internal data class BbdSandboxStatus(
     val dnsNames: Boolean,
     val traffic: Boolean,
     val newAppsFailed: Int = 0,
+    val hookHealth: Map<SandboxPart, SandboxHookState> = emptyMap(),
 )
 
 internal fun BbdSandboxStatus.asExternalModel(): SandboxStatus = SandboxStatus(
@@ -85,4 +89,5 @@ internal fun BbdSandboxStatus.asExternalModel(): SandboxStatus = SandboxStatus(
     netRecord = netRecord,
     dnsNames = dnsNames,
     traffic = traffic,
+    hookHealth = hookHealth,
 )

@@ -506,11 +506,17 @@ The daemon lists the uids with `device_ids`, `installed_apps` or `storage`
 on in `/data/system/big_brother_sandbox`, with an `items` line naming them
 unless a uid has the first two and not `storage`; the hook reads the list
 again when it changes, so no restart is needed. The
-hook pins each verified installation directory and checks its identity before answering for a UID. It acknowledges the revision it loaded and writes which hooks attached to
+hook checks and pins installation directories on a worker, then publishes
+the validated list as one snapshot. Framework calls keep using the last verified snapshot while the worker
+rechecks ownership. An event during a reload schedules another pass.
+If the watch stops, the hook keeps serving that snapshot and reports degraded
+health while it retries registration with backoff. The hook acknowledges the
+loaded revision and reports the health of each part in
 `/data/system/big_brother_sandbox.status`.
 
-The hook needs the `system` scope in the LSPosed manager: enable that scope
-for Big Brother in the manager and restart the device.
+Jail reports when the hook has not loaded. Enable Big Brother's `system`
+scope in LSPosed and restart the device in that case. A loaded hook reports
+unsupported framework signatures and runtime failures separately.
 
 A fault in system_server restarts the device, so every hook falls back to
 the original method when its own work fails, and the hook does not install
@@ -541,8 +547,9 @@ minutes.
   directory cannot be reached yet, gets empty, read-only storage in its
   place.
 - An entry whose uid Android has since given to another app is taken out.
-- On a device where the framework differs from what the hook expects,
-  the hook does not attach, and `bbd sandbox status` shows it as inactive.
+- On a device where a hook target has an unsupported signature,
+  `bbd sandbox status --json` reports that part as incompatible. A part that
+  fails at runtime passes calls through and reports degraded until restart.
 
 ## Testing
 

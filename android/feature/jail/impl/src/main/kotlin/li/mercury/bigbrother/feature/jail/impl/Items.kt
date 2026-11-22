@@ -38,9 +38,11 @@ import androidx.compose.material.icons.outlined.Sms
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
+import li.mercury.bigbrother.core.model.SandboxHookState
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxPart
+import li.mercury.bigbrother.core.model.SandboxStatus
 
 /** The items by what they keep from the app, as the global settings list them. */
 internal enum class ItemGroup(@StringRes val title: Int, val items: List<SandboxItem>) {
@@ -171,24 +173,38 @@ internal fun modeLabel(item: SandboxItem, mode: SandboxMode): String = stringRes
     },
 )
 
-/**
- * Why an item is not in effect, from the parts of it not in place. Storage
- * isolation not running comes first: without it, the hook would not put
- * storage in effect either. Then what the user can do about it, then what
- * nobody can. The network without the packet filter is not kept from
- * anything; without the mount over the resolver, only its name lookups
- * still go through.
- */
+/** A missing mount or packet filter changes what the whole item can do. */
 @StringRes
-internal fun notInEffect(item: SandboxItem, unmet: Set<SandboxPart>): Int = when {
+internal fun notInEffect(item: SandboxItem, unmet: Set<SandboxPart>, hookHealth: Map<SandboxPart, SandboxHookState>): Int = when {
     SandboxPart.PACKET_FILTER in unmet -> R.string.jail_not_in_effect_packet_filter
+
     item == SandboxItem.NETWORK -> R.string.jail_not_in_effect_resolver
+
     SandboxPart.MOUNTS in unmet -> R.string.jail_not_in_effect_mounts
-    unmet.any { it in HOOK_PARTS } -> R.string.jail_not_in_effect_hook
+
+    unmet.any { it in HOOK_PARTS } -> when (hookFailure(unmet, hookHealth)) {
+        SandboxHookState.NOT_LOADED -> R.string.jail_not_in_effect_hook
+        SandboxHookState.INCOMPATIBLE -> R.string.jail_hook_incompatible
+        SandboxHookState.DEGRADED -> R.string.jail_hook_degraded
+        else -> R.string.jail_hook_unavailable
+    }
+
     else -> R.string.jail_not_in_effect_app_ops
 }
 
 private val HOOK_PARTS = setOf(SandboxPart.ANDROID_ID_HOOK, SandboxPart.APP_LIST_HOOK, SandboxPart.URI_GRANTS_HOOK, SandboxPart.AD_ID_HOOK)
+
+internal fun SandboxStatus.unmetHooks(): Set<SandboxPart> = (unmet(SandboxItem.DEVICE_IDS) + unmet(SandboxItem.INSTALLED_APPS) + unmet(SandboxItem.STORAGE)).intersect(HOOK_PARTS)
+
+internal fun hookFailure(unmet: Set<SandboxPart>, health: Map<SandboxPart, SandboxHookState>): SandboxHookState? {
+    val states = unmet.filter { it in HOOK_PARTS }.map { health[it] }
+    return when {
+        SandboxHookState.DEGRADED in states -> SandboxHookState.DEGRADED
+        SandboxHookState.INCOMPATIBLE in states -> SandboxHookState.INCOMPATIBLE
+        states.isNotEmpty() && states.all { it == SandboxHookState.NOT_LOADED } -> SandboxHookState.NOT_LOADED
+        else -> null
+    }
+}
 
 /** What [mode] of [item] means for the app. */
 @Composable

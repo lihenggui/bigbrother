@@ -73,6 +73,7 @@ import li.mercury.bigbrother.core.designsystem.component.segmentCornerSize
 import li.mercury.bigbrother.core.designsystem.component.segmentShape
 import li.mercury.bigbrother.core.designsystem.icon.CageIcons
 import li.mercury.bigbrother.core.model.AppInfo
+import li.mercury.bigbrother.core.model.SandboxHookState
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxPart
@@ -157,6 +158,7 @@ internal fun ItemRow(
     modifier: Modifier = Modifier,
     checked: Boolean = mode.isOn,
     appOpsChecking: Boolean = false,
+    hookHealth: Map<SandboxPart, SandboxHookState> = emptyMap(),
 ) {
     val spatial = MaterialTheme.motionScheme.fastSpatialSpec<androidx.compose.ui.unit.Dp>()
     val top by animateDpAsState(segmentCornerSize(outer = expanded || index == 0), spatial, label = "top")
@@ -170,7 +172,7 @@ internal fun ItemRow(
     ) {
         Column {
             Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), verticalAlignment = Alignment.CenterVertically) {
-                ItemRowHeader(item, title, mode, globalMode != null && choice != null, unmet, expanded, turn, appOpsChecking, onExpandedChange)
+                ItemRowHeader(item, title, mode, globalMode != null && choice != null, unmet, expanded, turn, appOpsChecking, hookHealth, onExpandedChange)
                 VerticalDivider(Modifier.fillMaxHeight().padding(vertical = 20.dp))
                 ItemSwitch(title, checked, onCheckedChange)
             }
@@ -197,6 +199,7 @@ private fun RowScope.ItemRowHeader(
     expanded: Boolean,
     turn: Float,
     appOpsChecking: Boolean,
+    hookHealth: Map<SandboxPart, SandboxHookState>,
     onExpandedChange: (Boolean) -> Unit,
 ) {
     val state = stringResource(if (expanded) R.string.jail_choices_shown else R.string.jail_choices_hidden)
@@ -220,7 +223,7 @@ private fun RowScope.ItemRowHeader(
                 text = when {
                     inEffect -> modeLabel(item, mode)
                     checking -> stringResource(R.string.jail_checking_app_ops)
-                    else -> stringResource(notInEffect(item, unmet))
+                    else -> stringResource(notInEffect(item, unmet, hookHealth))
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (inEffect || checking) {

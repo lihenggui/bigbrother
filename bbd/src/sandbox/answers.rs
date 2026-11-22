@@ -48,6 +48,8 @@ pub struct DisabledAll {
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Listed {
     pub apps: Vec<ListedApp>,
+    #[serde(default)]
+    pub hook_health: HookHealth,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -152,4 +154,36 @@ pub struct HookStatus {
     /// Whether the advertising ID is withheld from the apps whose device
     /// identifiers are.
     pub ad_id: bool,
+    #[serde(default)]
+    pub health: HookHealth,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HookHealth {
+    pub android_id_hook: HookState,
+    pub app_list_hook: HookState,
+    pub uri_grants_hook: HookState,
+    pub ad_id_hook: HookState,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HookState {
+    #[default]
+    NotLoaded,
+    Incompatible,
+    Degraded,
+    Working,
+}
+
+impl From<HookHealth> for HookStatus {
+    fn from(health: HookHealth) -> Self {
+        Self {
+            android_id: health.android_id_hook == HookState::Working,
+            app_list: health.app_list_hook == HookState::Working,
+            uri_grants: health.uri_grants_hook == HookState::Working,
+            ad_id: health.ad_id_hook == HookState::Working,
+            health,
+        }
+    }
 }

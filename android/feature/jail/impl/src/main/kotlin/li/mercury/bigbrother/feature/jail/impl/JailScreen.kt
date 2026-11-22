@@ -77,6 +77,7 @@ import li.mercury.bigbrother.core.designsystem.component.ShapedIcon
 import li.mercury.bigbrother.core.designsystem.icon.CageIcons
 import li.mercury.bigbrother.core.model.InstalledApp
 import li.mercury.bigbrother.core.model.LoadFailure
+import li.mercury.bigbrother.core.model.SandboxHookState
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxStatus
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
@@ -248,11 +249,19 @@ private fun JailList(
 /** What is not in effect on this device, said before anything else. */
 private fun androidx.compose.foundation.lazy.LazyListScope.sandboxWarnings(status: SandboxStatus?) {
     if (status == null) return
-    if (!status.androidIdHook || !status.appListHook) {
+    val unmet = status.unmetHooks()
+    if (unmet.isNotEmpty()) {
+        val failure = hookFailure(unmet, status.hookHealth)
+        val (title, body) = when (failure) {
+            SandboxHookState.NOT_LOADED -> R.string.jail_hook_missing_title to R.string.jail_hook_missing
+            SandboxHookState.INCOMPATIBLE -> R.string.jail_hook_unavailable to R.string.jail_hook_incompatible
+            SandboxHookState.DEGRADED -> R.string.jail_hook_unavailable to R.string.jail_hook_degraded
+            else -> R.string.jail_hook_unavailable to R.string.jail_hook_status_unknown
+        }
         item(key = "hook") {
             SandboxWarningCard(
-                title = stringResource(R.string.jail_hook_missing_title),
-                body = stringResource(R.string.jail_hook_missing),
+                title = stringResource(title),
+                body = stringResource(body),
                 modifier = Modifier.padding(bottom = 8.dp),
             )
         }
