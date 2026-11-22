@@ -28,12 +28,8 @@ The sandbox (`bbd sandbox`, `bbd/src/sandbox/`, `SandboxHook` in the hook,
 ## Commands
 
 ```sh
-cargo fmt --all --check
-cargo clippy --all-targets -- -D warnings
-cargo test
-for s in module/*.sh scripts/*.sh; do bash -n "$s"; done
-./scripts/build.sh            # eBPF, daemons for arm64 and x86_64, and out/big_brother-<version>.apk.zip
-(cd android && ./gradlew spotlessCheck test)
+./scripts/check.sh           # before opening or updating a pull request
+./scripts/check.sh --fast    # while working
 ```
 
 The Android build packages the daemons from `out/`: run `./scripts/build.sh`
@@ -126,8 +122,5 @@ once before `:app` tasks that assemble the APK.
 
 ## Pull requests
 
-Branch from `main`. CI (`.github/workflows/ci.yml`) must pass: Rust format,
-clippy and tests, script syntax, license headers, the full build, the app's
-unit and screenshot tests, Dependency Guard, badging, Licensee and lint. When a
-change is intended to alter a baseline, update it in the same pull request
-(see CONTRIBUTING.md).
+Branch from `main`. When a change is intended to alter a baseline, update it
+in the same pull request (see CONTRIBUTING.md).
