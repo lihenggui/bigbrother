@@ -20,10 +20,14 @@ import androidx.activity.BackEventCompat
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.layout.findRootCoordinates
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import li.mercury.bigbrother.core.designsystem.theme.BigBrotherTheme
 import li.mercury.bigbrother.core.model.AccessPeriod
@@ -47,6 +51,8 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.annotation.LooperMode
 import java.time.LocalDateTime
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -114,8 +120,21 @@ class AppFilesScreenScreenshotTests {
     }
 
     @Test
-    fun givenFileDetailsOpening_whenShown_thenSheetShowsLoadingIndicator() {
-        capturePhone("AppFilesDetailsLoading") { Files { it.copy(fileDetails = FileDetails(PHOTO)) } }
+    @Config(qualifiers = "w412dp-h915dp-xxhdpi")
+    fun givenLongHistoryLoading_whenItArrives_thenSheetOpensToHalfHeightWithoutReachingFullHeight() {
+        var details by mutableStateOf(FileDetails(PHOTO))
+        composeTestRule.mainClock.autoAdvance = false
+        composeTestRule.setContent { BigBrotherTheme { Files { it.copy(fileDetails = details) } } }
+        val shown = (0 until FRAMES).map { frame ->
+            if (frame == LOADED_AT_FRAME) details = FileDetails(PHOTO, periods = longHistory())
+            composeTestRule.mainClock.advanceTimeByFrame()
+            shownFraction()
+        }
+
+        assertEquals(0f, shown[LOADED_AT_FRAME - 1], "The sheet opened before the history loaded")
+        assertTrue(shown.max() < 0.6f, "The sheet reached ${shown.max()} of the window while opening")
+        // The path sits about 90dp below the top of the sheet, which rests at half the window.
+        assertTrue(shown.last() in 0.35f..0.5f, "The sheet came to rest at ${shown.last()} of the window")
     }
 
     @Test
@@ -182,6 +201,19 @@ class AppFilesScreenScreenshotTests {
         composeTestRule.onNodeWithText(PHOTO.substringAfterLast('/')).assertIsDisplayed()
     }
 
+    /** An access a day, taller than the window. */
+    private fun longHistory() = (1L..40L).map { day ->
+        val time = clock.at(LocalDateTime.of(2026, 10, 1, 9, 0).minusDays(day))
+        AccessPeriod(Action.READ, viaProvider = false, allowed = 1, denied = 0, time = time)
+    }
+
+    /** How much of its window the sheet covers, measured at the path under its title; 0 while it is not shown. */
+    private fun shownFraction(): Float {
+        val node = composeTestRule.onAllNodesWithText(PHOTO).fetchSemanticsNodes().singleOrNull() ?: return 0f
+        val window = node.layoutInfo.coordinates.findRootCoordinates().size.height.toFloat()
+        return if (window == 0f) 0f else (window - node.boundsInRoot.top) / window
+    }
+
     private fun swipeBack() {
         val dispatcher = composeTestRule.activity.onBackPressedDispatcher
         composeTestRule.runOnUiThread {
@@ -240,5 +272,11 @@ class AppFilesScreenScreenshotTests {
     private companion object {
         const val CAMERA = "/storage/emulated/0/DCIM/Camera"
         const val PHOTO = "$CAMERA/PXL_20261005_081133.jpg"
+
+        /** Frames until the opening animation has long come to rest. */
+        const val FRAMES = 90
+
+        /** The history arrives a few frames after the tap. */
+        const val LOADED_AT_FRAME = 6
     }
 }
