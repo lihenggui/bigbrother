@@ -30,11 +30,12 @@ mkdir -p "$DATA" && chmod 700 "$DATA" || exit 1
 # never finished, so the module disables itself rather than risk the same
 # again. Not applied when started after boot (a hot install).
 BOOT_MARKER=$DATA/boot_pending
+[ ! -e "$MODDIR/disable" ] && [ ! -e "$MODDIR/remove" ] || exit 0
 if [ "$(getprop sys.boot_completed)" != 1 ]; then
     if [ -f "$BOOT_MARKER" ]; then
         echo "--- $(date '+%F %T') previous boot did not complete; module disabled" >>"$LOG"
-        rm -f "$BOOT_MARKER"
-        touch "$MODDIR/disable"
+        touch "$MODDIR/disable" || exit 1
+        sh "$MODDIR/uninstall.sh" --restore-disabled
         exit 0
     fi
     touch "$BOOT_MARKER"
@@ -53,8 +54,7 @@ fi
 # Run after boot, when app_process can reach the package and app-op services.
 set -- /data/adb/big_brother_recovery/pending.*
 if [ -d "$1" ]; then
-    (while [ "$(getprop sys.boot_completed)" != 1 ]; do sleep 5; done
-     if sh "$MODDIR/uninstall.sh" --recover; then
+    (if sh "$MODDIR/uninstall.sh" --recover-after-boot; then
          sh "$MODDIR/service.sh"
      else
          echo "sandbox recovery still pending" >>"$LOG"

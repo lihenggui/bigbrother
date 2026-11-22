@@ -61,6 +61,14 @@ stop() {
 }
 trap stop TERM INT
 
+# Re-enabling serializes with the offline helper before Jail can hold
+# grants again. Keep any wait out of the root manager's boot script.
+if ! sh "$MODDIR/uninstall.sh" --prepare-start; then
+    log "could not prepare sandbox recovery"
+    rm -f "$DATA/supervisor.pid"
+    exit 1
+fi
+
 failed=0
 delay=0
 while :; do
