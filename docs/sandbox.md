@@ -285,9 +285,29 @@ the daemon starts) or does not get every app out, the helper is run by
 itself once the system is up, with what the database says each app still
 sandboxed had (`bbd sandbox-restore-lines`). A root-only recovery directory
 under `/data/adb/big_brother_recovery` retains each pending request and the
-helper. Each restored item is checked and journaled. The boot worker retries
-outstanding requests and removes the batch after acknowledgement. The helper
-rechecks the installation before changing an app op or permission.
+helper. Each restored item is checked and journaled. The helper rechecks the
+installation before changing an app op or permission.
+
+Disabling the module also gives back the AppOps modes, runtime permissions,
+notification listener access, and accessibility access saved by Jail. The
+boot guard schedules recovery for the current boot and exits before starting
+the daemon. If the module is turned off in Magisk or KernelSU, recovery runs
+on the next normal boot. Both managers skip a disabled module's own
+`post-fs-data.sh` and `service.sh`, so the module registers a root-only
+recovery hook in `/data/adb/service.d`. It exits immediately when the module
+is enabled, and uninstall removes it. Manager safe modes can skip general
+scripts too. In that case recovery runs on the next normal boot with the
+module still disabled.
+[Magisk boot scripts](https://topjohnwu.github.io/Magisk/guides.html#boot-scripts)
+and [KernelSU boot scripts](https://kernelsu.org/guide/module.html#boot-scripts)
+describe the two kinds of hooks.
+
+The recovery worker waits for Android to finish booting. It retries pending
+requests with increasing delays and leaves completed requests journaled for
+the duration of the disable, including across reboots. Jail settings, records,
+identities and sandbox files stay on disk. When the module starts again,
+the daemon uses those settings to reapply Jail. Starting Jail retires any
+pending disable recovery before it begins enforcing again.
 
 ### Notifications and the screen
 
@@ -510,6 +530,9 @@ minutes.
   the hook does not attach, and `bbd sandbox status` shows it as inactive.
 
 ## Testing
+
+`scripts/check-module-recovery.sh` exercises the boot guard, the disabled
+module hook and re-enabling on a Linux host with fake Android commands.
 
 `scripts/check-sandbox.sh` runs the canary app outside the sandbox, inside
 it and outside again, and checks what it reports seeing each time, an

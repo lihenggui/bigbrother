@@ -76,6 +76,10 @@ fi
 set_perm_recursive "$MODPATH" 0 0 0755 0644
 set_perm "$MODPATH/bin/bbd" 0 0 0755
 message=$("$MODPATH/bin/bbd" module-check-db 2>&1) || abort "! $message"
+# The new version can be disabled before its first boot, with saved
+# restrictions still in the database from the installed version.
+sh "$MODPATH/uninstall.sh" --register-disable-hook ||
+    ui_print "! Could not register sandbox recovery. It will be retried at startup"
 
 # Install the app the module was flashed from, unless that exact APK is
 # already installed (which is the case when the app flashes itself).
