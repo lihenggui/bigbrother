@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import li.mercury.bigbrother.core.model.Action
 import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.SectionHeader
+import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.core.ui.label
 import li.mercury.bigbrother.core.ui.shortTime
 import li.mercury.bigbrother.core.ui.R as UiR
@@ -110,7 +111,7 @@ internal fun AppDetailList(
     ) {
         if (records.empty) {
             item(key = "empty") {
-                Message(stringResource(UiR.string.empty_title), "", Modifier.fillParentMaxHeight(0.7f))
+                Message(stringResource(UiR.string.empty_title), "", Modifier.animatedRow(this, motion).fillParentMaxHeight(0.7f))
             }
         }
         fun itemAt(index: Int) = records.items.getOrNull(index) ?: info[index - records.items.size]
@@ -125,7 +126,7 @@ internal fun AppDetailList(
                     text = stringResource(R.string.results_truncated),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    modifier = Modifier.animatedRow(this, motion).padding(horizontal = 16.dp, vertical = 12.dp),
                 )
             }
         }
@@ -145,7 +146,7 @@ private fun AppDetailRow(
         is Item.Header -> SectionHeader(
             title = stringResource(item.title),
             trailing = item.lastSeen?.let { stringResource(R.string.last_access, shortTime(it)) },
-            modifier = Modifier.padding(top = 8.dp),
+            modifier = modifier.padding(top = 8.dp),
         )
 
         is Item.Folder -> FolderRow(item, onClick = { onOpenFiles(item.folder.path) }, modifier = modifier)
@@ -165,7 +166,7 @@ private fun AppDetailRow(
 
         is Item.Info -> InfoRow(item.label, item.value, item.index, item.count, modifier)
 
-        Item.Launch -> LaunchButton(launchPackage)
+        Item.Launch -> LaunchButton(launchPackage, modifier)
     }
 }
 
@@ -269,13 +270,13 @@ private fun BrowseFilesRow(item: Item.BrowseFiles, onClick: () -> Unit, modifier
 
 /** Opens the app, when it has a screen to open. */
 @Composable
-private fun LaunchButton(packageName: String) {
+private fun LaunchButton(packageName: String, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val launch = remember(packageName) { context.packageManager.getLaunchIntentForPackage(packageName) }
         ?: return
     OutlinedButton(
         onClick = { context.startActivity(launch) },
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(top = 12.dp),
     ) {

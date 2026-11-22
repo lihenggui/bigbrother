@@ -17,8 +17,13 @@
 package li.mercury.bigbrother.feature.jail.impl.network
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.updateTransition
+import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -58,8 +63,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import li.mercury.bigbrother.core.designsystem.component.ShapedIcon
 import li.mercury.bigbrother.core.model.NetworkActivity
+import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.MenuFilterChip
 import li.mercury.bigbrother.core.ui.MenuOption
+import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.core.ui.timeWithDateIfNotToday
 import li.mercury.bigbrother.feature.jail.impl.R
 import li.mercury.bigbrother.feature.jail.impl.SandboxWarningCard
@@ -77,6 +84,7 @@ internal fun LazyListScope.notices(activity: NetworkActivity, actions: NetworkAc
                 containerColor = MaterialTheme.colorScheme.secondaryContainer,
                 contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
                 action = stringResource(R.string.jail_net_start) to { actions.onSetRecording(true) },
+                modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
             )
         }
     }
@@ -88,6 +96,7 @@ internal fun LazyListScope.notices(activity: NetworkActivity, actions: NetworkAc
                 body = stringResource(R.string.jail_net_no_network_body),
                 containerColor = MaterialTheme.colorScheme.tertiaryContainer,
                 contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
             )
         }
     }
@@ -96,7 +105,7 @@ internal fun LazyListScope.notices(activity: NetworkActivity, actions: NetworkAc
             SandboxWarningCard(
                 title = stringResource(R.string.jail_net_names_missing_title),
                 body = stringResource(R.string.jail_net_names_missing_body),
-                modifier = Modifier.padding(bottom = 8.dp),
+                modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme).padding(bottom = 8.dp),
             )
         }
     }
@@ -110,10 +119,11 @@ private fun NoticeCard(
     body: String,
     containerColor: Color,
     contentColor: Color,
+    modifier: Modifier = Modifier,
     action: Pair<String, () -> Unit>? = null,
 ) {
     Surface(
-        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+        modifier = modifier.fillMaxWidth().padding(bottom = 8.dp),
         shape = MaterialTheme.shapes.large,
         color = containerColor,
         contentColor = contentColor,
@@ -133,9 +143,9 @@ private fun NoticeCard(
 
 /** Recording, with nothing recorded yet: since when, and no empty chart. */
 @Composable
-internal fun Empty(since: Long) {
+internal fun Empty(since: Long, modifier: Modifier = Modifier) {
     Column(
-        Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 48.dp),
+        modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 48.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -155,10 +165,9 @@ internal fun Empty(since: Long) {
  * Choosing another range cross-fades it rather than growing the bars.
  */
 @Composable
-internal fun Summary(state: NetworkActivityUiState, activity: NetworkActivity, onSelect: (Long?) -> Unit) {
+internal fun Summary(state: NetworkActivityUiState, activity: NetworkActivity, onSelect: (Long?) -> Unit, modifier: Modifier = Modifier) {
     val totals = state.totals
-    val numbers = NumberFormat.getIntegerInstance()
-    Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceBright, modifier = Modifier.fillMaxWidth()) {
+    Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceBright, modifier = modifier.fillMaxWidth()) {
         val enter = fadeIn(MaterialTheme.motionScheme.defaultEffectsSpec())
         val exit = fadeOut(MaterialTheme.motionScheme.fastEffectsSpec())
         AnimatedContent(
@@ -168,29 +177,8 @@ internal fun Summary(state: NetworkActivityUiState, activity: NetworkActivity, o
             label = "summary",
         ) { shown ->
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(numbers.format(totals.destinations), style = MaterialTheme.typography.displayMedium, modifier = Modifier.alignByBaseline())
-                    Text(
-                        pluralStringResource(R.plurals.jail_net_destinations, totals.destinations),
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.alignByBaseline(),
-                    )
-                }
-                Text(
-                    if (shown.traffic && shown.networkAllowed) {
-                        pluralStringResource(
-                            R.plurals.jail_net_facts,
-                            totals.connections,
-                            numbers.format(totals.connections),
-                            formatBytes(totals.received),
-                            formatBytes(totals.sent),
-                        )
-                    } else {
-                        pluralStringResource(R.plurals.jail_net_facts_counts, totals.connections, numbers.format(totals.connections), numbers.format(totals.refused))
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                // Choosing a bar changes the numbers in place, with a cross-fade.
+                FadeThrough(totals, kind = { it }) { Totals(it, traffic = shown.traffic && shown.networkAllowed) }
                 ActivityChart(
                     buckets = shown.buckets,
                     bucketSeconds = shown.bucketSeconds,
@@ -213,42 +201,95 @@ internal fun Summary(state: NetworkActivityUiState, activity: NetworkActivity, o
     }
 }
 
+/** How many destinations, and how many connections and how much data went to them. */
+@Composable
+private fun Totals(totals: ActivityTotals, traffic: Boolean) {
+    val numbers = NumberFormat.getIntegerInstance()
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(numbers.format(totals.destinations), style = MaterialTheme.typography.displayMedium, modifier = Modifier.alignByBaseline())
+            Text(
+                pluralStringResource(R.plurals.jail_net_destinations, totals.destinations),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.alignByBaseline(),
+            )
+        }
+        Text(
+            if (traffic) {
+                pluralStringResource(
+                    R.plurals.jail_net_facts,
+                    totals.connections,
+                    numbers.format(totals.connections),
+                    formatBytes(totals.received),
+                    formatBytes(totals.sent),
+                )
+            } else {
+                pluralStringResource(R.plurals.jail_net_facts_counts, totals.connections, numbers.format(totals.connections), numbers.format(totals.refused))
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
 /** The chosen period, the blocked filter and the order. */
 @Composable
-internal fun Filters(state: NetworkActivityUiState, actions: NetworkActivityActions) {
+internal fun Filters(state: NetworkActivityUiState, actions: NetworkActivityActions, modifier: Modifier = Modifier) {
     Row(
-        Modifier
+        modifier
             .fillMaxWidth()
             .horizontalScroll(rememberScrollState())
             .padding(top = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        val bucket = state.bucket
-        val activity = state.activity
-        if (bucket != null && activity != null) {
-            InputChip(
-                selected = true,
-                onClick = { actions.onSelectBucket(null) },
-                label = { Text(periodLabel(bucket, activity.bucketSeconds, activity.zone)) },
-                trailingIcon = { Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(InputChipDefaults.IconSize)) },
+        // The period chip brings its own gap, so that none is left without it.
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            PeriodChip(state, onClear = { actions.onSelectBucket(null) })
+            FilterChip(
+                // The check mark widens the chip as it comes.
+                modifier = Modifier.animateContentSize(MaterialTheme.motionScheme.fastSpatialSpec()),
+                selected = state.blockedOnly,
+                onClick = { actions.onBlockedOnly(!state.blockedOnly) },
+                label = { Text(stringResource(R.string.jail_net_filter_blocked_count, state.blockedCount)) },
+                leadingIcon = if (state.blockedOnly) {
+                    { Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(FilterChipDefaults.IconSize)) }
+                } else {
+                    null
+                },
             )
         }
-        FilterChip(
-            selected = state.blockedOnly,
-            onClick = { actions.onBlockedOnly(!state.blockedOnly) },
-            label = { Text(stringResource(R.string.jail_net_filter_blocked_count, state.blockedCount)) },
-            leadingIcon = if (state.blockedOnly) {
-                { Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(FilterChipDefaults.IconSize)) }
-            } else {
-                null
-            },
-        )
         MenuFilterChip(
             label = stringResource(state.sort.label),
             options = DestinationSort.entries.map { MenuOption(it, stringResource(it.label)) },
             selected = state.sort,
             onSelect = actions.onSort,
+        )
+    }
+}
+
+/**
+ * The bar chosen in the chart, which clears the choice. It grows in beside
+ * the other filters, and keeps its label while it leaves.
+ */
+@Composable
+private fun PeriodChip(state: NetworkActivityUiState, onClear: () -> Unit) {
+    val bucket = state.bucket
+    val activity = state.activity
+    val label = if (bucket != null && activity != null) periodLabel(bucket, activity.bucketSeconds, activity.zone) else null
+    val transition = updateTransition(label, label = "period")
+    val motion = MaterialTheme.motionScheme
+    transition.AnimatedVisibility(
+        visible = { it != null },
+        enter = expandHorizontally(motion.defaultSpatialSpec()) + fadeIn(motion.defaultEffectsSpec()),
+        exit = shrinkHorizontally(motion.defaultSpatialSpec()) + fadeOut(motion.fastEffectsSpec()),
+    ) {
+        InputChip(
+            selected = true,
+            onClick = onClear,
+            label = { Text(transition.targetState ?: transition.currentState.orEmpty()) },
+            trailingIcon = { Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(InputChipDefaults.IconSize)) },
+            modifier = Modifier.padding(end = 8.dp),
         )
     }
 }
@@ -262,8 +303,8 @@ private val DestinationSort.label: Int
     }
 
 @Composable
-internal fun ShowAll(count: Int, onClick: () -> Unit) {
-    TextButton(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+internal fun ShowAll(count: Int, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    TextButton(onClick = onClick, modifier = modifier.fillMaxWidth()) {
         Text(stringResource(R.string.jail_net_show_all, count))
         Spacer(Modifier.size(6.dp))
         Icon(Icons.Outlined.ExpandMore, contentDescription = null)

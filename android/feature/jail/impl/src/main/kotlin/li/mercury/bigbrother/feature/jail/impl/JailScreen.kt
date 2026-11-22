@@ -54,7 +54,6 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -73,6 +72,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
+import li.mercury.bigbrother.core.designsystem.component.BigBrotherPullToRefreshBox
 import li.mercury.bigbrother.core.designsystem.component.ShapedIcon
 import li.mercury.bigbrother.core.designsystem.icon.CageIcons
 import li.mercury.bigbrother.core.model.InstalledApp
@@ -80,9 +80,13 @@ import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.SandboxHookState
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxStatus
+import li.mercury.bigbrother.core.ui.ContentKind
+import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
+import li.mercury.bigbrother.core.ui.Pop
 import li.mercury.bigbrother.core.ui.SectionHeader
+import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.core.ui.appNameWithUser
 import li.mercury.bigbrother.core.ui.failureReason
 import li.mercury.bigbrother.core.ui.R as UiR
@@ -159,7 +163,8 @@ internal fun JailScreen(
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
-            if (!state.apps.isNullOrEmpty()) {
+            // With no app isolated yet, the empty page has the button of its own.
+            Pop(!state.apps.isNullOrEmpty()) {
                 ExtendedFloatingActionButton(
                     onClick = onAdd,
                     expanded = atTop,
@@ -171,18 +176,20 @@ internal fun JailScreen(
             }
         },
     ) { padding ->
-        PullToRefreshBox(
+        BigBrotherPullToRefreshBox(
             isRefreshing = state.refreshing && state.apps != null,
             onRefresh = onRefresh,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(top = padding.calculateTopPadding()),
         ) {
-            val apps = state.apps
-            when {
-                state.failure != null -> LoadFailureMessage(state.failure, onRetry = onRefresh)
-                apps == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
-                else -> JailList(state, apps, listState, selectedUid, settingsSelected, onOpenApp, onOpenSettings, onAdd)
+            FadeThrough(state, kind = { ContentKind.of(it.failure, it.apps) }) { shown ->
+                val apps = shown.apps
+                when {
+                    shown.failure != null -> LoadFailureMessage(shown.failure, onRetry = onRefresh)
+                    apps == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
+                    else -> JailList(shown, apps, listState, selectedUid, settingsSelected, onOpenApp, onOpenSettings, onAdd)
+                }
             }
         }
     }
@@ -213,10 +220,10 @@ private fun JailList(
     ) {
         sandboxWarnings(state.status)
         if (apps.isEmpty()) {
-            item(key = "empty") { EmptyJail(onAdd) }
+            item(key = "empty") { EmptyJail(onAdd, Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
         } else {
             item(key = "isolated") {
-                SectionHeader(stringResource(R.string.jail_section_isolated), trailing = apps.size.toString())
+                SectionHeader(stringResource(R.string.jail_section_isolated), Modifier.animatedRow(this, MaterialTheme.motionScheme), trailing = apps.size.toString())
             }
             itemsIndexed(apps, key = { _, app -> app.app.uid }) { index, app ->
                 LinkRow(
@@ -227,11 +234,11 @@ private fun JailList(
                     count = apps.size,
                     leading = { IsolatedAppIcon(app.info, app.name) },
                     selected = if (beside) app.app.uid == selectedUid else null,
-                    modifier = Modifier.animateItem(),
+                    modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
                 )
             }
         }
-        item(key = "settings") { SectionHeader(stringResource(R.string.jail_section_settings)) }
+        item(key = "settings") { SectionHeader(stringResource(R.string.jail_section_settings), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
         item(key = "global") {
             LinkRow(
                 title = stringResource(R.string.jail_global_settings),
@@ -240,6 +247,7 @@ private fun JailList(
                 index = 0,
                 count = 1,
                 leading = { ShapedIcon(Icons.Outlined.Tune) },
+                modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
                 selected = if (beside) settingsSelected else null,
             )
         }
@@ -262,7 +270,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.sandboxWarnings(statu
             SandboxWarningCard(
                 title = stringResource(title),
                 body = stringResource(body),
-                modifier = Modifier.padding(bottom = 8.dp),
+                modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme).padding(bottom = 8.dp),
             )
         }
     }
@@ -271,7 +279,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.sandboxWarnings(statu
             SandboxWarningCard(
                 title = stringResource(R.string.jail_gate_missing_title),
                 body = stringResource(R.string.jail_gate_missing),
-                modifier = Modifier.padding(bottom = 8.dp),
+                modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme).padding(bottom = 8.dp),
             )
         }
     }
@@ -280,7 +288,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.sandboxWarnings(statu
             SandboxWarningCard(
                 title = stringResource(R.string.jail_appops_missing_title),
                 body = stringResource(R.string.jail_appops_missing),
-                modifier = Modifier.padding(bottom = 8.dp),
+                modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme).padding(bottom = 8.dp),
             )
         }
     }
@@ -289,9 +297,9 @@ private fun androidx.compose.foundation.lazy.LazyListScope.sandboxWarnings(statu
 /** No app in the jail: what it does, and how to put one in. */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun EmptyJail(onAdd: () -> Unit) {
+private fun EmptyJail(onAdd: () -> Unit, modifier: Modifier = Modifier) {
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(top = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,

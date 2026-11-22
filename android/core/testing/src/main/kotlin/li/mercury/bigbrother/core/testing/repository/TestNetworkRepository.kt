@@ -16,6 +16,7 @@
 
 package li.mercury.bigbrother.core.testing.repository
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -43,6 +44,9 @@ class TestNetworkRepository(var activity: NetworkActivity) : NetworkRepository {
     /** What a period with an end, such as one bar of the chart, holds. */
     var period: NetworkActivity? = null
 
+    /** While set, [getActivity] waits for it to complete, as a slow daemon would. */
+    var gate: CompletableDeferred<Unit>? = null
+
     /** The ranges asked for, as (since, until). */
     val asked = mutableListOf<Pair<Long, Long?>>()
 
@@ -58,6 +62,7 @@ class TestNetworkRepository(var activity: NetworkActivity) : NetworkRepository {
     override suspend fun getActivity(packageName: String, userId: Int, since: Long, until: Long?, bucket: BucketSize, zone: ZoneId): NetworkActivity {
         check()
         asked += since to until
+        gate?.await()
         return if (until != null) period ?: activity else activity
     }
 

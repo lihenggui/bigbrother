@@ -47,6 +47,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
 import li.mercury.bigbrother.core.model.AppSummary
+import li.mercury.bigbrother.core.ui.ContentKind
+import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.OpenFileResult
@@ -123,7 +125,6 @@ internal fun AppFilesScreen(
         FileDetailsSheet(details, onOpen = { onOpenFile(details.path) }, onDismiss = onDismissFileDetails)
     }
     var location by rememberSaveable { mutableStateOf(initialLocation ?: Location.ROOT) }
-    val browser = state.browser
     val background = MaterialTheme.colorScheme.surfaceContainer
     // Beside the app's page this is a pane of its own, closed rather than left.
     val beside = LocalShowsDetailBesideList.current
@@ -134,21 +135,24 @@ internal fun AppFilesScreen(
         },
     ) { padding ->
         Box(Modifier.padding(padding)) {
-            when {
-                state.failure != null -> LoadFailureMessage(state.failure, onRetry)
+            FadeThrough(state, kind = { ContentKind.of(it.failure, it.browser) }) { shown ->
+                val browser = shown.browser
+                when {
+                    shown.failure != null -> LoadFailureMessage(shown.failure, onRetry)
 
-                browser == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
+                    browser == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
 
-                else -> FilesPage(
-                    browser = browser,
-                    truncated = state.truncated,
-                    location = location,
-                    // Back goes up a folder, once search is closed.
-                    handleBack = !state.searching,
-                    onNavigate = { location = it },
-                    onReadOnly = onReadOnly,
-                    onFileDetails = onFileDetails,
-                )
+                    else -> FilesPage(
+                        browser = browser,
+                        truncated = shown.truncated,
+                        location = location,
+                        // Back goes up a folder, once search is closed.
+                        handleBack = !shown.searching,
+                        onNavigate = { location = it },
+                        onReadOnly = onReadOnly,
+                        onFileDetails = onFileDetails,
+                    )
+                }
             }
         }
     }

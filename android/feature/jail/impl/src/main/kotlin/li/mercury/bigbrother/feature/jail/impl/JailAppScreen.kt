@@ -34,7 +34,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalButton
@@ -60,7 +59,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.pluralStringResource
@@ -74,9 +72,14 @@ import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxedApp
+import li.mercury.bigbrother.core.ui.ContentKind
+import li.mercury.bigbrother.core.ui.ExpandChevron
+import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
+import li.mercury.bigbrother.core.ui.Pop
 import li.mercury.bigbrother.core.ui.SectionHeader
+import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.core.ui.appNameWithUser
 import li.mercury.bigbrother.core.ui.failureReason
 import li.mercury.bigbrother.feature.jail.impl.network.NetworkSectionActions
@@ -154,44 +157,53 @@ internal fun JailAppScreen(
                 scrollBehavior = scrollBehavior,
                 onBack = onBack,
                 actions = {
-                    if (state.app != null) IsolatedAppIcon(state.info, state.name, Modifier.padding(end = 16.dp))
+                    Pop(state.app != null) { IsolatedAppIcon(state.info, state.name, Modifier.padding(end = 16.dp)) }
                 },
             )
         },
     ) { padding ->
-        val app = state.app
-        when {
-            state.failure != null -> LoadFailureMessage(state.failure, onRetry = onRefresh, modifier = Modifier.padding(padding))
+        FadeThrough(state, kind = { it.kind() }) { shown ->
+            val app = shown.app
+            when {
+                shown.failure != null -> LoadFailureMessage(shown.failure, onRetry = onRefresh, modifier = Modifier.padding(padding))
 
-            state.loading -> BigBrotherLoadingIndicator(Modifier.fillMaxSize().padding(padding))
+                shown.loading -> BigBrotherLoadingIndicator(Modifier.fillMaxSize().padding(padding))
 
-            // Only while the page leaves, for an app that was not in the
-            // sandbox when it opened.
-            app == null -> Unit
+                // Only while the page leaves, for an app that was not in the
+                // sandbox when it opened.
+                app == null -> Unit
 
-            else -> {
-                var expanded by rememberSaveable { mutableStateOf(initiallyExpanded) }
-                var showAll by rememberSaveable { mutableStateOf(false) }
-                JailAppItems(
-                    state = state,
-                    app = app,
-                    padding = padding,
-                    expanded = expanded,
-                    showAll = showAll,
-                    onExpand = { expanded = it },
-                    onToggleShowAll = { showAll = !showAll },
-                    onRelease = onRelease,
-                    onOpenRecords = onOpenRecords,
-                    onOpenNetwork = onOpenNetwork,
-                    onReset = onReset,
-                    onSetOn = onSetOn,
-                    onChoose = onChoose,
-                    onAllowNetwork = onAllowNetwork,
-                    onSetRecording = onSetRecording,
-                )
+                else -> {
+                    var expanded by rememberSaveable { mutableStateOf(initiallyExpanded) }
+                    var showAll by rememberSaveable { mutableStateOf(false) }
+                    JailAppItems(
+                        state = shown,
+                        app = app,
+                        padding = padding,
+                        expanded = expanded,
+                        showAll = showAll,
+                        onExpand = { expanded = it },
+                        onToggleShowAll = { showAll = !showAll },
+                        onRelease = onRelease,
+                        onOpenRecords = onOpenRecords,
+                        onOpenNetwork = onOpenNetwork,
+                        onReset = onReset,
+                        onSetOn = onSetOn,
+                        onChoose = onChoose,
+                        onAllowNetwork = onAllowNetwork,
+                        onSetRecording = onSetRecording,
+                    )
+                }
             }
         }
     }
+}
+
+private fun JailAppUiState.kind(): ContentKind = when {
+    failure != null -> ContentKind.Failure
+    loading -> ContentKind.Loading
+    app == null -> ContentKind.Empty
+    else -> ContentKind.Content
 }
 
 @Composable
@@ -258,7 +270,7 @@ private fun JailAppItems(
         verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
     ) {
         item(key = "header") {
-            Actions(onRelease = onRelease, onOpenRecords = { onOpenRecords(app.uid, app.packageName) })
+            Actions(onRelease = onRelease, onOpenRecords = { onOpenRecords(app.uid, app.packageName) }, modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme))
         }
         jailAppItemSection(state, app, expanded, showAll, onExpand, onToggleShowAll, onSetOn, onChoose, onReset)
         networkSection(
@@ -276,7 +288,7 @@ private fun JailAppItems(
                 onOpenActivity = { onOpenNetwork(app.uid, app.packageName) },
             ),
         )
-        item(key = "restart") { Note(stringResource(R.string.jail_restart_note), Modifier.padding(top = 8.dp)) }
+        item(key = "restart") { Note(stringResource(R.string.jail_restart_note), Modifier.animatedRow(this, MaterialTheme.motionScheme).padding(top = 8.dp)) }
     }
 }
 
@@ -295,25 +307,25 @@ private fun LazyListScope.jailAppItemSection(
     val concerned = state.requested?.let { requested -> ITEM_ORDER.filter { it.concerns(requested) } } ?: ITEM_ORDER
     val others = ITEM_ORDER - concerned.toSet()
     item(key = "items") {
-        Row {
+        Row(Modifier.animatedRow(this, MaterialTheme.motionScheme)) {
             SectionHeader(
                 stringResource(R.string.jail_section_items),
                 Modifier
                     .weight(1f)
                     .alignByBaseline(),
             )
-            if (app.settings.keys.any { it in ITEM_ORDER }) {
-                TextButton(onClick = onReset, modifier = Modifier.alignByBaseline()) {
+            Pop(app.settings.keys.any { it in ITEM_ORDER }, Modifier.alignByBaseline()) {
+                TextButton(onClick = onReset) {
                     Text(stringResource(R.string.jail_reset))
                 }
             }
         }
     }
-    item(key = "summary") { Note(stringResource(R.string.jail_items_summary)) }
+    item(key = "summary") { Note(stringResource(R.string.jail_items_summary), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
     jailItemRows(concerned, state, app, expanded, onExpand, onSetOn, onChoose)
     if (others.isNotEmpty()) {
         item(key = "more") {
-            ShowAllToggle(showAll, others.size, onToggleShowAll)
+            ShowAllToggle(showAll, others.size, onToggleShowAll, Modifier.animatedRow(this, MaterialTheme.motionScheme))
         }
         if (showAll) jailItemRows(others, state, app, expanded, onExpand, onSetOn, onChoose)
     }
@@ -344,31 +356,33 @@ private fun LazyListScope.jailItemRows(
                 onChoose = { mode -> onChoose(item, mode) },
                 index = index,
                 count = items.size,
-                modifier = Modifier.animateItem(),
+                modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
             )
         }
     }
 }
 
 @Composable
-private fun ShowAllToggle(showAll: Boolean, count: Int, onClick: () -> Unit) {
-    TextButton(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
-        Text(
-            if (showAll) {
-                stringResource(R.string.jail_fewer_items)
-            } else {
-                pluralStringResource(R.plurals.jail_more_items, count, count)
-            },
-        )
+private fun ShowAllToggle(showAll: Boolean, count: Int, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    TextButton(onClick = onClick, modifier = modifier.fillMaxWidth()) {
+        FadeThrough(showAll, kind = { it }) { shown ->
+            Text(
+                if (shown) {
+                    stringResource(R.string.jail_fewer_items)
+                } else {
+                    pluralStringResource(R.plurals.jail_more_items, count, count)
+                },
+            )
+        }
         Spacer(Modifier.size(6.dp))
-        Icon(Icons.Outlined.ExpandMore, contentDescription = null, modifier = Modifier.rotate(if (showAll) 180f else 0f))
+        ExpandChevron(showAll)
     }
 }
 
 /** What can be done with the app: take it out of the sandbox, or see what it did. */
 @Composable
-private fun Actions(onRelease: () -> Unit, onOpenRecords: () -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+private fun Actions(onRelease: () -> Unit, onOpenRecords: () -> Unit, modifier: Modifier = Modifier) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = modifier.padding(top = 8.dp)) {
         OutlinedButton(onClick = onRelease, modifier = Modifier.weight(1f)) {
             Icon(CageIcons.Open, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.size(8.dp))

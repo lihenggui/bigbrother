@@ -38,7 +38,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.Text
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -50,10 +49,13 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import li.mercury.bigbrother.core.data.repository.ModuleUpdate
 import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
+import li.mercury.bigbrother.core.designsystem.component.BigBrotherPullToRefreshBox
 import li.mercury.bigbrother.core.designsystem.component.ShapedIcon
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.TimeRange
+import li.mercury.bigbrother.core.ui.ContentKind
 import li.mercury.bigbrother.core.ui.DataCategory
+import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.InlineMessage
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.SectionHeader
@@ -108,25 +110,22 @@ internal fun OverviewScreen(
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         val files = state.files
-        PullToRefreshBox(
+        BigBrotherPullToRefreshBox(
             isRefreshing = state.refreshing && files != null,
             onRefresh = onRefresh,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(top = padding.calculateTopPadding()),
         ) {
-            when {
-                state.failure == LoadFailure.ModuleMissing ->
-                    ModuleSetupMessage(state.moduleSetup, onInstallModule, onRefresh)
-
-                state.failure == LoadFailure.ModuleOutdated && state.moduleUpdate != ModuleUpdate.Idle ->
-                    ModuleUpdateCard(state.moduleUpdate, onUpdateModule, onStartDaemon)
-
-                state.failure != null -> LoadFailureMessage(state.failure, onRetry = onRefresh)
-
-                files == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
-
-                else -> Content(state, files, onRange, onOpenCategory, onUpdateModule, onStartDaemon)
+            FadeThrough(state, kind = { it.kind() }) { shown ->
+                val shownFiles = shown.files
+                when (shown.kind()) {
+                    OverviewKind.ModuleSetup -> ModuleSetupMessage(shown.moduleSetup, onInstallModule, onRefresh)
+                    OverviewKind.ModuleUpdate -> ModuleUpdateCard(shown.moduleUpdate, onUpdateModule, onStartDaemon)
+                    OverviewKind.Failure -> LoadFailureMessage(checkNotNull(shown.failure), onRetry = onRefresh)
+                    OverviewKind.Loading -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
+                    OverviewKind.Content -> Content(shown, checkNotNull(shownFiles), onRange, onOpenCategory, onUpdateModule, onStartDaemon)
+                }
             }
         }
     }
@@ -163,23 +162,50 @@ private fun Content(
                 modifier = Modifier.padding(top = 4.dp, bottom = 16.dp),
             )
             FilesCard(files, state.appInfo, wide = columns > 1, onClick = { onOpenCategory(DataCategory.FILES) })
-            if (state.categories.isEmpty()) {
-                if (files.readers.isEmpty() && files.lookedOnly == 0) {
-                    // The column scrolls, so the message must not: see InlineMessage.
-                    InlineMessage(stringResource(UiR.string.empty_title), "", Modifier.padding(top = 24.dp))
-                }
-            } else {
+            OtherCategories(state.categories, empty = files.readers.isEmpty() && files.lookedOnly == 0, columns, onOpenCategory)
+        }
+    }
+}
+
+/** What the screen shows at the top level: a setup step, a failure, the loader or the records. */
+private enum class OverviewKind { ModuleSetup, ModuleUpdate, Failure, Loading, Content }
+
+private fun OverviewUiState.kind(): OverviewKind = when {
+    failure == LoadFailure.ModuleMissing -> OverviewKind.ModuleSetup
+    failure == LoadFailure.ModuleOutdated && moduleUpdate != ModuleUpdate.Idle -> OverviewKind.ModuleUpdate
+    failure != null -> OverviewKind.Failure
+    files == null -> OverviewKind.Loading
+    else -> OverviewKind.Content
+}
+
+/**
+ * The categories other than files, or, when nothing at all was recorded in
+ * the range, a message; another range can fade from one to the other.
+ */
+@Composable
+private fun OtherCategories(categories: List<CategoryOverview>, empty: Boolean, columns: Int, onOpenCategory: (DataCategory) -> Unit) {
+    FadeThrough(
+        state = categories to empty,
+        kind = { (shown, nothing) ->
+            when {
+                shown.isNotEmpty() -> ContentKind.Content
+                nothing -> ContentKind.Empty
+                else -> null
+            }
+        },
+    ) { (shown, nothing) ->
+        if (shown.isNotEmpty()) {
+            Column {
                 SectionHeader(
                     title = stringResource(R.string.other_categories),
-                    trailing = pluralStringResource(
-                        R.plurals.category_count,
-                        state.categories.size,
-                        state.categories.size,
-                    ),
+                    trailing = pluralStringResource(R.plurals.category_count, shown.size, shown.size),
                     modifier = Modifier.padding(top = 8.dp),
                 )
-                CategoryColumns(state.categories, columns, onOpenCategory)
+                CategoryColumns(shown, columns, onOpenCategory)
             }
+        } else if (nothing) {
+            // The column scrolls, so the message must not: see InlineMessage.
+            InlineMessage(stringResource(UiR.string.empty_title), "", Modifier.padding(top = 24.dp))
         }
     }
 }

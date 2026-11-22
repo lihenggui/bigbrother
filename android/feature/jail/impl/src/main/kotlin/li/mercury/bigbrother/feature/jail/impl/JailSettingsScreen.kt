@@ -66,9 +66,12 @@ import li.mercury.bigbrother.core.model.SandboxHookState
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxStatus
+import li.mercury.bigbrother.core.ui.ContentKind
+import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.SectionHeader
+import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.feature.jail.impl.network.globalNetworkSection
 
 /** The global settings of the jail, item by item, and what works on this device. */
@@ -140,26 +143,28 @@ internal fun JailSettingsScreen(
             )
         },
     ) { padding ->
-        val global = state.global
-        when {
-            state.failure != null -> LoadFailureMessage(state.failure, onRetry = onRefresh, modifier = Modifier.padding(padding))
+        FadeThrough(state, kind = { ContentKind.of(it.failure, it.global) }) { shown ->
+            val global = shown.global
+            when {
+                shown.failure != null -> LoadFailureMessage(shown.failure, onRetry = onRefresh, modifier = Modifier.padding(padding))
 
-            global == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize().padding(padding))
+                global == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize().padding(padding))
 
-            else -> {
-                var expanded by rememberSaveable { mutableStateOf<SandboxItem?>(null) }
-                JailSettingsList(
-                    state = state,
-                    global = global,
-                    padding = padding,
-                    expanded = expanded,
-                    onExpand = { expanded = it },
-                    onSetOn = onSetOn,
-                    onChoose = onChoose,
-                    onSetAutoIsolate = onSetAutoIsolate,
-                    onAllowNetwork = onAllowNetwork,
-                    onConfirmRelease = { confirming = true },
-                )
+                else -> {
+                    var expanded by rememberSaveable { mutableStateOf<SandboxItem?>(null) }
+                    JailSettingsList(
+                        state = shown,
+                        global = global,
+                        padding = padding,
+                        expanded = expanded,
+                        onExpand = { expanded = it },
+                        onSetOn = onSetOn,
+                        onChoose = onChoose,
+                        onSetAutoIsolate = onSetAutoIsolate,
+                        onAllowNetwork = onAllowNetwork,
+                        onConfirmRelease = { confirming = true },
+                    )
+                }
             }
         }
     }
@@ -224,13 +229,13 @@ private fun LazyListScope.globalItemsSection(
             checked = state.autoIsolate,
             onCheckedChange = onSetAutoIsolate,
             leadingContent = { ShapedIcon(Icons.Outlined.InstallMobile) },
-            modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
+            modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme).padding(top = 8.dp, bottom = 16.dp),
             showThumbIcon = true,
         )
     }
-    item(key = "summary") { Note(stringResource(R.string.jail_items_summary)) }
+    item(key = "summary") { Note(stringResource(R.string.jail_items_summary), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
     for (group in ItemGroup.entries) {
-        item(key = group.name) { SectionHeader(stringResource(group.title)) }
+        item(key = group.name) { SectionHeader(stringResource(group.title), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
         group.items.forEachIndexed { index, item ->
             item(key = item.id) {
                 val mode = global[item] ?: SandboxMode.ON
@@ -247,11 +252,12 @@ private fun LazyListScope.globalItemsSection(
                     onChoose = { chosen -> if (chosen != null) onChoose(item, chosen) },
                     index = index,
                     count = group.items.size,
+                    modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
                 )
             }
         }
     }
-    item(key = "restart") { Note(stringResource(R.string.jail_restart_note), Modifier.padding(top = 8.dp)) }
+    item(key = "restart") { Note(stringResource(R.string.jail_restart_note), Modifier.animatedRow(this, MaterialTheme.motionScheme).padding(top = 8.dp)) }
     globalNetworkSection(
         mode = global[SandboxItem.NETWORK] ?: SandboxItem.NETWORK.default,
         unmet = state.status?.unmet(SandboxItem.NETWORK).orEmpty(),
@@ -263,8 +269,8 @@ private fun LazyListScope.globalItemsSection(
 }
 
 private fun LazyListScope.statusSection(state: JailSettingsUiState, holdNeeded: Boolean, onConfirmRelease: () -> Unit) {
-    item(key = "status_header") { SectionHeader(stringResource(R.string.jail_section_status)) }
-    item(key = "status") { StatusRow(state.status, state.autoIsolate && holdNeeded) }
+    item(key = "status_header") { SectionHeader(stringResource(R.string.jail_section_status), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+    item(key = "status") { StatusRow(state.status, state.autoIsolate && holdNeeded, Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
     item(key = "release_all") {
         LinkRow(
             title = stringResource(R.string.jail_release_all),
@@ -273,6 +279,7 @@ private fun LazyListScope.statusSection(state: JailSettingsUiState, holdNeeded: 
             index = 1,
             count = 2,
             leading = { ShapedIcon(CageIcons.Open) },
+            modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
         )
     }
 }
@@ -295,7 +302,7 @@ private fun ReleaseAllDialog(isolated: Int, onDismiss: () -> Unit, onConfirm: ()
 /** Which parts of the sandbox work on this device; until known, neither good nor bad. */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun StatusRow(status: SandboxStatus?, holdExpected: Boolean) {
+private fun StatusRow(status: SandboxStatus?, holdExpected: Boolean, modifier: Modifier = Modifier) {
     val problems = buildList {
         if (status != null && !status.gate) add(stringResource(R.string.jail_status_gate_missing))
         if (status != null) {
@@ -327,21 +334,28 @@ private fun StatusRow(status: SandboxStatus?, holdExpected: Boolean) {
     }
     val colors = MaterialTheme.colorScheme
     ListItem(
+        modifier = modifier,
         shapes = ListItemDefaults.segmentedShapes(0, 2),
         colors = ListItemDefaults.segmentedColors(),
+        // The status arrives after the screen opens, and can change while it
+        // is open: icon and text fade through to it in place.
         leadingContent = {
-            when {
-                status == null -> ShapedIcon(Icons.Outlined.HourglassEmpty)
-                problems.isEmpty() -> ShapedIcon(Icons.Outlined.CheckCircle)
-                else -> ShapedIcon(Icons.Outlined.ErrorOutline, containerColor = colors.errorContainer, contentColor = colors.onErrorContainer)
+            FadeThrough((status != null) to problems.isEmpty(), kind = { it }) { (known, fine) ->
+                when {
+                    !known -> ShapedIcon(Icons.Outlined.HourglassEmpty)
+                    fine -> ShapedIcon(Icons.Outlined.CheckCircle)
+                    else -> ShapedIcon(Icons.Outlined.ErrorOutline, containerColor = colors.errorContainer, contentColor = colors.onErrorContainer)
+                }
             }
         },
         supportingContent = {
-            when {
-                status == null -> Text(stringResource(R.string.jail_status_checking), color = colors.onSurfaceVariant)
-                problems.isEmpty() -> Text(stringResource(R.string.jail_status_ok), color = colors.onSurfaceVariant)
-                else -> Text(problems.joinToString(stringResource(R.string.jail_list_separator)), color = colors.error)
+            val text = when {
+                status == null -> stringResource(R.string.jail_status_checking)
+                problems.isEmpty() -> stringResource(R.string.jail_status_ok)
+                else -> problems.joinToString(stringResource(R.string.jail_list_separator))
             }
+            val color = if (status != null && problems.isNotEmpty()) colors.error else colors.onSurfaceVariant
+            FadeThrough(text to color, kind = { it }) { (shown, tint) -> Text(shown, color = tint) }
         },
         verticalAlignment = Alignment.CenterVertically,
     ) { Text(stringResource(R.string.jail_status_title)) }

@@ -67,9 +67,11 @@ import li.mercury.bigbrother.core.model.DestinationActivity
 import li.mercury.bigbrother.core.model.DestinationDetail
 import li.mercury.bigbrother.core.model.NetworkTarget
 import li.mercury.bigbrother.core.model.PortActivity
+import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.SectionHeader
+import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.core.ui.timeWithDateIfNotToday
 import li.mercury.bigbrother.feature.jail.impl.ErrorEffect
 import li.mercury.bigbrother.feature.jail.impl.R
@@ -125,14 +127,14 @@ internal fun DestinationScreen(
             verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
         ) {
             val destination = state.destination
-            item(key = "header") { Header(state.target, destination, onClose) }
+            item(key = "header") { Header(state.target, destination, onClose, Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
             when {
                 state.failure != null -> item(key = "failure") {
-                    LoadFailureMessage(state.failure, onRetry, Modifier.fillParentMaxHeight(0.5f))
+                    LoadFailureMessage(state.failure, onRetry, Modifier.animatedRow(this, MaterialTheme.motionScheme).fillParentMaxHeight(0.5f))
                 }
 
                 destination == null -> item(key = "loading") {
-                    BigBrotherLoadingIndicator(Modifier.fillMaxWidth().padding(vertical = 48.dp))
+                    BigBrotherLoadingIndicator(Modifier.animatedRow(this, MaterialTheme.motionScheme).fillMaxWidth().padding(vertical = 48.dp))
                 }
 
                 else -> details(state, destination, toggle)
@@ -148,14 +150,14 @@ private fun LazyListScope.details(
     toggle: (NetworkTarget, Boolean) -> Unit,
 ) {
     val target = destination.target
-    item(key = "action") { MainAction(destination, toggle) }
+    item(key = "action") { MainAction(destination, toggle, Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
     val limits = buildList {
         if (target is NetworkTarget.Domain && state.sharedWith.isNotEmpty()) add(state.sharedWith)
         if (target is NetworkTarget.Domain && state.ownResolver) add(null)
     }
     if (limits.isNotEmpty()) {
         item(key = "limits") {
-            Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.animatedRow(this, MaterialTheme.motionScheme).padding(horizontal = 8.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (limit in limits) {
                     Limit(
                         if (limit != null) {
@@ -168,7 +170,10 @@ private fun LazyListScope.details(
             }
         }
     }
-    item(key = "stats") { state.detail?.let { Stats(destination, it) } }
+    item(key = "stats") {
+        // The hourly detail loads after the destination: it fades in and the rows below make room.
+        FadeThrough(state.detail, kind = { it != null }, modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme)) { detail -> detail?.let { Stats(destination, it) } }
+    }
     val site = (target as? NetworkTarget.Domain)?.name
     // A site seen under its own name alone has no names to list, unless that
     // name is blocked by itself: the rule is shown where it can be removed.
@@ -177,7 +182,7 @@ private fun LazyListScope.details(
         hosts.size > 1 || only?.name != site || (only?.rule != null && destination.rule == null)
     }.orEmpty()
     if (target is NetworkTarget.Domain && hosts.isNotEmpty()) {
-        item(key = "hosts") { SectionHeader(stringResource(R.string.jail_net_hosts_header), trailing = hosts.size.toString()) }
+        item(key = "hosts") { SectionHeader(stringResource(R.string.jail_net_hosts_header), Modifier.animatedRow(this, MaterialTheme.motionScheme), trailing = hosts.size.toString()) }
         itemsIndexed(hosts, key = { _, host -> "host:${host.name}" }) { index, host ->
             DestinationRow(
                 row = DestinationRow(
@@ -196,27 +201,28 @@ private fun LazyListScope.details(
                 onToggle = { block -> toggle(host.rule ?: NetworkTarget.Domain(host.name, exact = true), block) },
                 index = index,
                 count = hosts.size,
+                modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
             )
         }
     }
     if (destination.ports.isNotEmpty()) {
-        item(key = "ports") { SectionHeader(stringResource(R.string.jail_net_ports_header), trailing = destination.ports.size.toString()) }
+        item(key = "ports") { SectionHeader(stringResource(R.string.jail_net_ports_header), Modifier.animatedRow(this, MaterialTheme.motionScheme), trailing = destination.ports.size.toString()) }
         itemsIndexed(destination.ports, key = { _, port -> "port:${port.port}" }) { index, port ->
             // Ports are blocked one by one only on an address: a domain's go with its addresses.
             val portTarget = (target as? NetworkTarget.Address)?.let { port.rule ?: NetworkTarget.Address(it.ip, port.port) }
-            PortRow(port, portTarget?.let { { block: Boolean -> toggle(it, block) } }, index, destination.ports.size)
+            PortRow(port, portTarget?.let { { block: Boolean -> toggle(it, block) } }, index, destination.ports.size, Modifier.animatedRow(this, MaterialTheme.motionScheme))
         }
     }
     if (destination.addresses.isNotEmpty()) {
-        item(key = "addresses") { SectionHeader(stringResource(R.string.jail_net_addresses_header), trailing = destination.addressCount.toString()) }
-        item(key = "address_list") { Addresses(destination.addresses, destination.addressCount) }
+        item(key = "addresses") { SectionHeader(stringResource(R.string.jail_net_addresses_header), Modifier.animatedRow(this, MaterialTheme.motionScheme), trailing = destination.addressCount.toString()) }
+        item(key = "address_list") { Addresses(destination.addresses, destination.addressCount, Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
     }
 }
 
 /** The name, whether it is blocked, how many names it has and when it was reached; and closing it. */
 @Composable
-private fun Header(target: NetworkTarget?, destination: DestinationActivity?, onClose: () -> Unit) {
-    Row(Modifier.padding(start = 8.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.Top) {
+private fun Header(target: NetworkTarget?, destination: DestinationActivity?, onClose: () -> Unit, modifier: Modifier = Modifier) {
+    Row(modifier.padding(start = 8.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.Top) {
         Column(Modifier.weight(1f).padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(target?.name.orEmpty(), style = MaterialTheme.typography.titleLarge)
             if (destination != null) {
@@ -249,11 +255,11 @@ private fun Header(target: NetworkTarget?, destination: DestinationActivity?, on
 
 /** Blocks the domain with its subdomains, or the address on every port; or, blocked, unblocks it. */
 @Composable
-private fun MainAction(destination: DestinationActivity, toggle: (NetworkTarget, Boolean) -> Unit) {
-    val modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp)
+private fun MainAction(destination: DestinationActivity, toggle: (NetworkTarget, Boolean) -> Unit, modifier: Modifier = Modifier) {
+    val button = modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp)
     val rule = destination.rule
     if (rule != null) {
-        OutlinedButton(onClick = { toggle(rule, false) }, modifier = modifier) {
+        OutlinedButton(onClick = { toggle(rule, false) }, modifier = button) {
             Text(stringResource(R.string.jail_net_unblock))
         }
         return
@@ -261,7 +267,7 @@ private fun MainAction(destination: DestinationActivity, toggle: (NetworkTarget,
     val target = destination.target
     Button(
         onClick = { toggle(target, true) },
-        modifier = modifier,
+        modifier = button,
         colors = ButtonDefaults.buttonColors(),
     ) {
         Icon(Icons.Outlined.Block, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -321,7 +327,7 @@ private fun Stat(value: String, label: String, modifier: Modifier = Modifier) {
 /** A port, with its usual service, what went through it and, on an address, a button blocking it. */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun PortRow(port: PortActivity, onToggle: ((Boolean) -> Unit)?, index: Int, count: Int) {
+private fun PortRow(port: PortActivity, onToggle: ((Boolean) -> Unit)?, index: Int, count: Int, modifier: Modifier = Modifier) {
     val title = portService(port.port)?.let { "${port.port} · $it" } ?: port.port.toString()
     val separator = stringResource(R.string.jail_summary_separator)
     val counts = countsText(port)
@@ -331,6 +337,7 @@ private fun PortRow(port: PortActivity, onToggle: ((Boolean) -> Unit)?, index: I
         counts
     }
     ListItem(
+        modifier = modifier,
         shapes = ListItemDefaults.segmentedShapes(index, count),
         colors = ListItemDefaults.segmentedColors(),
         supportingContent = {
@@ -351,9 +358,9 @@ private fun PortRow(port: PortActivity, onToggle: ((Boolean) -> Unit)?, index: I
 
 /** The first few addresses, and how many more. */
 @Composable
-private fun Addresses(addresses: List<String>, count: Int) {
+private fun Addresses(addresses: List<String>, count: Int, modifier: Modifier = Modifier) {
     FlowRow(
-        Modifier.padding(horizontal = 8.dp),
+        modifier.padding(horizontal = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {

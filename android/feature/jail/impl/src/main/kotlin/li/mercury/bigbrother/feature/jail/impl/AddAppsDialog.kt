@@ -78,7 +78,10 @@ import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndica
 import li.mercury.bigbrother.core.designsystem.component.segmentShape
 import li.mercury.bigbrother.core.model.InstalledApp
 import li.mercury.bigbrother.core.ui.AppIcon
+import li.mercury.bigbrother.core.ui.ContentKind
+import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.Message
+import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.core.ui.failureReason
 import li.mercury.bigbrother.core.ui.rememberPredictiveDismissProgress
 import li.mercury.bigbrother.core.ui.R as UiR
@@ -243,30 +246,35 @@ private fun AddAppsSearch(query: TextFieldState) {
 
 @Composable
 private fun ColumnScope.AddAppsBody(state: AddAppsUiState, onToggle: (String) -> Unit, onRetry: () -> Unit) {
-    val apps = state.apps
-    when {
-        state.failure != null -> Message(
-            title = failureReason(state.failure),
-            body = "",
-            modifier = Modifier.weight(1f),
-            actionLabel = stringResource(UiR.string.retry),
-            onAction = onRetry,
-        )
+    FadeThrough(state, kind = { it.kind() }, modifier = Modifier.weight(1f)) { shown ->
+        val apps = shown.apps
+        when {
+            shown.failure != null -> Message(
+                title = failureReason(shown.failure),
+                body = "",
+                actionLabel = stringResource(UiR.string.retry),
+                onAction = onRetry,
+            )
 
-        apps == null -> BigBrotherLoadingIndicator(Modifier.weight(1f))
+            apps == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
 
-        apps.isEmpty() -> Text(
-            stringResource(R.string.jail_add_empty),
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .padding(32.dp),
-        )
+            apps.isEmpty() -> Text(
+                stringResource(R.string.jail_add_empty),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(32.dp),
+            )
 
-        else -> AddAppsList(apps, state.selected, onToggle, Modifier.weight(1f))
+            else -> AddAppsList(apps, shown.selected, onToggle, Modifier.fillMaxSize())
+        }
     }
+}
+
+private fun AddAppsUiState.kind(): ContentKind = when {
+    apps?.isEmpty() == true && failure == null -> ContentKind.Empty
+    else -> ContentKind.of(failure, apps)
 }
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
@@ -280,7 +288,7 @@ private fun AddAppsList(apps: List<InstalledApp>, selected: Set<String>, onToggl
         itemsIndexed(apps, key = { _, app -> app.packageName }) { index, app ->
             val checked = app.packageName in selected
             ListItem(
-                modifier = Modifier
+                modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme)
                     .clip(segmentShape(index, apps.size))
                     .toggleable(value = checked, role = Role.Checkbox, onValueChange = { onToggle(app.packageName) }),
                 shapes = ListItemDefaults.segmentedShapes(index, apps.size),

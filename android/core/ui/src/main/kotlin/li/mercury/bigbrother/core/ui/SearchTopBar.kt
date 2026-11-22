@@ -17,7 +17,6 @@
 package li.mercury.bigbrother.core.ui
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -62,8 +61,9 @@ fun PredictiveSearchTopBar(
         onClose()
     }
     val transition = rememberPredictiveBackTransition(searching, false.takeIf { searching }, close)
+    val motion = MaterialTheme.motionScheme
     transition.AnimatedContent(
-        transitionSpec = { fadeIn(tween(100, delayMillis = 75)) togetherWith fadeOut(tween(75)) },
+        transitionSpec = { fadeIn(motion.defaultEffectsSpec()) togetherWith fadeOut(motion.fastEffectsSpec()) },
     ) { showSearch ->
         if (showSearch) {
             SearchTopBar(query, onQueryChange, placeholder, close)
@@ -120,7 +120,7 @@ fun SearchTopBar(
             )
         },
         actions = {
-            if (query.isNotEmpty()) {
+            Pop(query.isNotEmpty()) {
                 IconButton(onClick = { onQueryChange("") }) {
                     Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.clear_search))
                 }

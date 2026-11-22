@@ -51,6 +51,7 @@ import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.TimeRangeButtonGroup
+import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.feature.jail.impl.Note
 import li.mercury.bigbrother.feature.jail.impl.R
 
@@ -98,35 +99,35 @@ private fun LazyListScope.activityContent(
             range = state.range,
             onRange = actions.onRange,
             options = ACTIVITY_RANGES,
-            modifier = Modifier.padding(bottom = 8.dp),
+            modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme).padding(bottom = 8.dp),
         )
     }
     if (activity == null) {
-        item(key = "loading") { BigBrotherLoadingIndicator(Modifier.fillMaxWidth().padding(vertical = 96.dp)) }
+        item(key = "loading") { BigBrotherLoadingIndicator(Modifier.animatedRow(this, MaterialTheme.motionScheme).fillMaxWidth().padding(vertical = 96.dp)) }
         return
     }
     val nothing = activity.domains.isEmpty() && activity.addresses.isEmpty() && activity.rules.isEmpty() &&
         activity.buckets.all { it.connections + it.refused == 0 }
     if (nothing && activity.recording.on) {
-        item(key = "empty") { Empty(activity.recording.since ?: activity.since) }
+        item(key = "empty") { Empty(activity.recording.since ?: activity.since, Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
         return
     }
-    item(key = "summary") { Summary(state, activity, actions.onSelectBucket) }
-    item(key = "filters") { Filters(state, actions) }
+    item(key = "summary") { Summary(state, activity, actions.onSelectBucket, Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+    item(key = "filters") { Filters(state, actions, Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
     val shown = state.shown
     if (shown.domainCount > 0) {
-        item(key = "domains") { SectionHeader(stringResource(R.string.jail_net_section_domains), trailing = shown.domainCount.toString()) }
+        item(key = "domains") { SectionHeader(stringResource(R.string.jail_net_section_domains), Modifier.animatedRow(this, MaterialTheme.motionScheme), trailing = shown.domainCount.toString()) }
         rows(shown.domains, selectedTarget, beside, actions)
         if (shown.domainCount > shown.domains.size) {
-            item(key = "domains_all") { ShowAll(shown.domainCount, actions.onShowAllDomains) }
+            item(key = "domains_all") { ShowAll(shown.domainCount, actions.onShowAllDomains, Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
         }
     }
     if (shown.addressCount > 0) {
-        item(key = "addresses") { SectionHeader(stringResource(R.string.jail_net_section_addresses), trailing = shown.addressCount.toString()) }
-        if (!state.blockedOnly) item(key = "addresses_note") { Note(stringResource(R.string.jail_net_addresses_note)) }
+        item(key = "addresses") { SectionHeader(stringResource(R.string.jail_net_section_addresses), Modifier.animatedRow(this, MaterialTheme.motionScheme), trailing = shown.addressCount.toString()) }
+        if (!state.blockedOnly) item(key = "addresses_note") { Note(stringResource(R.string.jail_net_addresses_note), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
         rows(shown.addresses, selectedTarget, beside, actions)
         if (shown.addressCount > shown.addresses.size) {
-            item(key = "addresses_all") { ShowAll(shown.addressCount, actions.onShowAllAddresses) }
+            item(key = "addresses_all") { ShowAll(shown.addressCount, actions.onShowAllAddresses, Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
         }
     }
     if (shown.domainCount + shown.addressCount == 0 && (state.query.isNotBlank() || state.blockedOnly || state.bucket != null)) {
@@ -136,20 +137,20 @@ private fun LazyListScope.activityContent(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme).fillMaxWidth().padding(vertical = 32.dp),
             )
         }
     }
     if (state.blockedOnly) {
         item(key = "add") {
-            TextButton(onClick = { onDialog(NetworkDialog.BLOCK) }, modifier = Modifier.fillMaxWidth()) {
+            TextButton(onClick = { onDialog(NetworkDialog.BLOCK) }, modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme).fillMaxWidth()) {
                 Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.size(8.dp))
                 Text(stringResource(R.string.jail_net_menu_block))
             }
         }
     } else if (state.bucket == null) {
-        item(key = "footer") { Note(stringResource(R.string.jail_net_footer), Modifier.padding(top = 8.dp)) }
+        item(key = "footer") { Note(stringResource(R.string.jail_net_footer), Modifier.animatedRow(this, MaterialTheme.motionScheme).padding(top = 8.dp)) }
     }
 }
 
@@ -171,7 +172,7 @@ private fun LazyListScope.rows(
             index = index,
             count = rows.size,
             selected = if (beside) opens != null && opens.id == selectedTarget else null,
-            modifier = Modifier.animateItem(),
+            modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
         )
     }
 }

@@ -28,8 +28,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
@@ -41,8 +41,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.Text
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,17 +58,22 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
+import li.mercury.bigbrother.core.designsystem.component.BigBrotherPullToRefreshBox
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.ui.AppListItem
+import li.mercury.bigbrother.core.ui.ContentKind
 import li.mercury.bigbrother.core.ui.DataCategory
+import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.MenuFilterChip
 import li.mercury.bigbrother.core.ui.MenuOption
 import li.mercury.bigbrother.core.ui.Message
+import li.mercury.bigbrother.core.ui.Reveal
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.UserSettingsWriter
+import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.core.ui.categoriesSummary
 import li.mercury.bigbrother.core.ui.categoryDetail
 import li.mercury.bigbrother.core.ui.label
@@ -134,7 +139,7 @@ internal fun AppListScreen(
                 .fillMaxSize()
                 .padding(top = padding.calculateTopPadding()),
         ) {
-            if (state.failure == null && groups != null) {
+            Reveal(state.failure == null && groups != null) {
                 Filters(
                     range = state.range,
                     onRange = onRange,
@@ -147,27 +152,31 @@ internal fun AppListScreen(
                     onShowSystemApps = onShowSystemApps,
                 )
             }
-            PullToRefreshBox(
+            BigBrotherPullToRefreshBox(
                 isRefreshing = state.refreshing && state.apps != null,
                 onRefresh = onRefresh,
                 modifier = Modifier.fillMaxSize(),
             ) {
-                when {
-                    state.failure != null -> LoadFailureMessage(state.failure, onRetry = onRefresh)
+                FadeThrough(presentation, kind = { ContentKind.of(it.state.failure, it.groups) }) { shown ->
+                    val shownState = shown.state
+                    val shownGroups = shown.groups
+                    when {
+                        shownState.failure != null -> LoadFailureMessage(shownState.failure, onRetry = onRefresh)
 
-                    groups == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
+                        shownGroups == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
 
-                    else -> AppList(
-                        groups = groups,
-                        appInfo = state.appInfo,
-                        sort = sort,
-                        category = category,
-                        hiddenApps = state.hiddenApps,
-                        showSystemApps = state.showSystemApps,
-                        selectedUid = selectedUid,
-                        onOpen = { app -> onOpen(app, state.range, category) },
-                        onShowSystemApps = { onShowSystemApps(true) },
-                    )
+                        else -> AppList(
+                            groups = shownGroups,
+                            appInfo = shownState.appInfo,
+                            sort = shown.filter.sort,
+                            category = shown.filter.category,
+                            hiddenApps = shownState.hiddenApps,
+                            showSystemApps = shownState.showSystemApps,
+                            selectedUid = selectedUid,
+                            onOpen = { app -> onOpen(app, shownState.range, shown.filter.category) },
+                            onShowSystemApps = { onShowSystemApps(true) },
+                        )
+                    }
                 }
             }
         }
@@ -246,9 +255,19 @@ private fun AppList(
     onOpen: (AppSummary) -> Unit,
     onShowSystemApps: () -> Unit,
 ) {
-    // A different filter or order is a different list: start it at the top
-    // instead of keeping whichever row happened to be first.
-    val listState = rememberSaveable(sort, category, showSystemApps, saver = LazyListState.Saver) { LazyListState() }
+    // A different filter or order is a different list: it starts at the top
+    // instead of at whichever row happened to be first. The state is kept,
+    // since it holds what animates the rows to their new places; a restored
+    // screen keeps its position.
+    val listState = rememberLazyListState()
+    val filter = "$sort/$category/$showSystemApps"
+    var listed by rememberSaveable { mutableStateOf(filter) }
+    SideEffect {
+        if (listed != filter) {
+            listed = filter
+            listState.requestScrollToItem(0)
+        }
+    }
     val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -258,12 +277,12 @@ private fun AppList(
     ) {
         if (groups.all { (_, members) -> members.isEmpty() }) {
             item(key = "empty") {
-                EmptyAppList(hiddenApps, category, onShowSystemApps, Modifier.fillParentMaxHeight(0.7f))
+                EmptyAppList(hiddenApps, category, onShowSystemApps, Modifier.animatedRow(this, MaterialTheme.motionScheme).fillParentMaxHeight(0.7f))
             }
         }
         for ((title, members) in groups) {
             if (title != null) {
-                item(key = "header:$title") { SectionHeader(pluralStringResource(title, members.size, members.size)) }
+                item(key = "header:$title") { SectionHeader(pluralStringResource(title, members.size, members.size), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
             }
             itemsIndexed(members, key = { _, entry -> entry.app.uid }) { index, entry ->
                 AppListItem(
@@ -281,7 +300,7 @@ private fun AppList(
                     count = members.size,
                     selected = entry.app.uid == selectedUid,
                     onClick = { onOpen(entry.app) },
-                    modifier = Modifier.animateItem(),
+                    modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
                 )
             }
         }

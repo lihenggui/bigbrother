@@ -51,10 +51,13 @@ import li.mercury.bigbrother.core.designsystem.component.ShapedIcon
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.ui.AppListItem
+import li.mercury.bigbrother.core.ui.ContentKind
 import li.mercury.bigbrother.core.ui.DataCategory
+import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.SectionHeader
+import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.core.ui.categoryDetail
 import li.mercury.bigbrother.core.ui.label
 import li.mercury.bigbrother.core.ui.readFiles
@@ -106,11 +109,13 @@ internal fun CategoryScreen(
             )
         },
     ) { padding ->
-        val apps = state.apps
-        when {
-            state.failure != null -> LoadFailureMessage(state.failure, onRetry, Modifier.padding(padding))
-            apps == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize().padding(padding))
-            else -> AppsByCategory(state, apps, selectedUid, padding, onOpenApp)
+        FadeThrough(state, kind = { ContentKind.of(it.failure, it.apps) }) { shown ->
+            val apps = shown.apps
+            when {
+                shown.failure != null -> LoadFailureMessage(shown.failure, onRetry, Modifier.padding(padding))
+                apps == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize().padding(padding))
+                else -> AppsByCategory(shown, apps, selectedUid, padding, onOpenApp)
+            }
         }
     }
 }
@@ -143,13 +148,13 @@ private fun AppsByCategory(
     ) {
         if (apps.isEmpty()) {
             item(key = "empty") {
-                Message(stringResource(UiR.string.empty_title), "", Modifier.fillParentMaxHeight(0.7f))
+                Message(stringResource(UiR.string.empty_title), "", Modifier.animatedRow(this, MaterialTheme.motionScheme).fillParentMaxHeight(0.7f))
             }
         }
         for ((title, members) in groups) {
             if (title != null) {
                 item(key = "header:$title") {
-                    SectionHeader(pluralStringResource(title, members.size, members.size))
+                    SectionHeader(pluralStringResource(title, members.size, members.size), Modifier.animatedRow(this, MaterialTheme.motionScheme))
                 }
             }
             itemsIndexed(members, key = { _, app -> app.uid }) { index, app ->
@@ -162,7 +167,7 @@ private fun AppsByCategory(
                     count = members.size,
                     selected = app.uid == selectedUid,
                     onClick = { onOpenApp(app, state.range) },
-                    modifier = Modifier.animateItem(),
+                    modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
                 )
             }
         }

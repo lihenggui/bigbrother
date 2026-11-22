@@ -48,8 +48,10 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import li.mercury.bigbrother.core.model.Access
 import li.mercury.bigbrother.core.model.Action
+import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.LocalWallClock
 import li.mercury.bigbrother.core.ui.Message
+import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.core.ui.label
 import li.mercury.bigbrother.core.ui.relativeTime
 import li.mercury.bigbrother.feature.appdetail.impl.tree.FileNode
@@ -111,7 +113,7 @@ internal fun Listing(
                     }
                     if (entries.isEmpty()) {
                         item(key = "no-files") {
-                            NoFiles(readOnly, filtering, onShowAll, Modifier.fillParentMaxHeight(if (groups.isEmpty()) 0.7f else 0.35f))
+                            NoFiles(readOnly, filtering, onShowAll, Modifier.animatedRow(this, MaterialTheme.motionScheme).fillParentMaxHeight(if (groups.isEmpty()) 0.7f else 0.35f))
                         }
                     }
                     itemsIndexed(groups, key = { _, group -> group.location }) { index, group ->
@@ -126,7 +128,7 @@ internal fun Listing(
                     text = stringResource(R.string.results_truncated),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 12.dp),
+                    modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme).padding(horizontal = 4.dp, vertical = 12.dp),
                 )
             }
         }
@@ -183,11 +185,17 @@ private fun LazyItemScope.EntryRow(
     val colors = ListItemDefaults.segmentedColors()
     val name = @Composable { Text(if (isVolume) storageLabel(node) else node.name) }
     val detail: (@Composable () -> Unit)? = node.accesses.takeIf { it.isNotEmpty() }?.let { accesses ->
-        if (readOnly) {
-            // Only reads are listed here; the trailing count gives their number.
-            { Text(relativeTime(accesses.maxOf { it.lastSeen }, LocalWallClock.current.millis())) }
-        } else {
-            { AccessLines(accesses) }
+        {
+            // Switching between reads and all accesses fades the line
+            // through, and the row grows or shrinks to the new one.
+            FadeThrough(readOnly, kind = { it }) { onlyReads ->
+                if (onlyReads) {
+                    // Only reads are listed here; the trailing count gives their number.
+                    Text(relativeTime(accesses.maxOf { it.lastSeen }, LocalWallClock.current.millis()))
+                } else {
+                    AccessLines(accesses)
+                }
+            }
         }
     }
     // How many times the file was read.
@@ -227,7 +235,7 @@ private fun LazyItemScope.EntryRow(
             },
             supportingContent = detail,
             trailingContent = if (reads > 0) {
-                { Text(stringResource(R.string.read_count, reads)) }
+                { FadeThrough(reads, kind = { it }) { Text(stringResource(R.string.read_count, it)) } }
             } else {
                 null
             },
@@ -240,7 +248,8 @@ private fun LazyItemScope.EntryRow(
 @Composable
 private fun CountWithChevron(count: Int) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        if (count > 0) Text(count.toString())
+        // A count that comes or changes fades in place, and the row makes room for it.
+        FadeThrough(count.takeIf { it > 0 }, kind = { it }) { shown -> if (shown != null) Text(shown.toString()) }
         Icon(
             Icons.AutoMirrored.Filled.KeyboardArrowRight,
             contentDescription = null,

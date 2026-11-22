@@ -349,6 +349,8 @@ private fun AppContent(
                     }
                 },
                 popTransitionSpec = { backward },
+                // The back gesture scrubs the same slide as the back button.
+                predictivePopTransitionSpec = { backward },
             )
         }
     }

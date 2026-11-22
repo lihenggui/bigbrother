@@ -16,13 +16,13 @@
 
 package li.mercury.bigbrother.feature.appdetail.impl
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
@@ -45,6 +45,9 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import li.mercury.bigbrother.core.model.SensorSession
+import li.mercury.bigbrother.core.ui.ExpandChevron
+import li.mercury.bigbrother.core.ui.Reveal
+import li.mercury.bigbrother.core.ui.animatedSegmentedShapes
 import li.mercury.bigbrother.core.ui.sensorName
 import li.mercury.bigbrother.core.ui.timeOfDay
 import li.mercury.bigbrother.core.ui.timeWithDateIfNotToday
@@ -144,40 +147,45 @@ private fun rateText(session: SensorSession): String? {
 
 /**
  * One sensor and when it was on: the sensor, how many times and how long in
- * all; tapped, each time it was on.
+ * all; tapped, each time it was on, which grow in below it.
  */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 internal fun SensorGroup(group: SensorSessionGroup, now: Long, initiallyExpanded: Boolean, modifier: Modifier = Modifier) {
     var expanded by rememberSaveable(group.sensor) { mutableStateOf(initiallyExpanded) }
     var showAll by rememberSaveable(group.sensor) { mutableStateOf(false) }
-    val shown = when {
-        !expanded -> emptyList()
-        showAll -> group.sessions
-        else -> group.sessions.take(SESSIONS_SHOWN)
-    }
+    // Kept while collapsed, so that the sessions shrink away rather than vanish first.
+    val sessions = if (showAll) group.sessions else group.sessions.take(SESSIONS_SHOWN)
     val separator = stringResource(R.string.time_separator)
     val state = stringResource(if (expanded) R.string.expanded else R.string.collapsed)
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
+    Column(modifier = modifier) {
         ListItem(
             onClick = { expanded = !expanded },
             modifier = Modifier.semantics { stateDescription = state },
-            shapes = ListItemDefaults.segmentedShapes(0, 1 + shown.size),
+            shapes = animatedSegmentedShapes(0, if (expanded) 1 + sessions.size else 1),
             colors = ListItemDefaults.segmentedColors(),
             supportingContent = {
                 val times = pluralStringResource(UiR.plurals.sensor_times, group.sessions.size, group.sessions.size)
                 Text(times + separator + stringResource(R.string.sensor_total, durationText(group.totalSeconds(now))))
             },
-            trailingContent = {
-                Icon(if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, contentDescription = null)
-            },
+            trailingContent = { ExpandChevron(expanded) },
         ) {
             Text(sensorName(group.sensor, group.highRate))
         }
-        shown.forEachIndexed { index, session -> SessionItem(session, now, index + 1, 1 + shown.size) }
-        if (expanded && shown.size < group.sessions.size) {
-            TextButton(onClick = { showAll = true }, contentPadding = PaddingValues(horizontal = 16.dp)) {
-                Text(stringResource(R.string.show_all_details, group.sessions.size))
+        Reveal(expanded) {
+            // Showing all grows the sessions rather than pushing what follows down at once.
+            Column(
+                modifier = Modifier.animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec()),
+                verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
+            ) {
+                // The gap below the header goes with the sessions, so that there is none without them.
+                Spacer(Modifier)
+                sessions.forEachIndexed { index, session -> SessionItem(session, now, index + 1, 1 + sessions.size) }
+                Reveal(sessions.size < group.sessions.size) {
+                    TextButton(onClick = { showAll = true }, contentPadding = PaddingValues(horizontal = 16.dp)) {
+                        Text(stringResource(R.string.show_all_details, group.sessions.size))
+                    }
+                }
             }
         }
     }
@@ -194,7 +202,7 @@ private fun SessionItem(session: SensorSession, now: Long, index: Int, count: In
         if (session.highRate) stringResource(R.string.high_rate) else null,
     )
     ListItem(
-        shapes = ListItemDefaults.segmentedShapes(index, count),
+        shapes = animatedSegmentedShapes(index, count),
         colors = ListItemDefaults.segmentedColors(),
         trailingContent = if (session.highRate) {
             { Icon(Icons.Outlined.Speed, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary) }
@@ -226,11 +234,11 @@ private fun sessionSpan(start: Long, end: Long?): String {
 
 /** Under the sessions: the rates are those the app asked for. */
 @Composable
-internal fun SensorSessionsNote() {
+internal fun SensorSessionsNote(modifier: Modifier = Modifier) {
     Text(
         text = stringResource(R.string.sensor_sessions_note),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        modifier = modifier.padding(horizontal = 16.dp, vertical = 8.dp),
     )
 }

@@ -49,8 +49,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
 import li.mercury.bigbrother.core.designsystem.icon.CageIcons
 import li.mercury.bigbrother.core.ui.AppIcon
+import li.mercury.bigbrother.core.ui.ContentKind
+import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
+import li.mercury.bigbrother.core.ui.Pop
 import li.mercury.bigbrother.core.ui.appDisplayName
 import li.mercury.bigbrother.core.ui.label
 import li.mercury.bigbrother.core.ui.R as UiR
@@ -120,21 +123,23 @@ internal fun AppDetailScreen(
             AppDetailTopBar(state, name, background, scrollBehavior, onBack, onRequestJail)
         },
     ) { padding ->
-        val records = state.records
-        when {
-            state.failure != null -> LoadFailureMessage(state.failure, onRetry, Modifier.padding(padding))
+        FadeThrough(state, kind = { ContentKind.of(it.failure, it.records) }) { shown ->
+            val records = shown.records
+            when {
+                shown.failure != null -> LoadFailureMessage(shown.failure, onRetry, Modifier.padding(padding))
 
-            records == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize().padding(padding))
+                records == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize().padding(padding))
 
-            else -> AppDetailList(
-                records = records,
-                state = state,
-                padding = padding,
-                focusCategory = focusCategory,
-                openRecord = openRecord,
-                onOpenFiles = onOpenFiles,
-                onOpenRecord = onOpenRecord,
-            )
+                else -> AppDetailList(
+                    records = records,
+                    state = shown,
+                    padding = padding,
+                    focusCategory = focusCategory,
+                    openRecord = openRecord,
+                    onOpenFiles = onOpenFiles,
+                    onOpenRecord = onOpenRecord,
+                )
+            }
         }
     }
 }
@@ -187,12 +192,13 @@ private fun AppDetailTopBar(
             }
         },
         actions = {
-            if (state.canOpenJail) {
+            // Both depend on what loads after the page opens.
+            Pop(state.canOpenJail) {
                 IconButton(onClick = onRequestJail, enabled = state.jailAction == null) {
                     Icon(CageIcons.Outlined, contentDescription = stringResource(R.string.open_jail))
                 }
             }
-            if (state.packageDetails != null) {
+            Pop(state.packageDetails != null) {
                 IconButton(onClick = { context.startActivity(appSettingsIntent(app.packageName)) }) {
                     Icon(
                         Icons.Outlined.Info,
