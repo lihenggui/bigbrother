@@ -65,6 +65,7 @@
 mod answers;
 pub mod appops;
 pub mod auto;
+mod auto_admission;
 mod cli;
 pub mod destinations;
 pub(crate) mod dirs;

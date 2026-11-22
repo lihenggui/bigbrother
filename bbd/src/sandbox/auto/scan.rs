@@ -46,6 +46,18 @@ struct Plan {
     known: Known,
 }
 
+impl Known {
+    fn mark_isolation_failed(&mut self, uid: u32, names: BTreeSet<String>) {
+        self.failed.insert(
+            uid,
+            Failed {
+                names,
+                missing_profile: false,
+            },
+        );
+    }
+}
+
 /// What is new in `packages` against `known`, for `users`; `installed` says
 /// whether a package is installed for a user.
 fn plan(
@@ -286,42 +298,19 @@ impl Sandbox {
         let mut recoveries = BTreeSet::new();
         let mut asked = false;
         for (uid, names) in plan.isolate {
-            let app_id = app_id_of(uid);
             let released = known.failed.contains_key(&uid);
             if released {
-                let requested = self.auto.recoveries.contains(&uid);
-                if !requested && !matches!(look, Look::Packages) {
+                if !self.prepare_released_retry(packages, uid, look, until, &mut recoveries) {
                     continue;
                 }
-                let state = self.package_state(packages, uid);
-                if !requested && self.auto.failed_packages.get(&uid) == Some(&state) {
-                    continue;
-                }
-                if Instant::now() >= until {
-                    recoveries.insert(uid);
-                    continue;
-                }
-                self.auto.failed_packages.insert(uid, state);
                 // The plan verified at least one directory for the profile.
                 // An ensuing uninstall must now forget this failure.
-                known.failed.insert(
-                    uid,
-                    Failed {
-                        names: names.clone(),
-                        missing_profile: false,
-                    },
-                );
+                known.mark_isolation_failed(uid, names.clone());
             }
             let retry = self.auto.retries.get(&uid).copied();
             let now = Instant::now();
             if retry.is_some_and(|retry| retry.expired(now)) {
-                known.failed.insert(
-                    uid,
-                    Failed {
-                        names,
-                        missing_profile: false,
-                    },
-                );
+                known.mark_isolation_failed(uid, names);
                 continue;
             }
             if matches!(look, Look::Startup) || retry.is_some_and(|retry| retry.at > now) {
@@ -339,19 +328,11 @@ impl Sandbox {
                         if later.failures == 0 {
                             recoveries.insert(uid);
                         }
+                    } else if later.expired(Instant::now()) {
+                        known.mark_isolation_failed(uid, names);
                     } else {
-                        if later.expired(Instant::now()) {
-                            known.failed.insert(
-                                uid,
-                                Failed {
-                                    names,
-                                    missing_profile: false,
-                                },
-                            );
-                        } else {
-                            retries.insert(uid, later);
-                            left += 1;
-                        }
+                        retries.insert(uid, later);
+                        left += 1;
                     }
                     continue;
                 }
@@ -360,16 +341,8 @@ impl Sandbox {
                 known.failed.remove(&uid);
                 continue;
             };
-            let result = (|| {
-                let current = uid_of(packages, package, user_of(uid))?;
-                anyhow::ensure!(
-                    current == uid && !packages.is_system(app_id),
-                    "the package changed during the scan"
-                );
-                self.enable_uid(writer, packages, package, uid, crate::clock::now())
-            })();
-            match result {
-                Ok(_) => {
+            match self.enable_scanned_app(writer, packages, package, uid) {
+                Ok(()) => {
                     isolated.push(uid);
                     known.failed.remove(&uid);
                     known.uids.insert(uid, apps);
@@ -381,23 +354,10 @@ impl Sandbox {
                             retries.insert(uid, later);
                             left += 1;
                         } else {
-                            known.failed.insert(
-                                uid,
-                                Failed {
-                                    names: apps,
-                                    missing_profile: false,
-                                },
-                            );
+                            known.mark_isolation_failed(uid, apps);
                         }
                     }
-                    self.auto.failures.log(format_args!(
-                        "bbd: sandbox: uid {uid}, newly installed, is not in the sandbox: {outcome}",
-                        outcome = if known.failed.contains_key(&uid) {
-                            "waiting for a recovery event"
-                        } else {
-                            "retry scheduled"
-                        }
-                    ));
+                    self.log_isolation_failure(uid, known.failed.contains_key(&uid));
                 }
             }
         }
@@ -408,6 +368,57 @@ impl Sandbox {
         self.auto.retries = retries;
         self.auto.recoveries = recoveries;
         (known, isolated)
+    }
+
+    fn prepare_released_retry(
+        &mut self,
+        packages: &Packages,
+        uid: u32,
+        look: &Look,
+        until: Instant,
+        recoveries: &mut BTreeSet<u32>,
+    ) -> bool {
+        let requested = self.auto.recoveries.contains(&uid);
+        if !requested && !matches!(look, Look::Packages) {
+            return false;
+        }
+        let state = self.package_state(packages, uid);
+        if !requested && self.auto.failed_packages.get(&uid) == Some(&state) {
+            return false;
+        }
+        if Instant::now() >= until {
+            recoveries.insert(uid);
+            return false;
+        }
+        self.auto.failed_packages.insert(uid, state);
+        true
+    }
+
+    fn enable_scanned_app(
+        &mut self,
+        writer: &Writer,
+        packages: &mut Packages,
+        package: &str,
+        uid: u32,
+    ) -> anyhow::Result<()> {
+        let current = uid_of(packages, package, user_of(uid))?;
+        anyhow::ensure!(
+            current == uid && !packages.is_system(app_id_of(uid)),
+            "the package changed during the scan"
+        );
+        self.enable_uid(writer, packages, package, uid, crate::clock::now())?;
+        Ok(())
+    }
+
+    fn log_isolation_failure(&mut self, uid: u32, awaiting_recovery: bool) {
+        let outcome = if awaiting_recovery {
+            "waiting for a recovery event"
+        } else {
+            "retry scheduled"
+        };
+        self.auto.failures.log(format_args!(
+            "bbd: sandbox: uid {uid}, newly installed, is not in the sandbox: {outcome}"
+        ));
     }
 
     fn ask_libraries(

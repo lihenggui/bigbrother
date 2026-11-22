@@ -399,13 +399,7 @@ fn a_failed_global_write_restores_global_settings_before_undoing_each_app() {
     }
 }
 
-#[test]
-fn a_failed_global_commit_preserves_every_installs_undo_for_restart() {
-    use std::sync::{Arc, Mutex};
-
-    use crate::sandbox::appops::tests::{FINE, recording_helper};
-
-    let mut f = Fixture::new("sandbox-global-undo");
+fn sandbox_with_foreground_location(f: &mut Fixture) -> Sandbox {
     f.writer
         .put_sandbox_global(&[("location", "foreground")])
         .unwrap();
@@ -415,6 +409,33 @@ fn a_failed_global_commit_preserves_every_installs_undo_for_restart() {
             .enable(&f.writer, &mut f.packages, name, 0, 0)
             .unwrap();
     }
+    sandbox
+}
+
+fn reject_global_commit(f: &Fixture) -> rusqlite::Connection {
+    let fault = rusqlite::Connection::open(f.dir.join("bb.db")).unwrap();
+    fault
+        .execute_batch(
+            "CREATE TRIGGER fail_global BEFORE INSERT ON sandbox_global
+         BEGIN SELECT RAISE(ABORT, 'injected global commit failure'); END;",
+        )
+        .unwrap();
+    fault
+}
+
+fn assert_foreground_location_unchanged(writer: &Writer, before: &[Entry]) {
+    assert_eq!(writer.sandbox_global().unwrap(), "location=foreground");
+    assert_eq!(writer.sandbox_entries().unwrap(), before);
+}
+
+#[test]
+fn a_failed_global_commit_preserves_every_installs_undo_for_restart() {
+    use std::sync::{Arc, Mutex};
+
+    use crate::sandbox::appops::tests::{FINE, recording_helper};
+
+    let mut f = Fixture::new("sandbox-global-undo");
+    let mut sandbox = sandbox_with_foreground_location(&mut f);
     let before = f.writer.sandbox_entries().unwrap();
     let changed = Arc::new(Mutex::new(std::collections::BTreeSet::new()));
     let (effect, applied) = recording_helper({
@@ -428,13 +449,7 @@ fn a_failed_global_commit_preserves_every_installs_undo_for_restart() {
     sandbox.add_effect(effect);
     sandbox.resume(&f.writer, &mut f.packages);
 
-    let fault = rusqlite::Connection::open(f.dir.join("bb.db")).unwrap();
-    fault
-        .execute_batch(
-            "CREATE TRIGGER fail_global BEFORE INSERT ON sandbox_global
-         BEGIN SELECT RAISE(ABORT, 'injected global commit failure'); END;",
-        )
-        .unwrap();
+    let fault = reject_global_commit(&f);
     assert!(
         sandbox
             .set_global(
@@ -444,8 +459,7 @@ fn a_failed_global_commit_preserves_every_installs_undo_for_restart() {
             )
             .is_err()
     );
-    assert_eq!(f.writer.sandbox_global().unwrap(), "location=foreground");
-    assert_eq!(f.writer.sandbox_entries().unwrap(), before);
+    assert_foreground_location_unchanged(&f.writer, &before);
     let pending = f.writer.appops_undo().unwrap();
     assert_eq!(pending.len(), 2);
     assert!(
@@ -479,8 +493,7 @@ fn a_failed_global_commit_preserves_every_installs_undo_for_restart() {
     sandbox.recover_appops(&f.writer, &mut f.packages);
     assert!(changed.lock().unwrap().is_empty());
     assert!(f.writer.appops_undo().unwrap().is_empty());
-    assert_eq!(f.writer.sandbox_entries().unwrap(), before);
-    assert_eq!(f.writer.sandbox_global().unwrap(), "location=foreground");
+    assert_foreground_location_unchanged(&f.writer, &before);
     drop(sandbox);
     assert_eq!(
         recovered

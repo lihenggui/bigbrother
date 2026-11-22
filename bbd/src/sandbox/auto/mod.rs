@@ -61,7 +61,7 @@ use aya::maps::{Array, HashMap as BpfHashMap, MapData};
 use bb_common::{KNOWN_APP_WORDS, PER_USER_RANGE, known_app_bit};
 use serde::{Deserialize, Serialize};
 
-use super::{DISABLE_ALL_WAIT, Sandbox};
+use super::{DISABLE_ALL_WAIT, Sandbox, auto_admission::Admission};
 use crate::{
     backoff::Backoff,
     log::{Limited, Policy, SANDBOX_INTERVAL},
@@ -337,38 +337,6 @@ struct PackageState {
     name: String,
     version: Option<u64>,
     installed: bool,
-}
-
-/// Mirrors the new-app policy for starts already queued by the kernel.
-#[derive(Default)]
-pub(super) struct Admission {
-    hold: bool,
-    words: Vec<u64>,
-    known: BTreeSet<u32>,
-    released: BTreeSet<u32>,
-}
-
-impl Admission {
-    pub(super) fn releases(&self, uid: u32) -> bool {
-        self.released.contains(&uid)
-    }
-
-    pub(super) fn ends_queued_start(&self, uid: u32) -> bool {
-        // A newly installed mount policy can appear while a queued start
-        // is being handled. Only release it when the auto hold itself ended.
-        self.hold && !self.releases(uid)
-    }
-
-    #[cfg(test)]
-    pub(super) fn holds(&self, uid: u32) -> bool {
-        self.hold
-            && known_app_bit(app_id_of(uid)).is_some_and(|(word, bit)| {
-                self.words
-                    .get(word as usize)
-                    .is_none_or(|known| known & bit == 0)
-            })
-            && !self.known.contains(&uid)
-    }
 }
 
 /// The kernel side's maps for new apps (see `gate_setresuid` in bb-ebpf).

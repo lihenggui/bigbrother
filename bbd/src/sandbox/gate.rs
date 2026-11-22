@@ -55,7 +55,8 @@ use aya::maps::{Array, HashMap as BpfHashMap, MapData, MapError, RingBuf};
 use bb_common::{GATE_RECORD, GATE_REQUIRED};
 
 use super::{
-    Effect, Entry, Resumed, Sandbox, Status, auto,
+    Effect, Entry, Resumed, Sandbox, Status,
+    auto_admission::Admission,
     destinations::{Book, has_name_rules},
     dirs::{self, MEDIA_RW},
     items::{Mounts, Settings},
@@ -135,7 +136,7 @@ struct Gated {
 struct Shared {
     /// The uids held at the gate.
     apps: RwLock<HashMap<u32, Gated>>,
-    auto: Arc<RwLock<auto::Admission>>,
+    auto: Arc<RwLock<Admission>>,
     stats: Mutex<Stats>,
     /// False once the thread has ended.
     open: AtomicBool,
@@ -230,7 +231,7 @@ impl Storage {
         })
     }
 
-    pub(super) fn auto_admission(&self) -> Arc<RwLock<auto::Admission>> {
+    pub(super) fn auto_admission(&self) -> Arc<RwLock<Admission>> {
         self.shared.auto.clone()
     }
 

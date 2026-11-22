@@ -58,7 +58,7 @@ use std::{
     os::{
         fd::AsRawFd as _,
         unix::{
-            fs::PermissionsExt as _,
+            fs::{MetadataExt as _, PermissionsExt as _},
             net::{UnixListener, UnixStream},
         },
     },
@@ -74,12 +74,15 @@ use anyhow::Context as _;
 use tokio::sync::Notify;
 
 use self::protocol::{Asked, Parsed, addresses_in};
-use super::{
-    Sandbox, items_of,
-    resolver::{RELAY_SOCKET, SOCKET as NETD, SocketId, socket_id},
-    target::Target,
-};
-use crate::sync::{lock, read};
+use crate::sync::lock;
+
+/// Where netd listens for the lookups of apps.
+pub(super) const NETD: &str = "/dev/socket/dnsproxyd";
+
+/// Where the daemon listens for lookups. Beside netd's, in the filesystem
+/// every mount namespace has; the name says nothing of the sandbox, as an
+/// app can read its own mounts.
+pub(super) const RELAY_SOCKET: &str = "/dev/socket/dnsproxyd_relay";
 
 /// The label of netd's processes, and of the file of its socket.
 const NETD_LABEL: &str = "u:r:netd:s0";
@@ -239,43 +242,6 @@ pub type Refuses = Arc<dyn Fn(u32, Option<&str>) -> bool + Send + Sync>;
 /// when the lookup starts so a late answer cannot follow a reused UID.
 pub type Serves = Arc<dyn Fn(u32) -> Option<Arc<str>> + Send + Sync>;
 
-impl Sandbox {
-    pub(crate) fn name_policy(&self) -> (Serves, Refuses) {
-        let refuses: Refuses = {
-            let (snapshot, book) = (self.snapshot(), self.book());
-            Arc::new(move |uid, host: Option<&str>| {
-                // Only of an app in the sandbox: taken out, it is kept from
-                // nothing.
-                read(&snapshot).contains_key(&uid)
-                    && lock(&book).get(&uid).is_some_and(|targets| {
-                        targets.iter().any(|target| match host {
-                            Some(host) => target.covers_name(host),
-                            // A name that could not be read: refused to
-                            // an app kept from any name.
-                            None => !matches!(target, Target::Ip(..)),
-                        })
-                    })
-            })
-        };
-        let serves: Serves = {
-            let (snapshot, global, book) = (self.snapshot(), self.global(), self.book());
-            Arc::new(move |uid| {
-                // The apps given the daemon's socket, and no other: the socket
-                // can be found by any process, and an app kept from the
-                // network is to have no resolver at all.
-                let snapshot = read(&snapshot);
-                let entry = snapshot.get(&uid)?;
-                let items = items_of(entry, &read(&global));
-                (!items.network_refused()
-                    && (items.network_recorded()
-                        || super::destinations::has_name_rules(&book, uid)))
-                .then(|| Arc::from(entry.install_id.as_str()))
-            })
-        };
-        (serves, refuses)
-    }
-}
-
 /// The resolver's end of the queue. Recording a refusal never waits for space.
 pub struct RefusalReporter {
     pending: SyncSender<(u32, String)>,
@@ -359,6 +325,13 @@ impl Shared {
         }
         self.at_once.fetch_sub(1, Ordering::Relaxed);
     }
+}
+
+pub(super) type SocketId = (u64, u64);
+
+pub(super) fn socket_id(path: &str) -> io::Result<SocketId> {
+    let metadata = std::fs::metadata(path)?;
+    Ok((metadata.dev(), metadata.ino()))
 }
 
 /// The socket served by this generation. Holding the guard through a
