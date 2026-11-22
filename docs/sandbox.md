@@ -239,9 +239,10 @@ worker exits. A start that still requires mounts is ended. A start whose
 policy needs no mounts is resumed. The next daemon also checks the
 journal for starts left stopped by a crash.
 
-If the gate stops working, future starts continue and Jail reports the
-mounts as unavailable. While the gate is working, a UID whose required
-mount fails cannot start with that isolation enabled. Jail shows the
+While the kernel gate is attached, it ends a start registered for required
+mounts if it cannot hold the start for the daemon. The daemon also ends a
+missed start if it can verify the process generation. A UID whose required mount
+fails cannot start with that isolation enabled. Jail shows the
 cause and how to let the app start by turning off the affected items or
 removing it from Jail. Mounts are tried on the next launch after the
 mount settings change, an installed package version changes, the

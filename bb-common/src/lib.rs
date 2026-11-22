@@ -515,8 +515,10 @@ pub const GATE_RECORD: u32 = 2;
 
 /// Credential-encrypted storage may have become accessible.
 pub const GATE_STORAGE_READY: u32 = 3;
-/// The kernel could not stop a start that needed the gate.
+/// The kernel could not hold a start that needed required mounts.
 pub const GATE_MISSED: u32 = 4;
+/// The kernel could not hold a start for auto-isolation.
+pub const GATE_MISSED_NEW: u32 = 5;
 
 pub const GATE_WAIT_NS: u64 = 3_000_000_000;
 

@@ -51,7 +51,7 @@ use super::{
     mounts,
 };
 use crate::{
-    proc::{Process, parse_stat, uid_of_pid},
+    proc::{Process, process_start, uid_of_pid},
     sandbox_item::{Item, Mode},
 };
 
@@ -77,7 +77,11 @@ impl Restart {
             .is_some_and(|gate| gate.ready(entry, mounts))
     }
 
-    pub(super) fn resume_with(&mut self, apps: &[Resumed], mut restart: impl FnMut(&Entry, Which)) {
+    pub(super) fn resume_with(
+        &mut self,
+        apps: &[Resumed],
+        mut restart: impl FnMut(&Entry, Mounts) -> bool,
+    ) {
         for app in apps {
             let entry = &app.entry;
             let mounts = app.items.mounts();
@@ -85,9 +89,8 @@ impl Restart {
                 continue;
             }
             let policy = (entry.install_id.clone(), mounts);
-            if self.resumed.get(&entry.uid) != Some(&policy) {
+            if self.resumed.get(&entry.uid) != Some(&policy) && restart(entry, mounts) {
                 self.resumed.insert(entry.uid, policy);
-                restart(entry, Which::Lacking(mounts));
             }
         }
     }
@@ -103,13 +106,16 @@ impl Effect for Restart {
         // Those that started since the gate held them have their mounts.
         let mounts = items.mounts();
         if mounts.any() {
-            if self.ready(entry, mounts) {
-                end(entry, Which::Lacking(mounts), || self.ready(entry, mounts));
+            if self.ready(entry, mounts)
+                && end(entry, Which::Lacking(mounts), self.gate.as_ref(), || {
+                    self.ready(entry, mounts)
+                })
+            {
                 self.resumed
                     .insert(entry.uid, (entry.install_id.clone(), mounts));
             }
         } else if items.any_held_by_a_process() {
-            end(entry, Which::All, || true);
+            end(entry, Which::All, None, || true);
         }
         Ok(())
     }
@@ -117,7 +123,7 @@ impl Effect for Restart {
     fn disable(&mut self, entry: &mut Entry, _: &[String], items: &Settings) -> anyhow::Result<()> {
         self.resumed.remove(&entry.uid);
         if items.any_held_by_a_process() {
-            end(entry, Which::All, || true);
+            end(entry, Which::All, None, || true);
         }
         Ok(())
     }
@@ -135,11 +141,12 @@ impl Effect for Restart {
                 && after.mode(item) != Mode::Off
         });
         let mounts = after.mounts();
-        if (before.mounts() != mounts || turned_on) && (!mounts.any() || self.ready(entry, mounts))
-        {
-            end(entry, Which::All, || {
+        if (before.mounts() != mounts || turned_on)
+            && (!mounts.any() || self.ready(entry, mounts))
+            && end(entry, Which::All, None, || {
                 !mounts.any() || self.ready(entry, mounts)
-            });
+            })
+        {
             self.resumed
                 .insert(entry.uid, (entry.install_id.clone(), mounts));
         }
@@ -148,13 +155,10 @@ impl Effect for Restart {
 
     fn resume(&mut self, apps: &[Resumed]) {
         let gate = self.gate.clone();
-        self.resume_with(apps, |entry, which| {
-            let Which::Lacking(mounts) = which else {
-                return;
-            };
-            end(entry, which, || {
+        self.resume_with(apps, |entry, mounts| {
+            end(entry, Which::Lacking(mounts), gate.as_ref(), || {
                 gate.as_ref().is_some_and(|gate| gate.ready(entry, mounts))
-            });
+            })
         });
     }
 
@@ -162,7 +166,7 @@ impl Effect for Restart {
         for app in apps {
             let mounts = app.items.mounts();
             if mounts.storage && self.ready(&app.entry, mounts) {
-                end(&app.entry, Which::StandIn, || {
+                end(&app.entry, Which::StandIn, None, || {
                     self.ready(&app.entry, mounts)
                 });
             }
@@ -175,7 +179,7 @@ impl Effect for Restart {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Which {
+enum Which {
     All,
     /// Those without the given mounts: started without the gate holding
     /// them.
@@ -190,7 +194,12 @@ const PASS_PAUSE: std::time::Duration = std::time::Duration::from_millis(20);
 /// End processes of `uid`, looking again until a pass finds none to end:
 /// one may fork while the others are being ended, or have been about to
 /// take the uid when it was looked for.
-fn end(entry: &Entry, which: Which, ready: impl Fn() -> bool) {
+fn end(
+    entry: &Entry,
+    which: Which,
+    gate: Option<&MountReadiness>,
+    ready: impl Fn() -> bool,
+) -> bool {
     let uid = entry.uid;
     let media = mounts::media_of(uid);
     let media = Path::new(&media);
@@ -200,7 +209,7 @@ fn end(entry: &Entry, which: Which, ready: impl Fn() -> bool) {
     ) && dirs::open_sandbox(media, uid, &format!("{uid}-{}", entry.install_id))
         .is_ok();
     if which == Which::StandIn && !real_storage {
-        return;
+        return false;
     }
     let sandboxes = if matches!(which, Which::Lacking(Mounts { storage: true, .. })) {
         dirs::sandboxes_name(media).unwrap_or_else(|e| {
@@ -211,6 +220,7 @@ fn end(entry: &Entry, which: Which, ready: impl Fn() -> bool) {
         None
     };
     let passes = if which == Which::StandIn { 1 } else { PASSES };
+    let mut completed = false;
     for pass in 0..passes {
         if !ready() {
             break;
@@ -220,27 +230,51 @@ fn end(entry: &Entry, which: Which, ready: impl Fn() -> bool) {
         }
         // A process about to take the UID may have been missed in the
         // first pass of a policy change.
-        if end_once(entry, which, sandboxes.as_deref(), real_storage, &ready) == 0 && pass > 0 {
+        let Some(result) = end_once(
+            entry,
+            which,
+            sandboxes.as_deref(),
+            real_storage,
+            gate,
+            &ready,
+        ) else {
+            return false;
+        };
+        completed = !result.skipped;
+        if !result.ended && pass > 0 {
             break;
         }
     }
+    completed && ready()
 }
 
-/// One pass; returns how many were ended. A process that cannot be looked
-/// at has ended already. `sandboxes` is the name of the directory of the
-/// sandboxes, if it could be found.
+#[derive(Default)]
+struct Pass {
+    ended: bool,
+    skipped: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Disposition {
+    Kept,
+    Held,
+    Ended,
+}
+
+/// One pass over the processes of the app. `sandboxes` is the name of
+/// the directory of the sandboxes, if it could be found.
 fn end_once(
     entry: &Entry,
     which: Which,
     sandboxes: Option<&str>,
     real_storage: bool,
+    gate: Option<&MountReadiness>,
     ready: &impl Fn() -> bool,
-) -> u32 {
+) -> Option<Pass> {
     let uid = entry.uid;
-    let Ok(processes) = fs::read_dir("/proc") else {
-        return 0;
-    };
-    let mut ended = 0;
+    // Without a process list there is no completed pass to record.
+    let processes = fs::read_dir("/proc").ok()?;
+    let mut pass = Pass::default();
     for process in processes.flatten() {
         let Some(pid) = process
             .file_name()
@@ -267,21 +301,14 @@ fn end_once(
         if !runs_as(uid) {
             continue;
         }
-        if matches!(which, Which::Lacking(_))
-            && fs::read_to_string(format!("/proc/{pid}/stat"))
-                .ok()
-                .and_then(|stat| parse_stat(&stat)?.state_and_parent())
-                .is_some_and(|(state, _)| state == 'T')
-        {
-            // The gate may still be installing this start's mounts.
-            continue;
-        }
-        let to_end = which == Which::All
-            || fs::read_to_string(format!("/proc/{pid}/mountinfo")).is_ok_and(|mountinfo| {
-                needs_restart(&mountinfo, entry, which, sandboxes, real_storage)
-            });
-        if to_end
-            && matches!(
+        let lacks_mounts = || {
+            which == Which::All
+                || fs::read_to_string(format!("/proc/{pid}/mountinfo")).is_ok_and(|mountinfo| {
+                    needs_restart(&mountinfo, entry, which, sandboxes, real_storage)
+                })
+        };
+        let can_end = || {
+            matches!(
                 dirs::matches_install(
                     Path::new("/data/user_de"),
                     &entry.package,
@@ -289,14 +316,37 @@ fn end_once(
                     &entry.install_id
                 ),
                 Ok(true)
-            )
-            && ready()
-            && held.signal(libc::SIGKILL).is_ok()
-        {
-            ended += 1;
+            ) && ready()
+        };
+        match end_process(pid, &held, which, lacks_mounts, can_end, |start| {
+            gate.is_some_and(|gate| gate.holds_process(pid, start))
+        }) {
+            Disposition::Held => pass.skipped = true,
+            Disposition::Ended => pass.ended = true,
+            Disposition::Kept => {}
         }
     }
-    ended
+    Some(pass)
+}
+
+fn end_process(
+    pid: i32,
+    process: &Process,
+    which: Which,
+    lacks_mounts: impl FnOnce() -> bool,
+    can_end: impl FnOnce() -> bool,
+    gate_holds: impl FnOnce(u64) -> bool,
+) -> Disposition {
+    // Check the journal first. Once the watchdog removes an entry, the
+    // process has its mounts or has been signaled to end.
+    if matches!(which, Which::Lacking(_)) && process_start(pid as u32).is_some_and(gate_holds) {
+        return Disposition::Held;
+    }
+    if lacks_mounts() && can_end() && process.signal(libc::SIGKILL).is_ok() {
+        Disposition::Ended
+    } else {
+        Disposition::Kept
+    }
 }
 
 fn needs_restart(
@@ -431,11 +481,62 @@ mod tests {
     }
 
     #[test]
+    fn a_stopped_process_without_mounts_is_ended_unless_held_by_the_gate() {
+        use std::os::unix::process::ExitStatusExt as _;
+
+        let app = storage_app();
+        let which = Which::Lacking(app.items.mounts());
+        for gate_holds in [true, false] {
+            let mut child = std::process::Command::new("sleep")
+                .arg("30")
+                .spawn()
+                .unwrap();
+            let pid = child.id();
+            let process = Process::open(pid as i32).unwrap();
+            process.signal(libc::SIGSTOP).unwrap();
+            let mut status = 0;
+            // SAFETY: only wait for this test's child, with writable status.
+            assert_eq!(
+                unsafe { libc::waitpid(pid as i32, &mut status, libc::WUNTRACED) },
+                pid as i32
+            );
+            assert!(libc::WIFSTOPPED(status));
+            let start = process_start(pid).unwrap();
+            let disposition = end_process(
+                pid as i32,
+                &process,
+                which,
+                || needs_restart(ZYGOTE_MOUNTS, &app.entry, which, None, false),
+                || true,
+                |actual| actual == start + u64::from(!gate_holds),
+            );
+            let exited = process.exited(if gate_holds { 0 } else { 1000 }).unwrap();
+            if !exited {
+                child.kill().unwrap();
+            }
+            let status = child.wait().unwrap();
+            assert_eq!(
+                disposition,
+                if gate_holds {
+                    Disposition::Held
+                } else {
+                    Disposition::Ended
+                }
+            );
+            assert_eq!(exited, !gate_holds);
+            assert_eq!(status.signal(), Some(libc::SIGKILL));
+        }
+    }
+
+    #[test]
     fn resuming_with_an_unavailable_gate_never_restarts_a_mounted_app() {
         let app = storage_app();
         assert!(app.items.mounts().any());
         let mut restarted = Vec::new();
-        Restart::default().resume_with(&[app], |entry, _| restarted.push(entry.uid));
+        Restart::default().resume_with(&[app], |entry, _| {
+            restarted.push(entry.uid);
+            true
+        });
         assert!(restarted.is_empty());
     }
 

@@ -109,6 +109,10 @@ fn held(hold: Hold) -> bool {
     hold.0.any() || hold.1 != Resolver::None
 }
 
+fn changes_allowed_when_closed(was: Hold, wanted: Hold) -> bool {
+    !held(wanted) || recording_only(wanted) || (!adds_mounts(was.0, wanted.0) && was.1 == wanted.1)
+}
+
 /// Called with the uid of an app that was let through.
 type Told = Box<dyn Fn(u32) + Send>;
 
@@ -142,13 +146,22 @@ struct Shared {
     unknown: Mutex<Option<Told>>,
 }
 
-/// Read whether a registered mount policy is ready for an app restart.
+/// Read whether a mount policy is ready and which starts it is holding.
 #[derive(Clone)]
-pub struct MountReadiness(Arc<Shared>);
+pub struct MountReadiness {
+    shared: Arc<Shared>,
+    journal: Option<Arc<Mutex<watchdog::Journal>>>,
+}
 
 impl MountReadiness {
     pub(super) fn ready(&self, entry: &Entry, mounts: Mounts) -> bool {
-        self.0.mounts_ready(entry, mounts)
+        self.shared.mounts_ready(entry, mounts)
+    }
+
+    pub(super) fn holds_process(&self, pid: i32, start: u64) -> bool {
+        self.journal
+            .as_ref()
+            .is_some_and(|journal| watchdog::holds_process(&lock(journal), pid, start))
     }
 }
 
@@ -186,7 +199,7 @@ impl Stats {
 /// mount for each.
 pub struct Storage {
     uids: BpfHashMap<MapData, u32, u32>,
-    _watchdog: watchdog::Running,
+    watchdog: watchdog::Running,
     release_errors: Limited,
     shared: Arc<Shared>,
     /// Whether the packet filter can enforce the Network item.
@@ -236,7 +249,7 @@ impl Storage {
         let watchdog = watchdog::start(ring, open, pending, &shared, worker, storage_ready)?;
         Ok(Self {
             uids,
-            _watchdog: watchdog,
+            watchdog,
             release_errors: Limited::new(SANDBOX_INTERVAL, Policy::Shared),
             shared,
             network: false,
@@ -260,7 +273,10 @@ impl Storage {
     }
 
     pub fn mount_readiness(&self) -> MountReadiness {
-        MountReadiness(self.shared.clone())
+        MountReadiness {
+            shared: self.shared.clone(),
+            journal: Some(self.watchdog.journal.clone()),
+        }
     }
 
     pub(super) fn auto_admission(&self) -> Arc<RwLock<Admission>> {
@@ -291,17 +307,32 @@ impl Storage {
             .map_or(NOT_HELD, |gated| (gated.mounts, gated.resolver))
     }
 
+    fn check_change(&self, was: Hold, wanted: Hold) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.shared.open.load(Ordering::Acquire) || changes_allowed_when_closed(was, wanted),
+            "the gate has stopped; restart the daemon"
+        );
+        Ok(())
+    }
+
     /// Stop holding starts of `uid`, if they were held.
-    fn release(&mut self, uid: u32) {
+    fn release(&mut self, uid: u32) -> Result<(), MapError> {
         let mut apps = write(&self.shared.apps);
         if let Err(e) = self.uids.remove(&uid)
             && !missing_gate_key(&e)
         {
+            return Err(e);
+        }
+        apps.remove(&uid);
+        Ok(())
+    }
+
+    fn release_or_log(&mut self, uid: u32) {
+        if let Err(e) = self.release(uid) {
             self.release_errors.log(format_args!(
                 "bbd: sandbox: cannot remove uid {uid} from the gate: {e:?}"
             ));
         }
-        apps.remove(&uid);
     }
 
     /// Have `told` called, on the gate thread, with the uid of each app
@@ -326,10 +357,6 @@ impl Storage {
         mounts: Mounts,
         resolver: Resolver,
     ) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            self.shared.open.load(Ordering::Acquire),
-            "the gate has stopped; restart the daemon"
-        );
         let uid = entry.uid;
         let mut apps = write(&self.shared.apps);
         if apps.get(&uid).is_some_and(|app| {
@@ -431,8 +458,9 @@ impl Storage {
     fn gate(&mut self, entry: &Entry, packages: &[String], held: Hold) -> anyhow::Result<()> {
         let (mounts, resolver) = held;
         if !self::held(held) {
-            self.release(entry.uid);
-            return Ok(());
+            return self
+                .release(entry.uid)
+                .context("removing the uid from the gate");
         }
         if mounts.storage {
             dirs::prepare(
@@ -516,6 +544,19 @@ impl Effect for Storage {
         "storage"
     }
 
+    fn prepare_change(
+        &mut self,
+        entry: &mut Entry,
+        _: Option<&Settings>,
+        after: Option<&Settings>,
+    ) -> anyhow::Result<Option<String>> {
+        let wanted = after.map_or(NOT_HELD, |items| self.held_for(entry.uid, items));
+        // Only new requests are checked. A rollback must be able to
+        // restore a registered policy even if its watchdog has closed.
+        self.check_change(self.holding(entry.uid), wanted)?;
+        Ok(None)
+    }
+
     fn enable(
         &mut self,
         entry: &mut Entry,
@@ -545,12 +586,6 @@ impl Effect for Storage {
         if was == wanted {
             return Ok(());
         }
-        if !self.shared.open.load(Ordering::Acquire)
-            && !adds_mounts(was.0, wanted.0)
-            && was.1 == wanted.1
-        {
-            return Ok(());
-        }
         self.change(entry, packages, was, wanted)
     }
 
@@ -566,7 +601,9 @@ impl Effect for Storage {
             .map(|gated| gated.packages.clone());
         // Not held so far: the packages are needed for the storage mounts
         // only, which such an app has none of.
-        let result = self.change(entry, &packages.unwrap_or_default(), was, wanted);
+        let result = self
+            .check_change(was, wanted)
+            .and_then(|()| self.change(entry, &packages.unwrap_or_default(), was, wanted));
         if let Err(e) = &result
             && !items.network_refused()
             && has_name_rules(&self.book, entry.uid)
@@ -620,10 +657,10 @@ impl Effect for Storage {
     }
 
     fn watches_package_updates(&self) -> bool {
-        self.shared.open.load(Ordering::Acquire)
-            && read(&self.shared.apps)
-                .values()
-                .any(|app| !recording_only((app.mounts, app.resolver)))
+        // A closed gate still refuses required starts until the uid is removed.
+        read(&self.shared.apps)
+            .values()
+            .any(|app| !recording_only((app.mounts, app.resolver)))
     }
 
     fn packages_updated(&mut self, app_ids: &BTreeSet<u32>) {
@@ -660,12 +697,12 @@ impl Effect for Storage {
             .filter_map(|(&uid, app)| recording_only((app.mounts, app.resolver)).then_some(uid))
             .collect();
         for uid in only_recorded {
-            self.release(uid);
+            self.release_or_log(uid);
         }
     }
 
     fn forget(&mut self, uid: u32) {
-        self.release(uid);
+        self.release_or_log(uid);
         self.resolver_unknown.remove(&uid);
     }
 
@@ -754,6 +791,27 @@ mod tests {
 
     use super::*;
     use crate::sandbox_item::{Item, Mode};
+
+    #[test]
+    fn a_closed_gate_allows_removing_required_mounts() {
+        let files = Mounts {
+            storage: true,
+            cpu_info: false,
+        };
+        let record = (NOT_HELD.0, Resolver::Record);
+        assert!(changes_allowed_when_closed(
+            (files, Resolver::None),
+            NOT_HELD
+        ));
+        assert!(changes_allowed_when_closed(
+            (files, Resolver::Record),
+            record
+        ));
+        assert!(!changes_allowed_when_closed(
+            NOT_HELD,
+            (files, Resolver::None)
+        ));
+    }
 
     #[test]
     fn only_a_missing_gate_key_is_ignored() {

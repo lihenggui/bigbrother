@@ -102,12 +102,13 @@ impl Shared {
     pub(super) fn report_mounts(&self, status: &mut Status) {
         for (&uid, app) in read(&self.apps).iter() {
             let health = lock(&app.health);
-            if let Some(cause) = health.cause() {
+            let closed = !status.gate && app.mounts.any();
+            if let Some(cause) = health.cause().or(closed.then_some(Part::MountStartFailed)) {
                 status.mount_failures.insert(uid, cause);
             } else {
                 status.gated_uids.insert(uid);
             }
-            if status.gate && app.mounts.any() && health.refuses_start() {
+            if app.mounts.any() && (closed || health.refuses_start()) {
                 status.mount_launch_refused.insert(uid);
             }
         }

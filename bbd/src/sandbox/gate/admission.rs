@@ -409,14 +409,14 @@ pub(super) fn open_process(event: &GateEvent) -> anyhow::Result<Option<Process>>
     let actual = parse_stat(&stat)
         .and_then(|stat| stat.start_time())
         .context("reading the held process generation")?;
-    if actual != start_ticks(event) {
+    if actual != start_ticks(event.start_low, event.start_high) {
         return Ok(None);
     }
     Ok(Some(process))
 }
 
-fn start_ticks(event: &GateEvent) -> u64 {
-    let start = (u64::from(event.start_high) << 32) | u64::from(event.start_low);
+pub(super) fn start_ticks(low: u32, high: u32) -> u64 {
+    let start = (u64::from(high) << 32) | u64::from(low);
     let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
     (u128::from(start) * hz as u128 / 1_000_000_000) as u64
 }

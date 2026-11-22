@@ -56,9 +56,10 @@ daemon loop build on the lower layers, with the CLI at the top.
   AppOps preimage before a transaction mutates it. A runtime permission or
   service access regranted while held is saved before the helper takes it again.
 
-- A working gate refuses starts after a required mount fails. Retry the
-  mount on a later launch after a recovery event. An unavailable gate
-  releases new starts. Auto-isolation has a separate, bounded hold.
+- A registered required mount policy refuses starts the gate cannot hold
+  or mount. Retry the mount on a later launch after a recovery event.
+  Auto-isolation has a separate, bounded hold and releases new starts
+  when the gate is unavailable.
 - A starting app waits for the mount worker (`sandbox/gate/admission.rs`).
   The independent watchdog owns process completion. Neither waits for
   the database or a helper, and only held starts arm a deadline.

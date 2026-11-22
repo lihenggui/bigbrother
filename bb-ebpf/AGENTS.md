@@ -56,7 +56,8 @@ These programs run on every file open and many system calls of every process.
   costs one lookup more (`KNOWN_UIDS`). A new app not known yet is stopped
   and reported while the auto-isolation hold is active. The kernel only
   requests a stop after reserving room to report and journal it. If the
-  gate cannot accept a start, the app continues.
+  gate cannot accept a start, a mandatory mount policy ends it. Optional
+  recording and auto-isolation let it continue.
 
 - `network_refused` is not a recorder: the packet filter runs it for every
   packet leaving the device while an app is kept from the network, and not
