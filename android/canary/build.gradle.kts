@@ -29,4 +29,12 @@ android {
         versionCode = 1
         versionName = "1"
     }
+
+    buildTypes {
+        // Keep the existing debug APK for the records and permission checks.
+        create("noDeclarations") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".nodeclarations"
+        }
+    }
 }
