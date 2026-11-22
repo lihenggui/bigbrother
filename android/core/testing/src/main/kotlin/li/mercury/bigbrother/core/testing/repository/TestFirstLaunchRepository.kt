@@ -18,6 +18,8 @@ package li.mercury.bigbrother.core.testing.repository
 
 import li.mercury.bigbrother.core.data.repository.FirstLaunchRepository
 
-class TestFirstLaunchRepository(private val claimGuide: suspend () -> Boolean) : FirstLaunchRepository {
+class TestFirstLaunchRepository(private val unclaimed: Boolean = false, private val claimGuide: suspend () -> Boolean) : FirstLaunchRepository {
     override suspend fun claim(): Boolean = claimGuide()
+
+    override fun isUnclaimed(): Boolean = unclaimed
 }

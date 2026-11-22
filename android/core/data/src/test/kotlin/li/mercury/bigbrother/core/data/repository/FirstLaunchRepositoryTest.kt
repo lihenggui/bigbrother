@@ -56,6 +56,15 @@ class FirstLaunchRepositoryTest {
         assertTrue(LocalFirstLaunchRepository(app, Dispatchers.IO).claim())
     }
 
+    @Test
+    fun givenFreshInstall_whenFirstLaunchIsClaimed_thenItIsNoLongerUnclaimed() = runTest {
+        setInstallTimes(10, 10)
+        val repository = LocalFirstLaunchRepository(app, Dispatchers.IO)
+        assertTrue(repository.isUnclaimed())
+        repository.claim()
+        assertFalse(repository.isUnclaimed())
+    }
+
     private fun setInstallTimes(installed: Long, updated: Long) {
         shadowOf(app.packageManager).getInternalMutablePackageInfo(app.packageName).apply {
             firstInstallTime = installed
