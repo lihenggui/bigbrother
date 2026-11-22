@@ -32,8 +32,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.liveRegion
-import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.text
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import li.mercury.bigbrother.core.designsystem.component.ShapedIcon
 import li.mercury.bigbrother.core.model.AppSummary
@@ -101,12 +103,17 @@ private fun ResultList(results: SearchUiState, onResultClick: (SearchDestination
                 nothing -> UiR.string.no_matches
                 else -> R.string.results
             }
+            val spoken = stringResource(label)
             FadeThrough(
                 state = label,
                 kind = { it },
                 modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme)
                     .padding(start = 16.dp, top = 8.dp)
-                    .semantics { liveRegion = LiveRegionMode.Polite },
+                    // One node speaks for the label, the new one, also while the old one fades out.
+                    .clearAndSetSemantics {
+                        text = AnnotatedString(spoken)
+                        liveRegion = LiveRegionMode.Polite
+                    },
             ) { shown ->
                 Text(
                     text = stringResource(shown),

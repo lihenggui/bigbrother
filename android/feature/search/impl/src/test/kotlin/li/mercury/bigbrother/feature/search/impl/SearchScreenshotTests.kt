@@ -22,8 +22,20 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.Snapshot
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithText
+import li.mercury.bigbrother.core.designsystem.theme.BigBrotherTheme
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.PathMatch
 import li.mercury.bigbrother.core.screenshottesting.DefaultTestDevices
@@ -93,6 +105,23 @@ class SearchScreenshotTests {
         }
     }
 
+    @Test
+    fun givenLookupFinishing_whenLabelFadesThrough_thenOnlyTheNewLabelIsAnnounced() {
+        var results by mutableStateOf(cameraResults().copy(complete = false))
+        composeTestRule.mainClock.autoAdvance = false
+        composeTestRule.setContent { BigBrotherTheme { Results(results) } }
+        composeTestRule.mainClock.advanceTimeByFrame()
+
+        results = cameraResults()
+        // Written outside composition: hand it over now, so that the fade starts on the next frame.
+        Snapshot.sendApplyNotifications()
+        composeTestRule.mainClock.advanceTimeBy(MID_FADE_MILLIS)
+
+        composeTestRule.onAllNodesWithText(composeTestRule.activity.getString(R.string.searching)).assertCountEquals(0)
+        composeTestRule.onNodeWithText(composeTestRule.activity.getString(R.string.results))
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite))
+    }
+
     private fun capturePhone(name: String, body: @Composable () -> Unit) {
         composeTestRule.captureForDevice("phone", DefaultTestDevices.PHONE.spec, name, body = body)
     }
@@ -139,6 +168,9 @@ class SearchScreenshotTests {
     }
 
     private companion object {
+        /** Part way through the label's fade, while the old label is still drawn. */
+        const val MID_FADE_MILLIS = 50L
+
         const val MAX_FILES = 6
     }
 }
