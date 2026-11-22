@@ -105,7 +105,11 @@ class NetworkActivityViewModel @AssistedInject constructor(
 
     fun setRange(range: TimeRange) {
         if (range == load.value.range) return
-        load.update { it.copy(range = range, bucket = null, period = null, activity = null) }
+        // The activity shown stays until the new range's replaces it, so the
+        // page does not fall back to the loader; but it is no longer reused
+        // for a bar chosen in the meantime.
+        load.update { it.copy(range = range, bucket = null, period = null) }
+        completed = null
         refresh()
     }
 

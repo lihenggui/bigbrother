@@ -16,6 +16,7 @@
 
 package li.mercury.bigbrother.feature.jail.impl.network
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -147,6 +148,38 @@ class NetworkActivityViewModelTest {
 
         assertNull(viewModel.uiState.value.bucket)
         assertEquals(38, viewModel.uiState.value.totals.destinations)
+    }
+
+    @Test
+    fun givenActivityShown_whenRangeChanged_thenPreviousActivityShownUntilNewOneLoads() = runTest {
+        val viewModel = viewModel()
+        val day = viewModel.uiState.value.activity
+        val week = shopActivity().copy(since = shopActivity().since - 6 * 86_400, bucketSeconds = BucketSize.DAY.seconds)
+        val gate = CompletableDeferred<Unit>()
+        networkRepository.gate = gate
+        networkRepository.activity = week
+
+        viewModel.setRange(TimeRange.WEEK)
+
+        assertEquals(TimeRange.WEEK, viewModel.uiState.value.range)
+        assertEquals(day, viewModel.uiState.value.activity)
+        gate.complete(Unit)
+        assertEquals(week, viewModel.uiState.value.activity)
+    }
+
+    @Test
+    fun givenRangeLoading_whenOldBarSelected_thenNewRangeRead() = runTest {
+        val viewModel = viewModel()
+        val week = shopActivity().copy(since = shopActivity().since - 6 * 86_400, bucketSeconds = BucketSize.DAY.seconds)
+        val gate = CompletableDeferred<Unit>()
+        networkRepository.gate = gate
+        networkRepository.activity = week
+
+        viewModel.setRange(TimeRange.WEEK)
+        viewModel.selectBucket(shopActivity().buckets[12].start)
+        gate.complete(Unit)
+
+        assertEquals(week, viewModel.uiState.value.activity)
     }
 
     @Test
