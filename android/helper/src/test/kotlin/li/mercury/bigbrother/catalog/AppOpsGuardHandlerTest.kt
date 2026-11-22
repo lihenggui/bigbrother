@@ -58,6 +58,90 @@ class AppOpsGuardHandlerTest {
     }
 
     @Test
+    fun givenServiceRegrantedAfterHelperRestart_whenLeavingJail_thenBothServicesAreRestored() {
+        checkServiceRegrantAfterRestart { daemon, _ -> daemon.disable() }
+    }
+
+    @Test
+    fun givenServiceRegrantedAfterHelperRestart_whenTurningItsItemOff_thenBothServicesAreRestored() {
+        checkServiceRegrantAfterRestart { daemon, item -> daemon.set(item, "off") }
+    }
+
+    private fun checkServiceRegrantAfterRestart(restore: (DaemonDouble, String) -> Unit) {
+        val accesses = mapOf(
+            "notification_content" to "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE",
+            "screen_content" to "android.permission.BIND_ACCESSIBILITY_SERVICE",
+        )
+        val first = "$PACKAGE/$PACKAGE.First"
+        val second = "$PACKAGE/$PACKAGE.Second"
+        for ((item, access) in accesses) {
+            for (checked in listOf(true, false)) {
+                val android = FakeAndroid()
+                android.setServices(access, setOf(first))
+                val daemon = DaemonDouble(android)
+                daemon.set(item, "on")
+                daemon.enable()
+                assertTrue(android.services(access).isEmpty())
+                daemon.restartHelper()
+                android.setServices(access, setOf(second))
+                if (checked) {
+                    daemon.check()
+                    assertTrue(android.services(access).isEmpty())
+                }
+
+                restore(daemon, item)
+
+                assertEquals(setOf(first, second), android.services(access), "$item, checked=$checked")
+            }
+        }
+    }
+
+    @Test
+    fun givenAnotherAccessibilityServiceChangesAfterReading_whenHolding_thenTheOtherChangesAreKept() {
+        val jailed = "$PACKAGE/$PACKAGE.Service"
+        val old = "com.example.reader/com.example.reader.Old"
+        val new = "com.example.reader/com.example.reader.New"
+        var enabled = listOf(old, jailed)
+        var changePending = true
+
+        updateAccessibilityServices(
+            setOf(jailed),
+            given = false,
+            read = {
+                enabled.also {
+                    if (changePending) {
+                        enabled = listOf(jailed, new)
+                        changePending = false
+                    }
+                }
+            },
+            write = { enabled = it },
+        )
+
+        assertEquals(listOf(new), enabled)
+    }
+
+    @Test
+    fun givenAnotherAccessibilityWriterUsesAnEarlierList_whenRestoring_thenBothChangesAreKept() {
+        val jailed = "$PACKAGE/$PACKAGE.Service"
+        val reader = "com.example.reader/com.example.reader.Service"
+        var enabled = emptyList<String>()
+        var changePending = true
+
+        updateAccessibilityServices(
+            setOf(jailed),
+            given = true,
+            read = { enabled },
+            write = {
+                enabled = if (changePending) listOf(reader) else it
+                changePending = false
+            },
+        )
+
+        assertEquals(listOf(reader, jailed), enabled)
+    }
+
+    @Test
     fun givenARegrantWhileHeld_whenChecked_thenItIsKeptUntilTheDaemonPersistsIt() {
         val android = FakeAndroid()
         val handler = AppOpsGuardHandler(android, supervised = true)
@@ -194,6 +278,55 @@ class AppOpsGuardHandlerTest {
 
         assertEquals(MODE_IGNORED, android.mode(ALL_FILES_OP_NAME))
         assertEquals(listOf("unheld $UID -"), android.printed.filter { it.startsWith("unheld ") })
+    }
+
+    @Test
+    fun givenAnotherProfileMayBeRunning_whenHoldingAllFiles_thenTheOpIsUnheldUntilItIsSafeToWrite() {
+        for (running in listOf(true, null)) {
+            val android = FakeAndroid()
+            android.requestsAllFiles = true
+            android.userSetsMode(ALL_FILES_OP_NAME, MODE_ALLOWED)
+            android.otherProfileRunning = running
+            val handler = AppOpsGuardHandler(android)
+
+            handler.send("set $UID $ALL_FILES_OP_NAME=1,android:camera=1")
+            repeat(10) { handler.checkAll() }
+
+            assertEquals(0, android.helperWrites.getOrDefault(ALL_FILES_OP_NAME, 0))
+            assertEquals(MODE_ALLOWED, android.mode(ALL_FILES_OP_NAME))
+            assertEquals(MODE_IGNORED, android.mode("android:camera"))
+            assertEquals("unheld $UID $ALL_FILES_OP_NAME", android.printed.last { it.startsWith("unheld ") })
+
+            android.otherProfileRunning = false
+            handler.checkAll()
+
+            assertEquals(1, android.helperWrites[ALL_FILES_OP_NAME])
+            assertEquals(MODE_IGNORED, android.mode(ALL_FILES_OP_NAME))
+            assertEquals("unheld $UID -", android.printed.last { it.startsWith("unheld ") })
+        }
+    }
+
+    @Test
+    fun givenAnotherProfileIsRunning_whenRestoringAllFiles_thenTheSavedModeStaysRetryable() {
+        val android = FakeAndroid()
+        android.requestsAllFiles = true
+        val handler = AppOpsGuardHandler(android)
+        handler.send("set $UID $ALL_FILES_OP_NAME=1")
+        android.otherProfileRunning = true
+
+        assertFailsWith<IllegalStateException> { handler.send("restore $UID $ALL_FILES_OP_NAME=default") }
+
+        assertEquals(1, android.helperWrites[ALL_FILES_OP_NAME])
+        assertEquals(MODE_IGNORED, android.mode(ALL_FILES_OP_NAME))
+        assertEquals("unheld $UID -", android.printed.last { it.startsWith("unheld ") })
+        assertTrue(handler.isGuarded(UID))
+
+        android.otherProfileRunning = false
+        handler.send("restore $UID $ALL_FILES_OP_NAME=default")
+
+        assertEquals(2, android.helperWrites[ALL_FILES_OP_NAME])
+        assertEquals(MODE_DEFAULT, android.mode(ALL_FILES_OP_NAME))
+        assertEquals("restored $UID", android.printed.last())
     }
 
     @Test
