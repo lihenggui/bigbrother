@@ -444,9 +444,8 @@ assert_no_padding!(BinderEvent {
 // what it sees (see `gate_setresuid` in bb-ebpf). It has a ring buffer of its
 // own, read by a thread that does nothing else.
 
-/// A process stopped as it was about to take a sandboxed uid, or that of an
-/// app installed since newly installed apps are put in the sandbox, which
-/// the daemon has not dealt with yet.
+/// An app start reported by the kernel gate. A recording-only event leaves
+/// the process running so that recording cannot delay the launch.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct GateEvent {
@@ -455,13 +454,12 @@ pub struct GateEvent {
     pub pid: u32,
     /// The uid it is taking.
     pub uid: u32,
-    /// When it was stopped, `CLOCK_MONOTONIC` nanoseconds (`bpf_ktime_get_ns`),
+    /// When it was reported, `CLOCK_MONOTONIC` nanoseconds (`bpf_ktime_get_ns`),
     /// low half first.
     pub at_ns_low: u32,
     pub at_ns_high: u32,
-    /// 1 if the uid is not sandboxed but new to the daemon (see
-    /// `KNOWN_APP_IDS` in bb-ebpf), 0 if it is sandboxed.
-    pub unknown: u32,
+    /// The policy the kernel used when reporting this start.
+    pub kind: u32,
 }
 
 assert_no_padding!(GateEvent {
@@ -471,7 +469,7 @@ assert_no_padding!(GateEvent {
     uid,
     at_ns_low,
     at_ns_high,
-    unknown
+    kind
 });
 
 impl GateEvent {
@@ -504,12 +502,18 @@ event_data!(
     TrafficEvent,
 );
 
+/// Required mounts must be placed before the app starts.
+pub const GATE_REQUIRED: u32 = 0;
+/// The app must be registered before being allowed to start.
+pub const GATE_NEW: u32 = 1;
+/// A recording cover can be placed while the app is already running.
+pub const GATE_RECORD: u32 = 2;
+
 /// How long the daemon may leave a stopped process waiting before the kernel
-/// side takes it to be stuck, and stops holding further starts for it: they
-/// are killed instead (see `GATE_WAITING_SINCE` in bb-ebpf).
+/// side takes it to be stuck and refuses further starts requiring the
+/// gate (see `GATE_WAITING_SINCE` in bb-ebpf).
 pub const GATE_STALE_NS: u64 = 3_000_000_000;
-/// Stored in place of a time once the daemon's gate thread has ended: every
-/// start of a sandboxed app is killed from then on.
+/// Stored in place of a time once the daemon's gate thread has ended.
 pub const GATE_CLOSED: u64 = 1;
 
 /// Android multi-user layout: uid = user_id * PER_USER_RANGE + app_id.

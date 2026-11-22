@@ -1,4 +1,4 @@
 {
   "gate": true, "appops": false, "hook": {"android_id": true, "app_list": false, "uri_grants": true, "ad_id": false},
-  "new_apps_pending": 2, "new_apps_held": true, "network": true, "net_record": true, "dns_names": false, "traffic": true
+  "new_apps_pending": 2, "new_apps_failed": 1, "new_apps_held": true, "network": true, "net_record": true, "dns_names": false, "traffic": true
 }

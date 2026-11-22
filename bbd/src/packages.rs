@@ -49,7 +49,7 @@ pub const FIRST_ISOLATED_APP_ID: u32 = 90_000;
 pub struct Packages {
     source: String,
     by_app_id: HashMap<u32, Vec<String>>,
-    app_id_by_name: HashMap<String, u32>,
+    app_id_by_name: HashMap<String, (u32, Option<u64>)>,
     /// App ids with a package that came with the system.
     from_system: HashSet<u32>,
     loaded_at: Option<Instant>,
@@ -75,11 +75,7 @@ impl Packages {
                 let list = parse(&text);
                 self.by_app_id = list.by_app_id;
                 self.from_system = list.from_system;
-                self.app_id_by_name = self
-                    .by_app_id
-                    .iter()
-                    .flat_map(|(id, names)| names.iter().map(move |name| (name.clone(), *id)))
-                    .collect();
+                self.app_id_by_name = list.app_id_by_name;
                 true
             }
             Err(e) => {
@@ -121,6 +117,13 @@ impl Packages {
         self.by_app_id.get(&app_id).map_or(&[], Vec::as_slice)
     }
 
+    /// The installed version as of the last refresh, when Android lists it.
+    pub fn version_of(&self, package: &str) -> Option<u64> {
+        self.app_id_by_name
+            .get(package)
+            .and_then(|(_, version)| *version)
+    }
+
     /// Every app id in the list as it was last read, with its packages.
     pub fn app_ids(&self) -> impl Iterator<Item = (u32, &[String])> {
         self.by_app_id
@@ -146,7 +149,7 @@ impl Packages {
     /// The app id of `package`, if it is installed (for any user). Read
     /// again like [`Self::is_installed`] when not found.
     pub fn app_id_of(&mut self, package: &str) -> Option<u32> {
-        if let Some(app_id) = self.app_id_by_name.get(package) {
+        if let Some((app_id, _)) = self.app_id_by_name.get(package) {
             return Some(*app_id);
         }
         if self
@@ -155,7 +158,7 @@ impl Packages {
         {
             self.reload();
         }
-        self.app_id_by_name.get(package).copied()
+        self.app_id_by_name.get(package).map(|(app_id, _)| *app_id)
     }
 
     /// The uid of the app an isolated process belongs to, given the process's
@@ -163,7 +166,7 @@ impl Packages {
     /// throwaway uid, but are named `<package>:<suffix>` after their owner.
     pub fn owner_of_isolated(&self, isolated_uid: u32, process_name: &str) -> Option<u32> {
         let package = process_name.split(':').next()?;
-        let app_id = self.app_id_by_name.get(package)?;
+        let (app_id, _) = self.app_id_by_name.get(package)?;
         Some(user_of(isolated_uid) * PER_USER_RANGE + app_id)
     }
 }
@@ -171,12 +174,14 @@ impl Packages {
 /// What the package list holds.
 struct List {
     by_app_id: HashMap<u32, Vec<String>>,
+    app_id_by_name: HashMap<String, (u32, Option<u64>)>,
     from_system: HashSet<u32>,
 }
 
 fn parse(text: &str) -> List {
     let mut list = List {
         by_app_id: HashMap::new(),
+        app_id_by_name: HashMap::new(),
         from_system: HashSet::new(),
     };
     for line in text.lines() {
@@ -185,6 +190,9 @@ fn parse(text: &str) -> List {
         else {
             continue;
         };
+        let version = fields.get(7).and_then(|version| version.parse().ok());
+        list.app_id_by_name
+            .insert(name.to_string(), (app_id, version));
         list.by_app_id
             .entry(app_id)
             .or_default()

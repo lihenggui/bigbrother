@@ -117,21 +117,28 @@ again:
 
 ## Baseline and startup profiles
 
-Build the daemons with `./scripts/build.sh`, then connect an Android 13
-(API 33) or newer emulator or device. The generator launches the app,
-skips the first-launch guide if shown, visits the four main destinations,
-and scrolls the Apps list when records are available. It also scrolls
-Settings on a fresh install without root or the module.
+Build the daemons with `./scripts/build.sh`. Gradle provisions a Pixel 6
+emulator with the API 36 x86_64 AOSP system image. On Linux, the emulator
+needs access to `/dev/kvm`.
 
 ```sh
 cd android
-./gradlew :app:generateReleaseBaselineProfile
+./gradlew :app:generateReleaseBaselineProfile \
+  -Pandroid.testoptions.manageddevices.emulator.gpu=swiftshader_indirect
 ```
 
-Review and commit the generated `baseline-prof.txt` and `startup-prof.txt`
-under `app/src/release/generated/baselineProfiles/`. The release build
-packages the baseline profile and uses the startup profile for DEX
-layout. Profile generation is a separate task from CI and release builds.
+The generator skips the first-launch guide if shown, visits the four main
+destinations, scrolls the Apps list when records are available, and scrolls
+Settings on a fresh install. Review `baseline-prof.txt` and `startup-prof.txt`
+under `app/src/release/generated/baselineProfiles/`. The release build packages
+the baseline profile and uses the startup profile for DEX layout.
+
+The [Baseline Profiles workflow](.github/workflows/baseline-profiles.yml)
+runs weekly and can be started manually on `main`. When the profiles differ
+from `main`, it opens or updates a pull request from `ci/baseline-profiles`.
+The workflow starts CI and Device on that branch after each push it makes.
+Enable **Allow GitHub Actions to create and approve pull requests** in the
+repository's Actions settings so the workflow can open the pull request.
 
 To compare cold startup with and without baseline profile compilation,
 run the startup benchmark on a physical device from `android/`. The

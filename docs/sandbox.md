@@ -56,7 +56,8 @@ items that are on but not in effect and the part each lacks: the mounts,
 the app ops (read back after they are set, and whenever the system changes
 them), a hook, or the packet filter. While the helper checks an app after
 restarting, `appops_checking` marks its Android restrictions as pending
-readback. An item is in effect only with all its parts: the device
+readback. When readback fails or expires, Jail reports that the Android
+restriction could not be verified. An item is in effect only with all its parts: the device
 identifiers, for one, need the ANDROID_ID and advertising ID hooks and the
 phone-state app ops.
 
@@ -163,7 +164,7 @@ $bbd sandbox auto on    # or off; without an argument, says which it is
   static libraries Play installs with Chrome or WebView updates. The app
   ops helper reads the package manager's library flags once per new
   package with a data directory. A lookup that cannot classify the
-  package is retried before changing its sandbox.
+  package is retried within the same limit as an isolation attempt.
 - An app given the uid of one uninstalled while it was in the sandbox is
   put in once that one is taken out, with an entry of its own.
 
@@ -175,31 +176,37 @@ the sandbox. What wakes it is a file renamed or written into
 `/data/system` and a directory made in `/data/user_de` or in a user's
 directory there; what an app does inside its own data directory does not.
 
-The installer can request a launch immediately. While the gate is in
-place, it holds an ordinary zygote start of a UID the daemon has not
-dealt with yet; the daemon ends that start, as it ends any start it cannot
-give its sandbox, and puts the app in, and the next start is held as a
-sandboxed app's. Android can still be waiting for the ended launch to
-attach, so a new tap may need to wait for its startup timeout.
-`bbd sandbox status` reports the hold as `new_apps_held`.
-The kernel uses the UIDs and app IDs from the last scan, and the gate also
-checks installation ownership when it applies mounts. The daemon logs
-when it stops holding starts because the kernel cannot store what the
-daemon knows (more than 1024 uids of apps
-installed since the switch was turned on, counted per Android user); new
-apps are then still put in the sandbox as the daemon finds them. Apps
-installed while no daemon runs are held from when it starts, put in by its
-first look, and any of their processes then running are ended.
+The installer can request a launch immediately. With a restriction enabled
+in the global settings and the gate available, the gate holds an ordinary
+zygote start of a UID the daemon has not dealt with yet. The daemon ends
+that start if it is still waiting for isolation. Android can still be
+waiting for the ended launch to attach, so a new tap may need to wait for
+its startup timeout. With all restrictions off, including when only
+connection recording is on, auto-isolation does not hold starts.
 
-A look gives library queries up to 4 seconds total, and starts no more
-isolations after that budget. An isolation already in progress finishes or
-rolls back, and the rest are left for a look 2 seconds later. An app that
-cannot be put in, as when the app ops helper
-does not answer, is tried again after 10 seconds, then twice as long each
-time up to 5 minutes, and its starts are held meanwhile. A timer for the
-next try exists only while such an app waits. `bbd sandbox status` reports
-how many new apps are not in the sandbox yet (`new_apps_pending`), and the
-global settings' status row says so.
+`bbd sandbox status` reports whether the hold is active as `new_apps_held`.
+The kernel uses the UIDs and app IDs from the last scan, and the gate also
+checks installation ownership when it applies mounts. If the kernel cannot
+store what the daemon knows (more than 1024 uids of apps installed since
+the switch was turned on, counted per Android user), the daemon releases
+new starts and continues finding apps through the watch. Apps installed
+while no daemon runs are processed by its first look.
+
+A look gives library queries up to 4 seconds total and starts no more
+isolations after that budget. An isolation in progress finishes or rolls
+back, and apps that could not be attempted are looked at again after
+2 seconds. A temporary failure gets one retry after 10 seconds. The daemon
+also releases starts after 30 seconds of deferral, or as soon as it finds
+an error that needs a change outside the daemon, such as an unsupported
+restriction or a missing profile directory. A released app can start
+without isolation. The daemon can try again after a package or profile
+change, a helper recovery, or a change to the global settings. The user
+can also enable Jail for the app directly.
+
+`bbd sandbox status` reports how many new apps are waiting for a first
+attempt or a timed retry (`new_apps_pending`), and how many could not be
+isolated and were released (`new_apps_failed`). Jail's global settings
+show both counts.
 
 What the daemon knows of the installed apps is kept in the database, and
 forgotten when the switch is turned off. While it is off, nothing is
@@ -226,10 +233,9 @@ read of the switch for [newly installed apps](#newly-installed-apps).
 
 A start is held for a few milliseconds.
 
-A start that cannot be given its sandbox is killed, never let through; the
-system starts the app again when it is next wanted. If the daemon's thread
-is stuck for more than three seconds, or has ended, the kernel side kills
-such starts by itself. Other apps are not affected in either case.
+A start that cannot be given a required mount is killed. If the daemon's
+thread is stuck for more than three seconds or has ended, the kernel
+refuses those starts. A recording cover by itself never holds the app.
 
 The thread has no timer: with no sandboxed app starting, it does not run.
 
@@ -245,6 +251,17 @@ items that are on, remembers what they were, and sets them again when the
 system changes them, which it does whenever the app's permissions change.
 The helper runs only while a sandboxed app has such an item on.
 
+The helper skips modes that already match and keeps reapplying ordinary
+app ops whenever Android resets them. All-files mode changes, runtime
+permission revocations, and disabling notification listeners or
+accessibility services can end processes or unbind services. For each of
+these restrictions, the helper retries at most three times per UID in any
+ten-minute period. If the conflict continues, Jail shows the restriction as
+unavailable. The helper tracks the budget in memory. It resets when the UID's
+targets change, the app leaves Jail, or its installation is replaced.
+All-files access is also shown as unavailable when the helper cannot read
+which packages request it.
+
 An item left to the app in the foreground has its ops held at
 "foreground" instead, which the system keeps for the ops of runtime
 permissions as it keeps "ignored": the app gets the data while it is in
@@ -258,12 +275,12 @@ with precise location and gives it none at all. Location made coarse is
 the system's own approximate location instead. The helper revokes the
 precise location permission (`ACCESS_FINE_LOCATION`) of every package of
 the app that requests it, keeps the approximate one, and marks it as the
-user's choice not to be asked again, as Android's settings do; it revokes
-it again if the system or the user grants it while location is coarse,
-and then gives it back granted when location is no longer coarse: the
-user's latest choice. So it does when the user revokes it, which leaves
-it no longer marked so: it goes back revoked. The app's settings show
-precise location as turned off.
+user's choice not to be asked again, as Android's settings do. If the
+system or user grants it while location is coarse, the helper records the
+choice and attempts to revoke it again within the retry budget. A user
+revocation clears the fixed mark. When location is no longer coarse, the
+helper restores the user's latest choice. Android's settings show precise
+location as turned off while the restriction is effective.
 
 What the ops were, and whether the precise location permission was granted
 and with which of the user's choices, is kept in the database and put back
@@ -285,9 +302,29 @@ the daemon starts) or does not get every app out, the helper is run by
 itself once the system is up, with what the database says each app still
 sandboxed had (`bbd sandbox-restore-lines`). A root-only recovery directory
 under `/data/adb/big_brother_recovery` retains each pending request and the
-helper. Each restored item is checked and journaled. The boot worker retries
-outstanding requests and removes the batch after acknowledgement. The helper
-rechecks the installation before changing an app op or permission.
+helper. Each restored item is checked and journaled. The helper rechecks the
+installation before changing an app op or permission.
+
+Disabling the module also gives back the AppOps modes, runtime permissions,
+notification listener access, and accessibility access saved by Jail. The
+boot guard schedules recovery for the current boot and exits before starting
+the daemon. If the module is turned off in Magisk or KernelSU, recovery runs
+on the next normal boot. Both managers skip a disabled module's own
+`post-fs-data.sh` and `service.sh`, so the module registers a root-only
+recovery hook in `/data/adb/service.d`. It exits immediately when the module
+is enabled, and uninstall removes it. Manager safe modes can skip general
+scripts too. In that case recovery runs on the next normal boot with the
+module still disabled.
+[Magisk boot scripts](https://topjohnwu.github.io/Magisk/guides.html#boot-scripts)
+and [KernelSU boot scripts](https://kernelsu.org/guide/module.html#boot-scripts)
+describe the two kinds of hooks.
+
+The recovery worker waits for Android to finish booting. It retries pending
+requests with increasing delays and leaves completed requests journaled for
+the duration of the disable, including across reboots. Jail settings, records,
+identities and sandbox files stay on disk. When the module starts again,
+the daemon uses those settings to reapply Jail. Starting Jail retires any
+pending disable recovery before it begins enforcing again.
 
 ### Notifications and the screen
 
@@ -296,10 +333,8 @@ listeners the user gave the access to, and what is on screen to the
 accessibility services the user turned on, past any app op. With
 `notification_content` or `screen_content` on, the helper takes that
 access from every such service of the app, as the system's settings do,
-and keeps it taken: given again while the app is isolated, it is taken
-back within a minute, by the helper's regular check (neither service
-reports such a change to it), and that is what the app gets once it is
-out. Which
+and keeps it taken. The helper checks for regrants once a minute and
+takes them back within the retry budget. Which
 services had the access is saved with the entry (`saved_permissions`,
 under the permission the system binds such services with), and the access
 goes back to those services and no others: one the user never turned on
@@ -310,6 +345,14 @@ The access is taken and given back by the helper, through the
 notification service and the `enabled_accessibility_services` setting.
 Android also takes an app's accessibility services when the app is
 force-stopped.
+
+Before changing an app's Android restrictions, the daemon saves the
+installation's current AppOps modes, grants and service access in its
+database. It commits the policy and clears this recovery record together.
+If the command is interrupted, a helper restores and reads back the
+saved values before the record can be cleared. The daemon tries a restore
+up to three times, then only checks the values. A new explicit Jail change
+for that app can retry the restore.
 
 ### The packet filter
 
@@ -357,9 +400,11 @@ Where an app connects is recorded once `network_record` is on for it, and
 of no other app: the probes that report connections drop destinations on
 the internet in the kernel unless the app is listed. A row is an hour in
 which the app connected to a port of an address, under the name it was
-given the address for, with how many connections were tried and how many
-the sandbox refused. An app has rows for some hundreds of destinations
-in an hour; what it connects to past them is counted together. When a TCP
+given the address for when the app uses the relay, with how many connections
+were tried and how many the sandbox refused. Without a relay cover, the
+connections are recorded by address and port. An app has rows for some
+hundreds of destinations in an hour; what it connects to past them is
+counted together. When a TCP
 connection ends, the kernel's own counts
 of the bytes sent and received over it are read once and added to the row;
 nothing is counted packet by packet, and other protocols have connection
@@ -394,10 +439,10 @@ which an app's are: in one that shares them, it would take the resolver
 from every process. It shows among the app's own mounts as `/null` of
 `/dev`.
 
-An app whose connections are recorded, or that is kept from a name, is
-given a socket of the daemon's in place of netd's, in the same way, and
-the daemon stands between the two. It passes each request on to netd on a
-connection made with the app's uid as the effective one, so that netd
+A sandboxed app whose connections are recorded or that is kept from a
+name can use the daemon's socket in place of netd's. The daemon passes
+each allowed request on to
+netd on a connection made with the app's uid as the effective one, so netd
 chooses the network of the app and not of the daemon, and passes the
 answer back; it remembers which name the app was given each address for,
 and does not ask for a name the app is kept from. One request is taken on
@@ -406,11 +451,23 @@ an app connect to it without a rule added to the policy, is open to the
 group netd's is open to, and serves only the apps given it, a few lookups
 of each at once: any process can find the socket, and an app kept from the
 network is to have no resolver at all. Where
-the daemon's domain may not label a socket so, names are not available:
-`bbd sandbox status` says so, connections are recorded under addresses,
-and an app cannot be kept from a name. While there is no daemon, the
-lookups of these apps fail; the daemon that starts next gives their
-processes its own socket.
+the daemon's domain may not label a socket so, `bbd sandbox status`
+reports name rules as unavailable. With the gate in place, a saved
+name rule keeps DNS blocked while its relay is unavailable. The next
+daemon replaces the cover when it can serve lookups.
+
+For an app that uses the relay only to record connections, the cover is
+optional. When recording is the only reason for telling the gate about a
+start, the process keeps running as the cover is placed. An early lookup
+can go directly to Android. A failed recording cover leaves lookups to
+Android. If the relay stops serving, its covers are removed from those
+running apps. If the daemon exits abruptly, the supervisor reads the
+saved policies and detaches optional covers before it waits to restart
+the daemon or gives up. The next daemon keeps a cover only if it leads
+to its own live listener, replaces a stale cover if the relay is
+serving, or removes the optional cover if the relay is unavailable.
+`bbd sandbox list` reports missing domain names under `network_record`
+when the app has no working relay.
 
 On a kernel where starting apps cannot be held, the resolver is left to
 the app; `bbd sandbox list` then names the mounts as missing for
@@ -471,11 +528,17 @@ The daemon lists the uids with `device_ids`, `installed_apps` or `storage`
 on in `/data/system/big_brother_sandbox`, with an `items` line naming them
 unless a uid has the first two and not `storage`; the hook reads the list
 again when it changes, so no restart is needed. The
-hook pins each verified installation directory and checks its identity before answering for a UID. It acknowledges the revision it loaded and writes which hooks attached to
+hook checks and pins installation directories on a worker, then publishes
+the validated list as one snapshot. Framework calls keep using the last verified snapshot while the worker
+rechecks ownership. An event during a reload schedules another pass.
+If the watch stops, the hook keeps serving that snapshot and reports degraded
+health while it retries registration with backoff. The hook acknowledges the
+loaded revision and reports the health of each part in
 `/data/system/big_brother_sandbox.status`.
 
-The hook needs the `system` scope in the LSPosed manager: enable that scope
-for Big Brother in the manager and restart the device.
+Jail reports when the hook has not loaded. Enable Big Brother's `system`
+scope in LSPosed and restart the device in that case. A loaded hook reports
+unsupported framework signatures and runtime failures separately.
 
 A fault in system_server restarts the device, so every hook falls back to
 the original method when its own work fails, and the hook does not install
@@ -494,9 +557,8 @@ minutes.
 - The packet filter's rules stay when the daemon stops or dies, with the
   uids listed then, and are written again by the one that starts next. They
   do not outlast a restart of the device: until the daemon has started, an
-  app has the network. The resolver stays covered in the processes that
-  have it so; one that started while there was no daemon is given the
-  mount by the daemon that starts next.
+  app has the network. Required resolver covers stay in place when the
+  daemon stops. The next daemon reconciles the covers of running apps.
 - Isolated processes of a sandboxed app (a service declared
   `isolatedProcess`, a WebView renderer) run under uids of their own and
   are not given the mounts. Android gives them no shared storage, no
@@ -506,10 +568,14 @@ minutes.
   directory cannot be reached yet, gets empty, read-only storage in its
   place.
 - An entry whose uid Android has since given to another app is taken out.
-- On a device where the framework differs from what the hook expects,
-  the hook does not attach, and `bbd sandbox status` shows it as inactive.
+- On a device where a hook target has an unsupported signature,
+  `bbd sandbox status --json` reports that part as incompatible. A part that
+  fails at runtime passes calls through and reports degraded until restart.
 
 ## Testing
+
+`scripts/check-module-recovery.sh` exercises the boot guard, the disabled
+module hook and re-enabling on a Linux host with fake Android commands.
 
 `scripts/check-sandbox.sh` runs the canary app outside the sandbox, inside
 it and outside again, and checks what it reports seeing each time, an
@@ -520,6 +586,23 @@ file goes through the system's file picker, driven with `uiautomator`:
 ```sh
 (cd android && ./gradlew :canary:assembleDebug)
 ./scripts/check-sandbox.sh              # add --stress 200 for cold starts
+```
+
+`scripts/check-survival.sh` installs both canaries for Android user 0 on a
+rooted, unlocked device with auto-isolation off. It turns on Files and media
+and Installed apps, then checks ten cold starts of each app. Each start draws a
+first frame and must keep the same process through the helper's one-second
+settle and a five-second quiet period. ActivityManager events catch deaths
+and replacements, and AppOps callbacks catch changes between UID-mode
+readbacks. When isolation is applied, the declaring canary must move
+`MANAGE_EXTERNAL_STORAGE` and `GET_USAGE_STATS` to ignored once each. The
+canary without the two declarations must keep its original modes. Both
+are released after the check. Device CI runs this after the mount and
+hold-latency checks on API 33–36.
+
+```sh
+(cd android && ./gradlew :canary:assembleDebug :canary:assembleNoDeclarations)
+./scripts/check-survival.sh
 ```
 
 What an app's permissions and their app ops end as is set out case by case

@@ -128,11 +128,9 @@ internal fun strengthOfTheMoment(modeFlags: Int, ownedModeFlags: Int, globalMode
 /**
  * Whether the arguments of a `ContentProvider.Transport.call` are a read of
  * `Settings.Secure.ANDROID_ID`. The settings client asks for it with the
- * method `GET_secure` and the setting name as the argument; the other
- * arguments (caller, authority, extras) vary between releases, so the two
- * values are looked for anywhere in the list.
+ * method `GET_secure` and the setting name as the argument.
  */
-internal fun isAndroidIdRequest(args: List<Any?>): Boolean = "GET_secure" in args && "android_id" in args
+internal fun isAndroidIdRequest(authority: String?, method: String?, arg: String?): Boolean = isSettingsAuthority(authority) && method == "GET_secure" && arg == "android_id"
 
 /**
  * Whether a content URI's authority is the settings provider's. A caller may
@@ -161,34 +159,6 @@ internal fun androidIdQuery(pathSegments: List<String>): AndroidIdQuery? = when 
     else -> null
 }
 
-/** Where the two arguments `shouldFilterApplication` is judged by are, as indexes into its parameters. */
-internal data class FilterArguments(val callingUid: Int, val target: Int)
-
-/**
- * Finds the calling uid and the target package in a `shouldFilterApplication`
- * signature, given the declared parameter types as class names (`int` for
- * the primitive). Returns null if the signature does not have both.
- *
- * Known shapes:
- * - Android 12 / 12L: `(int callingUid, SettingBase callingSetting,
- *   PackageSetting targetPkgSetting, int userId)`
- * - Android 13 to 17: `(PackageDataSnapshot snapshot, int callingUid,
- *   Object callingSetting, PackageStateInternal targetPkgSetting, int userId)`
- *
- * The calling uid is the first `int`; the user id comes later. The target is
- * the last parameter declared as a package, matched by simple name so that a
- * package moved between Java packages is still found. It has to be the last
- * one and has to go by the declared type: the calling setting comes first and
- * is itself a `PackageSetting` at run time, so the first match, or a match on
- * run-time types, is the caller.
- */
-internal fun locateFilterArguments(parameterTypes: List<String>): FilterArguments? {
-    val callingUid = parameterTypes.indexOfFirst { it == "int" }
-    val target = parameterTypes.indexOfLast { it.substringAfterLast('.') in PACKAGE_TYPES }
-    if (callingUid < 0 || target < 0) return null
-    return FilterArguments(callingUid, target)
-}
-
 /**
  * Whether a sandboxed app calling as [callingUid] must not see the package
  * with app id [targetAppId]. The apps the user installed, other than itself,
@@ -206,47 +176,6 @@ internal fun hideFromSandboxed(callingUid: Int, targetAppId: Int, targetIsSystem
  * gives one of zeros, as to every app once the user deleted the ID.
  */
 internal const val AD_ID_PERMISSION = "com.google.android.gms.permission.AD_ID"
-
-/** Where a check by package of [AD_ID_PERMISSION] names the package and the user. */
-internal data class PackageCheck(val packageName: String, val userId: Int)
-
-/**
- * The package and user a `PermissionManagerService.checkPermission` is
- * asked about, if it asks about [AD_ID_PERMISSION]; null for any other
- * permission.
- *
- * Known shapes:
- * - Android 12 / 12L: `(String permName, String pkgName, int userId)`
- * - Android 13: `(String packageName, String permissionName, int userId)`
- * - Android 14: `(String packageName, String permissionName, int deviceId, int userId)`
- * - Android 15 to 17: `(String packageName, String permissionName,
- *   String persistentDeviceId, int userId)`
- *
- * The package is the first string that is not the permission, the device
- * coming after it; the user is the last `int`.
- */
-internal fun adIdCheckByPackage(args: List<Any?>): PackageCheck? {
-    if (AD_ID_PERMISSION !in args) return null
-    val packageName = args.firstOrNull { it is String && it != AD_ID_PERMISSION } as String? ?: return null
-    val userId = args.lastOrNull { it is Int } as Int? ?: return null
-    return PackageCheck(packageName, userId)
-}
-
-/**
- * The uid a `PermissionManagerService.checkUidPermission` is asked about,
- * if it asks about [AD_ID_PERMISSION]; null for any other permission.
- *
- * Known shapes:
- * - Android 12 / 12L: `(String permName, int uid)`
- * - Android 13: `(int uid, String permissionName)`
- * - Android 14 to 17: `(int uid, String permissionName, int deviceId)`
- *
- * The uid is the first `int`.
- */
-internal fun adIdCheckByUid(args: List<Any?>): Int? {
-    if (AD_ID_PERMISSION !in args) return null
-    return args.firstOrNull { it is Int } as Int?
-}
 
 /** The first release whose apps Play services asks for [AD_ID_PERMISSION]. */
 private const val AD_ID_PERMISSION_SINCE = 33
@@ -346,23 +275,32 @@ internal fun isIdProvider(name: String): Boolean = name.substringAfterLast('@') 
  * and no longer is, is told by its [bootId].
  */
 internal fun sandboxStatusText(
-    androidId: Boolean,
-    appList: Boolean,
-    uriGrants: Boolean,
-    adId: Boolean,
+    androidId: HookState,
+    appList: HookState,
+    uriGrants: HookState,
+    adId: HookState,
     api: Int,
     listReadable: Boolean,
     bootId: String,
 ): String = buildString {
-    append("android_id=").append(if (androidId) 1 else 0).append('\n')
-    append("app_list=").append(if (appList) 1 else 0).append('\n')
-    append("uri_grants=").append(if (uriGrants) 1 else 0).append('\n')
-    append("ad_id=").append(if (adId) 1 else 0).append('\n')
+    fun part(name: String, state: HookState) {
+        append(name).append('=').append(if (state == HookState.WORKING) 1 else 0).append('\n')
+        append(name).append("_health=").append(state.id).append('\n')
+    }
+    part("android_id", androidId)
+    part("app_list", appList)
+    part("uri_grants", uriGrants)
+    part("ad_id", adId)
     append("api=").append(api).append('\n')
     append("list=").append(if (listReadable) 1 else 0).append('\n')
     append("boot=").append(bootId).append('\n')
 }
 
+internal enum class HookState(val id: String) {
+    INCOMPATIBLE("incompatible"),
+    DEGRADED("degraded"),
+    WORKING("working"),
+}
+
 private val WHITE_SPACE = Regex("\\s+")
 private val ANDROID_ID = Regex("[0-9a-fA-F]{16}")
-private val PACKAGE_TYPES = setOf("PackageSetting", "PackageStateInternal")

@@ -143,6 +143,9 @@ enum class SandboxPart(val id: String) {
     /** The app's app ops, held by the daemon. */
     APP_OPS("app_ops"),
 
+    /** The daemon has no current AppOps readback for this installation. */
+    APP_OPS_UNKNOWN("app_ops_unknown"),
+
     /** The LSPosed hook in system_server, answering ANDROID_ID. */
     ANDROID_ID_HOOK("android_id_hook"),
 
@@ -160,10 +163,25 @@ enum class SandboxPart(val id: String) {
 
     /** The kernel's packet filter, refusing the app's connections. */
     PACKET_FILTER("packet_filter"),
+
+    DNS_NAMES("dns_names"),
     ;
 
     companion object {
         fun fromId(id: String): SandboxPart? = entries.firstOrNull { it.id == id }
+    }
+}
+
+/** Health reported by system_server for each sandbox hook part. */
+enum class SandboxHookState(val id: String) {
+    NOT_LOADED("not_loaded"),
+    INCOMPATIBLE("incompatible"),
+    DEGRADED("degraded"),
+    WORKING("working"),
+    ;
+
+    companion object {
+        fun fromId(id: String): SandboxHookState? = entries.firstOrNull { it.id == id }
     }
 }
 
@@ -212,6 +230,7 @@ data class SandboxedApp(
     val recordingSince: Long? = null,
     /** Whether the daemon is still checking this app's Android restrictions. */
     val appOpsChecking: Boolean = false,
+    val hookHealth: Map<SandboxPart, SandboxHookState> = emptyMap(),
 ) {
     val userId: Int get() = userIdOf(uid)
 
@@ -251,17 +270,22 @@ data class SandboxStatus(
     val dnsNames: Boolean = false,
     /** How much data goes to each destination can be counted. */
     val traffic: Boolean = false,
+    /** Newly installed apps allowed to start after automatic isolation failed. */
+    val newAppsFailed: Int = 0,
+    val hookHealth: Map<SandboxPart, SandboxHookState> = emptyMap(),
 ) {
     /** The parts of [item] not in place on this device, for every app. */
     fun unmet(item: SandboxItem): Set<SandboxPart> = item.parts.filterTo(mutableSetOf()) { part ->
         when (part) {
             SandboxPart.MOUNTS -> !gate
             SandboxPart.APP_OPS -> !appOps
+            SandboxPart.APP_OPS_UNKNOWN -> false
             SandboxPart.ANDROID_ID_HOOK -> !androidIdHook
             SandboxPart.APP_LIST_HOOK -> !appListHook
             SandboxPart.URI_GRANTS_HOOK -> !uriGrantsHook
             SandboxPart.AD_ID_HOOK -> !adIdHook
             SandboxPart.PACKET_FILTER -> !network
+            SandboxPart.DNS_NAMES -> !dnsNames
         }
     }
 

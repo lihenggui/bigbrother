@@ -24,10 +24,20 @@ android {
     targetProjectPath = ":app"
     defaultConfig.testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     experimentalProperties["android.experimental.self-instrumenting"] = true
+
+    testOptions.managedDevices.localDevices {
+        create("pixel6Api36") {
+            device = "Pixel 6"
+            sdkVersion = 36
+            systemImageSource = "aosp"
+            testedAbi = "x86_64"
+        }
+    }
 }
 
 baselineProfile {
-    useConnectedDevices = true
+    managedDevices += "pixel6Api36"
+    useConnectedDevices = false
 }
 
 dependencies {

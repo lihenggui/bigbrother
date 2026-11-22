@@ -32,7 +32,10 @@ import org.lsposed.hiddenapibypass.HiddenApiBypass
 import java.io.File
 import java.lang.reflect.Field
 import java.lang.reflect.Method
+import java.lang.reflect.Modifier
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * The identity part of the app sandbox, installed in system_server.
@@ -70,167 +73,162 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 internal class SandboxHook(private val module: XposedInterface) {
     private val listErrorLogged = AtomicBoolean(false)
-
-    private var observer: android.os.FileObserver? = null
+    private val worker = Executors.newSingleThreadExecutor { task -> Thread(task, "BigBrother sandbox") }
+    private val file = File(LIST_PATH)
+    private val list = SandboxList(file, ::onListError, HookInstallations(File(BOOT_ID_PATH))::replace)
+    private val watcher = SandboxListWatcher(file.toPath(), list, worker, ::onListReloaded, ::onWatchLost)
+    private val androidId = Health()
+    private val appList = Health()
+    private val uriGrants = Health()
+    private val adId = Health()
 
     fun install(classLoader: ClassLoader) {
         if (!StartGuard(File(GUARD_DIR)).allowStart()) {
             module.log(Log.WARN, TAG, "start guard tripped in system_server; sandbox hooks not installed")
-            writeStatus(androidId = false, appList = false, uriGrants = false, adId = false, listReadable = false)
+            for (health in listOf(androidId, appList, uriGrants, adId)) health.state.set(HookState.DEGRADED)
+            worker.execute(::writeStatus)
             return
         }
-        val list = SandboxList(File(LIST_PATH), ::onListError, owners = HookInstallations(File(BOOT_ID_PATH)))
-        val androidId = attach("ANDROID_ID") { hookAndroidId(list) }
-        val appList = attach("app list") { hookAppList(classLoader, list) }
-        val uriGrants = attach("file grants") { hookUriGrants(classLoader, list) }
-        val adId = attach("advertising ID") { hookAdId(classLoader, list) }
-        val publish = { writeStatus(androidId, appList, uriGrants, adId, list.readable, list.revision) }
-        list.onLoaded = {
-            publish()
-            if (adId) forgetPermissionAnswers()
-        }
-        val file = File(LIST_PATH)
-        observer = object : android.os.FileObserver(file.parentFile!!, MOVED_TO or DELETE or MOVED_FROM) {
-            override fun onEvent(event: Int, path: String?) {
-                if (path == file.name) list.reload()
+        attach("ANDROID_ID", androidId, ::hookAndroidId)
+        attach("app list", appList) { hookAppList(classLoader) }
+        attach("file grants", uriGrants) { hookUriGrants(classLoader) }
+        attach("advertising ID", adId) { hookAdId(classLoader) }
+        worker.execute {
+            writeStatus()
+            try {
+                Thread({ watcher.watch() }, "BigBrother sandbox events").start()
+            } catch (_: Throwable) {
+                onWatchLost()
             }
-        }.also { it.startWatching() }
-        list.reload()
-        publish()
+        }
     }
 
-    /** Runs one hook installation; a failure leaves the other hook unaffected. */
-    private inline fun attach(name: String, install: () -> Boolean): Boolean = try {
-        install().also { if (!it) module.log(Log.WARN, TAG, "sandbox $name hook found no target") }
-    } catch (e: Throwable) {
-        module.log(Log.ERROR, TAG, "could not install the sandbox $name hook", e)
-        false
+    private fun onWatchLost() {
+        onListError()
+        writeStatus()
     }
 
-    /**
-     * `Settings.Secure.getString` reaches the settings provider through
-     * `ContentProvider.Transport.call`, and a query of the secure table
-     * through `query`; their overloads differ between releases, so every
-     * method of either name is hooked. Both ways have to be covered for the
-     * hook to count: one left open gives the real id away.
-     */
+    private fun onListReloaded(previous: SandboxList.Snapshot) {
+        val revision = list.snapshot.revision
+        if (adId.active && (revision != permissionRevision || (revision != "none" && !previous.readable))) {
+            forgetPermissionAnswers()
+            permissionRevision = revision
+        }
+        writeStatus()
+    }
+
+    private var permissionRevision = "none"
+
+    /** Partially installed hooks keep passing through if an attachment fails. */
+    private inline fun attach(name: String, health: Health, install: () -> Boolean) {
+        try {
+            if (install()) return
+            module.log(Log.WARN, TAG, "sandbox $name hook found no target")
+        } catch (_: Throwable) {
+            module.log(Log.ERROR, TAG, "could not install the sandbox $name hook")
+        }
+        health.state.set(HookState.INCOMPATIBLE)
+    }
+
     @SuppressLint("PrivateApi")
-    private fun hookAndroidId(list: SandboxList): Boolean {
+    private fun hookAndroidId(): Boolean {
         val transport = Class.forName("android.content.ContentProvider\$Transport")
-        var calls = 0
-        var queries = 0
-        for (method in HiddenApiBypass.getDeclaredMethods(transport).filterIsInstance<Method>()) {
-            when (method.name) {
-                "call" -> {
-                    module.hook(method).intercept(AndroidIdHooker(module, list))
-                    calls++
-                }
-
-                "query" -> {
-                    module.hook(method).intercept(AndroidIdQueryHooker(module, list))
-                    queries++
-                }
-            }
-        }
-        return calls > 0 && queries > 0
+        val methods = HiddenApiBypass.getDeclaredMethods(transport).filterIsInstance<Method>()
+        val calls = methods.targets("call", ::isSettingsCall) ?: return false
+        val queries = methods.targets("query", ::isSettingsQuery) ?: return false
+        for (method in calls) module.hook(method).intercept(AndroidIdHooker(androidId, list))
+        for (method in queries) module.hook(method).intercept(AndroidIdQueryHooker(androidId, list))
+        return true
     }
 
-    /**
-     * The package visibility check lives in `AppsFilterBase` from Android 13
-     * and in `AppsFilter` before. Only overloads whose arguments can be
-     * located are hooked; the first class that yields one wins.
-     */
-    private fun hookAppList(classLoader: ClassLoader, list: SandboxList): Boolean {
-        for (className in FILTER_CLASSES) {
+    private fun hookAppList(classLoader: ClassLoader): Boolean {
+        val methods = FILTER_CLASSES.flatMap { className ->
             val filter = try {
                 Class.forName(className, false, classLoader)
             } catch (_: ClassNotFoundException) {
-                continue
+                return@flatMap emptyList()
             }
-            var hooked = 0
-            for (method in filter.declaredMethods) {
-                if (method.name != "shouldFilterApplication") continue
-                val types = method.parameterTypes
-                val arguments = locateFilterArguments(types.map { it.name }) ?: continue
-                val appId = findGetter(types[arguments.target], "getAppId", Int::class.javaPrimitiveType!!) ?: continue
-                // Without it every package with an app's id would be hidden,
-                // the system's own among them: rather no hook than that.
-                val isSystem = findGetter(types[arguments.target], "isSystem", Boolean::class.javaPrimitiveType!!) ?: continue
-                module.hook(method).intercept(AppListHooker(module, list, arguments, appId, isSystem))
-                hooked++
-            }
-            if (hooked > 0) return true
+            filter.declaredMethods.filter { it.name == "shouldFilterApplication" && !Modifier.isAbstract(it.modifiers) }
         }
-        return false
+        if (methods.isEmpty()) return false
+        val hooks = methods.map { method ->
+            if (Modifier.isStatic(method.modifiers)) return false
+            val arguments = locateFilterArguments(method.signature()) ?: return false
+            val target = method.parameterTypes[arguments.target]
+            val appId = findGetter(target, "getAppId", Int::class.javaPrimitiveType!!) ?: return false
+            val isSystem = findGetter(target, "isSystem", Boolean::class.javaPrimitiveType!!) ?: return false
+            method to AppListHooker(appList, list, arguments, appId, isSystem)
+        }
+        for ((method, hooker) in hooks) module.hook(method).intercept(hooker)
+        return true
     }
 
-    /**
-     * Every check of a grant to a file goes through
-     * `UriPermission.getStrength`, the exact grant's and those of the
-     * folders above it alike. Hooked only if every field it needs is there:
-     * a hook that cannot tell the grants apart would hold back none.
-     */
     @SuppressLint("PrivateApi")
-    private fun hookUriGrants(classLoader: ClassLoader, list: SandboxList): Boolean {
+    private fun hookUriGrants(classLoader: ClassLoader): Boolean {
         val grant = Class.forName(URI_PERMISSION_CLASS, false, classLoader)
-        val field = { name: String -> grant.getDeclaredField(name).apply { isAccessible = true } }
+        val method = grant.declaredMethods.asList().targets("getStrength") { it.matches("int", "int") }?.singleOrNull() ?: return false
+        val field = { name: String ->
+            grant.getDeclaredField(name).apply {
+                check(type == Int::class.javaPrimitiveType && !Modifier.isStatic(modifiers))
+                isAccessible = true
+            }
+        }
         val hooker = UriGrantHooker(
-            module,
+            uriGrants,
             list,
             targetUid = field("targetUid"),
             ownedModeFlags = field("ownedModeFlags"),
             globalModeFlags = field("globalModeFlags"),
         )
-        module.hook(grant.getDeclaredMethod("getStrength", Int::class.javaPrimitiveType)).intercept(hooker)
+        module.hook(method).intercept(hooker)
         return true
     }
 
-    /**
-     * Google Play services checks the permission by package, and other
-     * releases of it may by uid: both are hooked. Only a check of
-     * [AD_ID_PERMISSION] is looked at further. The services and providers
-     * that give identifiers are kept from the app where it asks for them:
-     * binding a service (`ActiveServices.bindServiceLocked`, which every
-     * bind goes through, whether or not the service runs already) and
-     * getting a provider (`ContentProviderHelper.getContentProvider`).
-     * Every one of them is hooked, or none counts.
-     */
     @SuppressLint("PrivateApi")
-    private fun hookAdId(classLoader: ClassLoader, list: SandboxList): Boolean {
+    private fun hookAdId(classLoader: ClassLoader): Boolean {
         val service = Class.forName(PERMISSION_MANAGER_CLASS, false, classLoader)
-        val byPackage = service.declaredMethods.filter { it.name == "checkPermission" && it.returnType == Int::class.javaPrimitiveType }
-        val byUid = service.declaredMethods.filter { it.name == "checkUidPermission" && it.returnType == Int::class.javaPrimitiveType }
-        val binds = Class.forName(ACTIVE_SERVICES_CLASS, false, classLoader).declaredMethods.filter {
-            it.name == "bindServiceLocked" && it.returnType == Int::class.javaPrimitiveType && Intent::class.java in it.parameterTypes
-        }
-        // (caller, callingPackage, name, userId, stable): the name is the
-        // last of the two strings.
-        val providers = Class.forName(PROVIDER_HELPER_CLASS, false, classLoader).declaredMethods.filter {
-            it.name == "getContentProvider" && it.parameterTypes.count { type -> type == String::class.java } == 2
-        }
-        if (byPackage.isEmpty() || byUid.isEmpty() || binds.isEmpty() || providers.isEmpty()) return false
+        val byPackage = service.declaredMethods.asList().targets("checkPermission") { locatePackagePermission(it) != null } ?: return false
+        val byUid = service.declaredMethods.asList().targets("checkUidPermission") { locateUidPermission(it) != null } ?: return false
+        val binds = Class.forName(ACTIVE_SERVICES_CLASS, false, classLoader)
+            .declaredMethods.asList().targets("bindServiceLocked", ::isIdentifierBind) ?: return false
+        val providers = Class.forName(PROVIDER_HELPER_CLASS, false, classLoader)
+            .declaredMethods.asList().targets("getContentProvider", ::isIdentifierProvider) ?: return false
         val packageManagerClass = Class.forName("android.content.pm.IPackageManager")
-        val packageUid = packageUidMethod(packageManagerClass) ?: return false
-        val applicationInfo = packageManagerClass.methods.firstOrNull {
-            it.name == "getApplicationInfo" && it.parameterTypes.size == 3 && it.parameterTypes[0] == String::class.java
-        } ?: return false
+        val packageUid = packageLookup(packageManagerClass, "getPackageUid", "int") ?: return false
+        val applicationInfo = packageLookup(packageManagerClass, "getApplicationInfo", "android.content.pm.ApplicationInfo") ?: return false
         val packagesForUid = packageManagerClass.getMethod("getPackagesForUid", Int::class.javaPrimitiveType)
         val packageManager = Class.forName("android.app.AppGlobals").getMethod("getPackageManager")
+        if (packagesForUid.returnType != Array<String>::class.java || packageManager.returnType != packageManagerClass ||
+            !Modifier.isStatic(packageManager.modifiers)
+        ) {
+            return false
+        }
         val targets = TargetSdks(packageManager, packagesForUid, applicationInfo)
-        for (method in byPackage) module.hook(method).intercept(AdIdPackageHooker(module, list, packageManager, packageUid))
-        for (method in byUid) module.hook(method).intercept(AdIdUidHooker(module, list))
-        for (method in binds) module.hook(method).intercept(IdServiceHooker(module, list, targets))
-        for (method in providers) module.hook(method).intercept(IdProviderHooker(module, list))
+        for (method in byPackage) {
+            val args = checkNotNull(locatePackagePermission(method.signature()))
+            module.hook(method).intercept(AdIdPackageHooker(adId, list, args, packageManager, packageUid))
+        }
+        for (method in byUid) {
+            val args = checkNotNull(locateUidPermission(method.signature()))
+            module.hook(method).intercept(AdIdUidHooker(adId, list, args))
+        }
+        for (method in binds) module.hook(method).intercept(IdServiceHooker(adId, list, targets))
+        for (method in providers) module.hook(method).intercept(IdProviderHooker(adId, list))
         return true
     }
 
-    /**
-     * `IPackageManager.getPackageUid(String, flags, int userId)`, the flags
-     * a `long` from Android 13 and an `int` before.
-     */
-    private fun packageUidMethod(packageManagerClass: Class<*>): Method? = packageManagerClass.methods.firstOrNull {
-        it.name == "getPackageUid" && it.parameterTypes.size == 3 && it.parameterTypes[0] == String::class.java
+    private fun packageLookup(type: Class<*>, name: String, returns: String): Method? = type.methods.firstOrNull { method ->
+        if (method.name != name) return@firstOrNull false
+        val signature = method.signature()
+        signature.matches(returns, "java.lang.String", "long", "int") || signature.matches(returns, "java.lang.String", "int", "int")
     }
+
+    /** A recognized overload cannot establish coverage of a different one. */
+    private fun List<Method>.targets(name: String, supported: (HookSignature) -> Boolean): List<Method>? = filter { it.name == name && !Modifier.isStatic(it.modifiers) }.takeIf { methods ->
+        methods.isNotEmpty() && methods.all { supported(it.signature()) }
+    }
+
+    private fun Method.signature() = HookSignature(returnType.typeName, parameterTypes.map { it.typeName })
 
     /**
      * Has every process forget the answers to permission checks it keeps
@@ -243,8 +241,8 @@ internal class SandboxHook(private val module: XposedInterface) {
     private fun forgetPermissionAnswers() {
         try {
             HiddenApiBypass.invoke(Class.forName("android.content.pm.PackageManager"), null, "invalidatePackageInfoCache")
-        } catch (e: Throwable) {
-            module.log(Log.ERROR, TAG, "could not have the permission answers forgotten", e)
+        } catch (_: Throwable) {
+            adId.degrade("could not have the permission answers forgotten")
         }
     }
 
@@ -263,24 +261,48 @@ internal class SandboxHook(private val module: XposedInterface) {
             ?.apply { isAccessible = true }
     }
 
-    private fun onListError(e: Throwable) {
-        // The list is checked every second; one report is enough.
+    private fun onListError() {
         if (listErrorLogged.compareAndSet(false, true)) {
-            module.log(Log.ERROR, TAG, "could not read the sandbox list", e)
+            module.log(Log.ERROR, TAG, "could not read the sandbox list")
         }
     }
 
-    /** Written by rename, so the daemon never reads half a file. */
-    @Synchronized
-    private fun writeStatus(androidId: Boolean, appList: Boolean, uriGrants: Boolean, adId: Boolean, listReadable: Boolean, revision: String = "none") {
+    /** Written by the worker by rename, so the daemon never reads half a file. */
+    private fun writeStatus() {
         try {
             val status = File(STATUS_PATH)
             val temporary = File("$STATUS_PATH.tmp")
             val bootId = File(BOOT_ID_PATH).readText().trim()
-            temporary.writeText(sandboxStatusText(androidId, appList, uriGrants, adId, Build.VERSION.SDK_INT, listReadable, bootId) + "revision=$revision\npid=${android.os.Process.myPid()}\n")
+            val snapshot = list.snapshot
+            val ready = snapshot.readable && watcher.current
+            val health = sandboxStatusText(
+                androidId.state.get().withListReady(ready),
+                appList.state.get().withListReady(ready),
+                uriGrants.state.get().withListReady(ready),
+                adId.state.get().withListReady(ready),
+                Build.VERSION.SDK_INT,
+                ready,
+                bootId,
+            )
+            temporary.writeText(health + "revision=${snapshot.revision}\npid=${android.os.Process.myPid()}\n")
             if (!temporary.renameTo(status)) error("rename failed")
-        } catch (e: Throwable) {
-            module.log(Log.ERROR, TAG, "could not write the sandbox status", e)
+        } catch (_: Throwable) {
+            module.log(Log.ERROR, TAG, "could not write the sandbox status")
+        }
+    }
+
+    private inner class Health {
+        val state = AtomicReference(HookState.WORKING)
+        val active: Boolean get() = state.get() == HookState.WORKING
+
+        fun degrade(message: String) {
+            if (state.compareAndSet(HookState.WORKING, HookState.DEGRADED)) {
+                // Even the error path on a Binder thread must leave status I/O to the worker.
+                worker.execute {
+                    module.log(Log.ERROR, TAG, message)
+                    writeStatus()
+                }
+            }
         }
     }
 
@@ -289,12 +311,11 @@ internal class SandboxHook(private val module: XposedInterface) {
      * class, not a lambda: see `ProviderHook.RecordingHooker`.
      */
     private class AndroidIdHooker(
-        module: XposedInterface,
+        health: Health,
         private val list: SandboxList,
-    ) : FailSafeHooker(module, "ANDROID_ID") {
+    ) : FailSafeHooker(health, "ANDROID_ID") {
         override fun replacement(chain: XposedInterface.Chain): Any? {
-            val args = chain.args
-            if (!isAndroidIdRequest(args)) return null
+            if (!isAndroidIdRequest(chain.getArg(1) as String?, chain.getArg(2) as String?, chain.getArg(3) as String?)) return null
             val androidId = list.androidIdOf(Binder.getCallingUid()) ?: return null
             return Bundle().apply { putString("value", androidId) }
         }
@@ -308,16 +329,15 @@ internal class SandboxHook(private val module: XposedInterface) {
      * lambda: see `ProviderHook.RecordingHooker`.
      */
     private class AndroidIdQueryHooker(
-        private val module: XposedInterface,
+        private val health: Health,
         private val list: SandboxList,
     ) : XposedInterface.Hooker {
-        private val failureLogged = AtomicBoolean(false)
-
         override fun intercept(chain: XposedInterface.Chain): Any? {
+            if (!health.active) return chain.proceed()
             // Every provider in system_server comes through here: the
             // authority is looked at first, and little else for the others.
             val replacement = guarded {
-                val uri = chain.args.firstOrNull { it is Uri } as Uri?
+                val uri = chain.getArg(1) as Uri?
                 if (uri == null || !isSettingsAuthority(uri.authority)) return@guarded null
                 val query = androidIdQuery(uri.pathSegments) ?: return@guarded null
                 list.androidIdOf(Binder.getCallingUid())?.let { query to it }
@@ -325,10 +345,15 @@ internal class SandboxHook(private val module: XposedInterface) {
             val result = chain.proceed()
             if (replacement == null || result !is Cursor) return result
             val (query, androidId) = replacement
-            return guarded { withAndroidId(result, query, androidId) } ?: result.also {
-                // Left wherever the copying stopped.
-                guarded { it.moveToPosition(-1) }
-            }
+            return guarded {
+                val position = result.position
+                try {
+                    withAndroidId(result, query, androidId)
+                } catch (e: Throwable) {
+                    result.moveToPosition(position)
+                    throw e
+                }
+            } ?: result
         }
 
         /** A copy of [cursor] in which the ANDROID_ID row has [androidId] as its value. */
@@ -338,7 +363,15 @@ internal class SandboxHook(private val module: XposedInterface) {
             val value = columns.indexOf("value")
             // The caller did not ask for the values: there is none to replace.
             if (value < 0) return cursor
-            val copy = MatrixCursor(columns, cursor.count)
+            val copy = object : MatrixCursor(columns, cursor.count) {
+                override fun close() {
+                    try {
+                        cursor.close()
+                    } finally {
+                        super.close()
+                    }
+                }
+            }
             cursor.moveToPosition(-1)
             // Values of the whole table without their names: which of them
             // is the id cannot be told, so none is returned.
@@ -349,16 +382,13 @@ internal class SandboxHook(private val module: XposedInterface) {
                 copy.addRow(row)
             }
             copy.extras = cursor.extras
-            cursor.close()
             return copy
         }
 
         private inline fun <T> guarded(block: () -> T): T? = try {
             block()
-        } catch (e: Throwable) {
-            if (failureLogged.compareAndSet(false, true)) {
-                module.log(Log.ERROR, TAG, "sandbox ANDROID_ID query hook failed; passing results through", e)
-            }
+        } catch (_: Throwable) {
+            health.degrade("sandbox ANDROID_ID query hook failed; passing results through")
             null
         }
     }
@@ -368,12 +398,12 @@ internal class SandboxHook(private val module: XposedInterface) {
      * about it. Named class, not a lambda: see `ProviderHook.RecordingHooker`.
      */
     private class AppListHooker(
-        module: XposedInterface,
+        health: Health,
         private val list: SandboxList,
         private val arguments: FilterArguments,
         private val appIdGetter: Method,
         private val isSystemGetter: Method,
-    ) : FailSafeHooker(module, "app list") {
+    ) : FailSafeHooker(health, "app list") {
         override fun replacement(chain: XposedInterface.Chain): Any? {
             val callingUid = chain.getArg(arguments.callingUid) as Int
             if (!list.hidesAppsFrom(callingUid)) return null
@@ -390,12 +420,12 @@ internal class SandboxHook(private val module: XposedInterface) {
      * lambda: see `ProviderHook.RecordingHooker`.
      */
     private class UriGrantHooker(
-        module: XposedInterface,
+        health: Health,
         private val list: SandboxList,
         private val targetUid: Field,
         private val ownedModeFlags: Field,
         private val globalModeFlags: Field,
-    ) : FailSafeHooker(module, "file grants") {
+    ) : FailSafeHooker(health, "file grants") {
         override fun replacement(chain: XposedInterface.Chain): Any? {
             val grant = chain.thisObject ?: return null
             if (!list.isolatesStorageOf(targetUid.getInt(grant))) return null
@@ -413,19 +443,23 @@ internal class SandboxHook(private val module: XposedInterface) {
      * `ProviderHook.RecordingHooker`.
      */
     private class AdIdPackageHooker(
-        module: XposedInterface,
+        health: Health,
         private val list: SandboxList,
+        private val arguments: PermissionArguments,
         private val packageManager: Method,
         private val packageUid: Method,
-    ) : FailSafeHooker(module, "advertising ID") {
+    ) : FailSafeHooker(health, "advertising ID") {
+        private val flags: Any = if (packageUid.parameterTypes[1] == Long::class.javaPrimitiveType) 0L else 0
+
         override fun replacement(chain: XposedInterface.Chain): Any? {
-            val check = adIdCheckByPackage(chain.args) ?: return null
+            if (chain.getArg(arguments.permission) != AD_ID_PERMISSION) return null
+            val packageName = chain.getArg(arguments.subject) as String? ?: return null
+            val userId = chain.getArg(arguments.user) as Int
             // As system_server, not as the caller: what the caller may see
             // is beside the point, and the caller is Play services.
             val identity = Binder.clearCallingIdentity()
             val uid = try {
-                val flags: Any = if (packageUid.parameterTypes[1] == Long::class.javaPrimitiveType) 0L else 0
-                packageUid.invoke(packageManager.invoke(null), check.packageName, flags, check.userId) as Int
+                packageUid.invoke(packageManager.invoke(null), packageName, flags, userId) as Int
             } finally {
                 Binder.restoreCallingIdentity(identity)
             }
@@ -443,12 +477,13 @@ internal class SandboxHook(private val module: XposedInterface) {
         private val packagesForUid: Method,
         private val applicationInfo: Method,
     ) {
+        private val flags: Any = if (applicationInfo.parameterTypes[1] == Long::class.javaPrimitiveType) 0L else 0
+
         fun of(uid: Int): List<Int> {
             val identity = Binder.clearCallingIdentity()
             try {
                 val manager = packageManager.invoke(null)
                 val packages = packagesForUid.invoke(manager, uid) as Array<*>? ?: return emptyList()
-                val flags: Any = if (applicationInfo.parameterTypes[1] == Long::class.javaPrimitiveType) 0L else 0
                 return packages.mapNotNull { name ->
                     (applicationInfo.invoke(manager, name, flags, uid / PER_USER_RANGE) as ApplicationInfo?)?.targetSdkVersion
                 }
@@ -466,12 +501,12 @@ internal class SandboxHook(private val module: XposedInterface) {
      * not a lambda: see `ProviderHook.RecordingHooker`.
      */
     private class IdServiceHooker(
-        module: XposedInterface,
+        health: Health,
         private val list: SandboxList,
         private val targets: TargetSdks,
-    ) : FailSafeHooker(module, "identifier services") {
+    ) : FailSafeHooker(health, "identifier services") {
         override fun replacement(chain: XposedInterface.Chain): Any? {
-            val intent = chain.args.firstOrNull { it is Intent } as Intent? ?: return null
+            val intent = chain.getArg(2) as Intent? ?: return null
             val component = intent.component
             val kind = idServiceBound(component?.packageName ?: intent.`package`, component?.className, intent.action) ?: return null
             // The app's own: the activity manager reads it the same way.
@@ -489,11 +524,11 @@ internal class SandboxHook(private val module: XposedInterface) {
      * `ProviderHook.RecordingHooker`.
      */
     private class IdProviderHooker(
-        module: XposedInterface,
+        health: Health,
         private val list: SandboxList,
-    ) : FailSafeHooker(module, "identifier providers") {
+    ) : FailSafeHooker(health, "identifier providers") {
         override fun replacement(chain: XposedInterface.Chain): Any? {
-            val name = chain.args.lastOrNull { it is String } as String? ?: return null
+            val name = chain.getArg(2) as String? ?: return null
             if (!isIdProvider(name) || !list.withholdsAdIdFrom(Binder.getCallingUid())) return null
             return NULL_ANSWER
         }
@@ -501,11 +536,13 @@ internal class SandboxHook(private val module: XposedInterface) {
 
     /** As [AdIdPackageHooker], for a check by uid. */
     private class AdIdUidHooker(
-        module: XposedInterface,
+        health: Health,
         private val list: SandboxList,
-    ) : FailSafeHooker(module, "advertising ID") {
+        private val arguments: PermissionArguments,
+    ) : FailSafeHooker(health, "advertising ID") {
         override fun replacement(chain: XposedInterface.Chain): Any? {
-            val uid = adIdCheckByUid(chain.args) ?: return null
+            if (chain.getArg(arguments.permission) != AD_ID_PERMISSION) return null
+            val uid = chain.getArg(arguments.subject) as Int
             return if (list.withholdsAdIdFrom(uid)) PackageManager.PERMISSION_DENIED else null
         }
     }
@@ -517,10 +554,9 @@ internal class SandboxHook(private val module: XposedInterface) {
      * original method's own exceptions pass through untouched.
      */
     private abstract class FailSafeHooker(
-        private val module: XposedInterface,
+        private val health: Health,
         private val name: String,
     ) : XposedInterface.Hooker {
-        private val failureLogged = AtomicBoolean(false)
 
         /**
          * The value to return in place of the original call, or null to let
@@ -529,12 +565,11 @@ internal class SandboxHook(private val module: XposedInterface) {
         abstract fun replacement(chain: XposedInterface.Chain): Any?
 
         override fun intercept(chain: XposedInterface.Chain): Any? {
+            if (!health.active) return chain.proceed()
             val replaced = try {
                 replacement(chain)
-            } catch (e: Throwable) {
-                if (failureLogged.compareAndSet(false, true)) {
-                    module.log(Log.ERROR, TAG, "sandbox $name hook failed; passing calls through", e)
-                }
+            } catch (_: Throwable) {
+                health.degrade("sandbox $name hook failed; passing calls through")
                 null
             }
             return when {
@@ -575,6 +610,8 @@ internal class SandboxHook(private val module: XposedInterface) {
         val FILTER_CLASSES = listOf(
             // Android 13 to 17.
             "com.android.server.pm.AppsFilterBase",
+            "com.android.server.pm.AppsFilterImpl",
+            "com.android.server.pm.AppsFilterSnapshotImpl",
             // Android 12 and 12L.
             "com.android.server.pm.AppsFilter",
         )

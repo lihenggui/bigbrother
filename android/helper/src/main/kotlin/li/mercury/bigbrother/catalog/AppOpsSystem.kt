@@ -21,9 +21,20 @@ import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.PermissionState
 /**
  * An op this device knows, as the service names it, with the op it is
  * switched with, under which the service keeps its uid mode, and the
- * permission whose grant the system sets that uid mode by, if any.
+ * permission whose grant the system sets that uid mode by, if any
+ * ([permission]: only when the system maps that permission back to this
+ * op). [declaredBy] is the permission an app must request to be allowed the
+ * op at all; Android 13 and 14 do not map some of these back (usage
+ * access), so it is kept apart.
  */
-internal class GuardedOp(val name: String, val code: Int, val switchCode: Int, val defaultMode: Int?, val permission: String?)
+internal class GuardedOp(
+    val name: String,
+    val code: Int,
+    val switchCode: Int,
+    val defaultMode: Int?,
+    val permission: String?,
+    val declaredBy: String? = permission,
+)
 
 /**
  * What [AppOpsGuardHandler] needs of the framework: the app ops service and
@@ -82,17 +93,21 @@ internal interface Taking {
     /** The state of [name] for [uid], `null` if no package of it has it to take. */
     fun state(uid: Int, name: String): PermissionState?
 
-    /** Take [name] from [uid] where it is not taken; whether anything had to be changed. */
-    fun hold(uid: Int, name: String): Boolean
+    /** Ask [mayChange] before a permission revocation or a service disable that can interrupt the app. */
+    fun hold(uid: Int, name: String, mayChange: () -> Boolean): HoldResult
 
     /** Give [uid] back [name] as it was ([state]); `null` where that is not known. */
     fun putBack(uid: Int, name: String, state: PermissionState?)
+
+    enum class HoldResult { HELD, CHANGED, SUSPENDED }
 }
 
 /** The calls on runtime permissions [AppOpsGuardHandler] makes. */
 internal interface RuntimePermissions {
-    /** The packages of [uid] that request [permission]. */
-    fun requesting(uid: Int, permission: String): List<String>
+    /** The packages of [uid] that request [permission], and whether every package could be read. */
+    fun requesting(uid: Int, permission: String): Requests
+
+    class Requests(val packages: List<String>, val complete: Boolean)
 
     /** The system keeps one grant for every package of a uid. */
     fun isGranted(uid: Int, permission: String): Boolean

@@ -82,12 +82,63 @@ impl Writer {
         result
     }
 
-    /// Forget the entry for `uid`. Only for undoing the first enable of an
-    /// app when it failed: a disabled entry is otherwise kept.
-    pub fn delete_sandbox(&self, uid: u32) -> anyhow::Result<()> {
+    pub fn stage_appops(&self, undo: &AppOpsUndo) -> anyhow::Result<()> {
         self.write_sandbox(|tx| {
-            tx.execute("DELETE FROM sandbox WHERE uid = ?1", params![uid])?;
-            tx.execute("DELETE FROM sandbox_packages WHERE uid = ?1", params![uid])?;
+            tx.execute(
+                "INSERT INTO sandbox_appops_undo (uid, package, install_id, preimage) VALUES (?1, ?2, ?3, ?4)",
+                params![undo.uid, undo.package, undo.install_id, undo.preimage],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn appops_undo(&self) -> anyhow::Result<Vec<AppOpsUndo>> {
+        appops_undo(&self.conn)
+    }
+
+    pub fn note_appops_recovery_attempt(&self, uid: u32) -> anyhow::Result<()> {
+        self.write_sandbox(|tx| {
+            tx.execute(
+                "UPDATE sandbox_appops_undo SET attempts = attempts + 1 WHERE uid = ?1",
+                [uid],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn retry_appops_recovery(&self, uid: u32) -> anyhow::Result<()> {
+        self.write_sandbox(|tx| {
+            tx.execute(
+                "UPDATE sandbox_appops_undo SET attempts = 0 WHERE uid = ?1",
+                [uid],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn clear_appops_undo(&self, uid: u32) -> anyhow::Result<()> {
+        self.write_sandbox(|tx| Self::delete_appops_undo(tx, uid))
+    }
+
+    fn delete_appops_undo(tx: &Transaction<'_>, uid: u32) -> anyhow::Result<()> {
+        tx.execute("DELETE FROM sandbox_appops_undo WHERE uid = ?1", [uid])?;
+        Ok(())
+    }
+
+    /// The committed settings and recovery records cross the commit point together.
+    pub fn commit_sandbox(
+        &self,
+        entries: &[&SandboxEntry],
+        global: Option<&[(&str, &str)]>,
+    ) -> anyhow::Result<()> {
+        self.write_sandbox(|tx| {
+            for entry in entries {
+                Self::write_sandbox_entry(tx, entry)?;
+                Self::delete_appops_undo(tx, entry.uid)?;
+            }
+            if let Some(pairs) = global {
+                Self::write_sandbox_global(tx, pairs)?;
+            }
             Ok(())
         })
     }
@@ -140,18 +191,49 @@ impl Writer {
 
     /// Replace the global settings of the sandbox with `pairs` of item and
     /// mode. Written through to the disk, as the entries are.
+    #[cfg(test)]
     pub fn put_sandbox_global(&self, pairs: &[(&str, &str)]) -> anyhow::Result<()> {
-        self.write_sandbox(|tx| {
-            tx.execute("DELETE FROM sandbox_global", [])?;
-            for (item, mode) in pairs {
-                tx.execute(
-                    "INSERT INTO sandbox_global (item, mode) VALUES (?1, ?2)",
-                    params![item, mode],
-                )?;
-            }
-            Ok(())
-        })
+        self.write_sandbox(|tx| Self::write_sandbox_global(tx, pairs))
     }
+
+    fn write_sandbox_global(tx: &Transaction<'_>, pairs: &[(&str, &str)]) -> anyhow::Result<()> {
+        tx.execute("DELETE FROM sandbox_global", [])?;
+        for (item, mode) in pairs {
+            tx.execute(
+                "INSERT INTO sandbox_global (item, mode) VALUES (?1, ?2)",
+                params![item, mode],
+            )?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct AppOpsUndo {
+    pub uid: u32,
+    pub package: String,
+    pub install_id: String,
+    pub preimage: String,
+    pub attempts: u32,
+}
+
+fn appops_undo(conn: &Connection) -> anyhow::Result<Vec<AppOpsUndo>> {
+    if !super::schema::has_appops_undo(conn)? {
+        return Ok(Vec::new());
+    }
+    let mut stmt = conn.prepare(
+        "SELECT uid, package, install_id, preimage, attempts FROM sandbox_appops_undo ORDER BY uid",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(AppOpsUndo {
+            uid: row.get(0)?,
+            package: row.get(1)?,
+            install_id: row.get(2)?,
+            preimage: row.get(3)?,
+            attempts: row.get(4)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
 }
 
 /// One app in the sandbox: a `sandbox` row.
@@ -216,8 +298,16 @@ pub struct KnownApp {
     /// The Android user it was dealt with for; `None` for every user.
     pub user: Option<u32>,
     pub package: String,
-    /// The package is a library, left alone itself.
-    pub library: bool,
+    pub kind: KnownKind,
+}
+
+/// The values 0 and 1 are the app and library rows written by v0.3.0.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KnownKind {
+    App = 0,
+    Library = 1,
+    Failed = 2,
+    MissingProfile = 3,
 }
 
 /// The `meta` key that says whether newly installed apps are isolated.
@@ -237,7 +327,13 @@ impl Writer {
                 app_id: r.get(0)?,
                 user: u32::try_from(r.get::<_, i64>(1)?).ok(),
                 package: r.get(2)?,
-                library: r.get(3)?,
+                kind: match r.get::<_, i64>(3)? {
+                    0 => KnownKind::App,
+                    1 => KnownKind::Library,
+                    2 => KnownKind::Failed,
+                    3 => KnownKind::MissingProfile,
+                    _ => return Err(rusqlite::Error::InvalidQuery),
+                },
             })
         })?;
         Ok((on, rows.collect::<Result<_, _>>()?))
@@ -263,7 +359,7 @@ impl Writer {
                     app.app_id,
                     app.user.map_or(-1, i64::from),
                     app.package,
-                    app.library
+                    app.kind as i64
                 ])?;
             }
             Ok(())
@@ -272,6 +368,10 @@ impl Writer {
 }
 
 impl Reader {
+    pub fn appops_undo(&self) -> anyhow::Result<Vec<AppOpsUndo>> {
+        appops_undo(self.connection())
+    }
+
     /// Every sandbox entry, enabled or not, by uid.
     pub fn sandbox_entries(&self) -> anyhow::Result<Vec<SandboxEntry>> {
         sandbox_entries(self.connection())
@@ -362,7 +462,7 @@ mod tests {
             app_id,
             user,
             package: package.into(),
-            library: false,
+            kind: KnownKind::App,
         };
         let rows = [
             known(10100, None, "com.a"),
@@ -370,7 +470,7 @@ mod tests {
             known(10230, Some(0), "com.new"),
             known(10230, Some(10), "com.new"),
             KnownApp {
-                library: true,
+                kind: KnownKind::Library,
                 ..known(10240, None, "com.library_2")
             },
         ];
@@ -436,9 +536,6 @@ mod tests {
         );
         w.put_sandbox_packages(1_010_100, &pair[1..]).unwrap();
         assert_eq!(w.sandbox_packages(1_010_100).unwrap().len(), 1);
-        w.delete_sandbox(1_010_100).unwrap();
-        assert_eq!(w.sandbox_entries().unwrap(), [sandbox_entry_for(10100)]);
-        assert!(w.sandbox_packages(1_010_100).unwrap().is_empty());
         drop(w);
         // It survives the daemon starting again.
         assert_eq!(

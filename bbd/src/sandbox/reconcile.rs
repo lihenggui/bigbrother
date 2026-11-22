@@ -20,7 +20,7 @@ use crate::{
     sync::lock,
 };
 
-use super::{Entry, Resumed, Sandbox, appops, dirs};
+use super::{Entry, Resumed, Sandbox, dirs};
 
 /// Least time between two log lines about entries that cannot be taken out:
 /// each is tried again at every command and every look for new apps.
@@ -33,10 +33,11 @@ impl Sandbox {
         if packages.refresh() && !packages.is_empty() {
             self.reconcile_entries(writer, packages, None);
         }
-        self.resume_verified(writer, packages);
+        self.suspend_pending_appops();
+        self.resume_verified(packages);
     }
 
-    fn resume_verified(&mut self, writer: &Writer, packages: &mut Packages) {
+    fn resume_verified(&mut self, packages: &mut Packages) {
         let mut owned = Vec::new();
         let mut waiting = BTreeSet::new();
         for entry in self.snapshot_read().values() {
@@ -49,7 +50,6 @@ impl Sandbox {
         self.awaiting_storage = waiting;
         let mut apps = Vec::new();
         for entry in owned {
-            let entry = self.naming_taken_on_resume(writer, entry);
             apps.push(Resumed {
                 packages: packages.for_uid(entry.uid).to_vec(),
                 items: self.items(&entry),
@@ -59,31 +59,6 @@ impl Sandbox {
         apps.sort_by_key(|app| app.entry.uid);
         for effect in &mut self.effects {
             effect.resume(&apps);
-        }
-    }
-
-    /// `entry`, taken up again, naming the permissions its items take that
-    /// it does not name yet, as enabling and changing items do before they
-    /// are taken: an item that takes one, new since the entry was last
-    /// written and on by the global settings, is taken as the helper
-    /// starts, and what it finds is kept only for what the entry names.
-    fn naming_taken_on_resume(&mut self, writer: &Writer, entry: Entry) -> Entry {
-        let named = appops::naming_taken(&entry, &self.items(&entry));
-        if named == entry {
-            return entry;
-        }
-        match writer.put_sandbox(&named) {
-            Ok(()) => {
-                self.snapshot_write().insert(named.uid, named.clone());
-                named
-            }
-            Err(e) => {
-                eprintln!(
-                    "bbd: sandbox: naming what uid {} is held to: {e:#}",
-                    entry.uid
-                );
-                entry
-            }
         }
     }
 
@@ -108,7 +83,7 @@ impl Sandbox {
                 .is_some_and(|entry| self.owns(entry))
         });
         if changed || available {
-            self.resume_verified(writer, packages);
+            self.resume_verified(packages);
         }
     }
 

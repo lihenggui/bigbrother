@@ -17,109 +17,47 @@
 package li.mercury.bigbrother.hook
 
 import java.io.File
-import java.util.concurrent.atomic.AtomicLong
+import java.nio.file.Files
+import java.nio.file.NoSuchFileException
 
-/**
- * The sandboxed uids and their Android IDs, as last written by the daemon
- * (format: [parseSandboxList]).
- *
- * The daemon replaces the file by rename whenever an app is sandboxed or
- * released, so a change takes effect without a reboot. The callers are
- * binder threads on hot paths (every package visibility check goes through
- * here), so the file is looked at no more than once per [checkIntervalNanos],
- * by whichever thread first finds the interval over, and read again only when
- * its modification time or size has changed. Everyone else reads the last
- * snapshot without waiting.
- *
- * A missing file means nothing is sandboxed. A file that exists but cannot be
- * read keeps the last snapshot, reports through [onError], and is tried again
- * at the next check.
- */
+/** Binder threads read only this snapshot; the reload worker owns all installation checks. */
 internal class SandboxList(
     private val file: File,
-    private val onError: (Throwable) -> Unit,
-    private val checkIntervalNanos: Long = CHECK_INTERVAL_NANOS,
-    private val clock: () -> Long = System::nanoTime,
-    private val owners: HookInstallations? = null,
+    private val onError: () -> Unit,
+    private val verifyOwners: (String, Set<Int>) -> Unit,
 ) {
+    data class Snapshot(
+        val entries: Map<Int, SandboxedUid> = emptyMap(),
+        val revision: String = "none",
+        val readable: Boolean = false,
+    )
+
     @Volatile
-    private var entries: Map<Int, SandboxedUid> = emptyMap()
-
-    private var stamp: java.nio.file.attribute.BasicFileAttributes? = null
-
-    var revision: String = "none"
+    var snapshot = Snapshot()
         private set
 
-    var onLoaded: (() -> Unit)? = null
+    fun androidIdOf(uid: Int): String? = snapshot.entries[uid]?.takeIf { it.ownAndroidId }?.androidId
+    fun withholdsAdIdFrom(uid: Int): Boolean = snapshot.entries[uid]?.ownAndroidId == true
+    fun hidesAppsFrom(uid: Int): Boolean = snapshot.entries[uid]?.hidesApps == true
+    fun isolatesStorageOf(uid: Int): Boolean = snapshot.entries[uid]?.isolatesStorage == true
 
-    /** Whether the last look at the file went well; a missing file counts. */
-    @Volatile
-    var readable: Boolean = true
-        private set
-
-    private val nextCheck: AtomicLong
-
-    init {
-        reload()
-        nextCheck = AtomicLong(clock() + checkIntervalNanos)
-    }
-
-    /** The Android ID configured for [uid], or null if it keeps the real one. */
-    fun androidIdOf(uid: Int): String? = entryOf(uid)?.takeIf { it.ownAndroidId }?.androidId
-
-    /** Whether [uid] is to get no advertising ID: it is, with its own Android ID. */
-    fun withholdsAdIdFrom(uid: Int): Boolean = entryOf(uid)?.ownAndroidId == true
-
-    /** Whether [uid] is to see no installed app but itself and the system's. */
-    fun hidesAppsFrom(uid: Int): Boolean = entryOf(uid)?.hidesApps == true
-
-    /** Whether [uid] is held to the file grants of the moment. */
-    fun isolatesStorageOf(uid: Int): Boolean = entryOf(uid)?.isolatesStorage == true
-
-    private fun entryOf(uid: Int): SandboxedUid? {
-        refresh()
-        if (uid !in entries) return null
-        return synchronized(this) { entries[uid]?.takeIf { owners?.matches(uid) != false } }
-    }
-
-    private fun refresh() {
-        val due = nextCheck.get()
-        val now = clock()
-        // Compare by difference: nanoTime may be negative or wrap.
-        if (now - due < 0) return
-        if (!nextCheck.compareAndSet(due, now + checkIntervalNanos)) return
-        reload(force = false)
-    }
-
-    @Synchronized
-    fun reload(force: Boolean = true) {
-        val previous = revision
-        val wasReadable = readable
-        try {
+    /** Runs on the worker so a slow read never interrupts enforcement. */
+    fun reload() {
+        snapshot = try {
             val text = try {
-                val attrs = java.nio.file.Files.readAttributes(file.toPath(), java.nio.file.attribute.BasicFileAttributes::class.java)
-                val last = stamp
-                if (!force && last != null && attrs.fileKey() != null && attrs.fileKey() == last.fileKey() && attrs.lastModifiedTime() == last.lastModifiedTime() && attrs.size() == last.size()) return
-                file.readText().also { stamp = attrs }
-            } catch (_: java.nio.file.NoSuchFileException) {
-                stamp = null
-                ""
+                Files.readAllBytes(file.toPath()).decodeToString()
+            } catch (_: NoSuchFileException) {
+                null
             }
-            val nextRevision = text.lineSequence().firstOrNull()?.removePrefix("# ")?.takeIf { text.startsWith("# ") } ?: "none"
-            val parsed = parseSandboxList(text)
-            if (previous != nextRevision || !wasReadable || force) owners?.replace(text, parsed.keys)
-            entries = parsed
-            revision = nextRevision
-            readable = true
-        } catch (e: Exception) {
-            stamp = null
-            readable = false
-            onError(e)
+            val revision = text?.lineSequence()?.firstOrNull()?.takeIf { it.startsWith("# ") }?.removePrefix("# ") ?: "none"
+            val entries = parseSandboxList(text.orEmpty())
+            // The daemon removes the file when there is no policy to apply.
+            check(text == null || entries.isNotEmpty())
+            verifyOwners(text.orEmpty(), entries.keys)
+            Snapshot(entries, revision, readable = true)
+        } catch (_: Throwable) {
+            onError()
+            snapshot.copy(readable = false)
         }
-        if (previous != revision || wasReadable != readable) onLoaded?.invoke()
-    }
-
-    private companion object {
-        const val CHECK_INTERVAL_NANOS = 1_000_000_000L
     }
 }

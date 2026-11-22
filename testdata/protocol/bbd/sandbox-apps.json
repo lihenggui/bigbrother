@@ -2,8 +2,8 @@
   "apps": [{
     "uid": 10234, "package": "com.example.notes", "enabled": true, "created": 1,
     "settings": {"camera": "off", "future": "on"},
-    "items": {"camera": "off", "location": "future"},
-    "unmet": {"camera": ["app_ops", "future"], "future": {}},
+    "items": {"camera": "off", "location": "future", "network_record": "on"},
+    "unmet": {"camera": ["app_ops", "future"], "network_record": ["dns_names"], "future": {}},
     "appops_checking": true, "network_rules": 2, "recording_since": null
   }]
 }

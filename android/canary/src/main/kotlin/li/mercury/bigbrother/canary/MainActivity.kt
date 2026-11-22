@@ -44,6 +44,7 @@ import android.provider.Settings
 import android.provider.Telephony
 import android.system.Os
 import android.util.Log
+import android.view.View
 import android.widget.ScrollView
 import android.widget.TextView
 import java.io.File
@@ -81,6 +82,12 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (intent.getBooleanExtra("keepalive", false)) {
+            // A first frame is enough when the check only needs a foreground process.
+            started = true
+            setContentView(View(this))
+            return
+        }
         output = TextView(this).apply { setPadding(32, 96, 32, 32) }
         setContentView(ScrollView(this).apply { addView(output) })
         if (intent.getBooleanExtra(EXTRA_PICK, false)) {

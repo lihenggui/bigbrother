@@ -336,6 +336,7 @@ private fun LazyListScope.jailItemRows(
                 choice = app.settings[item],
                 globalMode = state.global[item] ?: SandboxMode.ON,
                 unmet = app.unmet[item].orEmpty(),
+                hookHealth = app.hookHealth,
                 appOpsChecking = app.appOpsChecking,
                 expanded = expanded == item,
                 onExpandedChange = { open -> onExpand(item.takeIf { open }) },

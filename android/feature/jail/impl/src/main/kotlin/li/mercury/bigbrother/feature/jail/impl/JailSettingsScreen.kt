@@ -62,6 +62,7 @@ import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndica
 import li.mercury.bigbrother.core.designsystem.component.SegmentedSwitchRow
 import li.mercury.bigbrother.core.designsystem.component.ShapedIcon
 import li.mercury.bigbrother.core.designsystem.icon.CageIcons
+import li.mercury.bigbrother.core.model.SandboxHookState
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxStatus
@@ -201,7 +202,8 @@ private fun JailSettingsList(
         verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
     ) {
         globalItemsSection(state, global, expanded, onExpand, onSetOn, onChoose, onSetAutoIsolate, onAllowNetwork)
-        statusSection(state, onConfirmRelease)
+        val holdNeeded = SandboxItem.entries.any { it != SandboxItem.NETWORK_RECORD && (global[it] ?: it.default).isOn }
+        statusSection(state, holdNeeded, onConfirmRelease)
     }
 }
 
@@ -238,6 +240,7 @@ private fun LazyListScope.globalItemsSection(
                     choice = mode,
                     globalMode = null,
                     unmet = state.status?.unmet(item).orEmpty(),
+                    hookHealth = state.status?.hookHealth.orEmpty(),
                     expanded = expanded == item,
                     onExpandedChange = { open -> onExpand(item.takeIf { open }) },
                     onCheckedChange = { on -> onSetOn(item, on) },
@@ -259,9 +262,9 @@ private fun LazyListScope.globalItemsSection(
     )
 }
 
-private fun LazyListScope.statusSection(state: JailSettingsUiState, onConfirmRelease: () -> Unit) {
+private fun LazyListScope.statusSection(state: JailSettingsUiState, holdNeeded: Boolean, onConfirmRelease: () -> Unit) {
     item(key = "status_header") { SectionHeader(stringResource(R.string.jail_section_status)) }
-    item(key = "status") { StatusRow(state.status, state.autoIsolate) }
+    item(key = "status") { StatusRow(state.status, state.autoIsolate && holdNeeded) }
     item(key = "release_all") {
         LinkRow(
             title = stringResource(R.string.jail_release_all),
@@ -292,10 +295,21 @@ private fun ReleaseAllDialog(isolated: Int, onDismiss: () -> Unit, onConfirm: ()
 /** Which parts of the sandbox work on this device; until known, neither good nor bad. */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun StatusRow(status: SandboxStatus?, autoIsolate: Boolean) {
+private fun StatusRow(status: SandboxStatus?, holdExpected: Boolean) {
     val problems = buildList {
         if (status != null && !status.gate) add(stringResource(R.string.jail_status_gate_missing))
-        if (status != null && (!status.androidIdHook || !status.appListHook)) add(stringResource(R.string.jail_status_hook_missing))
+        if (status != null) {
+            val unmet = status.unmetHooks()
+            if (unmet.isNotEmpty()) {
+                val text = when (hookFailure(unmet, status.hookHealth)) {
+                    SandboxHookState.NOT_LOADED -> R.string.jail_status_hook_missing
+                    SandboxHookState.INCOMPATIBLE -> R.string.jail_hook_incompatible
+                    SandboxHookState.DEGRADED -> R.string.jail_hook_degraded
+                    else -> R.string.jail_hook_unavailable
+                }
+                add(stringResource(text))
+            }
+        }
         if (status != null && !status.appOps) add(stringResource(R.string.jail_status_appops_missing))
         if (status != null && !status.network) add(stringResource(R.string.jail_status_network_missing))
         val pending = status?.newAppsPending ?: 0
@@ -303,7 +317,11 @@ private fun StatusRow(status: SandboxStatus?, autoIsolate: Boolean) {
             val text = if (status?.newAppsHeld == true) R.plurals.jail_status_new_apps_held else R.plurals.jail_status_new_apps_pending
             add(pluralStringResource(text, pending, pending))
         }
-        if (autoIsolate && status != null && !status.newAppsHeld) {
+        val failed = status?.newAppsFailed ?: 0
+        if (failed > 0) {
+            add(pluralStringResource(R.plurals.jail_status_new_apps_failed, failed, failed))
+        }
+        if (holdExpected && status != null && !status.newAppsHeld) {
             add(stringResource(R.string.jail_status_new_apps_not_held))
         }
     }

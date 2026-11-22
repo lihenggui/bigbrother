@@ -97,7 +97,32 @@ pub async fn run<'a>(class: &str, args: impl Iterator<Item = &'a str>) -> anyhow
 /// connected to the daemon. A helper started this way exits when its input
 /// closes.
 pub fn spawn<'a>(class: &str, args: impl Iterator<Item = &'a str>) -> anyhow::Result<Child> {
-    let child = command(class, args)?
+    spawn_stream(command(class, args)?)
+}
+
+pub fn spawn_guard<'a>(class: &str, args: impl Iterator<Item = &'a str>) -> anyhow::Result<Child> {
+    use std::os::unix::process::CommandExt as _;
+
+    let mut command = command(class, args)?;
+    command.process_group(0);
+    let parent = std::process::id();
+    // An old helper must not finish a queued mutation after the daemon has restarted.
+    unsafe {
+        command.pre_exec(move || {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            if libc::getppid() as u32 != parent {
+                return Err(io::Error::from_raw_os_error(libc::ESRCH));
+            }
+            Ok(())
+        });
+    }
+    spawn_stream(command)
+}
+
+fn spawn_stream(mut command: Command) -> anyhow::Result<Child> {
+    let child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

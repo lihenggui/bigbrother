@@ -196,11 +196,6 @@ pub const SCREEN_ACCESS: &str = "android.permission.BIND_ACCESSIBILITY_SERVICE";
 /// The accesses the user gives service by service, held as permissions.
 pub const SPECIAL_ACCESS: [&str; 2] = [NOTIFICATION_ACCESS, SCREEN_ACCESS];
 
-/// The ops whose uid mode the system keeps under another op of the same
-/// item (their switch op), which holds them in the foreground: the Wi-Fi
-/// scan follows the coarse location.
-const SWITCHED_WITH_ANOTHER: &[&str] = &["android:wifi_scan"];
-
 /// The mode of some items: an app's own, or the global settings.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -216,11 +211,13 @@ pub struct Settings(BTreeMap<Item, Mode>);
 pub enum Part {
     Mounts,
     AppOps,
+    AppOpsUnknown,
     AndroidIdHook,
     AppListHook,
     UriGrantsHook,
     AdIdHook,
     PacketFilter,
+    DnsNames,
 }
 
 impl Part {
@@ -228,11 +225,13 @@ impl Part {
         match self {
             Part::Mounts => "mounts",
             Part::AppOps => "app_ops",
+            Part::AppOpsUnknown => "app_ops_unknown",
             Part::AndroidIdHook => "android_id_hook",
             Part::AppListHook => "app_list_hook",
             Part::UriGrantsHook => "uri_grants_hook",
             Part::AdIdHook => "ad_id_hook",
             Part::PacketFilter => "packet_filter",
+            Part::DnsNames => "dns_names",
         }
     }
 }
@@ -247,6 +246,7 @@ pub struct InPlace {
     pub uri_grants_hook: bool,
     pub ad_id_hook: bool,
     pub packet_filter: bool,
+    pub dns_names: bool,
 }
 
 /// What the sandbox mounts in an app's namespace as it starts.
@@ -402,12 +402,12 @@ impl Settings {
     fn op_targets_of(&self, item: Item) -> Vec<(&'static str, OpMode)> {
         match self.mode(item) {
             Mode::On => item.ops().iter().map(|op| (*op, OpMode::Ignored)).collect(),
-            // An op switched with another is held through that one:
-            // holding it as well would set the same uid mode twice.
+            // Keep the same logical targets through a mode change so a
+            // held switch is never captured as a new original. The helper
+            // groups the targets by the framework's actual switch codes.
             Mode::Foreground => item
                 .ops()
                 .iter()
-                .filter(|op| !SWITCHED_WITH_ANOTHER.contains(op))
                 .map(|op| (*op, OpMode::Foreground))
                 .collect(),
             Mode::Off | Mode::Coarse => Vec::new(),
@@ -466,6 +466,9 @@ impl Settings {
             if item == Item::Network && !parts.packet_filter {
                 missing.push(Part::PacketFilter);
             }
+            if item == Item::NetworkRecord && !parts.dns_names {
+                missing.push(Part::DnsNames);
+            }
             if !missing.is_empty() {
                 unmet.insert(item, missing);
             }
@@ -486,40 +489,6 @@ impl Settings {
     pub fn iter(&self) -> impl Iterator<Item = (Item, Mode)> + '_ {
         self.0.iter().map(|(item, mode)| (*item, *mode))
     }
-
-    /// Settings that keep from an app all that `self` or `other` keeps,
-    /// both over `global`: for each item, the mode of whichever keeps all
-    /// the other keeps, `self`'s where both do, and on where neither does
-    /// (coarse keeps the precise location, foreground what the app is
-    /// given in the background). What is written down while an app changes
-    /// from the one to the other, so that a daemon that stopped half way
-    /// takes it up again with every app op, mount and hook answer it may
-    /// have been given.
-    pub fn covering(&self, other: &Settings, global: &Settings) -> Settings {
-        let (mine, theirs) = (self.over(global), other.over(global));
-        let mut covering = Settings::default();
-        for item in Item::ALL {
-            let (my_mode, their_mode) = (mine.mode(item), theirs.mode(item));
-            let mode = if keeps_all_of(my_mode, their_mode) {
-                self.get(item)
-            } else if keeps_all_of(their_mode, my_mode) {
-                other.get(item)
-            } else {
-                Some(Mode::On)
-            };
-            if let Some(mode) = mode {
-                covering.0.insert(item, mode);
-            }
-        }
-        covering
-    }
-}
-
-/// Whether `wide` keeps from the app all that `narrow` keeps: on keeps
-/// everything, off nothing, and coarse and foreground each keep what the
-/// other does not.
-fn keeps_all_of(wide: Mode, narrow: Mode) -> bool {
-    wide == narrow || wide == Mode::On || narrow == Mode::Off
 }
 
 pub fn mode_name(mode: Mode) -> &'static str {
@@ -605,6 +574,25 @@ mod tests {
     }
 
     #[test]
+    fn recording_reports_when_dns_names_are_unavailable() {
+        let mut items = Settings::default();
+        for item in Item::ALL {
+            items.set(item, Some(Mode::Off)).unwrap();
+        }
+        items.set(Item::NetworkRecord, Some(Mode::On)).unwrap();
+        let unmet = items.unmet(&InPlace::default(), |_| true);
+        assert_eq!(
+            serde_json::to_value(unmet).unwrap(),
+            serde_json::json!({"network_record": ["dns_names"]})
+        );
+        let names = InPlace {
+            dns_names: true,
+            ..InPlace::default()
+        };
+        assert!(items.unmet(&names, |_| true).is_empty());
+    }
+
+    #[test]
     fn an_item_is_in_effect_only_with_all_its_parts() {
         let all = InPlace {
             mounts: true,
@@ -613,6 +601,7 @@ mod tests {
             uri_grants_hook: true,
             ad_id_hook: true,
             packet_filter: true,
+            dns_names: true,
         };
         let items = Settings::all_on();
         assert!(items.unmet(&all, |_| true).is_empty());
@@ -683,6 +672,7 @@ mod tests {
             uri_grants_hook: true,
             ad_id_hook: true,
             packet_filter: true,
+            dns_names: true,
         };
         assert!(items.unmet(&all, |_| true).is_empty());
         let unmet = items.unmet(&all, |name| name != SCREEN_ACCESS);
@@ -769,12 +759,12 @@ mod tests {
             own.set(item, Some(Mode::Foreground)).unwrap();
         }
         let foreground = own.over(&Settings::default());
-        // The Wi-Fi scan goes with the coarse location, its switch op.
         assert_eq!(
             foreground.op_targets(),
             [
                 ("android:coarse_location", OpMode::Foreground),
                 ("android:fine_location", OpMode::Foreground),
+                ("android:wifi_scan", OpMode::Foreground),
                 ("android:camera", OpMode::Foreground),
                 ("android:record_audio", OpMode::Foreground),
             ]
@@ -782,95 +772,6 @@ mod tests {
         assert!(foreground.taken_permissions().is_empty());
         assert!(foreground.any_on());
         assert!(!foreground.mounts().any());
-    }
-
-    #[test]
-    fn covering_settings_keep_all_that_either_keeps() {
-        let ops = |items: &Settings| -> std::collections::BTreeSet<&str> {
-            items.op_targets().into_iter().map(|(op, _)| op).collect()
-        };
-        // Only location takes a permission here.
-        let global = Settings::parse("camera=off,notification_content=off,screen_content=off");
-        let before = Settings::parse("location=coarse,microphone=on");
-        let after = Settings::parse("camera=on,location=off,microphone=on");
-        let covering = before.covering(&after, &global);
-        // What follows the global settings still does.
-        assert_eq!(
-            covering.to_text(),
-            "location=coarse,camera=on,microphone=on"
-        );
-        let held = ops(&covering.over(&global));
-        assert!(held.is_superset(&ops(&before.over(&global))));
-        assert!(held.is_superset(&ops(&after.over(&global))));
-        assert_eq!(
-            covering.over(&global).taken_permissions(),
-            [PRECISE_LOCATION]
-        );
-
-        // A change that keeps nothing more is covered by what was.
-        let wide = Settings::parse("camera=on");
-        assert_eq!(
-            wide.covering(&Settings::parse("location=coarse"), &global),
-            wide
-        );
-        // The global settings, over every item on.
-        assert_eq!(
-            Settings::parse("camera=off")
-                .covering(
-                    &Settings::parse("camera=on,microphone=off"),
-                    &Settings::default()
-                )
-                .to_text(),
-            "camera=on"
-        );
-    }
-
-    #[test]
-    fn coarse_and_foreground_are_covered_by_on() {
-        let none = Settings::default();
-        let covers = |before: &str, after: &str| {
-            Settings::parse(before)
-                .covering(&Settings::parse(after), &none)
-                .to_text()
-        };
-        // Each keeps what the other gives: the precise location, the
-        // location in the background.
-        assert_eq!(
-            covers("location=coarse", "location=foreground"),
-            "location=on"
-        );
-        assert_eq!(
-            covers("location=foreground", "location=coarse"),
-            "location=on"
-        );
-        // Foreground keeps more than off, and on more than foreground.
-        assert_eq!(
-            covers("camera=off", "camera=foreground"),
-            "camera=foreground"
-        );
-        assert_eq!(
-            covers("camera=foreground", "camera=off"),
-            "camera=foreground"
-        );
-        assert_eq!(
-            covers("microphone=foreground", "microphone=on"),
-            "microphone=on"
-        );
-        // Following the global settings, which make it foreground.
-        let global = Settings::parse("location=foreground");
-        let covering = Settings::default().covering(&Settings::parse("location=coarse"), &global);
-        assert_eq!(covering.to_text(), "location=on");
-        let held: std::collections::BTreeSet<&str> = covering
-            .over(&global)
-            .op_targets()
-            .into_iter()
-            .map(|(op, _)| op)
-            .collect();
-        assert!(held.contains("android:coarse_location") && held.contains("android:fine_location"));
-        assert_eq!(
-            Settings::parse("location=foreground").covering(&Settings::default(), &global),
-            Settings::parse("location=foreground")
-        );
     }
 
     #[test]

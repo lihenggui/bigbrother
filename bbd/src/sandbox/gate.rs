@@ -27,8 +27,9 @@
 //! namespace only if it shares its root and working directory with no other
 //! thread, so this one gives up sharing them when it starts.
 //!
-//! A start that cannot be given its sandbox is killed, never let through:
-//! the system starts the app again when it is next wanted. If the thread
+//! A start that cannot be given a required mount is killed. An optional
+//! recording cover is attempted without stopping the app when it needs
+//! no other mounts. If the thread
 //! itself gets stuck or ends, the kernel side kills such starts on its own
 //! (`GATE_WAITING_SINCE`).
 //!
@@ -51,15 +52,16 @@ use std::{
 
 use anyhow::Context as _;
 use aya::maps::{Array, HashMap as BpfHashMap, MapData, MapError, RingBuf};
+use bb_common::{GATE_RECORD, GATE_REQUIRED};
 
 use super::{
-    Effect, Entry, Resumed, Status,
-    destinations::Book,
+    Effect, Entry, Resumed, Sandbox, Status, auto,
+    destinations::{Book, has_name_rules},
     dirs::{self, MEDIA_RW},
     items::{Mounts, Settings},
-    mounts,
+    items_of, mounts,
+    names::Serving,
     resolver::{self, Cover},
-    target::Target,
 };
 use crate::{
     log::{Limited, Policy, SANDBOX_INTERVAL},
@@ -73,7 +75,29 @@ const HOLDS_KEPT: usize = 256;
 
 /// What the starts of an app are held for: its mounts, and what it finds
 /// at the socket of the system's resolver.
-type Hold = (Mounts, Cover);
+type Hold = (Mounts, Resolver);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Resolver {
+    None,
+    Block,
+    Names,
+    Record,
+}
+
+impl Resolver {
+    fn cover(self) -> Cover {
+        match self {
+            Self::None => Cover::None,
+            Self::Block => Cover::Null,
+            Self::Names | Self::Record => Cover::Relay,
+        }
+    }
+}
+
+fn recording_only((mounts, resolver): Hold) -> bool {
+    resolver == Resolver::Record && !mounts.any()
+}
 
 /// Starts that are not held.
 const NOT_HELD: Hold = (
@@ -81,12 +105,12 @@ const NOT_HELD: Hold = (
         storage: false,
         cpu_info: false,
     },
-    Cover::None,
+    Resolver::None,
 );
 
 /// Whether starts are held at all for this.
 fn held(hold: Hold) -> bool {
-    hold.0.any() || hold.1 != Cover::None
+    hold.0.any() || hold.1 != Resolver::None
 }
 
 /// Called with the uid of an app that was let through.
@@ -102,7 +126,8 @@ struct Gated {
     packages: Vec<String>,
     mounts: Mounts,
     /// What it finds at the socket of the system's resolver (`resolver`).
-    resolver: Cover,
+    resolver: Resolver,
+    relay_failed: Option<Arc<AtomicBool>>,
 }
 
 /// What the gate thread and the daemon's main loop share. Each update
@@ -110,9 +135,11 @@ struct Gated {
 struct Shared {
     /// The uids held at the gate.
     apps: RwLock<HashMap<u32, Gated>>,
+    auto: Arc<RwLock<auto::Admission>>,
     stats: Mutex<Stats>,
     /// False once the thread has ended.
     open: AtomicBool,
+    relay: Serving,
     /// Told the uid of each app let through.
     admitted: Mutex<Option<Told>>,
     /// Told the uid of each new app whose start was ended.
@@ -155,12 +182,9 @@ pub struct Storage {
     uids: BpfHashMap<MapData, u32, u32>,
     release_errors: Limited,
     shared: Arc<Shared>,
-    /// Whether apps can be kept from the network on this device. Where
-    /// they cannot, the resolver is left to them too.
+    /// Whether the packet filter can enforce the Network item.
     network: bool,
-    /// The destinations apps are kept from, once the daemon listens for
-    /// lookups (`names`).
-    names: Option<Book>,
+    book: Book,
     /// Running processes whose resolver mounts may differ from the gate.
     resolver_unknown: HashSet<u32>,
 }
@@ -169,7 +193,12 @@ impl Storage {
     /// Start the gate thread, on the maps of the already attached
     /// `gate_setresuid`. `scratch` is a directory of the daemon's own to
     /// assemble files in.
-    pub fn start(ebpf: &mut aya::Ebpf, scratch: &Path) -> anyhow::Result<Self> {
+    pub fn start(
+        ebpf: &mut aya::Ebpf,
+        scratch: &Path,
+        book: Book,
+        relay: Serving,
+    ) -> anyhow::Result<Self> {
         let mut map = |name: &str| {
             ebpf.take_map(name)
                 .with_context(|| format!("{name} map missing"))
@@ -183,8 +212,10 @@ impl Storage {
 
         let shared = Arc::new(Shared {
             apps: RwLock::default(),
+            auto: Arc::default(),
             stats: Mutex::default(),
             open: AtomicBool::new(true),
+            relay,
             admitted: Mutex::new(None),
             unknown: Mutex::new(None),
         });
@@ -194,17 +225,13 @@ impl Storage {
             release_errors: Limited::new(SANDBOX_INTERVAL, Policy::Shared),
             shared,
             network: false,
-            names: None,
+            book,
             resolver_unknown: HashSet::new(),
         })
     }
 
-    /// Give the apps whose connections are recorded, and those kept from
-    /// names, the daemon's socket in place of the resolver's from now on:
-    /// the daemon is listening on it (`names`). `book` tells which apps
-    /// are kept from names.
-    pub fn with_names(&mut self, book: Book) {
-        self.names = Some(book);
+    pub(super) fn auto_admission(&self) -> Arc<RwLock<auto::Admission>> {
+        self.shared.auto.clone()
     }
 
     /// Cover the resolver's socket from now on in the starting processes
@@ -215,25 +242,12 @@ impl Storage {
 
     /// What a start of the app of `uid`, with `items`, is held for.
     fn held_for(&self, uid: u32, items: &Settings) -> Hold {
-        let kept_from_names = |book: &Book| {
-            let book = lock(book);
-            book.get(&uid).is_some_and(|targets| {
-                targets
-                    .iter()
-                    .any(|target| !matches!(target, Target::Ip(..)))
-            })
-        };
-        let cover = if self.network && items.network_refused() {
-            Cover::Null
-        } else if self
-            .names
-            .as_ref()
-            .is_some_and(|book| items.network_recorded() || kept_from_names(book))
-        {
-            Cover::Relay
-        } else {
-            Cover::None
-        };
+        let cover = resolver_cover(
+            items,
+            self.network,
+            has_name_rules(&self.book, uid),
+            self.shared.relay.alive(),
+        );
         (items.mounts(), cover)
     }
 
@@ -276,7 +290,7 @@ impl Storage {
         entry: &Entry,
         packages: &[String],
         mounts: Mounts,
-        resolver: Cover,
+        resolver: Resolver,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.shared.open.load(Ordering::Relaxed),
@@ -289,13 +303,66 @@ impl Storage {
             packages: packages.to_vec(),
             mounts,
             resolver,
+            relay_failed: (resolver.cover() == Cover::Relay)
+                .then(|| Arc::new(AtomicBool::new(false))),
         };
         let mut apps = write(&self.shared.apps);
+        let kind = if recording_only((mounts, resolver)) {
+            GATE_RECORD
+        } else {
+            GATE_REQUIRED
+        };
         self.uids
-            .insert(&uid, &1, 0)
+            .insert(&uid, &kind, 0)
             .context("adding the uid to the gate")?;
         apps.insert(uid, gated);
         Ok(())
+    }
+}
+
+pub(super) fn resolver_cover(
+    items: &Settings,
+    network: bool,
+    name_rules: bool,
+    relay: bool,
+) -> Resolver {
+    if (network || name_rules) && items.network_refused() {
+        return Resolver::Block;
+    }
+    match (name_rules, relay) {
+        (true, true) => Resolver::Names,
+        (true, false) => Resolver::Block,
+        (false, true) if items.network_recorded() && !items.network_refused() => Resolver::Record,
+        (false, _) => Resolver::None,
+    }
+}
+
+fn recording_cover_applies(items: &Settings, book: &Book, uid: u32) -> bool {
+    resolver::optional_cover(items, has_name_rules(book, uid))
+}
+
+fn remove_recording_covers(entries: impl Iterator<Item = Entry>) {
+    if let Err(e) = resolver::remove_old_relays(entries) {
+        eprintln!("bbd: sandbox: cannot remove recording relay covers: {e:#}");
+    }
+}
+
+impl Sandbox {
+    pub fn uncover_recording_dns(&mut self) {
+        for effect in &mut self.effects {
+            effect.relay_stopped();
+        }
+        let entries: Vec<_> = {
+            let global = self.global_read().clone();
+            self.snapshot_read()
+                .values()
+                .filter(|entry| {
+                    recording_cover_applies(&items_of(entry, &global), &self.book, entry.uid)
+                })
+                .cloned()
+                .collect()
+        };
+        remove_recording_covers(entries.into_iter());
     }
 }
 
@@ -339,16 +406,28 @@ impl Storage {
         was: Hold,
         wanted: Hold,
     ) -> anyhow::Result<()> {
-        self.gate(entry, packages, wanted)?;
+        if let Err(e) = self.gate(entry, packages, wanted) {
+            if recording_only(wanted) && was == NOT_HELD {
+                eprintln!("bbd: sandbox: cannot hold starts for recording: {e:#}");
+                return Ok(());
+            }
+            return Err(e);
+        }
         if was.1 == wanted.1 && !self.resolver_unknown.contains(&entry.uid) {
             return Ok(());
         }
-        let Err(e) = resolver::set(entry, wanted.1)
-            .context("changing what the app's processes find at the resolver's socket")
-        else {
-            self.resolver_unknown.remove(&entry.uid);
-            return Ok(());
+        let e = match self.set_resolver(entry, wanted.1) {
+            Ok(covered) => {
+                self.note_resolver(entry.uid, covered);
+                return Ok(());
+            }
+            Err(e) => e.context("changing what the app's processes find at the resolver's socket"),
         };
+        if wanted.1 == Resolver::Record && matches!(was.1, Resolver::None | Resolver::Record) {
+            self.resolver_unknown.insert(entry.uid);
+            eprintln!("bbd: sandbox: recording could not cover the resolver: {e:#}");
+            return Ok(());
+        }
         if let Err(undo) = self.gate(entry, packages, was) {
             eprintln!(
                 "bbd: sandbox: uid {} is not held at the gate as it was: {undo:#}",
@@ -356,12 +435,25 @@ impl Storage {
             );
         }
         // The processes gone through before it failed, back as they were.
-        if resolver::set(entry, was.1).is_err() {
-            self.resolver_unknown.insert(entry.uid);
-        } else {
-            self.resolver_unknown.remove(&entry.uid);
-        }
+        let restored = self.set_resolver(entry, was.1).unwrap_or(false);
+        self.note_resolver(entry.uid, restored);
         Err(e)
+    }
+
+    fn note_resolver(&mut self, uid: u32, covered: bool) {
+        if covered {
+            self.resolver_unknown.remove(&uid);
+        } else {
+            self.resolver_unknown.insert(uid);
+        }
+    }
+
+    fn set_resolver(&self, entry: &Entry, policy: Resolver) -> anyhow::Result<bool> {
+        if policy == Resolver::Record {
+            resolver::record(entry, &self.shared.relay)
+        } else {
+            resolver::set(entry, policy.cover()).map(|()| true)
+        }
     }
 }
 
@@ -383,22 +475,19 @@ impl Effect for Storage {
         &mut self,
         entry: &mut Entry,
         packages: &[String],
-        items: &Settings,
+        _: &Settings,
     ) -> anyhow::Result<()> {
-        self.change(entry, packages, self.held_for(entry.uid, items), NOT_HELD)
+        self.change(entry, packages, self.holding(entry.uid), NOT_HELD)
     }
 
     fn update(
         &mut self,
         entry: &mut Entry,
         packages: &[String],
-        before: &Settings,
+        _: &Settings,
         after: &Settings,
     ) -> anyhow::Result<()> {
-        let (was, wanted) = (
-            self.held_for(entry.uid, before),
-            self.held_for(entry.uid, after),
-        );
+        let (was, wanted) = (self.holding(entry.uid), self.held_for(entry.uid, after));
         if was == wanted {
             return Ok(());
         }
@@ -426,27 +515,48 @@ impl Effect for Storage {
         // which is when the daemon usually starts.
         for app in apps {
             let (mounts, resolver) = self.held_for(app.entry.uid, &app.items);
-            if !held((mounts, resolver)) {
-                continue;
-            }
-            if let Err(e) = self.hold(&app.entry, &app.packages, mounts, resolver) {
+            if held((mounts, resolver))
+                && let Err(e) = self.hold(&app.entry, &app.packages, mounts, resolver)
+            {
                 eprintln!(
                     "bbd: sandbox: uid {} is not held at the gate: {e:#}",
                     app.entry.uid
                 );
-                continue;
             }
             // In the processes that started while there was no daemon to
             // hold them, and in those that have the socket of the daemon
             // before, which nothing listens on any more.
-            if resolver != Cover::None
-                && let Err(e) = resolver::set(&app.entry, resolver)
-            {
-                eprintln!(
-                    "bbd: sandbox: uid {} has the system's resolver: {e:#}",
-                    app.entry.uid
-                );
+            if resolver != Resolver::None {
+                match self.set_resolver(&app.entry, resolver) {
+                    Ok(covered) => self.note_resolver(app.entry.uid, covered),
+                    Err(e) => {
+                        self.resolver_unknown.insert(app.entry.uid);
+                        eprintln!(
+                            "bbd: sandbox: could not refresh the resolver cover for uid {}: {e:#}",
+                            app.entry.uid
+                        );
+                    }
+                }
             }
+        }
+        let serving = self.shared.relay.alive();
+        remove_recording_covers(
+            apps.iter()
+                .filter(|app| {
+                    (!serving || !app.items.network_recorded())
+                        && recording_cover_applies(&app.items, &self.book, app.entry.uid)
+                })
+                .map(|app| app.entry.clone()),
+        );
+    }
+
+    fn relay_stopped(&mut self) {
+        let only_recorded: Vec<_> = read(&self.shared.apps)
+            .iter()
+            .filter_map(|(&uid, app)| recording_only((app.mounts, app.resolver)).then_some(uid))
+            .collect();
+        for uid in only_recorded {
+            self.release(uid);
         }
     }
 
@@ -456,11 +566,18 @@ impl Effect for Storage {
     }
 
     fn report(&self, status: &mut Status) {
-        status
-            .gated_uids
-            .extend(read(&self.shared.apps).keys().copied());
+        let apps = read(&self.shared.apps);
+        status.gated_uids.extend(apps.keys().copied());
         let stats = lock(&self.shared.stats);
         status.gate = self.shared.open.load(Ordering::Relaxed);
+        status.dns_names = status.gate && self.shared.relay.alive();
+        if status.dns_names {
+            status.dns_uids.extend(apps.iter().filter_map(|(uid, app)| {
+                let failed = app.relay_failed.as_ref()?;
+                (!failed.load(Ordering::Relaxed) && !self.resolver_unknown.contains(uid))
+                    .then_some(*uid)
+            }));
+        }
         status.admitted = stats.admitted;
         status.failed = stats.failed;
         status.new_apps_stopped = stats.unknown;
@@ -470,7 +587,7 @@ impl Effect for Storage {
 
 /// Stands in for [`Storage`] on a kernel where the gate cannot be attached:
 /// nothing can be put in the sandbox there.
-pub struct Unavailable;
+pub struct Unavailable(pub Book);
 
 impl Effect for Unavailable {
     fn name(&self) -> &'static str {
@@ -500,6 +617,11 @@ impl Effect for Unavailable {
     }
 
     fn resume(&mut self, apps: &[Resumed]) {
+        remove_recording_covers(
+            apps.iter()
+                .filter(|app| recording_cover_applies(&app.items, &self.0, app.entry.uid))
+                .map(|app| app.entry.clone()),
+        );
         let mounted = apps.iter().filter(|app| app.items.mounts().any()).count();
         if mounted > 0 {
             eprintln!(
@@ -514,6 +636,7 @@ mod tests {
     use std::io;
 
     use super::*;
+    use crate::sandbox_item::{Item, Mode};
 
     #[test]
     fn only_a_missing_gate_key_is_ignored() {
@@ -543,5 +666,17 @@ mod tests {
         }
         assert_eq!(stats.hold_p95_us(), 7);
         assert_eq!(stats.admitted, 100 + HOLDS_KEPT as u64);
+    }
+
+    #[test]
+    fn covers_recording_apps_only_while_the_relay_serves() {
+        let mut items = Settings::default();
+        items.set(Item::NetworkRecord, Some(Mode::On)).unwrap();
+        assert_eq!(resolver_cover(&items, true, false, true), Resolver::Record);
+        assert_eq!(resolver_cover(&items, true, false, false), Resolver::None);
+        assert_eq!(resolver_cover(&items, true, true, true), Resolver::Names);
+        assert_eq!(resolver_cover(&items, true, true, false), Resolver::Block);
+        items.set(Item::Network, Some(Mode::On)).unwrap();
+        assert_eq!(resolver_cover(&items, true, true, true), Resolver::Block);
     }
 }

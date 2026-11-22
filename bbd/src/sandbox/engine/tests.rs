@@ -568,9 +568,15 @@ fn check_status_and_errors(ask: &mut impl FnMut(&str) -> serde_json::Value) {
         serde_json::json!({
             "ok": true, "gate": false, "appops": false, "network": false,
             "net_record": false, "dns_names": false, "traffic": false,
-            "hook": {"android_id": false, "app_list": false, "uri_grants": false, "ad_id": false},
+            "hook": {
+                "android_id": false, "app_list": false, "uri_grants": false, "ad_id": false,
+                "health": {
+                    "android_id_hook": "not_loaded", "app_list_hook": "not_loaded",
+                    "uri_grants_hook": "not_loaded", "ad_id_hook": "not_loaded",
+                },
+            },
             "admitted": 0, "failed": 0, "new_apps_stopped": 0, "new_apps_pending": 0,
-            "new_apps_held": false, "hold_p95_us": 0,
+            "new_apps_held": false, "new_apps_failed": 0, "hold_p95_us": 0,
         })
     );
     assert_eq!(
@@ -583,4 +589,68 @@ fn check_status_and_errors(ask: &mut impl FnMut(&str) -> serde_json::Value) {
     );
     assert_eq!(ask("not json")["ok"], false);
     assert_eq!(ask(r#"{"cmd":"sandbox.enable"}"#)["ok"], false);
+}
+
+#[test]
+fn a_failed_enable_commit_leaves_the_preimage_until_the_restart_can_clear_it() {
+    use std::sync::Mutex;
+
+    use crate::sandbox::appops::tests::recording_helper;
+
+    let mut f = Fixture::new("sandbox-enable-commit-failure");
+    let changed = Arc::new(Mutex::new(false));
+    let (effect, set) = recording_helper({
+        let changed = changed.clone();
+        move |_, command| {
+            if command.starts_with("set ") {
+                *changed.lock().unwrap() = true;
+            }
+        }
+    });
+    let db = rusqlite::Connection::open(f.dir.join("bb.db")).unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER fail_commit BEFORE INSERT ON sandbox
+         BEGIN SELECT RAISE(ABORT, 'injected commit failure'); END;",
+    )
+    .unwrap();
+    let mut sandbox = f.sandbox_with(vec![effect]);
+    assert!(
+        sandbox
+            .enable(&f.writer, &mut f.packages, "com.app", 0, 0)
+            .is_err()
+    );
+    assert!(*changed.lock().unwrap());
+    assert!(f.writer.sandbox_entries().unwrap().is_empty());
+    assert_eq!(f.writer.appops_undo().unwrap().len(), 1);
+    drop(sandbox);
+    assert!(
+        set.join()
+            .unwrap()
+            .iter()
+            .any(|command| command.starts_with("set "))
+    );
+
+    db.execute_batch(
+        "DROP TRIGGER fail_commit;
+         CREATE TRIGGER fail_clear BEFORE DELETE ON sandbox_appops_undo
+         BEGIN SELECT RAISE(ABORT, 'injected clear failure'); END;",
+    )
+    .unwrap();
+    let (effect, undo) = recording_helper({
+        let changed = changed.clone();
+        move |_, command| {
+            assert!(command.starts_with("undo 10100 android:camera=4,"));
+            *changed.lock().unwrap() = false;
+        }
+    });
+    let mut restarted = f.sandbox_with(vec![effect]);
+    restarted.resume(&f.writer, &mut f.packages);
+    restarted.recover_appops(&f.writer, &mut f.packages);
+    assert!(!*changed.lock().unwrap());
+    assert_eq!(f.writer.appops_undo().unwrap().len(), 1);
+    db.execute_batch("DROP TRIGGER fail_clear").unwrap();
+    restarted.recover_appops(&f.writer, &mut f.packages);
+    assert!(f.writer.appops_undo().unwrap().is_empty());
+    assert!(f.writer.sandbox_entries().unwrap().is_empty());
+    assert_eq!(undo.join().unwrap().len(), 2);
 }

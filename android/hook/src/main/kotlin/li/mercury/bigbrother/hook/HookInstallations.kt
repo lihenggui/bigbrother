@@ -23,13 +23,10 @@ import java.io.FileDescriptor
 
 /** Keep the directory inode alive across uninstall so a reused UID and inode cannot inherit policy. */
 internal class HookInstallations(private val bootId: File) {
-    private data class Owner(val path: String, val device: Long, val inode: Long, val fd: FileDescriptor)
+    private var owners: Map<Int, FileDescriptor> = emptyMap()
 
-    private var owners: Map<Int, Owner> = emptyMap()
-
-    @Synchronized
     fun replace(text: String, uids: Set<Int>) {
-        val next = mutableMapOf<Int, Owner>()
+        val next = mutableMapOf<Int, FileDescriptor>()
         try {
             if (uids.isNotEmpty()) {
                 val boot = bootId.readText().trim()
@@ -46,7 +43,7 @@ internal class HookInstallations(private val bootId: File) {
                 try {
                     val stat = Os.fstat(fd)
                     check(OsConstants.S_ISDIR(stat.st_mode) && stat.st_uid == uid && stat.st_dev == fields[3].toLong() && stat.st_ino == fields[4].toLong())
-                    next[uid] = Owner(path, stat.st_dev, stat.st_ino, fd)
+                    next[uid] = fd
                 } catch (e: Throwable) {
                     Os.close(fd)
                     throw e
@@ -54,23 +51,12 @@ internal class HookInstallations(private val bootId: File) {
             }
             check(next.keys == uids)
         } catch (e: Throwable) {
-            next.values.forEach { Os.close(it.fd) }
+            next.values.forEach { Os.close(it) }
             throw e
         }
         val previous = owners
         owners = next
-        previous.values.forEach { Os.close(it.fd) }
-    }
-
-    @Synchronized
-    fun matches(uid: Int): Boolean {
-        val owner = owners[uid] ?: return false
-        return try {
-            val stat = Os.lstat(owner.path)
-            stat.st_uid == uid && stat.st_dev == owner.device && stat.st_ino == owner.inode
-        } catch (_: android.system.ErrnoException) {
-            false
-        }
+        previous.values.forEach { Os.close(it) }
     }
 
     private companion object {

@@ -21,7 +21,10 @@ use aya_ebpf::{
     maps::{Array, HashMap, RingBuf},
     programs::ProbeContext,
 };
-use bb_common::{GATE_STALE_NS, GateEvent, KNOWN_APP_WORDS, PER_USER_RANGE, known_app_bit};
+use bb_common::{
+    GATE_CLOSED, GATE_NEW, GATE_RECORD, GATE_REQUIRED, GATE_STALE_NS, GateEvent, KNOWN_APP_WORDS,
+    PER_USER_RANGE, known_app_bit,
+};
 
 use crate::common::{BPF_RB_FORCE_WAKEUP, OFFSETS, arch, read_at};
 
@@ -29,8 +32,8 @@ use crate::common::{BPF_RB_FORCE_WAKEUP, OFFSETS, arch, read_at};
 #[map]
 static SANDBOX_UIDS: HashMap<u32, u32> = HashMap::with_max_entries(1024, 0);
 
-/// Processes stopped at the gate, for the daemon's gate thread. Apart from
-/// the records: letting an app start must not wait behind them.
+/// Starts reported to the gate thread. Required mounts and auto-isolation
+/// hold the process, so their events must not wait behind the records.
 #[map]
 static GATE: RingBuf = RingBuf::with_byte_size(64 * 1024, 0);
 
@@ -58,8 +61,8 @@ static AUTO_ISOLATE: Array<u32> = Array::with_max_entries(1, 0);
 static KNOWN_APP_IDS: Array<u64> = Array::with_max_entries(KNOWN_APP_WORDS, 0);
 
 /// Uids of apps installed since that the daemon has dealt with: put in the
-/// sandbox, where they are in `SANDBOX_UIDS` if anything is mounted for
-/// them, or taken out again by the user.
+/// sandbox, taken out again by the user, or released after auto-isolation
+/// failed. A UID with mounts in the sandbox is also in `SANDBOX_UIDS`.
 #[map]
 static KNOWN_UIDS: HashMap<u32, u32> = HashMap::with_max_entries(1024, 0);
 
@@ -69,13 +72,12 @@ const SIGSTOP: u32 = 19;
 /// Entry of `setresuid`. zygote's child calls it once, as root, to become
 /// the app, after zygote set up its mount namespace and before any of the
 /// app's code runs: the one moment at which what the app will see can still
-/// be replaced. A child taking a sandboxed uid is stopped here and reported
-/// to the daemon, which mounts the sandbox in its namespace and lets it
-/// continue.
+/// be replaced before the app can use it. The daemon receives the event
+/// and mounts the sandbox in the child's namespace. A child that only
+/// needs a recording cover is reported without stopping it.
 ///
-/// An app that cannot be given its sandbox must not run without it: when the
-/// daemon cannot be told, or is not letting anything through, the process is
-/// killed, and the system starts the app again when it is next wanted.
+/// A child that needs a required mount is stopped. If the daemon cannot
+/// be told or is not letting starts through, the child is killed.
 ///
 /// While newly installed apps are put in the sandbox, a child taking the uid
 /// of an app the daemon has not dealt with yet is stopped and reported the
@@ -96,10 +98,10 @@ fn try_gate(ctx: &ProbeContext) -> Result<(), i32> {
     }
     let regs: *const u8 = ctx.arg(0).ok_or(-1)?;
     let uid = unsafe { read_at::<u64>(regs, arch::ARG_OFFSETS[0])? } as u32;
-    let unknown = if unsafe { SANDBOX_UIDS.get(&uid) }.is_some() {
-        false
+    let kind = if let Some(kind) = unsafe { SANDBOX_UIDS.get(&uid) } {
+        *kind
     } else if unknown_app(uid) {
-        true
+        GATE_NEW
     } else {
         return Ok(());
     };
@@ -124,10 +126,13 @@ fn try_gate(ctx: &ProbeContext) -> Result<(), i32> {
     let waiting = GATE_WAITING_SINCE.get_ptr_mut(0).ok_or(-1)?;
     let since = unsafe { *waiting };
     let now = unsafe { bpf_ktime_get_ns() };
+    let required = kind == GATE_REQUIRED;
     let task = unsafe { aya_ebpf::helpers::bpf_get_current_task() } as *const u8;
     let Ok(start) = (unsafe { read_at::<u64>(task, OFFSETS.load()[bb_common::OFF_TASK_START]) })
     else {
-        kill();
+        if required {
+            kill();
+        }
         return Ok(());
     };
     let event = GateEvent {
@@ -137,9 +142,22 @@ fn try_gate(ctx: &ProbeContext) -> Result<(), i32> {
         uid,
         at_ns_low: now as u32,
         at_ns_high: (now >> 32) as u32,
-        unknown: u32::from(unknown),
+        kind,
     };
-    if since != 0 && now.wrapping_sub(since) > GATE_STALE_NS {
+    let stale = since == GATE_CLOSED || (since != 0 && now.wrapping_sub(since) > GATE_STALE_NS);
+    if kind == GATE_RECORD {
+        // Recording can miss a start. Stopping it would make the app
+        // depend on a working gate even if no restriction needs a mount.
+        if !stale {
+            let _ = GATE.output(&event, BPF_RB_FORCE_WAKEUP);
+        }
+        return Ok(());
+    }
+    if stale {
+        // An unavailable gate cannot end a start without an installed policy.
+        if !required {
+            return Ok(());
+        }
         // Reported all the same: a daemon that is there after all clears
         // the time when it reads this, and the next start is held again.
         let _ = GATE.output(&event, BPF_RB_FORCE_WAKEUP);
@@ -155,11 +173,13 @@ fn try_gate(ctx: &ProbeContext) -> Result<(), i32> {
     // until the daemon has seen it. It happens once per start of a sandboxed
     // app, or of a new app not dealt with yet, and for nothing else.
     if GATE.output(&event, BPF_RB_FORCE_WAKEUP).is_err() {
-        kill();
+        if required {
+            kill();
+        }
         return Ok(());
     }
     // Takes effect as the process leaves this system call.
-    if unsafe { aya_ebpf::helpers::generated::bpf_send_signal(SIGSTOP) } != 0 {
+    if unsafe { aya_ebpf::helpers::generated::bpf_send_signal(SIGSTOP) } != 0 && required {
         kill();
     }
     Ok(())

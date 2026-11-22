@@ -227,6 +227,10 @@ internal object AppOpsGuardProtocol {
 
         data class Release(override val uid: Int) : Command
 
+        data class Undo(override val uid: Int, val values: Values, val mayWrite: Boolean = true) : Command
+
+        data class Persisted(override val uid: Int, val permission: String, val state: PermissionState) : Command
+
         /**
          * Hold a guarded uid to [targets] from now on, after setting what
          * [resets] names back to the values given, which is not held.
@@ -255,6 +259,17 @@ internal object AppOpsGuardProtocol {
         return Bound(parts[1], parts[2], parts[3])
     }
 
+    data class Request(val number: Long, val commandLine: String)
+
+    fun parseRequest(line: String): Request? {
+        val words = line.split(' ', limit = 3)
+        if (words.size != 3 || words[0] != "request") return null
+        val number = words[1].toLongOrNull()?.takeIf { it >= 0 } ?: return null
+        return Request(number, words[2])
+    }
+
+    fun replyLine(request: Request, token: String, line: String): String = "reply ${request.number} $token $line"
+
     /** The command on [line], or `null` if it is not one. */
     fun parseCommand(line: String): Command? {
         val words = line.trim().split(' ', '\t').filter { it.isNotEmpty() }
@@ -276,6 +291,19 @@ internal object AppOpsGuardProtocol {
                 val targets = if (words[2] == NONE) Targets.NONE else decodeTargets(words[2]) ?: return null
                 val resets = if (words[3] == NONE) Values.NONE else decodeValues(words[3]) ?: return null
                 Command.Apply(uid, targets, resets)
+            }
+
+            "undo", "check-undo" -> {
+                if (words.size != 3) return null
+                val values = if (words[2] == NONE) Values.NONE else decodeValues(words[2]) ?: return null
+                Command.Undo(uid, values, mayWrite = words[0] == "undo")
+            }
+
+            "persisted" -> {
+                if (words.size != 3) return null
+                val (name, state) = decodePairs(words[2])?.singleOrNull() ?: return null
+                if (!isPermission(name)) return null
+                Command.Persisted(uid, name, decodeState(state) ?: return null)
             }
 
             "release" -> if (words.size == 2) Command.Release(uid) else null
@@ -363,6 +391,7 @@ internal object AppOpsGuardProtocol {
 
     fun restoreUidMode(desiredMode: () -> Int, writeMode: (Int) -> Boolean, readMode: () -> Int): Boolean {
         val expected = desiredMode()
+        if (readMode() == expected) return true
         if (!writeMode(expected)) return false
         if (readMode() == expected) return true
 

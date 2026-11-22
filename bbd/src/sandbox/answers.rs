@@ -48,6 +48,8 @@ pub struct DisabledAll {
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Listed {
     pub apps: Vec<ListedApp>,
+    #[serde(default)]
+    pub hook_health: HookHealth,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -123,6 +125,9 @@ pub struct Status {
     /// Newly installed apps not in the sandbox yet: not put in by the last
     /// look, or failed to be and waiting to be tried again.
     pub new_apps_pending: u32,
+    /// Newly installed apps whose starts were released after isolation failed.
+    #[serde(default)]
+    pub new_apps_failed: u32,
     /// Whether starts of newly installed apps not in the sandbox yet are
     /// held.
     pub new_apps_held: bool,
@@ -132,10 +137,15 @@ pub struct Status {
     /// what [`Sandbox::list`] reports per app.
     #[serde(skip)]
     pub gated_uids: BTreeSet<u32>,
+    /// Uids whose DNS uses the active relay.
+    #[serde(skip)]
+    pub dns_uids: BTreeSet<u32>,
     #[serde(skip)]
     pub held_ops: BTreeMap<u32, BTreeSet<String>>,
     #[serde(skip)]
     pub checking_appops: BTreeSet<u32>,
+    #[serde(skip)]
+    pub unknown_appops: BTreeSet<u32>,
 }
 
 /// What the system server hook reports it has in place.
@@ -149,4 +159,36 @@ pub struct HookStatus {
     /// Whether the advertising ID is withheld from the apps whose device
     /// identifiers are.
     pub ad_id: bool,
+    #[serde(default)]
+    pub health: HookHealth,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HookHealth {
+    pub android_id_hook: HookState,
+    pub app_list_hook: HookState,
+    pub uri_grants_hook: HookState,
+    pub ad_id_hook: HookState,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HookState {
+    #[default]
+    NotLoaded,
+    Incompatible,
+    Degraded,
+    Working,
+}
+
+impl From<HookHealth> for HookStatus {
+    fn from(health: HookHealth) -> Self {
+        Self {
+            android_id: health.android_id_hook == HookState::Working,
+            app_list: health.app_list_hook == HookState::Working,
+            uri_grants: health.uri_grants_hook == HookState::Working,
+            ad_id: health.ad_id_hook == HookState::Working,
+            health,
+        }
+    }
 }

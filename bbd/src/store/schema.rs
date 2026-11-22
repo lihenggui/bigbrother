@@ -17,7 +17,18 @@ use std::path::Path;
 use rusqlite::{Connection, OpenFlags};
 
 /// Schema version stored in SQLite's `user_version`. Bump it when the layout changes.
-const SCHEMA_VERSION: i32 = 12;
+const SCHEMA_VERSION: i32 = 13;
+const PREVIOUS_SCHEMA: i32 = 12;
+
+const APPOPS_UNDO_SCHEMA: &str = "
+CREATE TABLE sandbox_appops_undo (
+    uid INTEGER PRIMARY KEY,
+    package TEXT NOT NULL,
+    install_id TEXT NOT NULL,
+    preimage TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0
+);
+";
 
 // The old install's settings and saved grants remain available to the owner
 // for recovery. Only the live sandbox table is ever used to authorize work.
@@ -65,6 +76,7 @@ END;
 /// app installed since, already dealt with. There is a row for each package
 /// of the app id or uid. A library row is one package of an app id that the
 /// package manager has as a library, left alone while it is installed.
+/// A failed UID is left out of the start gate while awaiting a recovery event.
 const SCHEMA: &str = "
 CREATE TABLE access (
     hour     INTEGER NOT NULL,   -- unix time / 3600
@@ -145,7 +157,7 @@ CREATE TABLE sandbox_known (
     user    INTEGER NOT NULL,   -- the Android user; -1 for every user
     package TEXT    NOT NULL,   -- known while one of its packages is installed: tells it
                                 -- apart from an app given the app id after this one
-    library INTEGER NOT NULL,   -- 1: this package alone, a library
+    library INTEGER NOT NULL,   -- 0: app, 1: library, 2: failed, 3: missing profile
     PRIMARY KEY (app_id, user, package)
 ) WITHOUT ROWID;
 ";
@@ -202,13 +214,17 @@ fn version_of(conn: &Connection) -> rusqlite::Result<i32> {
     conn.pragma_query_value(None, "user_version", |r| r.get(0))
 }
 
+pub(super) fn has_appops_undo(conn: &Connection) -> anyhow::Result<bool> {
+    Ok(version_of(conn)? == SCHEMA_VERSION)
+}
+
 pub(super) fn has_schema(conn: &Connection) -> anyhow::Result<bool> {
     let version = version_of(conn)?;
     if version == 0 && !has_tables(conn)? {
         return Ok(false);
     }
     anyhow::ensure!(
-        version == SCHEMA_VERSION,
+        matches!(version, PREVIOUS_SCHEMA | SCHEMA_VERSION),
         "unsupported database schema {version} (expected {SCHEMA_VERSION}); use the previous module to uninstall before installing this build"
     );
     Ok(true)
@@ -228,13 +244,16 @@ pub(super) fn create_schema(conn: &mut Connection) -> anyhow::Result<()> {
     // One transaction for the tables and the version that records them: if
     // the process dies half way, the next start finds an empty database.
     let conn = conn.transaction()?;
-    if has_schema(&conn)? {
+    if version_of(&conn)? != PREVIOUS_SCHEMA && has_schema(&conn)? {
         return Ok(());
     }
-    conn.execute_batch(SCHEMA)?;
-    conn.execute_batch(RETIRED_SANDBOX)?;
-    conn.execute_batch(SANDBOX_AUTO_SCHEMA)?;
-    conn.execute_batch(NET_SCHEMA)?;
+    if version_of(&conn)? != PREVIOUS_SCHEMA {
+        conn.execute_batch(SCHEMA)?;
+        conn.execute_batch(RETIRED_SANDBOX)?;
+        conn.execute_batch(SANDBOX_AUTO_SCHEMA)?;
+        conn.execute_batch(NET_SCHEMA)?;
+    }
+    conn.execute_batch(APPOPS_UNDO_SCHEMA)?;
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     conn.commit()?;
     Ok(())
@@ -244,6 +263,53 @@ pub(super) fn create_schema(conn: &mut Connection) -> anyhow::Result<()> {
 mod tests {
     use super::*;
     use crate::store::{Reader, Writer, sandbox::sandbox_global};
+
+    #[test]
+    fn migrates_the_v030_schema_without_replacing_sandbox_data() {
+        let dir =
+            std::env::temp_dir().join(format!("bbd-test-journal-upgrade-{}", std::process::id()));
+        let db = dir.join("bb.db");
+        let writer = Writer::open(&db).unwrap();
+        let entry = crate::store::tests::sandbox_entry_for(10100);
+        writer.put_sandbox(&entry).unwrap();
+        writer
+            .put_sandbox_packages(entry.uid, std::slice::from_ref(&entry.package))
+            .unwrap();
+        writer
+            .put_sandbox_global(&[("location", "coarse")])
+            .unwrap();
+        drop(writer);
+        let conn = Connection::open(&db).unwrap();
+        conn.execute_batch("DROP TABLE sandbox_appops_undo; PRAGMA user_version = 12;")
+            .unwrap();
+        drop(conn);
+
+        check_module_database(&db).unwrap();
+        let before = Reader::open(&db).unwrap();
+        assert_eq!(
+            before.sandbox_entries().unwrap().as_slice(),
+            std::slice::from_ref(&entry)
+        );
+        assert!(before.appops_undo().unwrap().is_empty());
+        drop(before);
+
+        let migrated = Writer::open(&db).unwrap();
+        assert_eq!(
+            migrated.sandbox_entries().unwrap().as_slice(),
+            std::slice::from_ref(&entry)
+        );
+        assert_eq!(
+            migrated.sandbox_packages(entry.uid).unwrap(),
+            [entry.package].into()
+        );
+        assert_eq!(migrated.sandbox_global().unwrap(), "location=coarse");
+        assert!(migrated.appops_undo().unwrap().is_empty());
+        assert_eq!(
+            version_of(&Connection::open(&db).unwrap()).unwrap(),
+            SCHEMA_VERSION
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn an_incompatible_database_is_preserved() {
@@ -258,7 +324,7 @@ mod tests {
         assert!(Reader::open(&db).is_ok());
         check_module_database(&db).unwrap();
 
-        for version in [0, SCHEMA_VERSION - 1, SCHEMA_VERSION + 1] {
+        for version in [0, PREVIOUS_SCHEMA - 1, SCHEMA_VERSION + 1] {
             Connection::open(&db)
                 .unwrap()
                 .pragma_update(None, "user_version", version)

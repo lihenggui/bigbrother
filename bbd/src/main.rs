@@ -187,6 +187,9 @@ enum Command {
     /// the daemon.
     #[command(hide = true)]
     SandboxRestoreLines,
+    /// Remove optional recording resolver covers after the daemon has exited.
+    #[command(hide = true)]
+    SandboxDetachCovers,
     /// Check the database before replacing the installed module.
     #[command(hide = true)]
     ModuleCheckDb,
@@ -384,6 +387,7 @@ impl Command {
                 | Command::ModuleStop { .. }
                 | Command::ModuleExchange { .. }
                 | Command::SandboxRestoreLines
+                | Command::SandboxDetachCovers
                 | Command::Selftest
         )
     }
@@ -461,6 +465,7 @@ fn main() -> anyhow::Result<()> {
         Command::ModuleStop { module } => lifecycle::stop(&module),
         Command::ModuleExchange { staged, installed } => exchange_module(&staged, &installed),
         Command::SandboxRestoreLines => print_restore_lines(&cli.db),
+        Command::SandboxDetachCovers => sandbox::resolver::detach_recording_covers(&cli.db),
     }
 }
 
@@ -570,6 +575,7 @@ mod tests {
             &["module-stop", "module"],
             &["module-exchange", "staged", "installed"],
             &["sandbox-restore-lines"],
+            &["sandbox-detach-covers"],
             &["selftest"],
         ] {
             assert!(!needs_flush(args), "{args:?}");

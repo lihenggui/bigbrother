@@ -25,9 +25,9 @@ use std::{
 
 use anyhow::Context as _;
 use aya::maps::{Array, MapData, RingBuf};
-use bb_common::{GATE_CLOSED, GateEvent, read_event};
+use bb_common::{GATE_CLOSED, GATE_NEW, GATE_RECORD, GateEvent, read_event};
 
-use super::{Gated, Shared};
+use super::{Gated, Resolver, Shared, recording_only};
 use crate::{
     clock::clock_ns,
     log::{Limited, Policy, SANDBOX_INTERVAL},
@@ -155,6 +155,12 @@ impl Thread {
                 }
             }
             for event in events.drain(..) {
+                if event.kind == GATE_RECORD {
+                    if self.keeper.record(&event, &home, &cpuinfo).is_err() {
+                        return;
+                    }
+                    continue;
+                }
                 let lost = self.keeper.admit(&event, &home, &cpuinfo).is_err();
                 // Nothing waits any more: a later start is timed anew.
                 if let Err(e) = self.closing.waiting.set(0, &0, 0) {
@@ -184,7 +190,7 @@ impl Keeper {
     /// kill it.
     fn admit(&mut self, event: &GateEvent, home: &File, cpuinfo: &str) -> Result<(), Lost> {
         let pid = event.pid as i32;
-        let unknown = event.unknown != 0;
+        let unknown = event.kind == GATE_NEW;
         // The process is stopped and cannot end by itself. Keep its event
         // until we know we have the right process or that it is gone.
         let process = loop {
@@ -205,9 +211,7 @@ impl Keeper {
                 }
             }
         };
-        let start = (u64::from(event.start_high) << 32) | u64::from(event.start_low);
-        let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
-        let ticks = (u128::from(start) * hz as u128 / 1_000_000_000) as u64;
+        let ticks = start_ticks(event);
         loop {
             match process.signal(0) {
                 Ok(()) => match process_start(event.pid) {
@@ -226,21 +230,57 @@ impl Keeper {
             std::thread::sleep(Duration::from_millis(100));
         }
         let mut lost = false;
-        let held = wait_stopped(pid)
-            .and_then(|()| self.set_up(&process, event, home, cpuinfo, &mut lost))
-            .and_then(|held| {
-                if matches!(held, Held::Sandboxed | Held::NotOurs) {
-                    process
-                        .signal(libc::SIGCONT)
-                        .context("continuing held process")?;
-                }
-                Ok(held)
-            });
+        let held = match wait_stopped(pid) {
+            Ok(()) => self.set_up(&process, event, home, cpuinfo, &mut lost),
+            // An undelivered auto-isolation stop cannot end a start unless
+            // a required mount policy has since been installed.
+            Err(_)
+                if unknown
+                    && read(&self.shared.apps)
+                        .get(&event.uid)
+                        .is_none_or(|app| recording_only((app.mounts, app.resolver))) =>
+            {
+                Ok(Held::NotOurs)
+            }
+            Err(e) => Err(e),
+        };
         self.finish(event, &process, held);
         if lost { Err(Lost) } else { Ok(()) }
     }
 
+    fn record(&mut self, event: &GateEvent, home: &File, cpuinfo: &str) -> Result<(), Lost> {
+        if !self.shared.relay.alive() {
+            return Ok(());
+        }
+        if let Ok(process) = Process::open(event.pid as i32)
+            && process_start(event.pid) == Some(start_ticks(event))
+            && process.signal(0).is_ok()
+        {
+            let mut lost = false;
+            let _ = self.set_up(&process, event, home, cpuinfo, &mut lost);
+            if lost {
+                return Err(Lost);
+            }
+        }
+        Ok(())
+    }
+
     fn finish(&mut self, event: &GateEvent, process: &Process, held: anyhow::Result<Held>) {
+        let held = match held {
+            Ok(Held::New) if !read(&self.shared.auto).ends_queued_start(event.uid) => {
+                Ok(Held::NotOurs)
+            }
+            Ok(Held::Stale) if read(&self.shared.auto).releases(event.uid) => Ok(Held::NotOurs),
+            other => other,
+        };
+        let held = held.and_then(|held| {
+            if matches!(held, Held::Sandboxed | Held::NotOurs) {
+                process
+                    .signal(libc::SIGCONT)
+                    .context("continuing held process")?;
+            }
+            Ok(held)
+        });
         let shared = &self.shared;
         match held {
             Ok(Held::Sandboxed) => {
@@ -253,7 +293,7 @@ impl Keeper {
             }
             Ok(Held::NotOurs) => {}
             ended => {
-                let rescan = event.unknown != 0 || matches!(ended, Ok(Held::Stale));
+                let rescan = event.kind == GATE_NEW || matches!(ended, Ok(Held::Stale));
                 match ended {
                     Ok(Held::New) => lock(&shared.stats).unknown += 1,
                     Ok(_) => lock(&shared.stats).failed += 1,
@@ -295,37 +335,51 @@ impl Keeper {
     ) -> anyhow::Result<Held> {
         let pid = event.pid as i32;
         let uid = event.uid;
+        let gated = read(&self.shared.apps).get(&uid).cloned();
+        // A queued hold may arrive after only recording is left. The
+        // optional cover must not make that start depend on mount setup.
+        if gated.as_ref().is_some_and(|app| {
+            (event.kind == GATE_RECORD) != recording_only((app.mounts, app.resolver))
+        }) {
+            return Ok(Held::NotOurs);
+        }
         let Some(parent) = check_started_by_zygote(pid)? else {
             return Ok(Held::NotOurs);
         };
         // A new app put in the sandbox since it was stopped is given it now.
-        let Some(gated) = read(&self.shared.apps).get(&uid).cloned() else {
-            return Ok(if event.unknown != 0 {
+        let Some(gated) = gated else {
+            return Ok(if event.kind == GATE_NEW {
                 Held::New
             } else {
                 Held::NotOurs
             });
         };
-        // Mounting in a namespace the process shares with zygote would
-        // change what every app sees.
-        let theirs =
-            File::open(format!("/proc/{pid}/ns/mnt")).context("opening the app namespace")?;
-        let zygote =
-            File::open(format!("/proc/{parent}/ns/mnt")).context("opening the parent namespace")?;
-        check_namespace(&theirs, &zygote, home)?;
-        check_credentials(process, pid, uid)?;
-        match dirs::matches_install(
-            Path::new("/data/user_de"),
-            &gated.package,
-            uid,
-            &gated.install_id,
-        ) {
-            Ok(true) => {}
-            Ok(false) => return Ok(Held::Stale),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Held::Stale),
-            Err(e) => return Err(e.into()),
+        let result = (|| {
+            // Mounting in a namespace shared with zygote would affect other apps.
+            let theirs =
+                File::open(format!("/proc/{pid}/ns/mnt")).context("opening the app namespace")?;
+            let zygote = File::open(format!("/proc/{parent}/ns/mnt"))
+                .context("opening the parent namespace")?;
+            check_namespace(&theirs, &zygote, home)?;
+            check_credentials(process, pid, uid)?;
+            match dirs::matches_install(
+                Path::new("/data/user_de"),
+                &gated.package,
+                uid,
+                &gated.install_id,
+            ) {
+                Ok(true) => {}
+                Ok(false) => return Ok((Held::Stale, false)),
+                Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok((Held::Stale, false)),
+                Err(e) => return Err(e.into()),
+            }
+            let covered = self.mount_for(event, &gated, &theirs, home, cpuinfo, lost)?;
+            Ok((Held::Sandboxed, covered))
+        })();
+        if let Some(failed) = gated.relay_failed {
+            failed.store(!matches!(result, Ok((_, true))), Ordering::Relaxed);
         }
-        self.mount_for(event, &gated, &theirs, home, cpuinfo, lost)
+        result.map(|(held, _)| held)
     }
 
     fn mount_for(
@@ -336,7 +390,7 @@ impl Keeper {
         home: &File,
         cpuinfo: &str,
         lost: &mut bool,
-    ) -> anyhow::Result<Held> {
+    ) -> anyhow::Result<bool> {
         let pid = event.pid as i32;
         let uid = event.uid;
         self.kernel.generation = format!("{}-{}", uid, gated.install_id);
@@ -346,16 +400,30 @@ impl Keeper {
             &[]
         };
 
-        if gated.resolver != Cover::None {
-            // A mount on the resolver's socket must stay in this
-            // namespace: in one that passes its mounts on, it would take
-            // the resolver from every app.
+        let recording = gated.resolver == Resolver::Record;
+        let required = if recording {
+            Cover::None
+        } else if gated.resolver == Resolver::Names && !self.shared.relay.alive() {
+            Cover::Null
+        } else {
+            gated.resolver.cover()
+        };
+        let safe = || -> anyhow::Result<()> {
+            // A resolver cover must stay in this namespace.
             let mountinfo = fs::read_to_string(format!("/proc/{pid}/mountinfo"))
                 .context("reading its mounts")?;
             anyhow::ensure!(
                 resolver::spreads(&mountinfo) == Some(false),
                 "its mounts are shared with others"
             );
+            Ok(())
+        };
+        if required != Cover::None {
+            safe()?;
+        }
+        let may_record = recording && self.shared.relay.alive() && safe().is_ok();
+        if event.kind == GATE_RECORD && !may_record {
+            return Ok(false);
         }
         enter(theirs).context("entering its namespace")?;
         let mounted = mounts::apply(
@@ -364,14 +432,37 @@ impl Keeper {
             &gated.packages,
             files,
             gated.mounts.storage,
-            gated.resolver,
-        );
+            required,
+        )
+        .and_then(|()| {
+            if !may_record {
+                return Ok(required == Cover::Relay);
+            }
+            let apps = read(&self.shared.apps);
+            let registered = apps.get(&uid).and_then(|app| app.relay_failed.as_ref());
+            if !registered
+                .zip(gated.relay_failed.as_ref())
+                .is_some_and(|(current, expected)| Arc::ptr_eq(current, expected))
+            {
+                return Ok(false);
+            }
+            let serving = self.shared.relay.socket();
+            serving.map_or(Ok(false), |id| {
+                mounts::apply_resolver(Cover::Relay, true, |_| resolver::record_here(id))
+            })
+        });
         if let Err(e) = enter(home) {
             *lost = true;
             return Err(e).context("returning from its namespace");
         }
-        mounted.map(|()| Held::Sandboxed)
+        mounted
     }
+}
+
+fn start_ticks(event: &GateEvent) -> u64 {
+    let start = (u64::from(event.start_high) << 32) | u64::from(event.start_low);
+    let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+    (u128::from(start) * hz as u128 / 1_000_000_000) as u64
 }
 
 fn check_started_by_zygote(pid: i32) -> anyhow::Result<Option<i32>> {
@@ -475,6 +566,8 @@ fn log_start(log: &mut Limited, uid: u32, e: &anyhow::Error) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::{Sandbox, tests::Fixture};
+    use crate::sync::write;
 
     use std::sync::{Mutex, RwLock, atomic::AtomicBool};
 
@@ -492,8 +585,10 @@ mod tests {
     fn keeper(scratch: &Path) -> (Keeper, Arc<Shared>, Arc<Mutex<Vec<u32>>>) {
         let shared = Arc::new(Shared {
             apps: RwLock::default(),
+            auto: Arc::default(),
             stats: Mutex::default(),
             open: AtomicBool::new(true),
+            relay: Default::default(),
             admitted: Mutex::new(None),
             unknown: Mutex::new(None),
         });
@@ -514,7 +609,7 @@ mod tests {
             uid: 1_010_230,
             at_ns_low: 0,
             at_ns_high: 0,
-            unknown: 1,
+            kind: GATE_NEW,
         }
     }
 
@@ -530,6 +625,13 @@ mod tests {
         let (mut keeper, shared, told) = keeper(&dir);
         let home = File::open("/dev/null").unwrap();
 
+        let mut fixture = Fixture::new("gate-new");
+        let mut sandbox = fixture.sandbox();
+        sandbox
+            .set_auto(&fixture.writer, &mut fixture.packages, true)
+            .unwrap();
+        *write(&shared.auto) = sandbox.auto_admission();
+
         keeper.finish(&new_app_start(child.id()), &process, Ok(Held::New));
         assert!(process.exited(5000).unwrap());
         assert!(!child.wait().unwrap().success());
@@ -538,12 +640,64 @@ mod tests {
         assert_eq!((stats.unknown, stats.failed, stats.admitted), (1, 0, 0));
         drop(stats);
 
-        // Killed already, by the kernel side: the daemon is told all the
-        // same.
+        // The child can be gone by the time the thread opens its pidfd.
+        // Recheck the package list even then.
         keeper
             .admit(&new_app_start(i32::MAX as u32), &home, "")
             .unwrap();
         assert_eq!(lock(&told).len(), 2);
+    }
+
+    #[test]
+    fn a_queued_new_start_is_resumed_after_auto_isolation_releases_it() {
+        let mut fixture = Fixture::new("gate-released");
+        let user_data = fixture.dir.join("user_de");
+        fs::create_dir_all(user_data.join("0")).unwrap();
+        let mut sandbox = Sandbox::load(&fixture.writer, Vec::new(), Some(&user_data)).unwrap();
+        sandbox
+            .set_auto(&fixture.writer, &mut fixture.packages, true)
+            .unwrap();
+        fs::write(
+            fixture.dir.join("packages.list"),
+            "com.example.new 10230 0 /d default none 0 1 1 @null",
+        )
+        .unwrap();
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let process = Process::open(child.id() as i32).unwrap();
+        process.signal(libc::SIGSTOP).unwrap();
+        wait_stopped(child.id() as i32).unwrap();
+        let (mut keeper, shared, told) = keeper(&fixture.dir);
+        let event = new_app_start(child.id());
+        *write(&shared.auto) = sandbox.auto_admission();
+        assert!(read(&shared.auto).ends_queued_start(event.uid));
+
+        // No directory is available for the observed profile, so the scan
+        // releases it even if this start is still queued for disposition.
+        sandbox.auto_started(&fixture.writer, &mut fixture.packages, [event.uid].into());
+        *write(&shared.auto) = sandbox.auto_admission();
+        keeper.finish(&event, &process, Ok(Held::New));
+
+        let stopped = || {
+            fs::read_to_string(format!("/proc/{}/stat", child.id()))
+                .ok()
+                .and_then(|stat| parse_stat(&stat)?.state_and_parent())
+                .is_some_and(|(state, _)| state == 'T')
+        };
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while stopped() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let resumed = !stopped() && !process.exited(0).unwrap();
+        if child.try_wait().unwrap().is_none() {
+            process.signal(libc::SIGKILL).unwrap();
+            child.wait().unwrap();
+        }
+        assert!(resumed);
+        assert!(lock(&told).is_empty());
+        assert_eq!(lock(&shared.stats).unknown, 0);
     }
 
     #[test]
@@ -557,7 +711,7 @@ mod tests {
         let (mut keeper, shared, told) = keeper(Path::new("/unused"));
         let mut event = new_app_start(child.id());
         // The kernel already held this UID for the previous installation.
-        event.unknown = 0;
+        event.kind = bb_common::GATE_REQUIRED;
 
         keeper.finish(&event, &process, Ok(Held::Stale));
 

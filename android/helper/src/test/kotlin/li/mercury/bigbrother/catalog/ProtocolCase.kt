@@ -64,6 +64,12 @@ internal fun protocolCases(name: String, types: Set<String>, keys: Set<String>):
 /** The cases of any of [types], of which there must be at least one. */
 internal fun List<ProtocolCase>.ofType(vararg types: String): List<ProtocolCase> = filter { it.type in types }.also { check(it.isNotEmpty()) { "no case of ${types.toList()}" } }
 
+internal fun appOpsTransactionCases(): List<ProtocolCase> = protocolCases(
+    "appops-transaction.txt",
+    types = setOf("request", "reply"),
+    keys = setOf("request", "command", "token", "answer"),
+)
+
 /** Found from the directory the tests run in, which is the module's. */
 private fun protocolDirectory(): File {
     val start = File("").absoluteFile

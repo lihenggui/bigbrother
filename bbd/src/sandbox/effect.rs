@@ -28,13 +28,33 @@ pub trait Effect: Send {
     /// Names the effect in an error.
     fn name(&self) -> &'static str;
 
-    /// Read the original state needed for recovery before enabling an app.
-    fn prepare_enable(&mut self, _entry: &mut Entry, _items: &Settings) -> anyhow::Result<()> {
+    /// Read the preimage, if this effect changes state outside the daemon.
+    fn prepare_change(
+        &mut self,
+        _entry: &mut Entry,
+        _before: Option<&Settings>,
+        _after: Option<&Settings>,
+    ) -> anyhow::Result<Option<String>> {
+        Ok(None)
+    }
+
+    /// Prevent automatic enforcement while an earlier transaction is unresolved.
+    fn suspend(&mut self, _uid: u32) {}
+
+    fn restores_from_preimage(&self) -> bool {
+        false
+    }
+
+    fn restore_preimage(
+        &mut self,
+        _undo: &crate::store::AppOpsUndo,
+        _writer: &crate::store::Writer,
+    ) -> anyhow::Result<()> {
         Ok(())
     }
 
-    /// Discard preparation when the entry cannot be committed.
-    fn cancel_enable(&mut self, _uid: u32) {}
+    /// Release the transaction fence using the policy that actually committed.
+    fn finish_change(&mut self, _entry: &Entry, _items: Option<&Settings>) {}
 
     /// Apply the effect to `entry.uid`, under which run `packages`, as
     /// `items` say. It may change the entry, for instance to keep what it
@@ -71,6 +91,9 @@ pub trait Effect: Send {
     /// carries on.
     fn resume(&mut self, _apps: &[Resumed]) {}
 
+    /// Drop optional resolver admission work once the relay stops.
+    fn relay_stopped(&mut self) {}
+
     /// Drop bookkeeping without changing permissions or signalling the successor.
     fn forget(&mut self, _uid: u32) {}
 
@@ -87,6 +110,9 @@ pub trait Effect: Send {
 
     /// Fill in what the effect knows about its own state.
     fn report(&self, _status: &mut Status) {}
+
+    /// Tell Android it can act on a choice only after the daemon saved it.
+    fn found_written(&mut self, _uid: u32) {}
 
     /// Bring the enabled `entries` up to date with what the effect found
     /// changed by the user while their apps were sandboxed, since it was

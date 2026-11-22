@@ -52,13 +52,14 @@ daemon loop build on the lower layers, with the CLI at the top.
   it, and an app not in the sandbox is never touched.
 - A new item names the app ops, runtime permissions, mounts or hook answers
   it covers in `items.rs`; its app ops must also be in
-  `AppOpsGuardProtocol.GUARDED_OPS`. A runtime permission it takes is named
-  in the entry before it is taken (`appops::naming_taken`), as no covering
-  mode of the items can name it.
+  `AppOpsGuardProtocol.GUARDED_OPS`. The daemon journals the verified
+  AppOps preimage before a transaction mutates it. A runtime permission or
+  service access regranted while held is saved before the helper takes it again.
 
-- Fail closed. A start that cannot be given its sandbox is killed, never let
-  through, and the kernel side does the same when the gate thread is stuck
-  or gone.
+- A start with an established gate policy that cannot be given its sandbox
+  is killed. The kernel does the same when the gate thread is stuck or gone.
+  Auto-isolation has a separate, bounded hold. Release starts for installations
+  that cannot be isolated and retry them on recovery events.
 - A starting app waits for the gate thread (`sandbox/gate/admission.rs`).
   The thread never waits for the main loop, the database or a helper program,
   and has no timer. It blocks until a sandboxed app starts.

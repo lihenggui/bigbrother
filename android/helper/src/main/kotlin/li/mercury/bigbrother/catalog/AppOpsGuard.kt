@@ -103,14 +103,17 @@ import kotlin.system.exitProcess
  * Before the answer to `set`, `apply` and `verify`, and whenever a check
  * finds it changed, it prints `unheld <uid> <name>,...` (`-` for none):
  * what the uid is held to that the system did not keep even after it was
- * set again, ops at their mode and permissions revoked. Ops this device
- * does not have are not named.
+ * set again, ops at their mode and permissions revoked. The helper limits
+ * retries for all-files mode changes, permission revocations, and disabling
+ * special access. A restriction suspended this way is reported as unheld
+ * until the targets or the installation change, or the uid is released.
+ * All-files access with unreadable request metadata is also unheld. Ops this
+ * device does not have are not named.
  *
  * A command that fails is answered with `failed <uid>`, and the reason goes
  * to the error output. So is one the system took none of: a `set` after
- * which no op has its mode must not pass for one that worked, and a
- * permission the system still grants after it was revoked fails the
- * command. Op names are the public ones, such as `android:camera`, and
+ * which the service accepted none of the attempted modes must not pass for
+ * one that worked. Op names are the public ones, such as `android:camera`, and
  * permissions go by their full names.
  *
  * The modes are the uid's, not its packages': the content providers check
@@ -138,7 +141,11 @@ object AppOpsGuard {
     /** Held by each command and each check, so that they run one at a time and their output lines stay whole. */
     private val lock = Any()
 
-    private val handler = AppOpsGuardHandler(Framework)
+    private val handler = AppOpsGuardHandler(Framework, supervised = true)
+
+    private var reply: AppOpsGuardProtocol.Request? = null
+
+    private var boundToken: String? = null
 
     private var journal: File? = null
 
@@ -170,6 +177,7 @@ object AppOpsGuard {
         val lines = readInput()
         try {
             Framework.connect()
+            if (journal == null) emit("ready")
             thread(isDaemon = true, name = "check") { Framework.checkLoop(lock, handler) }
         } catch (e: Throwable) {
             System.err.println(describeFailure(e))
@@ -183,12 +191,12 @@ object AppOpsGuard {
     }
 
     private fun readInput(): LinkedBlockingQueue<Line> {
-        val lines = LinkedBlockingQueue<Line>()
+        val lines = LinkedBlockingQueue<Line>(128)
         thread(isDaemon = true, name = "input") {
             try {
                 System.`in`.bufferedReader().forEachLine { lines.put(Line.Text(it)) }
             } catch (e: Throwable) {
-                System.err.println("reading input: $e")
+                System.err.println("reading input: ${describeFailure(e)}")
             }
             inputClosed = true
             lines.put(Line.End)
@@ -203,32 +211,44 @@ object AppOpsGuard {
             return
         }
         val bound = AppOpsGuardProtocol.parseBound(line) ?: return
-        val command = AppOpsGuardProtocol.parseCommand(bound.commandLine)
+        val request = AppOpsGuardProtocol.parseRequest(bound.commandLine)
+        val command = AppOpsGuardProtocol.parseCommand(request?.commandLine ?: bound.commandLine)
         if (command == null) {
             System.err.println("invalid helper command")
             return
         }
         val owner = Installation(bound.packageName, bound.token)
-        synchronized(lock) { handleBound(owner, command) }
+        synchronized(lock) {
+            reply = request
+            boundToken = bound.token
+            try {
+                handleBound(owner, command, request != null)
+            } finally {
+                reply = null
+                boundToken = null
+            }
+        }
     }
 
-    private fun handleBound(owner: Installation, command: Command) {
+    private fun handleBound(owner: Installation, command: Command, transaction: Boolean) {
         val uid = command.uid
         try {
+            if (command is Command.Verify) emit("checking $uid")
             val current = owner.isCurrent(uid)
-            if (!current && journal != null && command is Command.Restore) {
+            if (!current && journal != null && (command is Command.Restore || command is Command.Undo)) {
                 emit("retired $uid")
                 return
             }
             check(current) { "installation changed" }
             if (owners.put(uid, owner) != owner) handler.forget(uid)
-            handler.handle(command)
-            if (!handler.isGuarded(uid)) owners.remove(uid)
+            handler.handle(command, transaction)
+            if (!handler.needsOwner(uid)) owners.remove(uid)
         } catch (e: Throwable) {
             System.err.println("bound $uid: ${describeFailure(e)}")
             emit(
                 when (command) {
                     is Command.Capture -> AppOpsGuardProtocol.captureFailedLine(uid, command.request)
+                    is Command.Verify -> "unknown-readback $uid"
                     else -> AppOpsGuardProtocol.failedLine(uid)
                 },
             )
@@ -251,7 +271,22 @@ object AppOpsGuard {
 
     internal fun emit(line: String) {
         synchronized(lock) {
-            println(line)
+            val kind = line.substringBefore(' ')
+            val request = reply
+            val bound = boundToken
+            val output = when (kind) {
+                "captured", "capture-failed", "saved", "restored", "applied", "failed" ->
+                    if (request != null && bound != null) AppOpsGuardProtocol.replyLine(request, bound, line) else line
+
+                "checking", "unknown-readback", "unheld", "reverted" -> {
+                    val uid = line.substringAfter(' ').substringBefore(' ').toIntOrNull()
+                    val token = bound ?: uid?.let(owners::get)?.token
+                    if (token != null && journal == null) "report $token $line" else line
+                }
+
+                else -> line
+            }
+            println(output)
             System.out.flush()
         }
     }

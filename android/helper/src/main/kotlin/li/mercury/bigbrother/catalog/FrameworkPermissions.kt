@@ -95,16 +95,23 @@ internal class Permissions(private val service: Any, private val packages: Any) 
     /** The packages of [uid]. */
     fun packagesOf(uid: Int): List<String> = (packagesForUid.call(packages, uid) as Array<*>?).orEmpty().filterIsInstance<String>()
 
-    override fun requesting(uid: Int, permission: String): List<String> {
-        val names = packagesForUid.call(packages, uid) as Array<*>? ?: return emptyList()
-        return names.filterIsInstance<String>().filter { name ->
+    override fun requesting(uid: Int, permission: String): RuntimePermissions.Requests {
+        val names = packagesForUid.call(packages, uid) as Array<*>? ?: return RuntimePermissions.Requests(emptyList(), complete = false)
+        val requesting = mutableListOf<String>()
+        var complete = true
+        for (name in names.filterIsInstance<String>()) {
             val info = if (packageInfo != null) {
                 packageInfo.call(packages, name, PackageManager.GET_PERMISSIONS.toLong(), userOf(uid))
             } else {
                 packageInfoInt!!.call(packages, name, PackageManager.GET_PERMISSIONS, userOf(uid))
             } as PackageInfo?
-            info?.requestedPermissions?.contains(permission) == true
+            if (info == null) {
+                complete = false
+            } else if (info.requestedPermissions?.contains(permission) == true) {
+                requesting += name
+            }
         }
+        return RuntimePermissions.Requests(requesting, complete)
     }
 
     override fun isGranted(uid: Int, permission: String): Boolean = checkUidPermission.call(packages, permission, uid) == PackageManager.PERMISSION_GRANTED

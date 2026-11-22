@@ -19,9 +19,11 @@ package li.mercury.bigbrother.core.data.bbd
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.RecordsException
+import li.mercury.bigbrother.core.model.SandboxHookState
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxPart
+import org.json.JSONObject
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import kotlin.test.Test
@@ -42,8 +44,14 @@ class BbdSandboxTest {
         assertEquals(2, app.networkRules)
         assertEquals(true, app.appOpsChecking)
         assertEquals(mapOf(SandboxItem.CAMERA to SandboxMode.OFF), app.settings)
-        assertEquals(mapOf(SandboxItem.CAMERA to SandboxMode.OFF), app.items)
-        assertEquals(mapOf(SandboxItem.CAMERA to setOf(SandboxPart.APP_OPS)), app.unmet)
+        assertEquals(
+            mapOf(SandboxItem.CAMERA to SandboxMode.OFF, SandboxItem.NETWORK_RECORD to SandboxMode.ON),
+            app.items,
+        )
+        assertEquals(
+            mapOf(SandboxItem.CAMERA to setOf(SandboxPart.APP_OPS), SandboxItem.NETWORK_RECORD to setOf(SandboxPart.DNS_NAMES)),
+            app.unmet,
+        )
         assertNull(app.recordingSince)
         assertContains(shell.lines.single(), "sandbox list --json;")
     }
@@ -65,10 +73,30 @@ class BbdSandboxTest {
         val status = RootShellBbdDataSource(shell, Dispatchers.Unconfined).getSandboxStatus()
 
         assertEquals(
-            BbdSandboxStatus(true, false, true, false, true, false, 2, true, true, true, false, true),
+            BbdSandboxStatus(true, false, true, false, true, false, 2, true, true, true, false, true, newAppsFailed = 1),
             status,
         )
         assertContains(shell.lines.single(), "sandbox status --json;")
+    }
+
+    @Test
+    fun givenPerHookHealth_whenStatusAndListAreRead_thenPreservesEachState() = runTest {
+        val health = JSONObject(
+            """{"android_id_hook":"working","app_list_hook":"incompatible","uri_grants_hook":"degraded","ad_id_hook":"not_loaded"}""",
+        )
+        val statusJson = JSONObject(bbdFixture("sandbox-status"))
+        statusJson.getJSONObject("hook").put("health", health)
+        val listJson = JSONObject(bbdFixture("sandbox-apps")).put("hook_health", health)
+        val status = RootShellBbdDataSource(TestBbdRootShell(statusJson.toString()), Dispatchers.Unconfined).getSandboxStatus()
+        val app = RootShellBbdDataSource(TestBbdRootShell(listJson.toString()), Dispatchers.Unconfined).listSandboxApps().single()
+        val expected = mapOf(
+            SandboxPart.ANDROID_ID_HOOK to SandboxHookState.WORKING,
+            SandboxPart.APP_LIST_HOOK to SandboxHookState.INCOMPATIBLE,
+            SandboxPart.URI_GRANTS_HOOK to SandboxHookState.DEGRADED,
+            SandboxPart.AD_ID_HOOK to SandboxHookState.NOT_LOADED,
+        )
+        assertEquals(expected, status.asExternalModel().hookHealth)
+        assertEquals(expected, app.asExternalModel().hookHealth)
     }
 
     @Test

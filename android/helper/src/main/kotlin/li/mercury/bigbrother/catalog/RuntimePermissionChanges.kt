@@ -19,6 +19,7 @@ package li.mercury.bigbrother.catalog
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.FLAG_USER_FIXED
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.PermissionState
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.USER_FLAGS
+import li.mercury.bigbrother.catalog.Taking.HoldResult
 
 internal class RuntimePermissionChanges(private val system: AppOpsSystem) : Taking {
     private fun permissions(): RuntimePermissions = system.permissions ?: error("runtime permissions cannot be reached: ${system.permissionsMissing}")
@@ -60,6 +61,27 @@ internal class RuntimePermissionChanges(private val system: AppOpsSystem) : Taki
     }
 
     /**
+     * Whether [op] stands for a permission that is not a runtime one, such
+     * as all files access, and that no package of [uid] requests. Its op
+     * at the default keeps the data from the app already, and Android 16
+     * drops a uid mode set on it at once: holding it would only change it
+     * back and forth, and the system ends the app's processes on every
+     * change of all files access. `null` where that cannot be told.
+     */
+    fun isUnrequestedAppOp(op: GuardedOp, uid: Int): Boolean? {
+        val permission = op.declaredBy ?: return null
+        val connected = system.permissions ?: return null
+        return try {
+            if (runtimeOf(connected, permission) != null) return false
+            val requests = connected.requesting(uid, permission)
+            if (requests.complete) requests.packages.isEmpty() else null
+        } catch (e: Throwable) {
+            system.warn("requests of ${op.name} for $uid: ${system.describe(e)}")
+            null
+        }
+    }
+
+    /**
      * Leave the permission of [op], and its background permission, marked
      * `REVOKED_COMPAT` for [uid] only where the user had them so before
      * the uid was held ([saved] and [grantThen]), its grant having changed
@@ -88,7 +110,7 @@ internal class RuntimePermissionChanges(private val system: AppOpsSystem) : Taki
     private fun markRevoked(connected: RuntimePermissions, uid: Int, permission: String, marked: Boolean) {
         if (connected.isGranted(uid, permission)) return
         val value = if (marked) AppOpsGuardProtocol.FLAG_REVOKED_COMPAT else 0
-        for (pkg in connected.requesting(uid, permission)) {
+        for (pkg in connected.requesting(uid, permission).packages) {
             system.requireOwner(uid)
             if (connected.flags(pkg, permission, uid) and AppOpsGuardProtocol.FLAG_REVOKED_COMPAT != value) {
                 connected.setFlags(pkg, permission, uid, AppOpsGuardProtocol.FLAG_REVOKED_COMPAT, value)
@@ -99,35 +121,42 @@ internal class RuntimePermissionChanges(private val system: AppOpsSystem) : Taki
     /** The state of [name] for [uid], `null` if no package of it requests it. */
     override fun state(uid: Int, name: String): PermissionState? {
         val connected = permissions()
-        val first = connected.requesting(uid, name).firstOrNull() ?: return null
+        val requests = connected.requesting(uid, name)
+        check(requests.complete) { "permission requests are unavailable" }
+        val first = requests.packages.firstOrNull() ?: return null
         return PermissionState(connected.isGranted(uid, name), connected.flags(first, name, uid) and USER_FLAGS)
     }
 
     /**
-     * Revoke [name] for [uid], fixed as the user's choice, where
-     * it is not already; whether anything had to be changed.
+     * Fix [name] first, so that if revocation fails it stays granted and fixed,
+     * which no one takes for the user's revocation.
      */
-    override fun hold(uid: Int, name: String): Boolean {
+    override fun hold(uid: Int, name: String, mayChange: () -> Boolean): HoldResult {
         val connected = permissions()
-        val requesting = connected.requesting(uid, name)
+        val requests = connected.requesting(uid, name)
+        check(requests.complete) { "permission requests are unavailable" }
+        val requesting = requests.packages
+        val first = requesting.firstOrNull() ?: return HoldResult.HELD
         var changed = false
         for (pkg in requesting) {
-            system.requireOwner(uid)
-            // Fixed first: held half way, the permission is granted and
-            // fixed, which no one takes for the user's revocation.
             if (connected.flags(pkg, name, uid) and FLAG_USER_FIXED == 0) {
+                system.requireOwner(uid)
                 connected.setFlags(pkg, name, uid, FLAG_USER_FIXED, FLAG_USER_FIXED)
                 changed = true
             }
-            if (connected.isGranted(uid, name)) {
-                connected.revoke(pkg, name, uid)
-                changed = true
-            }
+        }
+        // Android keeps one grant for the uid, so revoking through a second
+        // package could only fight a regrant that landed during this hold.
+        if (connected.isGranted(uid, name)) {
+            system.requireOwner(uid)
+            if (!mayChange()) return HoldResult.SUSPENDED
+            connected.revoke(first, name, uid)
+            changed = true
         }
         check(requesting.all { AppOpsGuardProtocol.isHeld(connected.isGranted(uid, name), connected.flags(it, name, uid)) }) {
             "the system did not take $name away"
         }
-        return changed
+        return if (changed) HoldResult.CHANGED else HoldResult.HELD
     }
 
     /**
@@ -136,17 +165,19 @@ internal class RuntimePermissionChanges(private val system: AppOpsSystem) : Taki
      */
     override fun putBack(uid: Int, name: String, state: PermissionState?) {
         val connected = permissions()
-        val requesting = connected.requesting(uid, name)
+        val requests = connected.requesting(uid, name)
+        check(requests.complete) { "permission requests are unavailable" }
+        val requesting = requests.packages
         for (pkg in requesting) {
             system.requireOwner(uid)
             if (state == null) {
-                connected.setFlags(pkg, name, uid, FLAG_USER_FIXED, 0)
+                if (connected.flags(pkg, name, uid) and FLAG_USER_FIXED != 0) connected.setFlags(pkg, name, uid, FLAG_USER_FIXED, 0)
                 continue
             }
             val granted = connected.isGranted(uid, name)
             if (state.granted && !granted) connected.grant(pkg, name, uid)
             if (!state.granted && granted) connected.revoke(pkg, name, uid)
-            connected.setFlags(pkg, name, uid, USER_FLAGS, state.flags)
+            if (connected.flags(pkg, name, uid) and USER_FLAGS != state.flags) connected.setFlags(pkg, name, uid, USER_FLAGS, state.flags)
         }
         check(requesting.all { AppOpsGuardProtocol.isPutBack(state, connected.isGranted(uid, name), connected.flags(it, name, uid)) }) {
             "the system did not give $name back"

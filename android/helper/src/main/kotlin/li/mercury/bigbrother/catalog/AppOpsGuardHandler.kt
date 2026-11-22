@@ -22,13 +22,19 @@ import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.OpState
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.PermissionState
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.Targets
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.Values
+import li.mercury.bigbrother.catalog.Taking.HoldResult
+import java.util.concurrent.TimeUnit
 
 /**
  * Carries out [AppOpsGuard]'s commands and checks, on what [system] reports
  * and changes. Not thread-safe: the caller runs one command or check at a
  * time.
  */
-internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
+internal class AppOpsGuardHandler(
+    private val system: AppOpsSystem,
+    private val supervised: Boolean = false,
+    private val now: () -> Long = System::nanoTime,
+) {
     /**
      * What a guarded uid is held to, the modes saved for it when known with
      * the grants they were saved at, and the states of the permissions this
@@ -45,15 +51,67 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
         val chosen: Set<String> = emptySet(),
         val held: Set<String> = emptySet(),
         val reported: Map<String, PermissionState> = emptyMap(),
+        val persisted: Map<String, PermissionState> = emptyMap(),
+        val retries: Retries = Retries(),
     ) {
         /** What to give [permission] back as, the daemon having sent [sent]. */
         fun toGiveBack(permission: String, sent: PermissionState?): PermissionState? = AppOpsGuardProtocol.stateToGiveBack(sent, tookPermissions[permission], permission in chosen)
 
         fun savedValues(): Values = Values(checkNotNull(saved), tookPermissions.toList(), savedGrants)
+
+        fun retriesFor(next: Targets): Retries = if (targets.ops == next.ops && targets.permissions == next.permissions) retries else Retries()
+
+        fun findChoice(permission: String, found: PermissionState?): PermissionState? {
+            val runtime = !AppOpsGuardProtocol.isSpecialAccess(permission)
+            if (runtime && found?.granted == true) retries.noteSuspendedGrant(permission)
+            val wasHeld = runtime && (permission in held || retries.wasGrantedWhileSuspended(permission))
+            return AppOpsGuardProtocol.chosenWhileHeld(found, wasHeld)
+        }
+    }
+
+    private class Retries {
+        private val attempts = mutableMapOf<String, ArrayDeque<Long>>()
+        private val suspended = mutableMapOf<String, Boolean>()
+
+        fun suspended(name: String): Boolean = name in suspended
+
+        // After suspension only a revocation from a known grant can be
+        // distinguished from an earlier partial hold by this helper.
+        fun noteSuspendedGrant(name: String) {
+            if (suspended(name)) suspended[name] = true
+        }
+
+        fun wasGrantedWhileSuspended(name: String): Boolean = suspended[name] == true
+
+        fun observedHeld(name: String) {
+            attempts.getOrPut(name) { ArrayDeque() }
+        }
+
+        fun mayWrite(name: String, now: Long): Boolean {
+            if (suspended(name)) return false
+            val previous = attempts[name]
+            if (previous == null) {
+                observedHeld(name)
+                return true
+            }
+            while (previous.firstOrNull()?.let { now - it >= RETRY_WINDOW } == true) previous.removeFirst()
+            // Allow brief policy syncs, but do not periodically resume writes
+            // once they have been killing processes or unbinding services.
+            if (previous.size == RETRY_LIMIT) {
+                suspended[name] = false
+                return false
+            }
+            previous.addLast(now)
+            return true
+        }
     }
 
     /** The guarded uids. */
     private val guarded = mutableMapOf<Int, Guard>()
+
+    private data class Prepared(val targets: Targets, val values: Values)
+
+    private val prepared = mutableMapOf<Int, Prepared>()
 
     /** The unheld ops last printed for each guarded uid. */
     private val reported = mutableMapOf<Int, List<String>>()
@@ -77,16 +135,21 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
             chosen = guard?.chosen.orEmpty(),
             held = guard?.held.orEmpty() intersect targets.permissions,
             reported = guard?.reported.orEmpty(),
+            retries = guard?.retriesFor(targets) ?: Retries(),
         )
     }
 
-    fun handle(command: Command) {
+    fun handle(command: Command, transaction: Boolean = false) {
+        if (transaction && (command is Command.Set || command is Command.Apply || command is Command.Restore)) {
+            val before = checkNotNull(prepared[command.uid]) { "missing transaction preimage" }
+            check(before.values == captureValues(command.uid, before.targets)) { "transaction preimage changed" }
+        }
         when (command) {
-            is Command.Capture -> handleCapture(command)
+            is Command.Capture -> handleCapture(command, transaction)
 
             is Command.Set -> handleSet(command)
 
-            is Command.Apply -> handleApply(command)
+            is Command.Apply -> handleApply(command, transaction)
 
             is Command.Restore -> handleRestore(command)
 
@@ -94,42 +157,106 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
 
             is Command.Verify -> handleVerify(command)
 
+            is Command.Undo -> handleUndo(command)
+
+            is Command.Persisted -> {
+                val guard = guarded[command.uid]
+                if (guard?.reported?.get(command.permission) == command.state) {
+                    guarded[command.uid] = guard.copy(persisted = guard.persisted + (command.permission to command.state))
+                }
+            }
+
             // Answered apart from the commands: see AppOpsGuard.
             is Command.Kind -> error("not a command on what the uid is held to")
         }
     }
 
-    private fun handleCapture(command: Command.Capture) {
+    private fun captureValues(uid: Int, targets: Targets): Values {
+        // Changing a precise-location grant can also make Android update its location switches.
+        val location = "android.permission.ACCESS_FINE_LOCATION" in targets.permissions
+        val related = ops.filter { it.name in targets.ops || (location && it.name in LOCATION_OPS) }
+        val modes = system.uidModes(uid, related.map { it.switchCode }.distinct().toIntArray())
+        return Values(
+            related.map { it.name to modes[it.switchCode] },
+            statesBefore(uid, targets.permissions, emptyMap()).toList(),
+            related.mapNotNull { op -> runtimePermissions.grantMode(op, uid)?.let { op.name to it } }.toMap(),
+        )
+    }
+
+    private fun handleCapture(command: Command.Capture, transaction: Boolean) {
         val uid = command.uid
-        val values = beforeSet(uid, command.targets).savedValues()
+        val values = if (transaction) {
+            captureValues(uid, command.targets).also { prepared[uid] = Prepared(command.targets, it) }
+        } else {
+            beforeSet(uid, command.targets).savedValues()
+        }
         system.emit(AppOpsGuardProtocol.capturedLine(uid, command.request, values))
+    }
+
+    private fun handleUndo(command: Command.Undo) {
+        val uid = command.uid
+        // Stop the failed policy before restoring, even if readback fails.
+        guarded.remove(uid)
+        reported.remove(uid)
+        val modes = command.values.ops.mapNotNull { (name, mode) ->
+            val op = ops.find { it.name == name } ?: system.resolve(name) ?: return@mapNotNull null
+            op to mode
+        }.distinctBy { (op, _) -> op.switchCode }
+        if (command.mayWrite) {
+            for ((name, state) in command.values.permissions) {
+                system.restoreItem(name) { taking(name).putBack(uid, name, state) }
+            }
+            for ((op, mode) in modes) {
+                system.restoreItem(op.name) {
+                    check(setBack(op, uid, mode, null, emptySet())) { "app op recovery incomplete" }
+                }
+            }
+        }
+        // Restoring a grant can trigger a permission-policy sync. Check
+        // the full preimage after the last write before acknowledging.
+        for ((name, state) in command.values.permissions) {
+            check(taking(name).state(uid, name) == state) { "permission recovery readback changed" }
+        }
+        for ((op, mode) in modes) {
+            check(readMode(op, uid) == (mode ?: op.defaultMode ?: MODE_DEFAULT)) { "app op recovery readback changed" }
+        }
+        forget(uid)
+        system.emit(AppOpsGuardProtocol.restoredLine(uid))
     }
 
     private fun handleSet(command: Command.Set) {
         val uid = command.uid
         val chosen = takeChosen(uid)
         val targets = command.targets
-        val guard = beforeSet(uid, targets)
+        val captured = prepared[uid]?.values
+        val guard = if (captured == null) {
+            beforeSet(uid, targets)
+        } else {
+            Guard(
+                saved = captured.ops,
+                targets = targets,
+                tookPermissions = captured.permissions.mapNotNull { (name, state) -> state?.let { name to it } }.toMap(),
+                savedGrants = captured.grants,
+            )
+        }
         // Written down first, so that a `release` after a failure
         // below puts back whatever was done.
         guarded[uid] = guard
-        val taken = targets.ops.count { (name, mode) -> setKnown(name, uid, mode) }
-        // Ops this Android version doesn't have are nothing to hold.
-        if (targets.ops.keys.any(::isKnown) && taken == 0) error("the system took none of the modes")
+        holdOps(uid, initial = true, requireAccepted = true)
         // Reported first, as the check does: holding can fail.
         reportChosen(uid, chosen)
-        for (permission in targets.permissions) holdKnown(uid, permission)
-        reportUnheld(uid, verify(uid), always = true)
+        val unheld = holdPermissions(uid, observeChoices = false)
+        reportUnheld(uid, holdOps(uid) + unheld, always = true)
         system.emit(AppOpsGuardProtocol.savedLine(uid, guard.savedValues()))
     }
 
-    private fun handleApply(command: Command.Apply) {
+    private fun handleApply(command: Command.Apply, transaction: Boolean) {
         val uid = command.uid
         val chosen = takeChosen(uid)
-        val guard = guarded[uid] ?: error("not guarded")
+        val guard = guarded[uid] ?: if (transaction) Guard(null, Targets.NONE) else error("not guarded")
         // Permissions taken only below are still as the user has them.
         val held = AppOpsGuardProtocol.heldWhileSettingBack(guard.heldPermissions(), command.resets)
-        var taken = command.resets.ops.count { (name, mode) ->
+        val restored = command.resets.ops.count { (name, mode) ->
             val op = ops.find { it.name == name } ?: return@count false
             check(setBack(op, uid, mode, command.resets.grants[name], held)) { "app op restore incomplete" }
             true
@@ -148,14 +275,13 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
             chosen = guard.chosen - givenBack - found.keys,
             held = guard.held - givenBack,
             reported = guard.reported - givenBack,
+            retries = guard.retriesFor(targets),
         )
-        taken += targets.ops.count { (name, mode) -> setKnown(name, uid, mode) }
-        val known = command.resets.ops.any { (name, _) -> isKnown(name) } || targets.ops.keys.any(::isKnown)
-        if (known && taken == 0) error("the system took none of the modes")
+        holdOps(uid, initial = true, requireAccepted = restored == 0)
         // Reported first, as the check does: holding can fail.
         reportChosen(uid, chosen)
-        for (permission in targets.permissions) holdKnown(uid, permission)
-        reportUnheld(uid, verify(uid), always = true)
+        val unheld = holdPermissions(uid, observeChoices = false)
+        reportUnheld(uid, holdOps(uid) + unheld, always = true)
         system.emit(AppOpsGuardProtocol.appliedLine(uid, found.toList()))
     }
 
@@ -205,6 +331,7 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
 
     private fun handleVerify(command: Command.Verify) {
         val uid = command.uid
+        prepared.remove(uid)
         val guard = guarded[uid]
         // A uid new here was held by the program before this one:
         // the daemon holds it to a permission only once a command
@@ -212,7 +339,8 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
         // while neither was there to see; but not one the daemon
         // last heard was unheld, which that program may have left
         // half taken.
-        guarded[uid] = guard?.copy(targets = command.targets) ?: Guard(null, command.targets, held = command.targets.permissions - command.targets.unheld)
+        guarded[uid] = guard?.copy(targets = command.targets, retries = guard.retriesFor(command.targets))
+            ?: Guard(null, command.targets, held = command.targets.permissions - command.targets.unheld)
         reportUnheld(uid, verify(uid), always = true)
         system.emit(AppOpsGuardProtocol.verifiedLine(uid))
     }
@@ -220,8 +348,11 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
     /** Whether [uid] is guarded. */
     fun isGuarded(uid: Int): Boolean = uid in guarded
 
+    fun needsOwner(uid: Int): Boolean = uid in guarded || uid in prepared
+
     /** Stop guarding [uid], forgetting all about it: it is another installation's now, or given back. */
     fun forget(uid: Int) {
+        prepared.remove(uid)
         guarded.remove(uid)
         reported.remove(uid)
     }
@@ -232,9 +363,13 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
      */
     fun checkAll() {
         for (uid in guarded.keys.toList()) {
+            if (uid in prepared) continue
+            if (supervised) system.emit("checking $uid")
             try {
-                reportUnheld(uid, verify(uid), always = false)
+                reportUnheld(uid, verify(uid), always = supervised)
             } catch (e: Throwable) {
+                reported.remove(uid)
+                if (supervised) system.emit("unknown-readback $uid")
                 system.warn("checking $uid: ${system.describe(e)}")
             }
         }
@@ -253,7 +388,7 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
         val guard = guarded[uid] ?: return emptySet()
         val found = guard.targets.permissions.mapNotNull { permission ->
             try {
-                AppOpsGuardProtocol.chosenWhileHeld(taking(permission).state(uid, permission), permission in guard.held && !AppOpsGuardProtocol.isSpecialAccess(permission))
+                guard.findChoice(permission, taking(permission).state(uid, permission))
                     ?.let { permission to kept(guard.tookPermissions[permission], it) }
             } catch (e: Throwable) {
                 system.warn("looking at $permission for $uid: ${system.describe(e)}")
@@ -304,15 +439,6 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
         (known[name] ?: taking(name).state(uid, name))?.let { name to it }
     }.toMap()
 
-    /** Whether this device knows the op [name]. */
-    private fun isKnown(name: String): Boolean = ops.any { it.name == name }
-
-    /** Set [name], if this device knows it, to [mode] for [uid]; whether it was set. */
-    private fun setKnown(name: String, uid: Int, mode: Int): Boolean {
-        val op = ops.find { it.name == name } ?: return false
-        return setUidMode(op, uid, mode)
-    }
-
     /**
      * Set [op] back for [uid] to [saved], or to the mode the system gives
      * it for its permission now if the grant is no longer [grantThen]
@@ -321,23 +447,39 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
      */
     private fun setBack(op: GuardedOp, uid: Int, saved: Int?, grantThen: Int?, held: Set<String>): Boolean {
         val compared = grantThen != null && AppOpsGuardProtocol.comparesGrant(op.permission, held)
+        val destructive = op.name in DESTRUCTIVE_OPS
         // Setting an op's default mode removes the uid mode.
         val default = op.defaultMode ?: MODE_DEFAULT
-        return AppOpsGuardProtocol.restoreUidMode(
+        var unrequested: Boolean? = null
+        val restored = AppOpsGuardProtocol.restoreUidMode(
             desiredMode = {
-                val grantNow = if (compared) runtimePermissions.grantMode(op, uid) else null
-                AppOpsGuardProtocol.modeToRestore(saved, grantThen, grantNow) ?: default
-            },
-            writeMode = { mode ->
-                setUidMode(op, uid, mode).also { set ->
-                    // The marks change with the grant: one unchanged is as
-                    // Android left it.
-                    val grantNow = if (set && compared) runtimePermissions.grantMode(op, uid) else null
-                    if (grantThen != null && grantNow != null && grantNow != grantThen) runtimePermissions.unmarkRevoked(op, uid, saved, grantThen)
+                if (destructive || (saved != null && saved != default)) {
+                    unrequested = runtimePermissions.isUnrequestedAppOp(op, uid)
+                }
+                // Android drops a non-default mode if an update removed the
+                // last request for its app-op permission.
+                if (unrequested == true) {
+                    default
+                } else {
+                    val grantNow = if (compared) runtimePermissions.grantMode(op, uid) else null
+                    AppOpsGuardProtocol.modeToRestore(saved, grantThen, grantNow) ?: default
                 }
             },
-            readMode = { states(uid, listOf(op)).single().uidMode ?: default },
+            writeMode = { mode ->
+                if (destructive && unrequested == null) {
+                    val unheld = reported[uid].orEmpty()
+                    if (op.name !in unheld) reportUnheld(uid, unheld + op.name, always = false)
+                    false
+                } else {
+                    setUidMode(op, uid, mode)
+                }
+            },
+            readMode = { readMode(op, uid) ?: default },
         )
+        // The marks can need restoring even if the mode was already right.
+        val grantNow = if (restored && compared) runtimePermissions.grantMode(op, uid) else null
+        if (grantThen != null && grantNow != null && grantNow != grantThen) runtimePermissions.unmarkRevoked(op, uid, saved, grantThen)
+        return restored
     }
 
     /** The permissions this program holds revoked for a guarded uid, or took and has not given back. */
@@ -353,37 +495,93 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
      */
     private fun verify(uid: Int): List<String> {
         system.requireOwner(uid)
-        val targets = guarded[uid]?.targets ?: return emptyList()
-        val again = AppOpsGuardProtocol.opsToSetAgain(states(uid), targets.ops)
-        for (name in again) {
-            if (setKnown(name, uid, targets.ops.getValue(name))) {
-                system.emit(AppOpsGuardProtocol.revertedLine(uid, name))
+        return holdOps(uid) + holdPermissions(uid, observeChoices = true)
+    }
+
+    private fun holdOps(uid: Int, initial: Boolean = false, requireAccepted: Boolean = false): List<String> {
+        val guard = guarded.getValue(uid)
+        val unheld = mutableListOf<String>()
+        val holding = ops.filter { op ->
+            if (op.name !in guard.targets.ops) return@filter false
+            // Check again after a package update, which can change requests.
+            when (runtimePermissions.isUnrequestedAppOp(op, uid)) {
+                true -> false
+
+                null if op.name in DESTRUCTIVE_OPS -> {
+                    unheld += op.name
+                    false
+                }
+
+                else -> true
+            }
+        }.groupBy { it.switchCode }
+        if (holding.isEmpty()) return unheld
+        val switches = holding.keys.toIntArray()
+        val modes = system.uidModes(uid, switches)
+        var attempted = false
+        var accepted = false
+        // Aliases share the switch's mode and any retry budget.
+        for ((switch, aliases) in holding) {
+            val op = aliases.first()
+            val destructive = op.name in DESTRUCTIVE_OPS
+            val mode = guard.targets.ops.getValue(op.name)
+            val current = modes[switch] ?: op.defaultMode
+            if (current == mode || (attempted && readMode(op, uid) == mode)) {
+                if (destructive) guard.retries.observedHeld(op.name)
+                accepted = true
+            } else if (!destructive || guard.retries.mayWrite(op.name, now())) {
+                attempted = true
+                if (setUidMode(op, uid, mode)) {
+                    accepted = true
+                    if (!initial) system.emit(AppOpsGuardProtocol.revertedLine(uid, op.name))
+                }
             }
         }
-        // Read again only when something was set again: otherwise every op
-        // was found as it is held.
-        val unheld = if (again.isEmpty()) mutableListOf() else AppOpsGuardProtocol.opsToSetAgain(states(uid), targets.ops).toMutableList()
-        for (permission in targets.permissions) {
-            try {
+        if (initial) {
+            check(!requireAccepted || !attempted || accepted) { "the system took none of the modes" }
+            return unheld
+        }
+        val readback = if (attempted) system.uidModes(uid, switches) else modes
+        for ((switch, aliases) in holding) {
+            val op = aliases.first()
+            val actual = readback[switch] ?: op.defaultMode
+            for (alias in aliases) {
+                if (guard.retries.suspended(op.name) || actual != guard.targets.ops.getValue(alias.name)) unheld += alias.name
+            }
+        }
+        return unheld
+    }
+
+    private fun holdPermissions(uid: Int, observeChoices: Boolean): List<String> = guarded.getValue(uid).targets.permissions.filter { permission ->
+        try {
+            val guard = guarded.getValue(uid)
+            val access = taking(permission)
+            var chosen: PermissionState? = null
+            if (observeChoices) {
                 // Changed by the user while held: their choice since it was
                 // taken, which is what to give back from now on. Kept and
                 // reported before it is taken again: holding it can revoke
                 // it and then fail on its flags.
-                // A special access has no mark of its own to lose.
-                val wasHeld = guarded[uid]?.held.orEmpty().contains(permission) && !AppOpsGuardProtocol.isSpecialAccess(permission)
-                val chosen = AppOpsGuardProtocol.chosenWhileHeld(taking(permission).state(uid, permission), wasHeld)
-                    ?.let { kept(guarded[uid]?.tookPermissions?.get(permission), it) }
-                if (chosen != null) {
-                    guarded[uid]?.let { guarded[uid] = it.copy(tookPermissions = it.tookPermissions + (permission to chosen), chosen = it.chosen + permission) }
-                    reportFound(uid, permission, chosen)
+                val current = access.state(uid, permission)
+                chosen = guard.findChoice(permission, current)
+                    ?.let { kept(guard.tookPermissions[permission], it) }
+                if (supervised && chosen == null && permission !in guard.held && current != null) {
+                    chosen = current
                 }
-                if (holdKnown(uid, permission) && chosen == null) system.emit(AppOpsGuardProtocol.revertedLine(uid, permission))
-            } catch (e: Throwable) {
-                system.warn("holding $permission for $uid: ${system.describe(e)}")
-                unheld += permission
+                if (chosen != null) {
+                    guarded[uid] = guard.copy(tookPermissions = guard.tookPermissions + (permission to chosen), chosen = guard.chosen + permission)
+                    reportFound(uid, permission, chosen)
+                    if (supervised && guard.persisted[permission] != chosen) return@filter true
+                }
             }
+            val result = holdKnown(uid, permission, access)
+            if (observeChoices && result == HoldResult.CHANGED && chosen == null) system.emit(AppOpsGuardProtocol.revertedLine(uid, permission))
+            result == HoldResult.SUSPENDED
+        } catch (e: Throwable) {
+            if (supervised && observeChoices) throw e
+            system.warn("holding $permission for $uid: ${system.describe(e)}")
+            true
         }
-        return unheld
     }
 
     /** Print [unheld] for [uid]: [always], or if it changed since last printed. */
@@ -394,10 +592,12 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
     }
 
     /** The guarded ops' uid modes for [uid], as the service reports them. */
-    private fun states(uid: Int, selected: List<GuardedOp> = ops): List<OpState> {
-        val modes = system.uidModes(uid, selected.map { it.switchCode }.distinct().toIntArray())
-        return selected.map { OpState(it.name, modes[it.switchCode], it.defaultMode) }
+    private fun states(uid: Int): List<OpState> {
+        val modes = system.uidModes(uid, ops.map { it.switchCode }.distinct().toIntArray())
+        return ops.map { OpState(it.name, modes[it.switchCode], it.defaultMode) }
     }
+
+    private fun readMode(op: GuardedOp, uid: Int): Int? = system.uidModes(uid, intArrayOf(op.switchCode))[op.switchCode] ?: op.defaultMode
 
     /** Whether the mode was set; a failure is reported and the rest carries on. */
     private fun setUidMode(op: GuardedOp, uid: Int, mode: Int): Boolean = try {
@@ -414,14 +614,31 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
      * the permission found no longer fixed was changed by the user. One
      * the system would not hold says nothing of the user.
      */
-    private fun holdKnown(uid: Int, permission: String): Boolean {
-        val changed = try {
-            taking(permission).hold(uid, permission)
+    private fun holdKnown(uid: Int, permission: String, access: Taking): HoldResult {
+        val guard = guarded.getValue(uid)
+        if (guard.retries.suspended(permission)) return HoldResult.SUSPENDED
+        val result = try {
+            access.hold(uid, permission) { guard.retries.mayWrite(permission, now()) }
         } catch (e: Throwable) {
-            guarded[uid]?.let { guarded[uid] = it.copy(held = it.held - permission) }
+            guarded[uid] = guard.copy(held = guard.held - permission)
             throw e
         }
-        guarded[uid]?.let { guarded[uid] = it.copy(held = it.held + permission) }
-        return changed
+        if (result != HoldResult.SUSPENDED) {
+            guard.retries.observedHeld(permission)
+            if (permission !in guard.held) guarded[uid] = guard.copy(held = guard.held + permission)
+        } else if (!AppOpsGuardProtocol.isSpecialAccess(permission) && access.state(uid, permission)?.granted == true) {
+            guard.retries.noteSuspendedGrant(permission)
+        }
+        return result
+    }
+
+    private companion object {
+        val LOCATION_OPS = setOf("android:coarse_location", "android:fine_location", "android:wifi_scan")
+        val DESTRUCTIVE_OPS = setOf(
+            // StorageManagerService ends the uid's processes on each mode change.
+            "android:manage_external_storage",
+        )
+        const val RETRY_LIMIT = 3
+        val RETRY_WINDOW = TimeUnit.MINUTES.toNanos(10)
     }
 }
