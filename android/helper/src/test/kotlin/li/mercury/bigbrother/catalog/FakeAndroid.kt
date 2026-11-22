@@ -112,6 +112,8 @@ internal class FakeAndroid :
         GuardedOp("android:wifi_scan", WIFI_SCAN_OP, COARSE_LOCATION_OP, MODE_ALLOWED, COARSE),
         GuardedOp("android:camera", CAMERA_OP, CAMERA_OP, MODE_ALLOWED, CAMERA),
         GuardedOp(ALL_FILES_OP_NAME, ALL_FILES_OP, ALL_FILES_OP, MODE_DEFAULT, ALL_FILES),
+        // As on Android 13 and 14, which do not map usage access back to its op.
+        GuardedOp(USAGE_OP_NAME, USAGE_OP, USAGE_OP, MODE_DEFAULT, permission = null, declaredBy = USAGE),
     )
 
     init {
@@ -389,6 +391,10 @@ internal class FakeAndroid :
         const val ALL_FILES = "android.permission.MANAGE_EXTERNAL_STORAGE"
         const val ALL_FILES_OP_NAME = "android:manage_external_storage"
 
+        /** Usage access: not a runtime permission, and not requested by the app. */
+        const val USAGE = "android.permission.PACKAGE_USAGE_STATS"
+        const val USAGE_OP_NAME = "android:get_usage_stats"
+
         // Not one the app requests.
         private const val BACKGROUND_CAMERA = "android.permission.BACKGROUND_CAMERA"
 
@@ -404,6 +410,7 @@ internal class FakeAndroid :
         private const val WIFI_SCAN_OP = 10
         private const val CAMERA_OP = 26
         private const val ALL_FILES_OP = 92
+        private const val USAGE_OP = 43
 
         /** The permission each switch op stands for (`AppOpsManager.opToPermission`). */
         private val PERMISSION_OF_SWITCH = mapOf(

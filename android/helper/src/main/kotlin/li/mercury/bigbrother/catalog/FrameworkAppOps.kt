@@ -194,9 +194,9 @@ internal object Framework : AppOpsSystem {
             val switchCode = toSwitch?.invokeOrNull(code) as Int? ?: code
             // Several ops can name one permission: the system sets by its
             // grant only the op the permission maps back to.
-            val permission = (toPermission?.invokeOrNull(switchCode) as String?)
-                ?.takeIf { permissionToCode?.invokeOrNull(it) == switchCode }
-            GuardedOp(name, code, switchCode, toDefault?.invokeOrNull(switchCode) as Int?, permission)
+            val declaredBy = toPermission?.invokeOrNull(switchCode) as String?
+            val permission = declaredBy?.takeIf { permissionToCode?.invokeOrNull(it) == switchCode }
+            GuardedOp(name, code, switchCode, toDefault?.invokeOrNull(switchCode) as Int?, permission, declaredBy)
         }
     }
 
