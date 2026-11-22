@@ -16,14 +16,15 @@
 use aya_ebpf::{
     helpers::{
         bpf_get_current_comm, bpf_get_current_pid_tgid, bpf_get_current_uid_gid, bpf_ktime_get_ns,
+        generated::bpf_send_signal,
     },
     macros::{kprobe, kretprobe, map},
     maps::{Array, HashMap, RingBuf},
     programs::{ProbeContext, RetProbeContext},
 };
 use bb_common::{
-    GATE_MISSED, GATE_NEW, GATE_RECORD, GATE_REQUIRED, GATE_STORAGE_READY, GateEvent,
-    KNOWN_APP_WORDS, PER_USER_RANGE, known_app_bit,
+    GATE_MISSED, GATE_MISSED_NEW, GATE_NEW, GATE_RECORD, GATE_REQUIRED, GATE_STORAGE_READY,
+    GateEvent, KNOWN_APP_WORDS, PER_USER_RANGE, known_app_bit,
 };
 
 use crate::common::{BPF_RB_FORCE_WAKEUP, OFFSETS, arch, read_at};
@@ -64,6 +65,7 @@ static KNOWN_APP_IDS: Array<u64> = Array::with_max_entries(KNOWN_APP_WORDS, 0);
 #[map]
 static KNOWN_UIDS: HashMap<u32, u32> = HashMap::with_max_entries(1024, 0);
 
+const SIGKILL: u32 = 9;
 const SIGSTOP: u32 = 19;
 
 /// Entry of `setresuid`. zygote's child calls it once, as root, to become
@@ -74,7 +76,7 @@ const SIGSTOP: u32 = 19;
 /// needs a recording cover is reported without stopping it.
 ///
 /// A child that needs a required mount is stopped only once the request
-/// can be supervised.
+/// can be supervised. Otherwise it is ended before it can run unmounted.
 ///
 /// While newly installed apps are put in the sandbox, a child taking the uid
 /// of an app the daemon has not dealt with yet is stopped and reported the
@@ -103,7 +105,8 @@ fn try_gate(ctx: &ProbeContext) -> Result<(), i32> {
     } else {
         return Ok(());
     };
-    if !open() {
+    let gate_open = open();
+    if !gate_open && kind != GATE_REQUIRED {
         return Ok(());
     }
     // A child of zygote still has zygote's thread name here ("main"), or
@@ -134,18 +137,19 @@ fn try_gate(ctx: &ProbeContext) -> Result<(), i32> {
         at_ns_high: (now >> 32) as u32,
         kind,
     };
-    let Ok(start) = start else {
+    if let Ok(start) = start {
+        event.start_low = start as u32;
+        event.start_high = (start >> 32) as u32;
+    }
+    if start.is_err() || !gate_open {
         if kind == GATE_REQUIRED {
+            end_required_start();
             event.kind = GATE_MISSED;
             if GATE.output(&event, BPF_RB_FORCE_WAKEUP).is_err() {
                 close();
             }
         }
-        return Ok(());
-    };
-    event.start_low = start as u32;
-    event.start_high = (start >> 32) as u32;
-    if kind == GATE_RECORD {
+    } else if kind == GATE_RECORD {
         // A full ring may lose an optional recording cover.
         let _ = GATE.output(&event, BPF_RB_FORCE_WAKEUP);
     } else {
@@ -160,6 +164,7 @@ fn hold_child(event: GateEvent) {
     // afterwards also prevents a reply from racing the stop request.
     let Some(mut slot) = GATE.reserve::<GateEvent>(0) else {
         if event.kind == GATE_REQUIRED {
+            end_required_start();
             close();
         }
         return;
@@ -167,22 +172,27 @@ fn hold_child(event: GateEvent) {
     let key = event.process_key();
     let pending = [event.uid, event.at_ns_low, event.at_ns_high, event.kind];
     let accepted = GATE_PENDING.insert(&key, &pending, 1).is_ok();
-    let stopped = accepted
-        && open()
-        && unsafe { aya_ebpf::helpers::generated::bpf_send_signal(SIGSTOP) } == 0;
+    let stopped = accepted && open() && unsafe { bpf_send_signal(SIGSTOP) } == 0;
     if accepted && !stopped {
         // An entry that survives deletion is checked against a stopped PID.
         let _ = GATE_PENDING.remove(&key);
     }
-    slot.write(if stopped {
-        event
+    let kind = if stopped {
+        event.kind
+    } else if event.kind == GATE_REQUIRED {
+        end_required_start();
+        GATE_MISSED
     } else {
-        GateEvent {
-            kind: GATE_MISSED,
-            ..event
-        }
-    });
+        GATE_MISSED_NEW
+    };
+    slot.write(GateEvent { kind, ..event });
     slot.submit(BPF_RB_FORCE_WAKEUP);
+}
+
+#[inline(always)]
+fn end_required_start() {
+    // The watchdog can use its pidfd fallback if the miss can be reported.
+    let _ = unsafe { bpf_send_signal(SIGKILL) };
 }
 
 #[inline(always)]

@@ -17,15 +17,15 @@
 use std::{
     collections::VecDeque,
     fs, io,
-    sync::{Arc, atomic::Ordering},
+    sync::{Arc, Mutex, atomic::Ordering},
     time::Duration,
 };
 
 use anyhow::Context as _;
 use aya::maps::{Array, HashMap, Map, MapData, RingBuf};
 use bb_common::{
-    GATE_MISSED, GATE_NEW, GATE_RECORD, GATE_REQUIRED, GATE_STORAGE_READY, GATE_WAIT_NS, GateEvent,
-    read_event,
+    GATE_MISSED, GATE_MISSED_NEW, GATE_NEW, GATE_RECORD, GATE_REQUIRED, GATE_STORAGE_READY,
+    GATE_WAIT_NS, GateEvent, read_event,
 };
 use tokio::{
     io::{Interest, unix::AsyncFd},
@@ -34,7 +34,7 @@ use tokio::{
 
 use super::{
     Gated, Shared,
-    admission::{Done, Held, Work, Worker, check_started_by_zygote, open_process},
+    admission::{Done, Held, Work, Worker, check_started_by_zygote, open_process, start_ticks},
     recording_only,
 };
 use crate::{
@@ -49,6 +49,7 @@ pub(super) const PIN: &str = "/sys/fs/bpf/bb_gate_pending";
 pub(super) type Journal = HashMap<MapData, [u32; 3], [u32; 4]>;
 
 pub(super) struct Running {
+    pub(super) journal: Arc<Mutex<Journal>>,
     stop: Option<oneshot::Sender<()>>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -83,10 +84,11 @@ pub(super) fn start(
     };
     open.set(0, &1, 0)?;
     let (stop, stopped) = oneshot::channel();
+    let journal = Arc::new(Mutex::new(journal));
     let mut watch = Watchdog {
         ring,
         open,
-        journal,
+        journal: journal.clone(),
         completion: Completion::new(shared.clone()),
         storage_ready,
     };
@@ -95,6 +97,7 @@ pub(super) fn start(
         .spawn(move || runtime.block_on(watch.run(worker, stopped)))
         .context("starting the gate watchdog")?;
     Ok(Running {
+        journal,
         stop: Some(stop),
         thread: Some(thread),
     })
@@ -103,7 +106,7 @@ pub(super) fn start(
 struct Watchdog {
     ring: AsyncFd<RingBuf<MapData>>,
     open: Array<MapData, u32>,
-    journal: Journal,
+    journal: Arc<Mutex<Journal>>,
     completion: Completion,
     storage_ready: Arc<Notify>,
 }
@@ -163,7 +166,7 @@ impl Watchdog {
                         let Some(event) = read_event::<GateEvent>(&item) else { continue };
                         match event.kind {
                             GATE_STORAGE_READY => storage_changed = true,
-                            GATE_MISSED => self.completion.missed(&event),
+                            GATE_MISSED | GATE_MISSED_NEW => self.completion.missed(&event),
                             GATE_RECORD => worker.record(self.completion.work(event)),
                             _ => queue.push_back(event),
                         }
@@ -197,7 +200,8 @@ impl Watchdog {
     fn dispose_journal(&mut self) {
         // Include starts reported after the last read, and ones reserved
         // by a probe just before the gate closed.
-        match journal_events(&self.journal) {
+        let events = journal_events(&lock(&self.journal));
+        match events {
             Ok(mut events) => {
                 events.sort_unstable_by_key(GateEvent::at_ns);
                 for event in events {
@@ -209,7 +213,7 @@ impl Watchdog {
             }
             Err(e) => eprintln!("bbd: sandbox: cannot read the gate journal: {e}"),
         }
-        if self.journal.keys().next().is_none()
+        if lock(&self.journal).keys().next().is_none()
             && let Err(e) = fs::remove_file(PIN)
         {
             eprintln!("bbd: sandbox: cannot remove the empty gate journal: {e}");
@@ -217,7 +221,7 @@ impl Watchdog {
     }
 
     fn forget(&mut self, event: &GateEvent) {
-        if let Err(e) = self.journal.remove(&event.process_key()) {
+        if let Err(e) = lock(&self.journal).remove(&event.process_key()) {
             self.completion.log(event.uid, &e.into());
         }
     }
@@ -320,17 +324,26 @@ impl Completion {
 
     fn missed(&mut self, event: &GateEvent) {
         let work = self.work(*event);
+        if event.kind == GATE_MISSED_NEW {
+            if work.policy.is_none() {
+                self.tell_unknown(event.uid);
+            }
+            return;
+        }
         if let Some(policy) = work
             .policy
             .as_ref()
             .filter(|app| !recording_only((app.mounts, app.resolver)))
         {
-            // A later successful launch does not give mounts to the
-            // running process whose stop the kernel missed.
             lock(&policy.health).missed_stop();
             lock(&self.shared.stats).failed += 1;
-        } else if work.policy.is_none() {
-            self.tell_unknown(event.uid);
+            // Only the kernel can target a start whose generation it could
+            // not read. A reused PID must never receive the fallback signal.
+            if (event.start_low != 0 || event.start_high != 0)
+                && let Err(e) = end_missed_start(event)
+            {
+                self.log(event.uid, &e);
+            }
         }
     }
 
@@ -442,6 +455,13 @@ impl Completion {
     }
 }
 
+fn end_missed_start(event: &GateEvent) -> anyhow::Result<()> {
+    if let Some(process) = open_process(event)? {
+        signal_process(&process, libc::SIGKILL)?;
+    }
+    Ok(())
+}
+
 fn signal_process(process: &Process, signal: i32) -> anyhow::Result<()> {
     match process.signal(signal) {
         Ok(()) => Ok(()),
@@ -453,6 +473,16 @@ fn signal_process(process: &Process, signal: i32) -> anyhow::Result<()> {
 fn verified_child(event: &GateEvent) -> bool {
     uid_of_pid(event.pid) == Some(event.uid)
         && matches!(check_started_by_zygote(event.pid as i32), Ok(Some(_)))
+}
+
+pub(super) fn holds_process(journal: &Journal, pid: i32, start: u64) -> bool {
+    // /proc exposes ticks rather than nanoseconds. The watchdog retains
+    // the journal entry while a start is queued or with the worker, and
+    // the lock prevents watchdog deletion from restarting the iterator.
+    journal.keys().any(|key| {
+        // A failed lookup cannot establish that the gate holds this PID.
+        key.is_ok_and(|[held, low, high]| held == pid as u32 && start_ticks(low, high) == start)
+    })
 }
 
 fn journal_events(journal: &Journal) -> Result<Vec<GateEvent>, aya::maps::MapError> {
@@ -526,6 +556,7 @@ mod tests {
         admission::tests::{keeper, new_app_start},
     };
     use super::*;
+    use crate::sandbox::{Entry, Resumed, Status, items::Settings, sweep::Restart};
     use crate::sync::write;
     use std::path::Path;
 
@@ -583,14 +614,43 @@ mod tests {
     }
 
     #[test]
-    fn repeated_mount_failures_refuse_starts_report_the_cause_and_skip_sweeps() {
-        use crate::sandbox::{Entry, Resumed, Status, items::Settings, sweep::Restart};
+    fn a_missed_required_start_is_ended_and_its_cause_is_reported() {
+        use std::os::unix::process::ExitStatusExt as _;
 
         let (_, shared, _) = keeper(Path::new("/unused"));
-        let event = new_app_start(0);
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let process = Process::open(child.id() as i32).unwrap();
+        let mut event = new_app_start(child.id());
+        event.kind = GATE_MISSED;
+        let (_, gated) = register_mount_policy(&shared, event.uid);
+        let mut completion = Completion::new(shared.clone());
+        let mut new = event;
+        new.kind = GATE_MISSED_NEW;
+        completion.missed(&new);
+        let mut stale = event;
+        stale.start_low = stale.start_low.wrapping_add(1_000_000_000);
+        completion.missed(&stale);
+        let stale_left_running = !process.exited(20).unwrap();
+        completion.missed(&event);
+        let exited = process.exited(1000).unwrap();
+        if !exited {
+            child.kill().unwrap();
+        }
+        let status = child.wait().unwrap();
+        assert!(stale_left_running);
+        assert!(exited);
+        assert_eq!(status.signal(), Some(libc::SIGKILL));
+        assert_eq!(lock(&gated.health).cause(), Some(Part::MountStartFailed));
+        assert_eq!(lock(&shared.stats).failed, 2);
+    }
+
+    fn register_mount_policy(shared: &Shared, uid: u32) -> (Resumed, Arc<Gated>) {
         let app = Resumed {
             entry: Entry {
-                uid: event.uid,
+                uid,
                 package: "com.example.app".into(),
                 install_id: "install".into(),
                 enabled: true,
@@ -612,9 +672,50 @@ mod tests {
             health: Default::default(),
             relay_failed: None,
         });
-        write(&shared.apps).insert(event.uid, gated.clone());
+        write(&shared.apps).insert(uid, gated.clone());
+        (app, gated)
+    }
+
+    #[test]
+    fn a_mount_policy_is_resumed_only_after_a_complete_sweep() {
+        let (_, shared, _) = keeper(Path::new("/unused"));
+        let (app, _) = register_mount_policy(&shared, new_app_start(0).uid);
+        let mut restart = Restart::new(super::super::MountReadiness {
+            shared,
+            journal: None,
+        });
+        let mut sweeps = 0;
+        for complete in [false, true, true] {
+            restart.resume_with(std::slice::from_ref(&app), |_, _| {
+                sweeps += 1;
+                complete
+            });
+        }
+        assert_eq!(sweeps, 2);
+    }
+
+    #[test]
+    fn a_closed_gate_reports_registered_required_mounts_as_refusing_launches() {
+        let (_, shared, _) = keeper(Path::new("/unused"));
+        let event = new_app_start(0);
+        register_mount_policy(&shared, event.uid);
+        shared.open.store(false, Ordering::Release);
+        let mut closed = Status::default();
+        shared.report_gate(&mut closed);
+        assert_eq!(closed.mount_failures[&event.uid], Part::MountStartFailed);
+        assert!(closed.mount_launch_refused.contains(&event.uid));
+    }
+
+    #[test]
+    fn repeated_mount_failures_refuse_starts_report_the_cause_and_skip_sweeps() {
+        let (_, shared, _) = keeper(Path::new("/unused"));
+        let event = new_app_start(0);
+        let (app, gated) = register_mount_policy(&shared, event.uid);
         let completion = Completion::new(shared.clone());
-        let mut restart = Restart::new(super::super::MountReadiness(shared.clone()));
+        let mut restart = Restart::new(super::super::MountReadiness {
+            shared: shared.clone(),
+            journal: None,
+        });
         let mut sweeps = 0;
         let apps = std::slice::from_ref(&app);
         let decision = |cause| {
@@ -638,14 +739,20 @@ mod tests {
             assert_eq!(status.mount_failures[&event.uid], Part::MountSetupFailed);
             assert!(status.mount_launch_refused.contains(&event.uid));
             assert!(!status.gated_uids.contains(&event.uid));
-            restart.resume_with(apps, |_, _| sweeps += 1);
+            restart.resume_with(apps, |_, _| {
+                sweeps += 1;
+                true
+            });
         }
         assert_eq!(sweeps, 0);
 
         lock(&gated.health).recover();
         assert!(!lock(&gated.health).refuses_start());
         assert_eq!(status().mount_failures[&event.uid], Part::MountSetupFailed);
-        restart.resume_with(apps, |_, _| sweeps += 1);
+        restart.resume_with(apps, |_, _| {
+            sweeps += 1;
+            true
+        });
         assert_eq!(sweeps, 0);
 
         assert_eq!(decision(Some(Part::MountTimedOut)), libc::SIGKILL);
