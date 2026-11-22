@@ -16,6 +16,9 @@
 
 package li.mercury.bigbrother.catalog
 
+import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.MODE_DEFAULT
+import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.MODE_IGNORED
+import li.mercury.bigbrother.catalog.FakeAndroid.Companion.ALL_FILES_OP_NAME
 import li.mercury.bigbrother.catalog.FakeAndroid.Companion.COARSE
 import li.mercury.bigbrother.catalog.FakeAndroid.Companion.FINE
 import li.mercury.bigbrother.catalog.FakeAndroid.Companion.PACKAGE
@@ -67,5 +70,55 @@ class AppOpsGuardHandlerTest {
         repeat(3) { handler.checkAll() }
 
         assertEquals(listOf("reverted $UID $FINE=granted"), android.printed.filter { it.startsWith("reverted $UID $FINE=") })
+    }
+
+    @Test
+    fun givenAllFilesAccessNotRequested_whenHeldAndCheckedAgain_thenItsModeIsLeftAndNothingIsUnheld() {
+        val android = FakeAndroid()
+        val handler = AppOpsGuardHandler(android)
+
+        handler.handle(AppOpsGuardProtocol.parseCommand("set $UID $ALL_FILES_OP_NAME=1,android:read_contacts=1")!!)
+        repeat(3) { handler.checkAll() }
+
+        assertEquals(0, android.allFilesChanges)
+        assertEquals(MODE_DEFAULT, android.mode(ALL_FILES_OP_NAME))
+        assertEquals(MODE_IGNORED, android.mode("android:read_contacts"))
+        assertEquals(listOf("unheld $UID -"), android.printed.filter { it.startsWith("unheld ") })
+    }
+
+    @Test
+    fun givenAllFilesAccessNotRequested_whenOnlyItIsHeld_thenTheSetSucceeds() {
+        val android = FakeAndroid()
+        val handler = AppOpsGuardHandler(android)
+
+        handler.handle(AppOpsGuardProtocol.parseCommand("set $UID $ALL_FILES_OP_NAME=1")!!)
+
+        assertTrue(handler.isGuarded(UID))
+        assertTrue(android.printed.any { it.startsWith("saved $UID") })
+        assertEquals(0, android.allFilesChanges)
+    }
+
+    @Test
+    fun givenAllFilesAccessRequested_whenHeld_thenItIsIgnored() {
+        val android = FakeAndroid()
+        android.requestsAllFiles = true
+        val handler = AppOpsGuardHandler(android)
+
+        handler.handle(AppOpsGuardProtocol.parseCommand("set $UID $ALL_FILES_OP_NAME=1")!!)
+
+        assertEquals(MODE_IGNORED, android.mode(ALL_FILES_OP_NAME))
+        assertEquals(listOf("unheld $UID -"), android.printed.filter { it.startsWith("unheld ") })
+    }
+
+    @Test
+    fun givenUpdateThatRequestsAllFilesAccess_whenChecked_thenItIsHeld() {
+        val android = FakeAndroid()
+        val handler = AppOpsGuardHandler(android)
+        handler.handle(AppOpsGuardProtocol.parseCommand("set $UID $ALL_FILES_OP_NAME=1")!!)
+
+        android.requestsAllFiles = true
+        handler.checkAll()
+
+        assertEquals(MODE_IGNORED, android.mode(ALL_FILES_OP_NAME))
     }
 }
