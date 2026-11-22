@@ -61,66 +61,8 @@ jobs:
 
       - uses: ./.github/actions/setup
 
-      - name: Check formatting
-        run: cargo fmt --all --check
-
-      - name: Lint
-        run: cargo clippy --all-targets -- -D warnings
-
-      - name: Check eBPF function length
-        env:
-          RUSTFLAGS: '--cfg bpf_target_arch="x86_64"'
-        run: |
-          for features in "" task-storage; do
-            cargo +nightly clippy -Z build-std=core --target bpfel-unknown-none \
-              -p bb-ebpf --features "$features" -- -A clippy::all -D clippy::too_many_lines
-          done
-
-      - name: Test the daemon
-        run: cargo test
-
-      - name: Check the module scripts
-        run: |
-          for script in module/*.sh scripts/*.sh; do
-            bash -n "$script"
-          done
-
-      # The app's sources get theirs from Spotless, checked below.
-      - name: Check license headers
-        run: |
-          missing=$(git ls-files '*.rs' '*.sh' | xargs grep -L 'GNU General Public License' || true)
-          if [ -n "$missing" ]; then
-            echo "Missing license header:"
-            echo "$missing"
-            exit 1
-          fi
-
-      - name: Check the app's formatting and license headers
-        working-directory: android
-        run: ./gradlew spotlessCheck :build-logic:convention:spotlessCheck
-
-      # Also needed by the app's tests: packaging the app takes the daemon
-      # from out/.
-      - name: Build the APK
-        run: ./scripts/build.sh
-
-      - name: Test the app
-        working-directory: android
-        run: ./gradlew test
-
-      # A new library, permission or license comes in with a reviewed change:
-      # the baselines are app/dependencies/ and app/release-badging.txt.
-      - name: Check the app's dependencies, permissions and licenses
-        working-directory: android
-        run: ./gradlew :app:dependencyGuard :app:checkReleaseBadging :app:licenseeAndroidRelease
-
-      - name: Lint the app
-        working-directory: android
-        run: ./gradlew :app:lintRelease
-
-      - name: Check Kotlin source structure and test names
-        working-directory: android
-        run: ./gradlew lintStructure -PlintStructureOnly
+      - name: Run host checks
+        run: ./scripts/check.sh
 
       - name: Upload the lint reports
         if: failure()

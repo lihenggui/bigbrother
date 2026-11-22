@@ -198,27 +198,25 @@ the same pull request.
 | Permissions and other manifest facts | `android/app/release-badging.txt` | `./gradlew :app:updateReleaseBadging` |
 | Licenses of dependencies | allow-list in `build-logic/.../Licensee.kt` | edit the list |
 
-Run the source checks locally.
+Run the same host checks as CI before opening or updating a pull request.
 
 ```sh
-cargo fmt --all --check
-cargo clippy --all-targets -- -D warnings
-cargo test
-(cd android && ./gradlew lintStructure -PlintStructureOnly)
-(cd android && ./gradlew :app:lintRelease)
+./scripts/check.sh
 ```
 
-Clippy checks Rust functions against an 80-line threshold. Nightly Clippy
-checks both eBPF syscall-state backends with the x86_64 configuration.
+While working, run `./scripts/check.sh --fast` for formatting, Clippy,
+Rust tests, shell syntax, license headers, Spotless and Kotlin structure lint.
+The pre-push hook is opt-in. Enable it for this clone to run the fast checks
+before each push.
 
 ```sh
-rustup component add --toolchain nightly clippy
-for features in "" task-storage; do
-  RUSTFLAGS='--cfg bpf_target_arch="x86_64"' cargo +nightly clippy \
-    -Z build-std=core --target bpfel-unknown-none -p bb-ebpf --features "$features" \
-    -- -A clippy::all -D clippy::too_many_lines
-done
+git config core.hooksPath .githooks
 ```
+
+Use JDK 21 to match CI. Install `rustfmt` and `clippy` for stable Rust and
+`clippy` for nightly. Clippy checks Rust functions against an 80-line
+threshold. The full check also uses nightly Clippy for both eBPF syscall-state
+backends with the x86_64 configuration.
 
 `cargo test` checks daemon module cycles at the top level and between
 siblings by following production source paths. To run that check alone,
@@ -231,7 +229,6 @@ checks test names against `givenState_whenAction_thenOutcome`. It uses
 the debug variant for Android app and library modules, which includes
 their test sources. JVM modules using the lint convention run the same
 structure checks.
-CI checks that every Rust and shell file has a license header.
 
 ## Releasing
 
