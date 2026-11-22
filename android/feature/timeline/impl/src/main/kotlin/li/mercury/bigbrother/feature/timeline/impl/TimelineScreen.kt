@@ -41,7 +41,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -62,6 +61,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
+import li.mercury.bigbrother.core.designsystem.component.BigBrotherPullToRefreshBox
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.Category
 import li.mercury.bigbrother.core.model.TimeRange
@@ -138,7 +138,7 @@ internal fun TimelineScreen(
             Reveal(state.failure == null && state.entries != null) {
                 Filters(filter.category, onCategory, filter.includeLookups, onIncludeLookups)
             }
-            PullToRefreshBox(
+            BigBrotherPullToRefreshBox(
                 isRefreshing = state.refreshing && state.entries != null,
                 onRefresh = onRefresh,
                 modifier = Modifier.fillMaxSize(),

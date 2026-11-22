@@ -54,7 +54,6 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -73,6 +72,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
+import li.mercury.bigbrother.core.designsystem.component.BigBrotherPullToRefreshBox
 import li.mercury.bigbrother.core.designsystem.component.ShapedIcon
 import li.mercury.bigbrother.core.designsystem.icon.CageIcons
 import li.mercury.bigbrother.core.model.InstalledApp
@@ -176,7 +176,7 @@ internal fun JailScreen(
             }
         },
     ) { padding ->
-        PullToRefreshBox(
+        BigBrotherPullToRefreshBox(
             isRefreshing = state.refreshing && state.apps != null,
             onRefresh = onRefresh,
             modifier = Modifier

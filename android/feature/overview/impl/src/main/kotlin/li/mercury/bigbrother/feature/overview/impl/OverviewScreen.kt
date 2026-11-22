@@ -38,7 +38,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.Text
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -50,6 +49,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import li.mercury.bigbrother.core.data.repository.ModuleUpdate
 import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
+import li.mercury.bigbrother.core.designsystem.component.BigBrotherPullToRefreshBox
 import li.mercury.bigbrother.core.designsystem.component.ShapedIcon
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.TimeRange
@@ -110,7 +110,7 @@ internal fun OverviewScreen(
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         val files = state.files
-        PullToRefreshBox(
+        BigBrotherPullToRefreshBox(
             isRefreshing = state.refreshing && files != null,
             onRefresh = onRefresh,
             modifier = Modifier

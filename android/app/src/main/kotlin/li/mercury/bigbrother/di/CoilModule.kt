@@ -18,6 +18,7 @@ package li.mercury.bigbrother.di
 
 import android.content.Context
 import coil3.ImageLoader
+import coil3.request.crossfade
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -45,6 +46,9 @@ object CoilModule {
                 add(AppIconKeyer())
                 add(AppIconFetcher.Factory(iconSize, true, context))
             }
+            // An icon loaded from the package manager fades in rather than
+            // popping in; one already in memory is drawn at once, without it.
+            .crossfade(true)
             .build()
     }
 }

@@ -143,7 +143,8 @@ internal fun rememberBarVisibility(current: Boolean, previous: Boolean?, progres
         if (previous != null && progress != null) {
             visibility.snapTo(lerp(resting, if (previous) 1f else 0f, progress))
         } else {
-            visibility.animateTo(resting, motion.fastEffectsSpec())
+            // The visibility sets the bar's height, so it moves as space does.
+            visibility.animateTo(resting, motion.fastSpatialSpec())
         }
     }
     return visibility.asState()
@@ -152,7 +153,8 @@ internal fun rememberBarVisibility(current: Boolean, previous: Boolean?, progres
 /** The bar occupies only its revealed height, keeping the destination's insets in sync. */
 internal fun Modifier.revealBar(visibility: State<Float>, top: Boolean): Modifier = clipToBounds().layout { measurable, constraints ->
     val bar = measurable.measure(constraints)
-    val height = (bar.height * visibility.value).roundToInt()
+    // A spring can pass its target by a fraction; the bar never grows past itself.
+    val height = (bar.height * visibility.value.coerceIn(0f, 1f)).roundToInt()
     layout(bar.width, height) {
         bar.placeRelative(0, if (top) height - bar.height else 0)
     }
