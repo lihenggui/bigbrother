@@ -21,9 +21,20 @@ import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.PermissionState
 /**
  * An op this device knows, as the service names it, with the op it is
  * switched with, under which the service keeps its uid mode, and the
- * permission whose grant the system sets that uid mode by, if any.
+ * permission whose grant the system sets that uid mode by, if any
+ * ([permission]: only when the system maps that permission back to this
+ * op). [declaredBy] is the permission an app must request to be allowed the
+ * op at all; Android 13 and 14 do not map some of these back (usage
+ * access), so it is kept apart.
  */
-internal class GuardedOp(val name: String, val code: Int, val switchCode: Int, val defaultMode: Int?, val permission: String?)
+internal class GuardedOp(
+    val name: String,
+    val code: Int,
+    val switchCode: Int,
+    val defaultMode: Int?,
+    val permission: String?,
+    val declaredBy: String? = permission,
+)
 
 /**
  * What [AppOpsGuardHandler] needs of the framework: the app ops service and

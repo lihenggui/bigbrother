@@ -69,7 +69,7 @@ internal class RuntimePermissionChanges(private val system: AppOpsSystem) : Taki
      * change of all files access. `null` where that cannot be told.
      */
     fun isUnrequestedAppOp(op: GuardedOp, uid: Int): Boolean? {
-        val permission = op.permission ?: return null
+        val permission = op.declaredBy ?: return null
         val connected = system.permissions ?: return null
         return try {
             if (runtimeOf(connected, permission) != null) return false

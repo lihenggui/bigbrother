@@ -26,6 +26,7 @@ import li.mercury.bigbrother.catalog.FakeAndroid.Companion.CONTACTS
 import li.mercury.bigbrother.catalog.FakeAndroid.Companion.FINE
 import li.mercury.bigbrother.catalog.FakeAndroid.Companion.PACKAGE
 import li.mercury.bigbrother.catalog.FakeAndroid.Companion.UID
+import li.mercury.bigbrother.catalog.FakeAndroid.Companion.USAGE_OP_NAME
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -88,6 +89,19 @@ class AppOpsGuardHandlerTest {
         assertEquals(0, android.allFilesChanges)
         assertEquals(MODE_DEFAULT, android.mode(ALL_FILES_OP_NAME))
         assertEquals(MODE_IGNORED, android.mode("android:read_contacts"))
+        assertEquals(listOf("unheld $UID -"), android.printed.filter { it.startsWith("unheld ") })
+    }
+
+    @Test
+    fun givenUsageAccessNotMappedBackToItsOp_whenNotRequestedAndHeld_thenItIsNeverWritten() {
+        val android = FakeAndroid()
+        val handler = AppOpsGuardHandler(android)
+
+        handler.handle(AppOpsGuardProtocol.parseCommand("set $UID $USAGE_OP_NAME=1,android:read_contacts=1")!!)
+        repeat(3) { handler.checkAll() }
+
+        assertEquals(0, android.helperWrites.getOrDefault(USAGE_OP_NAME, 0))
+        assertEquals(MODE_DEFAULT, android.mode(USAGE_OP_NAME))
         assertEquals(listOf("unheld $UID -"), android.printed.filter { it.startsWith("unheld ") })
     }
 
