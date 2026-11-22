@@ -567,6 +567,23 @@ file goes through the system's file picker, driven with `uiautomator`:
 ./scripts/check-sandbox.sh              # add --stress 200 for cold starts
 ```
 
+`scripts/check-survival.sh` installs both canaries for Android user 0 on a
+rooted, unlocked device with auto-isolation off. It turns on Files and media
+and Installed apps, then checks ten cold starts of each app. Each start draws a
+first frame and must keep the same process through the helper's one-second
+settle and a five-second quiet period. ActivityManager events catch deaths
+and replacements, and AppOps callbacks catch changes between UID-mode
+readbacks. When isolation is applied, the declaring canary must move
+`MANAGE_EXTERNAL_STORAGE` and `GET_USAGE_STATS` to ignored once each. The
+canary without the two declarations must keep its original modes. Both
+are released after the check. Device CI runs this after the mount and
+hold-latency checks on API 33–36.
+
+```sh
+(cd android && ./gradlew :canary:assembleDebug :canary:assembleNoDeclarations)
+./scripts/check-survival.sh
+```
+
 What an app's permissions and their app ops end as is set out case by case
 in `testdata/permissions/matrix.tsv`: the permission's state as the app
 enters the sandbox, what the user or the sandbox's items change while it is
