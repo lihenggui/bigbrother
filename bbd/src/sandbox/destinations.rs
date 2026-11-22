@@ -39,7 +39,12 @@ use aya::maps::{HashMap as BpfHashMap, MapData};
 use bb_common::NetRuleKey;
 
 use super::{
-    Effect, Entry, Resumed, Status, items::Settings, names::Names, network::Listed, target::Target,
+    Effect, Entry, Resumed, Sandbox, Status,
+    items::Settings,
+    items_of,
+    names::{Names, Refuses, Serves},
+    network::Listed,
+    target::Target,
 };
 use crate::{
     clock,
@@ -57,6 +62,42 @@ pub(super) fn has_name_rules(book: &Book, uid: u32) -> bool {
             .iter()
             .any(|target| !matches!(target, Target::Ip(..)))
     })
+}
+
+impl Sandbox {
+    pub(crate) fn name_policy(&self) -> (Serves, Refuses) {
+        let refuses: Refuses = {
+            let (snapshot, book) = (self.snapshot(), self.book());
+            Arc::new(move |uid, host: Option<&str>| {
+                // Only of an app in the sandbox: taken out, it is kept from
+                // nothing.
+                read(&snapshot).contains_key(&uid)
+                    && lock(&book).get(&uid).is_some_and(|targets| {
+                        targets.iter().any(|target| match host {
+                            Some(host) => target.covers_name(host),
+                            // A name that could not be read: refused to
+                            // an app kept from any name.
+                            None => !matches!(target, Target::Ip(..)),
+                        })
+                    })
+            })
+        };
+        let serves: Serves = {
+            let (snapshot, global, book) = (self.snapshot(), self.global(), self.book());
+            Arc::new(move |uid| {
+                // The apps given the daemon's socket, and no other: the socket
+                // can be found by any process, and an app kept from the
+                // network is to have no resolver at all.
+                let snapshot = read(&snapshot);
+                let entry = snapshot.get(&uid)?;
+                let items = items_of(entry, &read(&global));
+                (!items.network_refused()
+                    && (items.network_recorded() || has_name_rules(&book, uid)))
+                .then(|| Arc::from(entry.install_id.as_str()))
+            })
+        };
+        (serves, refuses)
+    }
 }
 
 /// What tells, of a connection an app tried, whether the sandbox refused

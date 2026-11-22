@@ -58,16 +58,13 @@ use std::{
 
 use anyhow::Context as _;
 
-use super::{Entry, dirs, items::Settings, items_of, names::Serving};
+use super::{
+    Entry, dirs,
+    items::Settings,
+    items_of,
+    names::{NETD as SOCKET, RELAY_SOCKET, Serving, SocketId, socket_id},
+};
 use crate::{proc::Process, store::Reader};
-
-/// Where netd listens for the lookups of apps.
-pub const SOCKET: &str = "/dev/socket/dnsproxyd";
-
-/// Where the daemon listens for lookups. Beside netd's, in the filesystem
-/// every mount namespace has; the name says nothing of the sandbox, as an
-/// app can read its own mounts.
-pub(super) const RELAY_SOCKET: &str = "/dev/socket/dnsproxyd_relay";
 
 /// What is mounted over the socket: there in every namespace, of the same
 /// filesystem as the socket, and nothing can be connected to it.
@@ -110,13 +107,6 @@ impl Cover {
             Cover::Relay => Some(RELAY_SOCKET),
         }
     }
-}
-
-pub(super) type SocketId = (u64, u64);
-
-pub(super) fn socket_id(path: &str) -> io::Result<SocketId> {
-    let metadata = fs::metadata(path)?;
-    Ok((metadata.dev(), metadata.ino()))
 }
 
 /// The old relay's file may still be linked if its replacement could not
@@ -381,33 +371,9 @@ fn pass_once(
         .context("listing the processes")?
         .flatten()
     {
-        let Some(pid) = process
-            .file_name()
-            .to_str()
-            .and_then(|name| name.parse::<i32>().ok())
-        else {
+        let Some((pid, held, change)) = open_selected_process(&process, changes) else {
             continue;
         };
-        // Non-dumpable app processes can have root-owned proc directories.
-        let owner = || {
-            let uid = process.metadata().ok()?.uid();
-            if uid != 0 {
-                return Some(uid);
-            }
-            crate::proc::real_uid(&fs::read(format!("/proc/{pid}/status")).ok()?)
-        };
-        let Some(uid) = owner() else { continue };
-        let Some(change) = changes.get(&uid) else {
-            continue;
-        };
-        // Held open, then looked at again: what is read of the pid from
-        // here on is of this process, or it has ended.
-        let Ok(held) = Process::open(pid) else {
-            continue;
-        };
-        if owner() != Some(uid) {
-            continue;
-        }
         let Ok(theirs) = File::open(format!("/proc/{pid}/ns/mnt")) else {
             continue;
         };
@@ -446,38 +412,19 @@ fn pass_once(
         };
         let done = match enter_target() {
             Ok(()) => {
-                let mounted = (|| -> anyhow::Result<bool> {
-                    if let Some(relay) = relay {
-                        let serving = relay.socket();
-                        let covered = socket_id(SOCKET).ok();
-                        complete &= serving.is_some();
-                        let Some((detach, cover)) = change.plan(mounted, *serving, covered)? else {
-                            return Ok(false);
-                        };
-                        if detach {
-                            uncover_here()?;
-                        }
-                        if let Some(id) = serving.filter(|_| cover == Cover::Relay)
-                            && record_here(id).is_err()
-                        {
-                            complete = false;
-                            if matches!(change, Change::Names(_)) {
-                                cover_here(Cover::Null)?;
-                                return Ok(true);
+                let mounted = if let Some(relay) = relay {
+                    change_relay_here(change, relay, mounted, &mut complete)
+                } else {
+                    (|| {
+                        if let Some((detach, cover)) = plan {
+                            if detach {
+                                uncover_here()?;
                             }
-                            return Ok(detach);
-                        }
-                        if cover == Cover::Null {
                             cover_here(cover)?;
                         }
-                    } else if let Some((detach, cover)) = plan {
-                        if detach {
-                            uncover_here()?;
-                        }
-                        cover_here(cover)?;
-                    }
-                    Ok(true)
-                })();
+                        Ok(true)
+                    })()
+                };
                 // A thread that cannot come back must stop visiting namespaces.
                 enter(home).context("returning from a namespace")?;
                 mounted.context("changing what is at the resolver's socket")
@@ -496,6 +443,60 @@ fn pass_once(
         }
     }
     sweep_error.map_or(Ok((changed, complete)), Err)
+}
+
+/// A process that cannot be looked at has ended for the purposes of the sweep.
+fn open_selected_process<'a>(
+    process: &fs::DirEntry,
+    changes: &'a HashMap<u32, Change>,
+) -> Option<(i32, Process, &'a Change)> {
+    let pid = process.file_name().to_str()?.parse::<i32>().ok()?;
+    // Non-dumpable app processes can have root-owned proc directories.
+    let owner = || {
+        let uid = process.metadata().ok()?.uid();
+        if uid != 0 {
+            return Some(uid);
+        }
+        crate::proc::real_uid(&fs::read(format!("/proc/{pid}/status")).ok()?)
+    };
+    let uid = owner()?;
+    let change = changes.get(&uid)?;
+    // Held open, then looked at again: what is read of the pid from
+    // here on is of this process, or it has ended.
+    let held = Process::open(pid).ok()?;
+    (owner() == Some(uid)).then_some((pid, held, change))
+}
+
+fn change_relay_here(
+    change: &Change,
+    relay: &Serving,
+    mounted: Mounted,
+    complete: &mut bool,
+) -> anyhow::Result<bool> {
+    let serving = relay.socket();
+    // If the socket cannot be identified, the plan still has mount information.
+    let covered = socket_id(SOCKET).ok();
+    *complete &= serving.is_some();
+    let Some((detach, cover)) = change.plan(mounted, *serving, covered)? else {
+        return Ok(false);
+    };
+    if detach {
+        uncover_here()?;
+    }
+    if let Some(id) = serving.filter(|_| cover == Cover::Relay)
+        && record_here(id).is_err()
+    {
+        *complete = false;
+        if matches!(change, Change::Names(_)) {
+            cover_here(Cover::Null)?;
+            return Ok(true);
+        }
+        return Ok(detach);
+    }
+    if cover == Cover::Null {
+        cover_here(cover)?;
+    }
+    Ok(true)
 }
 
 fn enter(namespace: &File) -> io::Result<()> {

@@ -17,7 +17,11 @@
 use std::{
     io::{BufRead as _, BufReader, Write as _},
     os::fd::AsRawFd as _,
-    sync::{MutexGuard, atomic::Ordering},
+    process::ChildStdout,
+    sync::{
+        MutexGuard,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -89,6 +93,32 @@ impl State {
     pub(super) fn invalidate(&mut self, uid: u32) {
         self.unheld.remove(&uid);
         self.unknown.insert(uid);
+    }
+
+    fn accept_helper_line<'a>(&self, line: &'a str) -> Option<&'a str> {
+        #[cfg(not(test))]
+        if self.input.is_none() || self.restart {
+            return None;
+        }
+        if let Some(report) = line.strip_prefix("report ") {
+            let (token, line) = report.split_once(' ')?;
+            let uid = line
+                .split_ascii_whitespace()
+                .nth(1)
+                .and_then(|uid| uid.parse::<u32>().ok())?;
+            return self
+                .owners
+                .get(&uid)
+                .is_some_and(|(_, owner)| owner == token)
+                .then_some(line);
+        }
+        #[cfg(not(test))]
+        if !line.starts_with("reply ")
+            && !matches!(parse_line(line), Some((_, Some(Answer::Kind(..)))))
+        {
+            return None;
+        }
+        Some(line)
     }
 
     /// Have the helper look at the ops of `uid` and hold it to what it is
@@ -265,37 +295,8 @@ impl Shared {
 
     pub(super) fn receive(&self, line: &str) {
         let mut state = self.state();
-        #[cfg(not(test))]
-        if state.input.is_none() || state.restart {
+        let Some(line) = state.accept_helper_line(line) else {
             return;
-        }
-        let line = if let Some(report) = line.strip_prefix("report ") {
-            let Some((token, line)) = report.split_once(' ') else {
-                return;
-            };
-            let Some(uid) = line
-                .split_ascii_whitespace()
-                .nth(1)
-                .and_then(|uid| uid.parse::<u32>().ok())
-            else {
-                return;
-            };
-            if !state
-                .owners
-                .get(&uid)
-                .is_some_and(|(_, owner)| owner == token)
-            {
-                return;
-            }
-            line
-        } else {
-            #[cfg(not(test))]
-            if !line.starts_with("reply ")
-                && !matches!(parse_line(line), Some((_, Some(Answer::Kind(..)))))
-            {
-                return;
-            }
-            line
         };
         let mut wake_found = false;
         let mut wake_restart = false;
@@ -438,8 +439,6 @@ fn supervise_child(
     helper: &mut std::process::Child,
     ready_wait: Duration,
 ) -> anyhow::Error {
-    use std::sync::atomic::AtomicBool;
-
     let output = helper.stdout.take().expect("spawned with a piped stdout");
     let input = helper.stdin.take().expect("spawned with a piped stdin");
     // Drain without logging framework output, which can include package names.
@@ -453,22 +452,7 @@ fn supervise_child(
     let ready = AtomicBool::new(false);
     let ended = AtomicBool::new(false);
     std::thread::scope(|scope| {
-        scope.spawn(|| {
-            let mut lines = BufReader::new(output).lines().map_while(Result::ok);
-            if lines.next().as_deref() == Some("ready") {
-                {
-                    let _state = shared.state();
-                    ready.store(true, Ordering::Relaxed);
-                    shared.changed.notify_all();
-                }
-                for line in lines {
-                    shared.receive(&line);
-                }
-            }
-            let _state = shared.state();
-            ended.store(true, Ordering::Relaxed);
-            shared.changed.notify_all();
-        });
+        scope.spawn(|| read_helper_output(shared, output, &ready, &ended));
 
         let ready_until = Instant::now() + ready_wait;
         let mut state = shared.state();
@@ -528,6 +512,29 @@ fn supervise_child(
         }
         anyhow::anyhow!(reason)
     })
+}
+
+fn read_helper_output(
+    shared: &Shared,
+    output: ChildStdout,
+    ready: &AtomicBool,
+    ended: &AtomicBool,
+) {
+    // A read error ends the session just like EOF.
+    let mut lines = BufReader::new(output).lines().map_while(Result::ok);
+    if lines.next().as_deref() == Some("ready") {
+        {
+            let _state = shared.state();
+            ready.store(true, Ordering::Relaxed);
+            shared.changed.notify_all();
+        }
+        for line in lines {
+            shared.receive(&line);
+        }
+    }
+    let _state = shared.state();
+    ended.store(true, Ordering::Relaxed);
+    shared.changed.notify_all();
 }
 
 #[cfg(test)]
