@@ -16,6 +16,7 @@
 
 package li.mercury.bigbrother.feature.overview.impl
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -39,74 +40,90 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import li.mercury.bigbrother.core.data.repository.ModuleUpdate
 import li.mercury.bigbrother.core.model.LoadFailure
+import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.Message
+import li.mercury.bigbrother.core.ui.Reveal
+import li.mercury.bigbrother.core.ui.RevealNotNull
 import li.mercury.bigbrother.core.ui.failureBody
 import li.mercury.bigbrother.core.ui.failureReason
 import li.mercury.bigbrother.core.ui.failureTitle
 import li.mercury.bigbrother.core.ui.R as UiR
 
-/** Status that needs the user, shown only when something is wrong. */
+/**
+ * Status that needs the user, shown only when something is wrong. Cards grow
+ * in and out, so that what is below them moves rather than jumps.
+ */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 internal fun RecorderStatusCards(state: OverviewUiState, onUpdateModule: () -> Unit, onStartDaemon: () -> Unit) {
     // A staged update comes first: starting now would run the old module.
-    if (state.modulePendingReboot) {
-        RecorderStatusCard(
-            icon = Icons.Outlined.SystemUpdate,
-            title = stringResource(R.string.module_pending_reboot),
-            body = null,
-            error = false,
-        )
-        return
-    }
-
+    val pending = state.modulePendingReboot
     val update = state.moduleUpdate
     val updateFailure = (update as? ModuleUpdate.Failed)?.failure
     val stopped = state.recording == false
-    if (update == ModuleUpdate.Updating || !stopped || (updateFailure != LoadFailure.Operation.DAEMON_NOT_REPORTING && updateFailure != state.daemonStartError)) {
-        ModuleUpdateCard(update, onUpdateModule, onStartDaemon)
+    val updateShown = !pending && update != ModuleUpdate.Idle &&
+        (update == ModuleUpdate.Updating || !stopped || (updateFailure != LoadFailure.Operation.DAEMON_NOT_REPORTING && updateFailure != state.daemonStartError))
+    Column {
+        Reveal(pending) {
+            RecorderStatusCard(
+                icon = Icons.Outlined.SystemUpdate,
+                title = stringResource(R.string.module_pending_reboot),
+                body = null,
+                error = false,
+            )
+        }
+        RevealNotNull(update.takeIf { updateShown }) { ModuleUpdateCard(it, onUpdateModule, onStartDaemon) }
+        Reveal(!pending && stopped && update != ModuleUpdate.Updating) {
+            StoppedCard(state, updateFailure, onStartDaemon)
+        }
     }
-    if (stopped && update != ModuleUpdate.Updating) {
-        val error = state.daemonStartError
-        RecorderStatusCard(
-            icon = Icons.Filled.ErrorOutline,
-            title = stringResource(R.string.status_stopped),
-            body = when {
-                state.daemonStarting -> stringResource(R.string.daemon_starting)
-                error == null && updateFailure == LoadFailure.Operation.DAEMON_NOT_REPORTING -> failureReason(updateFailure)
-                error == null -> stringResource(R.string.daemon_stopped)
-                else -> failureReason(error)
-            },
-            error = true,
-            // A disabled module is turned back on in the root manager, not here.
-            action = stringResource(R.string.start_daemon)
-                .takeUnless { state.daemonStarting || error == LoadFailure.Operation.MODULE_DISABLED },
-            busy = state.daemonStarting,
-            onAction = onStartDaemon,
-        )
-    }
+}
+
+/** The recorder is not running: why, and starting it again where that can help. */
+@Composable
+private fun StoppedCard(state: OverviewUiState, updateFailure: LoadFailure?, onStartDaemon: () -> Unit) {
+    val error = state.daemonStartError
+    RecorderStatusCard(
+        icon = Icons.Filled.ErrorOutline,
+        title = stringResource(R.string.status_stopped),
+        body = when {
+            state.daemonStarting -> stringResource(R.string.daemon_starting)
+            error == null && updateFailure == LoadFailure.Operation.DAEMON_NOT_REPORTING -> failureReason(updateFailure)
+            error == null -> stringResource(R.string.daemon_stopped)
+            else -> failureReason(error)
+        },
+        error = true,
+        // A disabled module is turned back on in the root manager, not here.
+        action = stringResource(R.string.start_daemon)
+            .takeUnless { state.daemonStarting || error == LoadFailure.Operation.MODULE_DISABLED },
+        busy = state.daemonStarting,
+        onAction = onStartDaemon,
+    )
 }
 
 /** Bringing the module up to date with the app: while it happens, and when it did not work. */
 @Composable
 internal fun ModuleUpdateCard(update: ModuleUpdate, onUpdateModule: () -> Unit, onStartDaemon: () -> Unit) {
-    when (update) {
-        ModuleUpdate.Idle -> Unit
+    FadeThrough(update, kind = { it }) { shown ->
+        when (shown) {
+            ModuleUpdate.Idle -> Unit
 
-        ModuleUpdate.Updating -> RecorderStatusCard(
-            icon = Icons.Outlined.SystemUpdate,
-            title = stringResource(R.string.updating_module),
-            body = null,
-            error = false,
-            busy = true,
-        )
+            ModuleUpdate.Updating -> RecorderStatusCard(
+                icon = Icons.Outlined.SystemUpdate,
+                title = stringResource(R.string.updating_module),
+                body = null,
+                error = false,
+                busy = true,
+            )
 
-        is ModuleUpdate.Failed -> ModuleUpdateFailureCard(update.failure, onUpdateModule, onStartDaemon)
+            is ModuleUpdate.Failed -> ModuleUpdateFailureCard(shown.failure, onUpdateModule, onStartDaemon)
+        }
     }
 }
 
@@ -156,34 +173,30 @@ private fun RecorderStatusCard(
     onAction: () -> Unit = {},
 ) {
     val colors = MaterialTheme.colorScheme
+    // A card that turns into a fault, or out of one, changes color gradually.
+    val spec = MaterialTheme.motionScheme.defaultEffectsSpec<Color>()
+    val container by animateColorAsState(if (error) colors.errorContainer else colors.tertiaryContainer, spec, label = "container")
+    val content by animateColorAsState(if (error) colors.onErrorContainer else colors.onTertiaryContainer, spec, label = "content")
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .padding(bottom = 12.dp),
         shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(
-            containerColor = if (error) colors.errorContainer else colors.tertiaryContainer,
-            contentColor = if (error) colors.onErrorContainer else colors.onTertiaryContainer,
-        ),
+        colors = CardDefaults.cardColors(containerColor = container, contentColor = content),
     ) {
         Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Icon(icon, contentDescription = null)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(title, style = MaterialTheme.typography.titleMedium)
                 if (body != null) Text(body, style = MaterialTheme.typography.bodyMedium)
-                if (busy) {
-                    LoadingIndicator(Modifier.size(32.dp))
-                } else if (action != null) {
-                    Button(
-                        onClick = onAction,
-                        modifier = Modifier.padding(top = 8.dp),
-                        colors = if (error) {
-                            ButtonDefaults.buttonColors(containerColor = colors.error, contentColor = colors.onError)
-                        } else {
-                            ButtonDefaults.buttonColors(containerColor = colors.tertiary, contentColor = colors.onTertiary)
-                        },
-                    ) {
-                        Text(action)
+                Reveal(busy || action != null) {
+                    // Starting shows progress where the button was.
+                    FadeThrough(busy to action, kind = { (working, _) -> working }) { (working, label) ->
+                        if (working) {
+                            LoadingIndicator(Modifier.size(32.dp))
+                        } else if (label != null) {
+                            StatusAction(label, error, onAction)
+                        }
                     }
                 }
             }
@@ -191,10 +204,32 @@ private fun RecorderStatusCard(
     }
 }
 
+@Composable
+private fun StatusAction(label: String, error: Boolean, onAction: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Button(
+        onClick = onAction,
+        modifier = Modifier.padding(top = 8.dp),
+        colors = if (error) {
+            ButtonDefaults.buttonColors(containerColor = colors.error, contentColor = colors.onError)
+        } else {
+            ButtonDefaults.buttonColors(containerColor = colors.tertiary, contentColor = colors.onTertiary)
+        },
+    ) {
+        Text(label)
+    }
+}
+
 /** Shown when the module is absent: offers to flash the copy bundled in this APK. */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 internal fun ModuleSetupMessage(setup: ModuleSetup, onInstall: () -> Unit, onRetry: () -> Unit) {
+    FadeThrough(setup, kind = { it }) { shown -> ModuleSetupStep(shown, onInstall, onRetry) }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun ModuleSetupStep(setup: ModuleSetup, onInstall: () -> Unit, onRetry: () -> Unit) {
     when (setup) {
         ModuleSetup.Idle -> Message(
             title = failureTitle(LoadFailure.ModuleMissing),

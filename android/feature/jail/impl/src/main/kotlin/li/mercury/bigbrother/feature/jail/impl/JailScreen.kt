@@ -84,6 +84,7 @@ import li.mercury.bigbrother.core.ui.ContentKind
 import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
+import li.mercury.bigbrother.core.ui.Pop
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.core.ui.appNameWithUser
@@ -162,7 +163,8 @@ internal fun JailScreen(
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
-            if (!state.apps.isNullOrEmpty()) {
+            // With no app isolated yet, the empty page has the button of its own.
+            Pop(!state.apps.isNullOrEmpty()) {
                 ExtendedFloatingActionButton(
                     onClick = onAdd,
                     expanded = atTop,

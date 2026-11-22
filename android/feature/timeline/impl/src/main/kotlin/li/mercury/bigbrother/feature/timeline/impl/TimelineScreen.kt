@@ -74,6 +74,7 @@ import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.MenuFilterChip
 import li.mercury.bigbrother.core.ui.MenuOption
 import li.mercury.bigbrother.core.ui.Message
+import li.mercury.bigbrother.core.ui.Reveal
 import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.core.ui.dateWithWeekday
 import li.mercury.bigbrother.core.ui.failureTitle
@@ -134,7 +135,7 @@ internal fun TimelineScreen(
                 .fillMaxSize()
                 .padding(top = padding.calculateTopPadding()),
         ) {
-            if (state.failure == null && state.entries != null) {
+            Reveal(state.failure == null && state.entries != null) {
                 Filters(filter.category, onCategory, filter.includeLookups, onIncludeLookups)
             }
             PullToRefreshBox(

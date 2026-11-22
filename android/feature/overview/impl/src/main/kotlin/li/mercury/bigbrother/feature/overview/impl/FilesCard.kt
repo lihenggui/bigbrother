@@ -16,6 +16,7 @@
 
 package li.mercury.bigbrother.feature.overview.impl
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -49,6 +50,8 @@ import li.mercury.bigbrother.core.designsystem.component.ShapedIcon
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.ui.AppIcon
 import li.mercury.bigbrother.core.ui.DataCategory
+import li.mercury.bigbrother.core.ui.FadeThrough
+import li.mercury.bigbrother.core.ui.RevealNotNull
 import li.mercury.bigbrother.core.ui.appDisplayName
 import li.mercury.bigbrother.core.ui.R as UiR
 
@@ -63,9 +66,14 @@ private const val ICONS_SHOWN = 5
 @Composable
 internal fun FilesCard(files: FilesOverview, appInfo: Map<String, AppInfo>, wide: Boolean, onClick: () -> Unit) {
     val anyRead = files.readers.isNotEmpty()
-    // Without reads there is nothing to draw attention to.
-    val container = if (anyRead) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh
-    val content = if (anyRead) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+    val colors = MaterialTheme.colorScheme
+    // Without reads there is nothing to draw attention to. Another range
+    // can change that, and the card changes color gradually.
+    val spec = MaterialTheme.motionScheme.defaultEffectsSpec<Color>()
+    val container by animateColorAsState(if (anyRead) colors.primaryContainer else colors.surfaceContainerHigh, spec, label = "container")
+    val content by animateColorAsState(if (anyRead) colors.onPrimaryContainer else colors.onSurface, spec, label = "content")
+    val iconContainer by animateColorAsState(if (anyRead) colors.primary else colors.surfaceContainerHighest, spec, label = "iconContainer")
+    val iconContent by animateColorAsState(if (anyRead) colors.onPrimary else colors.onSurfaceVariant, spec, label = "iconContent")
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
@@ -74,11 +82,7 @@ internal fun FilesCard(files: FilesOverview, appInfo: Map<String, AppInfo>, wide
     ) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                ShapedIcon(
-                    icon = Icons.Outlined.FolderOpen,
-                    containerColor = if (anyRead) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHighest,
-                    contentColor = if (anyRead) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                ShapedIcon(icon = Icons.Outlined.FolderOpen, containerColor = iconContainer, contentColor = iconContent)
                 Text(
                     text = stringResource(DataCategory.FILES.title),
                     style = MaterialTheme.typography.titleSmallEmphasized,
@@ -86,38 +90,18 @@ internal fun FilesCard(files: FilesOverview, appInfo: Map<String, AppInfo>, wide
                 )
                 Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
             }
-            if (anyRead) {
-                val count = files.readers.size
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Row(Modifier.weight(1f), verticalAlignment = Alignment.Bottom) {
-                        Text(count.toString(), style = MaterialTheme.typography.displayMediumEmphasized)
-                        Text(
-                            text = pluralStringResource(R.plurals.readers_label, count),
-                            style = MaterialTheme.typography.titleMediumEmphasized,
-                            modifier = Modifier.padding(start = 8.dp, bottom = 6.dp),
-                        )
-                    }
-                    if (wide) IconStack(files, appInfo)
+            FadeThrough(files, kind = { it.readers.isNotEmpty() }) { shown ->
+                if (shown.readers.isNotEmpty()) {
+                    Reads(shown, appInfo, wide)
+                } else {
+                    Text(stringResource(R.string.no_reads), style = MaterialTheme.typography.headlineSmall)
                 }
-                if (!wide) IconStack(files, appInfo)
-                val places = buildList {
-                    if (files.folders.isNotEmpty()) add(files.folders.joinToString(stringResource(UiR.string.summary_separator)))
-                    if (files.mediaLibrary) add(stringResource(UiR.string.summary_media_library))
-                }
-                if (places.isNotEmpty()) {
-                    Text(places.joinToString(stringResource(UiR.string.dot_separator)), style = MaterialTheme.typography.bodyMedium)
-                }
-            } else {
-                Text(stringResource(R.string.no_reads), style = MaterialTheme.typography.headlineSmall)
             }
-            if (files.lookedOnly > 0) {
+            RevealNotNull(files.lookedOnly.takeIf { it > 0 }) { lookedOnly ->
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Icon(Icons.AutoMirrored.Outlined.ManageSearch, contentDescription = null, modifier = Modifier.size(18.dp))
                     Text(
-                        text = pluralStringResource(R.plurals.looked_only, files.lookedOnly, files.lookedOnly),
+                        text = pluralStringResource(R.plurals.looked_only, lookedOnly, lookedOnly),
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
@@ -126,11 +110,45 @@ internal fun FilesCard(files: FilesOverview, appInfo: Map<String, AppInfo>, wide
     }
 }
 
+/** How many apps read files, which of them, and from where. */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun Reads(files: FilesOverview, appInfo: Map<String, AppInfo>, wide: Boolean) {
+    val count = files.readers.size
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // A new count fades through in place.
+            FadeThrough(count, kind = { it }, modifier = Modifier.weight(1f)) { shown ->
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(shown.toString(), style = MaterialTheme.typography.displayMediumEmphasized)
+                    Text(
+                        text = pluralStringResource(R.plurals.readers_label, shown),
+                        style = MaterialTheme.typography.titleMediumEmphasized,
+                        modifier = Modifier.padding(start = 8.dp, bottom = 6.dp),
+                    )
+                }
+            }
+            if (wide) IconStack(files, appInfo)
+        }
+        if (!wide) IconStack(files, appInfo)
+        val places = buildList {
+            if (files.folders.isNotEmpty()) add(files.folders.joinToString(stringResource(UiR.string.summary_separator)))
+            if (files.mediaLibrary) add(stringResource(UiR.string.summary_media_library))
+        }
+        RevealNotNull(places.takeIf { it.isNotEmpty() }) { shown ->
+            Text(shown.joinToString(stringResource(UiR.string.dot_separator)), style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
+
 /** The icons of the first apps that read files, overlapping, then how many more. */
 @Composable
 private fun IconStack(files: FilesOverview, appInfo: Map<String, AppInfo>) {
     val ring = MaterialTheme.colorScheme.primaryContainer
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
         Overlapping(overlap = 8.dp) {
             for (app in files.readers.take(ICONS_SHOWN)) {
                 val info = appInfo[app.packageName]
@@ -142,9 +160,12 @@ private fun IconStack(files: FilesOverview, appInfo: Map<String, AppInfo>) {
                 )
             }
         }
-        val more = files.readers.size - ICONS_SHOWN
-        if (more > 0) {
-            Text(stringResource(R.string.more_count, more), style = MaterialTheme.typography.labelLarge)
+        // Carries its own gap, so that there is none without it; the stack
+        // widens and narrows as it comes and goes.
+        FadeThrough((files.readers.size - ICONS_SHOWN).takeIf { it > 0 }, kind = { it }) { more ->
+            if (more != null) {
+                Text(stringResource(R.string.more_count, more), style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(start = 6.dp))
+            }
         }
     }
 }

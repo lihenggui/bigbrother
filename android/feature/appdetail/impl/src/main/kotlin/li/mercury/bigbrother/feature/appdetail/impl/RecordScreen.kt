@@ -16,6 +16,7 @@
 
 package li.mercury.bigbrother.feature.appdetail.impl
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -65,6 +66,7 @@ import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.LocalWallClock
 import li.mercury.bigbrother.core.ui.Message
+import li.mercury.bigbrother.core.ui.Reveal
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.core.ui.appDisplayName
@@ -293,6 +295,8 @@ private fun Details(details: List<RecordDetail.Plain>, modifier: Modifier = Modi
     Column(
         modifier = modifier
             .fillMaxWidth()
+            // Showing all grows the list rather than pushing what follows down at once.
+            .animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec())
             .padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -303,7 +307,7 @@ private fun Details(details: List<RecordDetail.Plain>, modifier: Modifier = Modi
                 }
             }
         }
-        if (shown.size < details.size) {
+        Reveal(shown.size < details.size) {
             TextButton(onClick = { showAll = true }, contentPadding = PaddingValues(0.dp)) {
                 Text(stringResource(R.string.show_all_details, details.size))
             }

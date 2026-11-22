@@ -16,11 +16,6 @@
 
 package li.mercury.bigbrother.feature.jail.impl.network
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.material.icons.Icons
@@ -46,6 +41,7 @@ import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxPart
 import li.mercury.bigbrother.core.model.SandboxedApp
+import li.mercury.bigbrother.core.ui.Reveal
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.core.ui.failureReason
@@ -134,14 +130,7 @@ internal fun LazyListScope.networkSection(
     }
     // Always an item, so the row can grow in and out as recording is switched.
     item(key = "network_activity") {
-        AnimatedVisibility(
-            visible = activityShown,
-            modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
-            enter = expandVertically(MaterialTheme.motionScheme.defaultSpatialSpec()) +
-                fadeIn(MaterialTheme.motionScheme.defaultEffectsSpec()),
-            exit = shrinkVertically(MaterialTheme.motionScheme.defaultSpatialSpec()) +
-                fadeOut(MaterialTheme.motionScheme.fastEffectsSpec()),
-        ) {
+        Reveal(activityShown, Modifier.animatedRow(this, MaterialTheme.motionScheme)) {
             val found = destinations ?: 0
             val separator = stringResource(R.string.jail_summary_separator)
             val summary = listOfNotNull(

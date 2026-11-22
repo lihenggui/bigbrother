@@ -16,13 +16,7 @@
 
 package li.mercury.bigbrother.feature.jail.impl
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -41,7 +35,6 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
@@ -54,19 +47,22 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.offset
 import li.mercury.bigbrother.core.designsystem.component.ShapedIcon
 import li.mercury.bigbrother.core.designsystem.component.SwitchStateIcon
 import li.mercury.bigbrother.core.designsystem.component.segmentCornerSize
@@ -78,6 +74,9 @@ import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxPart
 import li.mercury.bigbrother.core.ui.AppIcon
+import li.mercury.bigbrother.core.ui.ExpandChevron
+import li.mercury.bigbrother.core.ui.FadeThrough
+import li.mercury.bigbrother.core.ui.Reveal
 
 /**
  * A row that opens something, in a segmented group. [selected] is whether
@@ -160,33 +159,35 @@ internal fun ItemRow(
     appOpsChecking: Boolean = false,
     hookHealth: Map<SandboxPart, SandboxHookState> = emptyMap(),
 ) {
-    val spatial = MaterialTheme.motionScheme.fastSpatialSpec<androidx.compose.ui.unit.Dp>()
+    val spatial = MaterialTheme.motionScheme.fastSpatialSpec<Dp>()
     val top by animateDpAsState(segmentCornerSize(outer = expanded || index == 0), spatial, label = "top")
     val bottom by animateDpAsState(segmentCornerSize(outer = expanded || index == count - 1), spatial, label = "bottom")
-    val turn by animateFloatAsState(if (expanded) 180f else 0f, MaterialTheme.motionScheme.fastSpatialSpec(), label = "turn")
+    // The gap around an opened row grows with its choices.
+    val gap = animateDpAsState(if (expanded) 6.dp else 0.dp, MaterialTheme.motionScheme.defaultSpatialSpec(), label = "gap")
     val title = stringResource(item.title)
     Surface(
-        modifier = modifier.padding(vertical = if (expanded) 6.dp else 0.dp),
+        modifier = modifier.verticalGap(gap),
         shape = RoundedCornerShape(topStart = top, topEnd = top, bottomStart = bottom, bottomEnd = bottom),
         color = MaterialTheme.colorScheme.surfaceBright,
     ) {
         Column {
             Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), verticalAlignment = Alignment.CenterVertically) {
-                ItemRowHeader(item, title, mode, globalMode != null && choice != null, unmet, expanded, turn, appOpsChecking, hookHealth, onExpandedChange)
+                ItemRowHeader(item, title, mode, globalMode != null && choice != null, unmet, expanded, appOpsChecking, hookHealth, onExpandedChange)
                 VerticalDivider(Modifier.fillMaxHeight().padding(vertical = 20.dp))
                 ItemSwitch(title, checked, onCheckedChange)
             }
-            AnimatedVisibility(
-                visible = expanded,
-                enter = expandVertically(MaterialTheme.motionScheme.defaultSpatialSpec()) +
-                    fadeIn(MaterialTheme.motionScheme.defaultEffectsSpec()),
-                exit = shrinkVertically(MaterialTheme.motionScheme.defaultSpatialSpec()) +
-                    fadeOut(MaterialTheme.motionScheme.fastEffectsSpec()),
-            ) {
+            Reveal(expanded) {
                 ModeChoices(item, choice, globalMode, onChoose)
             }
         }
     }
+}
+
+/** Space of [gap] above and below, read while laying out so that it can animate without composing again. */
+private fun Modifier.verticalGap(gap: State<Dp>): Modifier = layout { measurable, constraints ->
+    val space = gap.value.roundToPx()
+    val placeable = measurable.measure(constraints.offset(vertical = -2 * space))
+    layout(placeable.width, placeable.height + 2 * space) { placeable.place(0, space) }
 }
 
 @Composable
@@ -197,7 +198,6 @@ private fun RowScope.ItemRowHeader(
     tagged: Boolean,
     unmet: Set<SandboxPart>,
     expanded: Boolean,
-    turn: Float,
     appOpsChecking: Boolean,
     hookHealth: Map<SandboxPart, SandboxHookState>,
     onExpandedChange: (Boolean) -> Unit,
@@ -219,35 +219,27 @@ private fun RowScope.ItemRowHeader(
             TitleWithTag(title, tagged = tagged)
             val inEffect = unmet.isEmpty() || !mode.isOn
             val checking = appOpsChecking && unmet == setOf(SandboxPart.APP_OPS) && mode.isOn
-            Text(
-                text = when {
-                    inEffect -> modeLabel(item, mode)
+            val status = when {
+                inEffect -> modeLabel(item, mode)
 
-                    checking -> stringResource(R.string.jail_checking_app_ops)
+                checking -> stringResource(R.string.jail_checking_app_ops)
 
-                    else -> {
-                        val reason = stringResource(notInEffect(item, unmet, hookHealth))
-                        if (SandboxPart.MOUNT_LAUNCH_REFUSED in unmet) {
-                            stringResource(R.string.jail_mount_launch_refused, reason)
-                        } else {
-                            reason
-                        }
+                else -> {
+                    val reason = stringResource(notInEffect(item, unmet, hookHealth))
+                    if (SandboxPart.MOUNT_LAUNCH_REFUSED in unmet) {
+                        stringResource(R.string.jail_mount_launch_refused, reason)
+                    } else {
+                        reason
                     }
-                },
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (inEffect || checking) {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                } else {
-                    MaterialTheme.colorScheme.error
-                },
-            )
+                }
+            }
+            val color = if (inEffect || checking) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error
+            // A new status, or the same one turning into a problem, fades through in place.
+            FadeThrough(status to color, kind = { it }) { (text, tint) ->
+                Text(text, style = MaterialTheme.typography.bodyMedium, color = tint)
+            }
         }
-        Icon(
-            Icons.Outlined.ExpandMore,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.rotate(turn),
-        )
+        ExpandChevron(expanded, tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

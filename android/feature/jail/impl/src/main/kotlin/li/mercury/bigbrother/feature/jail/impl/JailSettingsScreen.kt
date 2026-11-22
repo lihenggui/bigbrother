@@ -337,19 +337,25 @@ private fun StatusRow(status: SandboxStatus?, holdExpected: Boolean, modifier: M
         modifier = modifier,
         shapes = ListItemDefaults.segmentedShapes(0, 2),
         colors = ListItemDefaults.segmentedColors(),
+        // The status arrives after the screen opens, and can change while it
+        // is open: icon and text fade through to it in place.
         leadingContent = {
-            when {
-                status == null -> ShapedIcon(Icons.Outlined.HourglassEmpty)
-                problems.isEmpty() -> ShapedIcon(Icons.Outlined.CheckCircle)
-                else -> ShapedIcon(Icons.Outlined.ErrorOutline, containerColor = colors.errorContainer, contentColor = colors.onErrorContainer)
+            FadeThrough((status != null) to problems.isEmpty(), kind = { it }) { (known, fine) ->
+                when {
+                    !known -> ShapedIcon(Icons.Outlined.HourglassEmpty)
+                    fine -> ShapedIcon(Icons.Outlined.CheckCircle)
+                    else -> ShapedIcon(Icons.Outlined.ErrorOutline, containerColor = colors.errorContainer, contentColor = colors.onErrorContainer)
+                }
             }
         },
         supportingContent = {
-            when {
-                status == null -> Text(stringResource(R.string.jail_status_checking), color = colors.onSurfaceVariant)
-                problems.isEmpty() -> Text(stringResource(R.string.jail_status_ok), color = colors.onSurfaceVariant)
-                else -> Text(problems.joinToString(stringResource(R.string.jail_list_separator)), color = colors.error)
+            val text = when {
+                status == null -> stringResource(R.string.jail_status_checking)
+                problems.isEmpty() -> stringResource(R.string.jail_status_ok)
+                else -> problems.joinToString(stringResource(R.string.jail_list_separator))
             }
+            val color = if (status != null && problems.isNotEmpty()) colors.error else colors.onSurfaceVariant
+            FadeThrough(text to color, kind = { it }) { (shown, tint) -> Text(shown, color = tint) }
         },
         verticalAlignment = Alignment.CenterVertically,
     ) { Text(stringResource(R.string.jail_status_title)) }

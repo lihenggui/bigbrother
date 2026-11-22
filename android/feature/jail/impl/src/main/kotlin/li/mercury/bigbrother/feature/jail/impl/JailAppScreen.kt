@@ -34,7 +34,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalButton
@@ -60,7 +59,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.pluralStringResource
@@ -75,9 +73,11 @@ import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxedApp
 import li.mercury.bigbrother.core.ui.ContentKind
+import li.mercury.bigbrother.core.ui.ExpandChevron
 import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
+import li.mercury.bigbrother.core.ui.Pop
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.core.ui.appNameWithUser
@@ -157,7 +157,7 @@ internal fun JailAppScreen(
                 scrollBehavior = scrollBehavior,
                 onBack = onBack,
                 actions = {
-                    if (state.app != null) IsolatedAppIcon(state.info, state.name, Modifier.padding(end = 16.dp))
+                    Pop(state.app != null) { IsolatedAppIcon(state.info, state.name, Modifier.padding(end = 16.dp)) }
                 },
             )
         },
@@ -314,8 +314,8 @@ private fun LazyListScope.jailAppItemSection(
                     .weight(1f)
                     .alignByBaseline(),
             )
-            if (app.settings.keys.any { it in ITEM_ORDER }) {
-                TextButton(onClick = onReset, modifier = Modifier.alignByBaseline()) {
+            Pop(app.settings.keys.any { it in ITEM_ORDER }, Modifier.alignByBaseline()) {
+                TextButton(onClick = onReset) {
                     Text(stringResource(R.string.jail_reset))
                 }
             }
@@ -365,15 +365,17 @@ private fun LazyListScope.jailItemRows(
 @Composable
 private fun ShowAllToggle(showAll: Boolean, count: Int, onClick: () -> Unit, modifier: Modifier = Modifier) {
     TextButton(onClick = onClick, modifier = modifier.fillMaxWidth()) {
-        Text(
-            if (showAll) {
-                stringResource(R.string.jail_fewer_items)
-            } else {
-                pluralStringResource(R.plurals.jail_more_items, count, count)
-            },
-        )
+        FadeThrough(showAll, kind = { it }) { shown ->
+            Text(
+                if (shown) {
+                    stringResource(R.string.jail_fewer_items)
+                } else {
+                    pluralStringResource(R.plurals.jail_more_items, count, count)
+                },
+            )
+        }
         Spacer(Modifier.size(6.dp))
-        Icon(Icons.Outlined.ExpandMore, contentDescription = null, modifier = Modifier.rotate(if (showAll) 180f else 0f))
+        ExpandChevron(showAll)
     }
 }
 

@@ -18,6 +18,7 @@ package li.mercury.bigbrother.feature.settings.impl
 
 import android.content.ClipData
 import android.content.Intent
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
@@ -70,9 +71,11 @@ import androidx.core.net.toUri
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import li.mercury.bigbrother.core.designsystem.component.SegmentedSwitchRow
+import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.UserSettingsWriter
 import li.mercury.bigbrother.core.ui.animatedRow
+import li.mercury.bigbrother.core.ui.animatedSegmentedShapes
 import li.mercury.bigbrother.core.ui.failureReason
 import li.mercury.bigbrother.core.ui.rememberSettingsWriteSnackbar
 import li.mercury.bigbrother.core.ui.R as UiR
@@ -329,24 +332,31 @@ private fun Row(
     iconTint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
     onClick: (() -> Unit)? = null,
 ) {
-    val leading = @Composable { Icon(icon, contentDescription = null, tint = iconTint) }
-    val supporting = @Composable { Text(summary) }
+    // What the recorder reports arrives after the screen opens: the row
+    // fades to it in place, and its corners follow rows joining the group.
+    val tint by animateColorAsState(iconTint, MaterialTheme.motionScheme.defaultEffectsSpec(), label = "tint")
+    val shapes = animatedSegmentedShapes(index, count)
+    val leading = @Composable { FadeThrough(icon, kind = { it }) { Icon(it, contentDescription = null, tint = tint) } }
+    val supporting = @Composable { FadeThrough(summary, kind = { it }) { Text(it) } }
+    val headline = @Composable { FadeThrough(title, kind = { it }) { Text(it) } }
     if (onClick != null) {
         ListItem(
             onClick = onClick,
             modifier = modifier,
-            shapes = ListItemDefaults.segmentedShapes(index, count),
+            shapes = shapes,
             colors = ListItemDefaults.segmentedColors(),
             leadingContent = leading,
             supportingContent = supporting,
-        ) { Text(title) }
+            content = headline,
+        )
     } else {
         ListItem(
             modifier = modifier,
-            shapes = ListItemDefaults.segmentedShapes(index, count),
+            shapes = shapes,
             colors = ListItemDefaults.segmentedColors(),
             leadingContent = leading,
             supportingContent = supporting,
-        ) { Text(title) }
+            content = headline,
+        )
     }
 }

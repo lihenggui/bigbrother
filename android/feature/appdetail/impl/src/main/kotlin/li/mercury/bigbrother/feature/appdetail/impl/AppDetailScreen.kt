@@ -53,6 +53,7 @@ import li.mercury.bigbrother.core.ui.ContentKind
 import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
+import li.mercury.bigbrother.core.ui.Pop
 import li.mercury.bigbrother.core.ui.appDisplayName
 import li.mercury.bigbrother.core.ui.label
 import li.mercury.bigbrother.core.ui.R as UiR
@@ -191,12 +192,13 @@ private fun AppDetailTopBar(
             }
         },
         actions = {
-            if (state.canOpenJail) {
+            // Both depend on what loads after the page opens.
+            Pop(state.canOpenJail) {
                 IconButton(onClick = onRequestJail, enabled = state.jailAction == null) {
                     Icon(CageIcons.Outlined, contentDescription = stringResource(R.string.open_jail))
                 }
             }
-            if (state.packageDetails != null) {
+            Pop(state.packageDetails != null) {
                 IconButton(onClick = { context.startActivity(appSettingsIntent(app.packageName)) }) {
                     Icon(
                         Icons.Outlined.Info,

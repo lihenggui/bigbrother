@@ -70,6 +70,7 @@ import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.MenuFilterChip
 import li.mercury.bigbrother.core.ui.MenuOption
 import li.mercury.bigbrother.core.ui.Message
+import li.mercury.bigbrother.core.ui.Reveal
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.UserSettingsWriter
 import li.mercury.bigbrother.core.ui.animatedRow
@@ -138,7 +139,7 @@ internal fun AppListScreen(
                 .fillMaxSize()
                 .padding(top = padding.calculateTopPadding()),
         ) {
-            if (state.failure == null && groups != null) {
+            Reveal(state.failure == null && groups != null) {
                 Filters(
                     range = state.range,
                     onRange = onRange,
