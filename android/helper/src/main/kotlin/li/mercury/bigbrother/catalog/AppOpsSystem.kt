@@ -82,17 +82,21 @@ internal interface Taking {
     /** The state of [name] for [uid], `null` if no package of it has it to take. */
     fun state(uid: Int, name: String): PermissionState?
 
-    /** Take [name] from [uid] where it is not taken; whether anything had to be changed. */
-    fun hold(uid: Int, name: String): Boolean
+    /** Ask [mayChange] before a permission revocation or a service disable that can interrupt the app. */
+    fun hold(uid: Int, name: String, mayChange: () -> Boolean): HoldResult
 
     /** Give [uid] back [name] as it was ([state]); `null` where that is not known. */
     fun putBack(uid: Int, name: String, state: PermissionState?)
+
+    enum class HoldResult { HELD, CHANGED, SUSPENDED }
 }
 
 /** The calls on runtime permissions [AppOpsGuardHandler] makes. */
 internal interface RuntimePermissions {
-    /** The packages of [uid] that request [permission]. */
-    fun requesting(uid: Int, permission: String): List<String>
+    /** The packages of [uid] that request [permission], and whether every package could be read. */
+    fun requesting(uid: Int, permission: String): Requests
+
+    class Requests(val packages: List<String>, val complete: Boolean)
 
     /** The system keeps one grant for every package of a uid. */
     fun isGranted(uid: Int, permission: String): Boolean

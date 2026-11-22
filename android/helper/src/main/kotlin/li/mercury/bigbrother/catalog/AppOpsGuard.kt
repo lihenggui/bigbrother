@@ -103,14 +103,17 @@ import kotlin.system.exitProcess
  * Before the answer to `set`, `apply` and `verify`, and whenever a check
  * finds it changed, it prints `unheld <uid> <name>,...` (`-` for none):
  * what the uid is held to that the system did not keep even after it was
- * set again, ops at their mode and permissions revoked. Ops this device
- * does not have are not named.
+ * set again, ops at their mode and permissions revoked. The helper limits
+ * retries for all-files mode changes, permission revocations, and disabling
+ * special access. A restriction suspended this way is reported as unheld
+ * until the targets or the installation change, or the uid is released.
+ * All-files access with unreadable request metadata is also unheld. Ops this
+ * device does not have are not named.
  *
  * A command that fails is answered with `failed <uid>`, and the reason goes
  * to the error output. So is one the system took none of: a `set` after
- * which no op has its mode must not pass for one that worked, and a
- * permission the system still grants after it was revoked fails the
- * command. Op names are the public ones, such as `android:camera`, and
+ * which the service accepted none of the attempted modes must not pass for
+ * one that worked. Op names are the public ones, such as `android:camera`, and
  * permissions go by their full names.
  *
  * The modes are the uid's, not its packages': the content providers check

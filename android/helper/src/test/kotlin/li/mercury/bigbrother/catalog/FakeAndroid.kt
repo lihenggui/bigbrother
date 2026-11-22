@@ -23,6 +23,8 @@ import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.MODE_ALLOWED
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.MODE_DEFAULT
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.MODE_FOREGROUND
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.MODE_IGNORED
+import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.PermissionState
+import li.mercury.bigbrother.catalog.Taking.HoldResult
 
 /**
  * One app, as Android 15 and later keep its runtime permissions and the
@@ -79,10 +81,23 @@ internal class FakeAndroid :
 
     /** Whether the app requests all files access. */
     var requestsAllFiles = false
+        set(value) {
+            field = value
+            if (!value) store(ALL_FILES_OP, MODE_DEFAULT)
+        }
 
-    /** How many times the mode of all files access changed. */
-    var allFilesChanges = 0
-        private set
+    var permissionServiceAvailable = true
+    var packageInfoAvailable = true
+
+    val helperWrites = mutableMapOf<String, Int>()
+    val effectiveChanges = mutableMapOf<String, Int>()
+    val revocations = mutableMapOf<String, Int>()
+    val resetOpsAfterWrite = mutableMapOf<String, Int>()
+    val regrantAfterRevoke = mutableSetOf<String>()
+    private val pendingOpResets = mutableMapOf<String, Int>()
+    private val enabledServices = mutableMapOf<String, Set<String>>()
+
+    val allFilesChanges get() = effectiveChanges.getOrDefault(ALL_FILES_OP_NAME, 0)
 
     private val granted = mutableMapOf<String, Boolean>()
     private val permissionFlags = mutableMapOf<String, Int>()
@@ -110,20 +125,45 @@ internal class FakeAndroid :
 
     override fun restoreItem(name: String, change: () -> Unit) = change()
 
-    // No app here has a service a special access is given to.
     override fun specialAccess(): Taking = object : Taking {
-        override fun state(uid: Int, name: String): AppOpsGuardProtocol.PermissionState? = null
+        override fun state(uid: Int, name: String): PermissionState? = enabledServices[name]?.let(PermissionState::ofServices)
 
-        override fun hold(uid: Int, name: String) = false
+        override fun hold(uid: Int, name: String, mayChange: () -> Boolean): HoldResult {
+            val enabled = enabledServices[name].orEmpty()
+            if (enabled.isEmpty()) return HoldResult.HELD
+            if (!mayChange()) return HoldResult.SUSPENDED
+            setServices(name, emptySet(), helper = true)
+            if (name in regrantAfterRevoke) setServices(name, enabled)
+            check(enabledServices[name].orEmpty().isEmpty())
+            return HoldResult.CHANGED
+        }
 
-        override fun putBack(uid: Int, name: String, state: AppOpsGuardProtocol.PermissionState?) = Unit
+        override fun putBack(uid: Int, name: String, state: PermissionState?) {
+            if (state != null && state.services != enabledServices[name]) setServices(name, state.services, helper = true)
+        }
+    }
+
+    fun setServices(name: String, services: Set<String>, helper: Boolean = false) {
+        if (helper) helperWrites.countChange(name)
+        if (enabledServices.put(name, services).orEmpty() != services) effectiveChanges.countChange(name)
     }
 
     override fun uidModes(uid: Int, switchCodes: IntArray): Map<Int, Int> = modes.filterKeys { it in switchCodes }
 
-    override fun setUidMode(code: Int, uid: Int, mode: Int) = setModeFromOutside(ops.first { it.code == code }.switchCode, mode)
+    override fun setUidMode(code: Int, uid: Int, mode: Int) {
+        val op = ops.first { it.code == code }
+        helperWrites.countChange(op.name)
+        setModeFromOutside(op.switchCode, mode)
+        resetOpsAfterWrite[op.name]?.let { pendingOpResets[op.name] = it }
+    }
 
-    override val permissions: RuntimePermissions get() = this
+    /** Land the external manager's changes after the helper's readback. */
+    fun settleExternalChanges() {
+        pendingOpResets.forEach(::userSetsMode)
+        pendingOpResets.clear()
+    }
+
+    override val permissions: RuntimePermissions? get() = if (permissionServiceAvailable) this else null
 
     override val permissionsMissing = ""
 
@@ -135,13 +175,18 @@ internal class FakeAndroid :
 
     override fun describe(e: Throwable): String = e.toString()
 
-    override fun requesting(uid: Int, permission: String): List<String> = if (installed && (permission in REQUESTED || (permission == ALL_FILES && requestsAllFiles))) listOf(PACKAGE) else emptyList()
+    override fun requesting(uid: Int, permission: String): RuntimePermissions.Requests {
+        val requested = permission in REQUESTED || (permission == ALL_FILES && requestsAllFiles)
+        val names = if (installed && packageInfoAvailable && requested) listOf(PACKAGE) else emptyList()
+        return RuntimePermissions.Requests(names, complete = !installed || packageInfoAvailable)
+    }
 
     override fun isGranted(uid: Int, permission: String): Boolean = installed && granted[permission] == true
 
     override fun flags(pkg: String, permission: String, uid: Int): Int = permissionFlags[permission] ?: 0
 
     override fun setFlags(pkg: String, permission: String, uid: Int, mask: Int, values: Int) {
+        helperWrites.countChange(permission)
         if (refuseNextFlagChange) {
             refuseNextFlagChange = false
             return
@@ -150,30 +195,37 @@ internal class FakeAndroid :
         syncOps()
     }
 
-    override fun grant(pkg: String, permission: String, uid: Int) = pmGrant(permission)
+    override fun grant(pkg: String, permission: String, uid: Int) {
+        helperWrites.countChange(permission)
+        pmGrant(permission)
+    }
 
     override fun revoke(pkg: String, permission: String, uid: Int) {
-        if (!refuseToRevoke) pmRevoke(permission)
+        helperWrites.countChange(permission)
+        if (refuseToRevoke) return
+        if (isGranted(uid, permission)) revocations.countChange(permission)
+        pmRevoke(permission)
+        if (permission in regrantAfterRevoke) pmGrant(permission)
     }
 
     override fun runtime(permission: String): RuntimePermissions.Runtime? = if (permission in RUNTIME) RuntimePermissions.Runtime(BACKGROUND_OF[permission]) else null
 
     /** `pm grant`: the grant alone, its flags as they are. */
     fun pmGrant(permission: String) {
-        granted[permission] = true
+        changeGrant(permission, true)
         syncOps()
     }
 
     /** `pm revoke`: as [pmGrant]. */
     fun pmRevoke(permission: String) {
-        granted[permission] = false
+        changeGrant(permission, false)
         syncOps()
     }
 
     /** Allowed in the settings, as the permission controller grants it. */
     fun settingsGrant(permission: String) {
         if (!isGrantedToTheSettings(permission)) {
-            granted[permission] = true
+            changeGrant(permission, true)
             allowOp(permission)
             changeFlags(permission, FLAG_REVOKED_COMPAT, 0)
         }
@@ -185,7 +237,7 @@ internal class FakeAndroid :
     /** Denied in the settings, as the permission controller revokes it: only one it takes for granted. */
     fun settingsRevoke(permission: String) {
         if (isGrantedToTheSettings(permission)) {
-            granted[permission] = false
+            changeGrant(permission, false)
             if (permission == BACKGROUND) {
                 for (foreground in FOREGROUND_OF_BACKGROUND) if (isGrantedToTheSettings(foreground)) setOpFromTheSettings(foreground, MODE_FOREGROUND)
             } else {
@@ -248,13 +300,8 @@ internal class FakeAndroid :
     /** `AppOpsService.setUidMode` called from outside the permission policy. */
     private fun setModeFromOutside(switch: Int, mode: Int) {
         if (switch == ALL_FILES_OP) {
-            val before = modes[switch]
             store(switch, mode)
-            if (modes[switch] != before) allFilesChanges++
-            if (!requestsAllFiles && switch in modes) {
-                modes.remove(switch)
-                allFilesChanges++
-            }
+            if (!requestsAllFiles) store(switch, MODE_DEFAULT)
             return
         }
         updateRevokedCompat(switch, mode)
@@ -305,11 +352,26 @@ internal class FakeAndroid :
     }
 
     private fun store(switch: Int, mode: Int) {
-        if (mode == MODE_DEFAULT || mode == MODE_ALLOWED) modes.remove(switch) else modes[switch] = mode
+        val affected = ops.filter { it.switchCode == switch }
+        val default = affected.first().defaultMode
+        val before = modes[switch] ?: default
+        if (mode == default) modes.remove(switch) else modes[switch] = mode
+        if (before != mode) affected.forEach { effectiveChanges.countChange(it.name) }
     }
 
     private fun changeFlags(permission: String, mask: Int, values: Int) {
-        permissionFlags[permission] = (flags(PACKAGE, permission, UID) and mask.inv()) or (values and mask)
+        val before = flags(PACKAGE, permission, UID)
+        val after = (before and mask.inv()) or (values and mask)
+        permissionFlags[permission] = after
+        if (before != after) effectiveChanges.countChange(permission)
+    }
+
+    private fun changeGrant(permission: String, value: Boolean) {
+        if ((granted.put(permission, value) == true) != value) effectiveChanges.countChange(permission)
+    }
+
+    private fun MutableMap<String, Int>.countChange(name: String) {
+        this[name] = getOrDefault(name, 0) + 1
     }
 
     companion object {

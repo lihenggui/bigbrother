@@ -22,6 +22,7 @@ import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.os.IBinder
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.PermissionState
+import li.mercury.bigbrother.catalog.Taking.HoldResult
 
 private const val NOTIFICATION_ACCESS = "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
 
@@ -76,14 +77,15 @@ internal class SpecialAccess(private val packages: Any) : Taking {
         return PermissionState.ofServices(given(uid, name, services))
     }
 
-    override fun hold(uid: Int, name: String): Boolean {
+    override fun hold(uid: Int, name: String, mayChange: () -> Boolean): HoldResult {
         val services = services(uid, name)
-        if (services.isEmpty()) return false
+        if (services.isEmpty()) return HoldResult.HELD
         val given = given(uid, name, services)
-        if (given.isEmpty()) return false
+        if (given.isEmpty()) return HoldResult.HELD
+        if (!mayChange()) return HoldResult.SUSPENDED
         set(uid, name, given, false)
         check(given(uid, name, services).isEmpty()) { "the system did not take $name away" }
-        return true
+        return HoldResult.CHANGED
     }
 
     override fun putBack(uid: Int, name: String, state: PermissionState?) {
@@ -143,7 +145,7 @@ internal class SpecialAccess(private val packages: Any) : Taking {
         // The other services keep their place.
         val now = accessibilityServices(uid)
         val after = if (given) now + (services - now.toSet()) else now - services
-        settings("put", "--user", userOf(uid).toString(), "secure", ACCESSIBILITY_SERVICES, after.joinToString(":"))
+        if (after != now) settings("put", "--user", userOf(uid).toString(), "secure", ACCESSIBILITY_SERVICES, after.joinToString(":"))
     }
 
     /** Run the `settings` command; what it printed. */
