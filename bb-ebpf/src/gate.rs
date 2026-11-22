@@ -58,8 +58,8 @@ static AUTO_ISOLATE: Array<u32> = Array::with_max_entries(1, 0);
 static KNOWN_APP_IDS: Array<u64> = Array::with_max_entries(KNOWN_APP_WORDS, 0);
 
 /// Uids of apps installed since that the daemon has dealt with: put in the
-/// sandbox, where they are in `SANDBOX_UIDS` if anything is mounted for
-/// them, or taken out again by the user.
+/// sandbox, taken out again by the user, or released after auto-isolation
+/// failed. A UID with mounts in the sandbox is also in `SANDBOX_UIDS`.
 #[map]
 static KNOWN_UIDS: HashMap<u32, u32> = HashMap::with_max_entries(1024, 0);
 
@@ -127,7 +127,9 @@ fn try_gate(ctx: &ProbeContext) -> Result<(), i32> {
     let task = unsafe { aya_ebpf::helpers::bpf_get_current_task() } as *const u8;
     let Ok(start) = (unsafe { read_at::<u64>(task, OFFSETS.load()[bb_common::OFF_TASK_START]) })
     else {
-        kill();
+        if !unknown {
+            kill();
+        }
         return Ok(());
     };
     let event = GateEvent {
@@ -140,6 +142,11 @@ fn try_gate(ctx: &ProbeContext) -> Result<(), i32> {
         unknown: u32::from(unknown),
     };
     if since != 0 && now.wrapping_sub(since) > GATE_STALE_NS {
+        // An unavailable gate must not prevent an app from starting
+        // before there is a sandbox policy for it.
+        if unknown {
+            return Ok(());
+        }
         // Reported all the same: a daemon that is there after all clears
         // the time when it reads this, and the next start is held again.
         let _ = GATE.output(&event, BPF_RB_FORCE_WAKEUP);
@@ -155,11 +162,13 @@ fn try_gate(ctx: &ProbeContext) -> Result<(), i32> {
     // until the daemon has seen it. It happens once per start of a sandboxed
     // app, or of a new app not dealt with yet, and for nothing else.
     if GATE.output(&event, BPF_RB_FORCE_WAKEUP).is_err() {
-        kill();
+        if !unknown {
+            kill();
+        }
         return Ok(());
     }
     // Takes effect as the process leaves this system call.
-    if unsafe { aya_ebpf::helpers::generated::bpf_send_signal(SIGSTOP) } != 0 {
+    if unsafe { aya_ebpf::helpers::generated::bpf_send_signal(SIGSTOP) } != 0 && !unknown {
         kill();
     }
     Ok(())

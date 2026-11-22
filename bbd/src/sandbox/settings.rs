@@ -201,6 +201,7 @@ impl Sandbox {
             }
             return Err(e.context("the global settings are as they were"));
         }
+        self.auto_settings_changed();
         Ok(self.global_items())
     }
 

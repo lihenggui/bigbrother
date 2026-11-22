@@ -216,6 +216,7 @@ fn print_status(out: &mut impl std::io::Write, status: &Status) -> std::io::Resu
     writeln!(out, "New apps held:     {}", on(status.new_apps_held))?;
     writeln!(out, "New apps stopped:  {}", status.new_apps_stopped)?;
     writeln!(out, "New apps pending:  {}", status.new_apps_pending)?;
+    writeln!(out, "New apps failed:   {}", status.new_apps_failed)?;
     writeln!(out, "Hold time p95:     {} us", status.hold_p95_us)
 }
 

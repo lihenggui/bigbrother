@@ -17,17 +17,24 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use bb_common::PER_USER_RANGE;
 
-use super::{Known, Retry, is_app};
+use super::{Failed, Known, PackageState, Retry, is_app};
 use crate::{
     packages::{Packages, app_id_of, user_of},
     sandbox::{LAST_USER, OWN_PACKAGES, Sandbox, uid_of},
     store::Writer,
 };
+
+pub(super) enum Look {
+    Startup,
+    New,
+    Starts(BTreeSet<u32>),
+    Packages,
+}
 
 /// What a look at the package list finds.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -65,6 +72,22 @@ fn plan(
         now.retain(|name| installed(user, name));
         if !now.is_disjoint(was) {
             next.uids.insert(uid, now);
+        }
+    }
+    for (&uid, was) in &known.failed {
+        let packages = names_of(app_id_of(uid));
+        let mut names: BTreeSet<String> = packages.intersection(&was.names).cloned().collect();
+        if !was.missing_profile {
+            names.retain(|name| installed(user_of(uid), name));
+        }
+        if !names.is_empty() {
+            next.failed.insert(
+                uid,
+                Failed {
+                    names,
+                    missing_profile: was.missing_profile,
+                },
+            );
         }
     }
     // A library is left alone for as long as that package is installed.
@@ -107,6 +130,9 @@ fn plan(
     // system update then brought) needs no uids of its own.
     next.uids
         .retain(|&uid, _| !next.apps.contains_key(&app_id_of(uid)));
+    next.failed.retain(|&uid, _| {
+        !next.apps.contains_key(&app_id_of(uid)) && !next.uids.contains_key(&uid)
+    });
     Plan {
         isolate,
         known: next,
@@ -115,8 +141,8 @@ fn plan(
 
 impl Sandbox {
     /// Look at what is installed: forget what is not any more, know the
-    /// system's new apps, and with `isolate`, put new apps in the sandbox.
-    pub(super) fn look(&mut self, writer: &Writer, packages: &mut Packages, isolate: bool) {
+    /// system's new apps, and put new apps in the sandbox after startup.
+    pub(super) fn look(&mut self, writer: &Writer, packages: &mut Packages, look: Look) {
         let started = Instant::now();
         // Each question to the app ops helper and each app put in may wait
         // for it, on the loop that also records. As when taking every app
@@ -124,10 +150,19 @@ impl Sandbox {
         // then waits no longer than a command does, and the rest are left
         // for the next look, with their starts held meanwhile.
         let until = started + self.auto.look_wait;
-        let Some(plan) = self.plan_look(writer, packages, isolate, until) else {
+        let isolate = !matches!(look, Look::Startup);
+        let was_ready = self.auto.metadata_ready;
+        let Some(mut plan) = self.plan_look(writer, packages, isolate, until) else {
+            if was_ready {
+                self.sync_auto();
+            }
             return;
         };
-        let (known, isolated) = self.put_in(writer, packages, plan, isolate, until);
+        let gate_changed = self.check_started(packages, &mut plan, &look);
+        let (known, isolated) = self.put_in(writer, packages, plan, &look, until);
+        if (gate_changed || !was_ready) && known == self.auto.known && !self.auto.known_dirty {
+            self.sync_auto();
+        }
         if !isolated.is_empty() {
             // How long it took: putting an app in can wait for the app ops
             // helper to start, and for the database to reach the disk.
@@ -138,7 +173,19 @@ impl Sandbox {
                 started.elapsed().as_millis()
             );
         }
+        self.auto
+            .failed_packages
+            .retain(|uid, _| known.failed.contains_key(uid));
+        for &uid in known.failed.keys() {
+            if !self.auto.failed_packages.contains_key(&uid) {
+                let state = self.package_state(packages, uid);
+                self.auto.failed_packages.insert(uid, state);
+            }
+        }
         self.save_known(writer, known);
+        if self.auto.rescan.is_none() && !self.auto.recoveries.is_empty() {
+            self.auto.rescan = Some(Retry::soon(None));
+        }
     }
 
     fn plan_look(
@@ -153,9 +200,11 @@ impl Sandbox {
         // Without the package list, or the users, nothing can be told, and
         // nothing known is forgotten.
         if !fresh || packages.is_empty() || users.is_empty() {
+            self.auto.metadata_ready = false;
             self.auto.put_off();
             return None;
         }
+        self.auto.metadata_ready = true;
         if isolate {
             self.reconcile(writer, packages, Some(until));
         }
@@ -170,12 +219,63 @@ impl Sandbox {
         Some(plan)
     }
 
+    /// A verified zygote start can identify a profile before its data directory
+    /// appears. Wait for a package or directory event when it cannot be verified.
+    fn check_started(&mut self, packages: &Packages, plan: &mut Plan, look: &Look) -> bool {
+        let mut changed = false;
+        self.auto.unidentified.retain(|uid| {
+            let app_id = app_id_of(*uid);
+            let names = packages.packages_of(app_id);
+            if names.is_empty() {
+                return true;
+            }
+            changed = true;
+            if !plan.known.apps.contains_key(&app_id) && !plan.known.uids.contains_key(uid) {
+                plan.known.failed.insert(
+                    *uid,
+                    Failed {
+                        names: names.iter().cloned().collect(),
+                        missing_profile: true,
+                    },
+                );
+            }
+            false
+        });
+        let Look::Starts(starts) = look else {
+            return changed;
+        };
+        for &uid in starts {
+            let app_id = app_id_of(uid);
+            if !is_app(app_id)
+                || plan.known.apps.contains_key(&app_id)
+                || plan.known.uids.contains_key(&uid)
+                || plan.known.failed.contains_key(&uid)
+                || plan.isolate.iter().any(|(candidate, _)| *candidate == uid)
+            {
+                continue;
+            }
+            let names = packages.packages_of(app_id);
+            if names.is_empty() {
+                changed |= self.auto.unidentified.insert(uid);
+            } else {
+                plan.known.failed.insert(
+                    uid,
+                    Failed {
+                        names: names.iter().cloned().collect(),
+                        missing_profile: true,
+                    },
+                );
+            }
+        }
+        changed
+    }
+
     fn put_in(
         &mut self,
         writer: &Writer,
         packages: &mut Packages,
         plan: Plan,
-        isolate: bool,
+        look: &Look,
         until: Instant,
     ) -> (Known, Vec<u32>) {
         let mut known = plan.known;
@@ -183,56 +283,120 @@ impl Sandbox {
         // The new apps this look leaves out, and when to try them again.
         let mut left = 0;
         let mut retries = BTreeMap::new();
+        let mut recoveries = BTreeSet::new();
         let mut asked = false;
         for (uid, names) in plan.isolate {
             let app_id = app_id_of(uid);
-            let retry = self.auto.retries.get(&uid).copied();
-            if !isolate || retry.is_some_and(|retry| retry.at > Instant::now()) {
-                let later = match retry {
-                    Some(retry) if retry.at > Instant::now() => retry,
-                    // Left by a look that puts nothing in: due at once.
-                    _ => Retry {
-                        at: Instant::now(),
-                        failures: retry.map_or(0, |retry| retry.failures),
+            let released = known.failed.contains_key(&uid);
+            if released {
+                let requested = self.auto.recoveries.contains(&uid);
+                if !requested && !matches!(look, Look::Packages) {
+                    continue;
+                }
+                let state = self.package_state(packages, uid);
+                if !requested && self.auto.failed_packages.get(&uid) == Some(&state) {
+                    continue;
+                }
+                if Instant::now() >= until {
+                    recoveries.insert(uid);
+                    continue;
+                }
+                self.auto.failed_packages.insert(uid, state);
+                // The plan verified at least one directory for the profile.
+                // An ensuing uninstall must now forget this failure.
+                known.failed.insert(
+                    uid,
+                    Failed {
+                        names: names.clone(),
+                        missing_profile: false,
                     },
-                };
-                retries.insert(uid, later);
+                );
+            }
+            let retry = self.auto.retries.get(&uid).copied();
+            let now = Instant::now();
+            if retry.is_some_and(|retry| retry.expired(now)) {
+                known.failed.insert(
+                    uid,
+                    Failed {
+                        names,
+                        missing_profile: false,
+                    },
+                );
+                continue;
+            }
+            if matches!(look, Look::Startup) || retry.is_some_and(|retry| retry.at > now) {
+                retries.insert(
+                    uid,
+                    retry.unwrap_or_else(|| Retry::new(None, Duration::ZERO, 0)),
+                );
                 left += 1;
                 continue;
             }
             let apps = match self.ask_libraries(uid, &names, until, &mut known, &mut asked, retry) {
                 Ok(apps) => apps,
                 Err(later) => {
-                    retries.insert(uid, later);
-                    left += 1;
+                    if released {
+                        if later.failures == 0 {
+                            recoveries.insert(uid);
+                        }
+                    } else {
+                        if later.expired(Instant::now()) {
+                            known.failed.insert(
+                                uid,
+                                Failed {
+                                    names,
+                                    missing_profile: false,
+                                },
+                            );
+                        } else {
+                            retries.insert(uid, later);
+                            left += 1;
+                        }
+                    }
                     continue;
                 }
             };
-            // Libraries alone.
-            let Some(package) = apps.first().cloned() else {
+            let Some(package) = apps.first() else {
+                known.failed.remove(&uid);
                 continue;
             };
             let result = (|| {
-                let current = uid_of(packages, &package, user_of(uid))?;
+                let current = uid_of(packages, package, user_of(uid))?;
                 anyhow::ensure!(
                     current == uid && !packages.is_system(app_id),
                     "the package changed during the scan"
                 );
-                self.enable_uid(writer, packages, &package, uid, crate::clock::now())
+                self.enable_uid(writer, packages, package, uid, crate::clock::now())
             })();
             match result {
-                // Only an app in the sandbox under its own entry is known.
                 Ok(_) => {
                     isolated.push(uid);
+                    known.failed.remove(&uid);
                     known.uids.insert(uid, apps);
                 }
                 Err(e) => {
-                    retries.insert(uid, Retry::after(retry));
-                    left += 1;
-                    // Package names are not logged; the error may name it.
-                    let e = format!("{e:#}").replace(package.as_str(), "the app");
+                    if !released {
+                        let later = Retry::after(retry);
+                        if super::Transient::is(&e) && !later.expired(Instant::now()) {
+                            retries.insert(uid, later);
+                            left += 1;
+                        } else {
+                            known.failed.insert(
+                                uid,
+                                Failed {
+                                    names: apps,
+                                    missing_profile: false,
+                                },
+                            );
+                        }
+                    }
                     self.auto.failures.log(format_args!(
-                        "bbd: sandbox: uid {uid}, newly installed, is not in the sandbox: {e}"
+                        "bbd: sandbox: uid {uid}, newly installed, is not in the sandbox: {outcome}",
+                        outcome = if known.failed.contains_key(&uid) {
+                            "waiting for a recovery event"
+                        } else {
+                            "retry scheduled"
+                        }
                     ));
                 }
             }
@@ -242,6 +406,7 @@ impl Sandbox {
         }
         self.auto.pending = left;
         self.auto.retries = retries;
+        self.auto.recoveries = recoveries;
         (known, isolated)
     }
 
@@ -283,10 +448,10 @@ impl Sandbox {
         Ok(apps)
     }
 
-    fn save_known(&mut self, writer: &Writer, known: Known) {
+    pub(super) fn save_known(&mut self, writer: &Writer, known: Known) {
         if known != self.auto.known || self.auto.known_dirty {
             self.auto.known = known;
-            self.auto.sync();
+            self.sync_auto();
             self.auto.known_dirty = true;
         }
         if self.auto.known_dirty
@@ -298,6 +463,18 @@ impl Sandbox {
         }
         self.auto.known_dirty = false;
         self.auto.rescan = None;
+    }
+
+    fn package_state(&self, packages: &Packages, uid: u32) -> BTreeSet<PackageState> {
+        packages
+            .packages_of(app_id_of(uid))
+            .iter()
+            .map(|name| PackageState {
+                version: packages.version_of(name),
+                installed: self.installed_for(user_of(uid), name),
+                name: name.clone(),
+            })
+            .collect()
     }
 
     fn auto_user_data(&self) -> Option<&Path> {
@@ -354,6 +531,7 @@ mod tests {
                 (1_010_221, names(&["com.example.gone"])),
             ]),
             libraries: BTreeMap::new(),
+            failed: BTreeMap::new(),
         };
         // User 10 has removed it, and has only the second of the pair.
         let installed = |user: u32, package: &str| {
@@ -373,6 +551,7 @@ mod tests {
                 apps: known.apps.clone(),
                 uids: BTreeMap::from([(10221, names(&["com.example.gone"]))]),
                 libraries: BTreeMap::new(),
+                failed: BTreeMap::new(),
             }
         );
     }

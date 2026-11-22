@@ -216,8 +216,16 @@ pub struct KnownApp {
     /// The Android user it was dealt with for; `None` for every user.
     pub user: Option<u32>,
     pub package: String,
-    /// The package is a library, left alone itself.
-    pub library: bool,
+    pub kind: KnownKind,
+}
+
+/// The values 0 and 1 are the app and library rows written by v0.3.0.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KnownKind {
+    App = 0,
+    Library = 1,
+    Failed = 2,
+    MissingProfile = 3,
 }
 
 /// The `meta` key that says whether newly installed apps are isolated.
@@ -237,7 +245,13 @@ impl Writer {
                 app_id: r.get(0)?,
                 user: u32::try_from(r.get::<_, i64>(1)?).ok(),
                 package: r.get(2)?,
-                library: r.get(3)?,
+                kind: match r.get::<_, i64>(3)? {
+                    0 => KnownKind::App,
+                    1 => KnownKind::Library,
+                    2 => KnownKind::Failed,
+                    3 => KnownKind::MissingProfile,
+                    _ => return Err(rusqlite::Error::InvalidQuery),
+                },
             })
         })?;
         Ok((on, rows.collect::<Result<_, _>>()?))
@@ -263,7 +277,7 @@ impl Writer {
                     app.app_id,
                     app.user.map_or(-1, i64::from),
                     app.package,
-                    app.library
+                    app.kind as i64
                 ])?;
             }
             Ok(())
@@ -362,7 +376,7 @@ mod tests {
             app_id,
             user,
             package: package.into(),
-            library: false,
+            kind: KnownKind::App,
         };
         let rows = [
             known(10100, None, "com.a"),
@@ -370,7 +384,7 @@ mod tests {
             known(10230, Some(0), "com.new"),
             known(10230, Some(10), "com.new"),
             KnownApp {
-                library: true,
+                kind: KnownKind::Library,
                 ..known(10240, None, "com.library_2")
             },
         ];

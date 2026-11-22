@@ -119,6 +119,10 @@
         <item quantity="one">%d newly installed app not isolated yet; kept from starting</item>
         <item quantity="other">%d newly installed apps not isolated yet; kept from starting</item>
     </plurals>
+    <plurals name="jail_status_new_apps_failed">
+        <item quantity="one">Could not isolate %d new app. It can start without isolation.</item>
+        <item quantity="other">Could not isolate %d new apps. They can start without isolation.</item>
+    </plurals>
     <plurals name="jail_status_new_apps_pending">
         <item quantity="one">%d newly installed app not isolated yet</item>
         <item quantity="other">%d newly installed apps not isolated yet</item>

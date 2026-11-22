@@ -228,6 +228,7 @@ fn the_kernel_side_is_given_a_bit_per_known_app_id() {
             .collect(),
         uids: BTreeMap::from([(1_010_230, names(&["com.b"]))]),
         libraries: BTreeMap::from([(10_065, names(&["com.library_2"]))]),
+        failed: BTreeMap::new(),
     };
     let words = known.words();
     assert_eq!(words.len(), 157);
@@ -296,7 +297,9 @@ impl crate::sandbox::Effect for Refusing {
         _: &crate::sandbox::items::Settings,
     ) -> anyhow::Result<()> {
         self.tries.set(self.tries.get() + 1);
-        anyhow::ensure!(!self.refusing.get(), "{} was refused", packages[0]);
+        if self.refusing.get() {
+            return Err(Transient(anyhow::anyhow!("{} was refused", packages[0])).into());
+        }
         Ok(())
     }
 
@@ -342,6 +345,7 @@ fn an_app_that_cannot_be_put_in_is_tried_again_later_and_reported() {
     sandbox.isolate_new(&f.writer, &mut f.packages);
     assert_eq!(tries.get(), 1);
     assert_eq!(sandbox.status().new_apps_pending, 1);
+    assert!(sandbox.auto_admission().holds(10230));
 
     // Its time come, it is tried again.
     refusing.set(false);
@@ -365,6 +369,165 @@ fn an_app_that_cannot_be_put_in_is_tried_again_later_and_reported() {
         last = Retry::after(Some(last));
     }
     assert_eq!(RETRY_BACKOFF.delay(last.failures), Duration::from_secs(300));
+}
+
+#[test]
+fn persistent_enable_failure_releases_starts_until_a_recovery_event() {
+    let mut f = Fixture::new("auto-release");
+    let refusing = crate::test_sync::Rc::new(crate::test_sync::Cell::new(true));
+    let tries = crate::test_sync::Rc::new(crate::test_sync::Cell::new(0));
+    let mut sandbox = f.sandbox_with(vec![Box::new(Refusing {
+        refusing: refusing.clone(),
+        tries: tries.clone(),
+    })]);
+    sandbox.set_auto(&f.writer, &mut f.packages, true).unwrap();
+    f.list(&[NEW]);
+    f.install(0, "com.example.new");
+
+    sandbox.isolate_new(&f.writer, &mut f.packages);
+    assert!(sandbox.auto_admission().holds(10230));
+    sandbox.auto.retries.get_mut(&10230).unwrap().at = Instant::now();
+    sandbox.isolate_new(&f.writer, &mut f.packages);
+
+    assert_eq!(tries.get(), 2);
+    assert!(!sandbox.auto_admission().holds(10230));
+    assert!(sandbox.auto_admission().holds(10231));
+    assert!(sandbox.auto_admission().holds(1_010_230));
+    assert_eq!(sandbox.status().new_apps_failed, 1);
+    assert_eq!(sandbox.status().new_apps_pending, 0);
+    assert_eq!(sandbox.auto_next_look(), None);
+
+    sandbox.auto_started(&f.writer, &mut f.packages, BTreeSet::from([10230]));
+    sandbox.isolate_new(&f.writer, &mut f.packages);
+    assert_eq!(tries.get(), 2);
+
+    let mut restarted = f.sandbox();
+    restarted.resume_auto(None, &f.writer, &mut f.packages);
+    assert!(!restarted.auto_admission().holds(10230));
+    assert_eq!(restarted.status().new_apps_failed, 1);
+    assert_eq!(restarted.auto_next_look(), None);
+
+    sandbox.auto_helper_restarted(&f.writer, &mut f.packages);
+    assert_eq!(tries.get(), 3);
+    assert!(!sandbox.auto_admission().holds(10230));
+    assert_eq!(sandbox.auto_next_look(), None);
+    refusing.set(false);
+    sandbox.auto_packages_changed(&f.writer, &mut f.packages);
+    assert_eq!(tries.get(), 3);
+    f.list(&[&NEW.replace("none 0 1 1", "none 0 2 1")]);
+    sandbox.auto_packages_changed(&f.writer, &mut f.packages);
+    assert_eq!(tries.get(), 4);
+    assert_eq!(sandboxed(&sandbox), [10230]);
+    assert_eq!(sandbox.status().new_apps_failed, 0);
+}
+
+#[test]
+fn an_unsupported_restriction_releases_starts_without_a_retry_timer() {
+    use crate::sandbox_item::{Item, Mode};
+
+    let mut f = Fixture::new("auto-unsupported");
+    let mut sandbox = f.sandbox_with(vec![Box::new(crate::sandbox::network::Unavailable::new())]);
+    sandbox
+        .set_global(
+            &f.writer,
+            &mut f.packages,
+            &BTreeMap::from([(Item::Network, Mode::On)]),
+        )
+        .unwrap();
+    sandbox.set_auto(&f.writer, &mut f.packages, true).unwrap();
+    f.list(&[NEW]);
+    f.install(0, "com.example.new");
+
+    sandbox.isolate_new(&f.writer, &mut f.packages);
+
+    assert!(!sandbox.auto_admission().holds(10230));
+    assert_eq!(sandbox.status().new_apps_failed, 1);
+    assert_eq!(sandbox.auto_next_look(), None);
+
+    sandbox
+        .set_global(
+            &f.writer,
+            &mut f.packages,
+            &BTreeMap::from([(Item::Network, Mode::Off)]),
+        )
+        .unwrap();
+    assert!(!sandbox.auto_admission().holds(10230));
+    sandbox.isolate_new(&f.writer, &mut f.packages);
+    assert_eq!(sandboxed(&sandbox), [10230]);
+    assert_eq!(sandbox.status().new_apps_failed, 0);
+}
+
+#[test]
+fn all_global_items_off_leave_new_starts_alone() {
+    use crate::sandbox_item::{Item, Mode};
+
+    let mut f = Fixture::new("auto-all-off");
+    let mut sandbox = f.sandbox();
+    sandbox.set_auto(&f.writer, &mut f.packages, true).unwrap();
+    assert!(sandbox.auto_admission().holds(10230));
+    let off = Item::ALL
+        .into_iter()
+        .map(|item| (item, Mode::Off))
+        .collect();
+    sandbox
+        .set_global(&f.writer, &mut f.packages, &off)
+        .unwrap();
+
+    assert!(!sandbox.auto_admission().holds(10230));
+    f.list(&[NEW]);
+    f.install(0, "com.example.new");
+    sandbox.isolate_new(&f.writer, &mut f.packages);
+    assert_eq!(sandboxed(&sandbox), [10230]);
+    assert!(!sandbox.auto_admission().holds(10231));
+
+    sandbox
+        .set_global(
+            &f.writer,
+            &mut f.packages,
+            &BTreeMap::from([(Item::Camera, Mode::On)]),
+        )
+        .unwrap();
+    assert!(sandbox.auto_admission().holds(10231));
+    assert!(!sandbox.auto_admission().holds(10230));
+}
+
+#[test]
+fn a_started_app_with_no_profile_directory_is_released_until_it_appears() {
+    let mut f = Fixture::new("auto-no-profile");
+    let mut sandbox = f.sandbox();
+    sandbox.set_auto(&f.writer, &mut f.packages, true).unwrap();
+    f.list(&[NEW]);
+    f.install(0, "com.example.new");
+
+    sandbox.auto_started(&f.writer, &mut f.packages, BTreeSet::from([1_010_230]));
+
+    assert_eq!(sandboxed(&sandbox), [10230]);
+    assert!(!sandbox.auto_admission().holds(1_010_230));
+    assert_eq!(sandbox.status().new_apps_failed, 1);
+    assert_eq!(sandbox.auto_next_look(), None);
+
+    f.install(10, "com.example.new");
+    sandbox.auto_packages_changed(&f.writer, &mut f.packages);
+    assert_eq!(sandboxed(&sandbox), [10230, 1_010_230]);
+    assert_eq!(sandbox.status().new_apps_failed, 0);
+}
+
+#[test]
+fn a_deferred_attempt_releases_starts_at_the_deadline() {
+    let mut f = Fixture::new("auto-hold-timeout");
+    let mut sandbox = f.sandbox();
+    sandbox.set_auto(&f.writer, &mut f.packages, true).unwrap();
+    f.list(&[NEW]);
+    f.install(0, "com.example.new");
+    sandbox.auto.look_wait = Duration::ZERO;
+
+    sandbox.isolate_new(&f.writer, &mut f.packages);
+    sandbox.auto.retries.get_mut(&10230).unwrap().since = Instant::now() - HOLD_LIMIT;
+    sandbox.isolate_new(&f.writer, &mut f.packages);
+
+    assert!(!sandbox.auto_admission().holds(10230));
+    assert_eq!(sandbox.status().new_apps_failed, 1);
+    assert_eq!(sandbox.auto_next_look(), None);
 }
 
 #[test]
@@ -459,12 +622,12 @@ fn a_library_is_left_alone_and_its_app_id_is_not() {
     assert_eq!(sandbox.status().new_apps_pending, 0);
     // That package alone is known, as a library, and its app id is not.
     let (_, known) = f.writer.sandbox_auto().unwrap();
-    let rows: Vec<(u32, bool)> = known
+    let rows: Vec<_> = known
         .iter()
         .filter(|row| row.app_id == 10240)
-        .map(|row| (row.app_id, row.library))
+        .map(|row| (row.app_id, row.kind))
         .collect();
-    assert_eq!(rows, [(10240, true)]);
+    assert_eq!(rows, [(10240, KnownKind::Library)]);
     assert_eq!(
         sandbox.auto.known.words(),
         Known::default().words(),

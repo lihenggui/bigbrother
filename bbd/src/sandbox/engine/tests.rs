@@ -570,7 +570,7 @@ fn check_status_and_errors(ask: &mut impl FnMut(&str) -> serde_json::Value) {
             "net_record": false, "dns_names": false, "traffic": false,
             "hook": {"android_id": false, "app_list": false, "uri_grants": false, "ad_id": false},
             "admitted": 0, "failed": 0, "new_apps_stopped": 0, "new_apps_pending": 0,
-            "new_apps_held": false, "hold_p95_us": 0,
+            "new_apps_held": false, "new_apps_failed": 0, "hold_p95_us": 0,
         })
     );
     assert_eq!(

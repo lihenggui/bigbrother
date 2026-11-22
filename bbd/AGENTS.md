@@ -44,9 +44,10 @@ must keep dependencies acyclic.
   in the entry before it is taken (`appops::naming_taken`), as no covering
   mode of the items can name it.
 
-- Fail closed. A start that cannot be given its sandbox is killed, never let
-  through, and the kernel side does the same when the gate thread is stuck
-  or gone.
+- A start with an established gate policy that cannot be given its sandbox
+  is killed. The kernel does the same when the gate thread is stuck or gone.
+  Auto-isolation has a separate, bounded hold. Release starts for installations
+  that cannot be isolated and retry them on recovery events.
 - A starting app waits for the gate thread (`sandbox/gate/admission.rs`).
   The thread never waits for the main loop, the database or a helper program,
   and has no timer. It blocks until a sandboxed app starts.

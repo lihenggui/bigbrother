@@ -163,7 +163,7 @@ $bbd sandbox auto on    # or off; without an argument, says which it is
   static libraries Play installs with Chrome or WebView updates. The app
   ops helper reads the package manager's library flags once per new
   package with a data directory. A lookup that cannot classify the
-  package is retried before changing its sandbox.
+  package is retried within the same limit as an isolation attempt.
 - An app given the uid of one uninstalled while it was in the sandbox is
   put in once that one is taken out, with an entry of its own.
 
@@ -175,31 +175,37 @@ the sandbox. What wakes it is a file renamed or written into
 `/data/system` and a directory made in `/data/user_de` or in a user's
 directory there; what an app does inside its own data directory does not.
 
-The installer can request a launch immediately. While the gate is in
-place, it holds an ordinary zygote start of a UID the daemon has not
-dealt with yet; the daemon ends that start, as it ends any start it cannot
-give its sandbox, and puts the app in, and the next start is held as a
-sandboxed app's. Android can still be waiting for the ended launch to
-attach, so a new tap may need to wait for its startup timeout.
-`bbd sandbox status` reports the hold as `new_apps_held`.
-The kernel uses the UIDs and app IDs from the last scan, and the gate also
-checks installation ownership when it applies mounts. The daemon logs
-when it stops holding starts because the kernel cannot store what the
-daemon knows (more than 1024 uids of apps
-installed since the switch was turned on, counted per Android user); new
-apps are then still put in the sandbox as the daemon finds them. Apps
-installed while no daemon runs are held from when it starts, put in by its
-first look, and any of their processes then running are ended.
+The installer can request a launch immediately. With a restriction enabled
+in the global settings and the gate available, the gate holds an ordinary
+zygote start of a UID the daemon has not dealt with yet. The daemon ends
+that start if it is still waiting for isolation. Android can still be
+waiting for the ended launch to attach, so a new tap may need to wait for
+its startup timeout. With all restrictions off, including when only
+connection recording is on, auto-isolation does not hold starts.
 
-A look gives library queries up to 4 seconds total, and starts no more
-isolations after that budget. An isolation already in progress finishes or
-rolls back, and the rest are left for a look 2 seconds later. An app that
-cannot be put in, as when the app ops helper
-does not answer, is tried again after 10 seconds, then twice as long each
-time up to 5 minutes, and its starts are held meanwhile. A timer for the
-next try exists only while such an app waits. `bbd sandbox status` reports
-how many new apps are not in the sandbox yet (`new_apps_pending`), and the
-global settings' status row says so.
+`bbd sandbox status` reports whether the hold is active as `new_apps_held`.
+The kernel uses the UIDs and app IDs from the last scan, and the gate also
+checks installation ownership when it applies mounts. If the kernel cannot
+store what the daemon knows (more than 1024 uids of apps installed since
+the switch was turned on, counted per Android user), the daemon releases
+new starts and continues finding apps through the watch. Apps installed
+while no daemon runs are processed by its first look.
+
+A look gives library queries up to 4 seconds total and starts no more
+isolations after that budget. An isolation in progress finishes or rolls
+back, and apps that could not be attempted are looked at again after
+2 seconds. A temporary failure gets one retry after 10 seconds. The daemon
+also releases starts after 30 seconds of deferral, or as soon as it finds
+an error that needs a change outside the daemon, such as an unsupported
+restriction or a missing profile directory. A released app can start
+without isolation. The daemon can try again after a package or profile
+change, a helper recovery, or a change to the global settings. The user
+can also enable Jail for the app directly.
+
+`bbd sandbox status` reports how many new apps are waiting for a first
+attempt or a timed retry (`new_apps_pending`), and how many could not be
+isolated and were released (`new_apps_failed`). Jail's global settings
+show both counts.
 
 What the daemon knows of the installed apps is kept in the database, and
 forgotten when the switch is turned off. While it is off, nothing is

@@ -251,6 +251,8 @@ data class SandboxStatus(
     val dnsNames: Boolean = false,
     /** How much data goes to each destination can be counted. */
     val traffic: Boolean = false,
+    /** Newly installed apps allowed to start after automatic isolation failed. */
+    val newAppsFailed: Int = 0,
 ) {
     /** The parts of [item] not in place on this device, for every app. */
     fun unmet(item: SandboxItem): Set<SandboxPart> = item.parts.filterTo(mutableSetOf()) { part ->

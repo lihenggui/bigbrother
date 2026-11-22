@@ -123,6 +123,9 @@ pub struct Status {
     /// Newly installed apps not in the sandbox yet: not put in by the last
     /// look, or failed to be and waiting to be tried again.
     pub new_apps_pending: u32,
+    /// Newly installed apps whose starts were released after isolation failed.
+    #[serde(default)]
+    pub new_apps_failed: u32,
     /// Whether starts of newly installed apps not in the sandbox yet are
     /// held.
     pub new_apps_held: bool,
