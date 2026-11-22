@@ -42,6 +42,7 @@ class BbdSandboxTest {
 
         assertEquals("com.example.notes", app.packageName)
         assertEquals(2, app.networkRules)
+        assertEquals(1, app.nameRulesNotInEffect)
         assertEquals(true, app.appOpsChecking)
         assertEquals(mapOf(SandboxItem.CAMERA to SandboxMode.OFF), app.settings)
         assertEquals(

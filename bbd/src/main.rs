@@ -190,6 +190,9 @@ enum Command {
     /// Remove optional recording resolver covers after the daemon has exited.
     #[command(hide = true)]
     SandboxDetachCovers,
+    /// Remove sandbox networking from the running device after stopping the daemon.
+    #[command(hide = true)]
+    SandboxRemoveNetwork,
     /// Check the database before replacing the installed module.
     #[command(hide = true)]
     ModuleCheckDb,
@@ -388,6 +391,7 @@ impl Command {
                 | Command::ModuleExchange { .. }
                 | Command::SandboxRestoreLines
                 | Command::SandboxDetachCovers
+                | Command::SandboxRemoveNetwork
                 | Command::Selftest
         )
     }
@@ -466,6 +470,7 @@ fn main() -> anyhow::Result<()> {
         Command::ModuleExchange { staged, installed } => exchange_module(&staged, &installed),
         Command::SandboxRestoreLines => print_restore_lines(&cli.db),
         Command::SandboxDetachCovers => sandbox::resolver::detach_recording_covers(&cli.db),
+        Command::SandboxRemoveNetwork => sandbox::remove_network(&cli.db),
     }
 }
 

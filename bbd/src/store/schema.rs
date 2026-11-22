@@ -14,11 +14,12 @@
 
 use std::path::Path;
 
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 
 /// Schema version stored in SQLite's `user_version`. Bump it when the layout changes.
-const SCHEMA_VERSION: i32 = 13;
-const PREVIOUS_SCHEMA: i32 = 12;
+const SCHEMA_VERSION: i32 = 14;
+const V030_SCHEMA: i32 = 12;
+const APPOPS_UNDO_VERSION: i32 = 13;
 
 const APPOPS_UNDO_SCHEMA: &str = "
 CREATE TABLE sandbox_appops_undo (
@@ -202,6 +203,19 @@ CREATE TABLE net_recording (
 ) WITHOUT ROWID;
 ";
 
+/// Addresses already given to an installation before a name was blocked.
+const NAME_ADDRESSES: &str = "
+CREATE TABLE net_name_address (
+    uid        INTEGER NOT NULL,
+    target     TEXT    NOT NULL,
+    install_id TEXT    NOT NULL,
+    address    TEXT    NOT NULL,
+    expires    INTEGER NOT NULL,
+    PRIMARY KEY (uid, target, install_id, address),
+    FOREIGN KEY (uid, target) REFERENCES net_rule(uid, target) ON DELETE CASCADE
+) WITHOUT ROWID;
+";
+
 fn has_tables(conn: &Connection) -> rusqlite::Result<bool> {
     conn.query_row(
         "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table')",
@@ -215,19 +229,26 @@ fn version_of(conn: &Connection) -> rusqlite::Result<i32> {
 }
 
 pub(super) fn has_appops_undo(conn: &Connection) -> anyhow::Result<bool> {
-    Ok(version_of(conn)? == SCHEMA_VERSION)
+    Ok(matches!(
+        version_of(conn)?,
+        APPOPS_UNDO_VERSION..=SCHEMA_VERSION
+    ))
 }
 
 pub(super) fn has_schema(conn: &Connection) -> anyhow::Result<bool> {
+    Ok(supported_version(conn)?.is_some())
+}
+
+fn supported_version(conn: &Connection) -> anyhow::Result<Option<i32>> {
     let version = version_of(conn)?;
     if version == 0 && !has_tables(conn)? {
-        return Ok(false);
+        return Ok(None);
     }
     anyhow::ensure!(
-        matches!(version, PREVIOUS_SCHEMA | SCHEMA_VERSION),
+        matches!(version, V030_SCHEMA..=SCHEMA_VERSION),
         "unsupported database schema {version} (expected {SCHEMA_VERSION}); use the previous module to uninstall before installing this build"
     );
-    Ok(true)
+    Ok(Some(version))
 }
 
 /// Check a new or existing database before the installer replaces its daemon.
@@ -239,21 +260,29 @@ pub fn check_module_database(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Create the schema in a new database; one that has it is left alone.
+/// Create or upgrade the schema in place.
 pub(super) fn create_schema(conn: &mut Connection) -> anyhow::Result<()> {
-    // One transaction for the tables and the version that records them: if
-    // the process dies half way, the next start finds an empty database.
-    let conn = conn.transaction()?;
-    if version_of(&conn)? != PREVIOUS_SCHEMA && has_schema(&conn)? {
+    if version_of(conn)? == SCHEMA_VERSION {
         return Ok(());
     }
-    if version_of(&conn)? != PREVIOUS_SCHEMA {
-        conn.execute_batch(SCHEMA)?;
-        conn.execute_batch(RETIRED_SANDBOX)?;
-        conn.execute_batch(SANDBOX_AUTO_SCHEMA)?;
-        conn.execute_batch(NET_SCHEMA)?;
+    // Commit the tables and version together so an interrupted upgrade
+    // still leaves a database that the recovery reader can use.
+    let conn = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let version = supported_version(&conn)?;
+    match version {
+        Some(SCHEMA_VERSION) => return Ok(()),
+        None => {
+            conn.execute_batch(SCHEMA)?;
+            conn.execute_batch(RETIRED_SANDBOX)?;
+            conn.execute_batch(SANDBOX_AUTO_SCHEMA)?;
+            conn.execute_batch(NET_SCHEMA)?;
+        }
+        Some(_) => {}
     }
-    conn.execute_batch(APPOPS_UNDO_SCHEMA)?;
+    if matches!(version, None | Some(V030_SCHEMA)) {
+        conn.execute_batch(APPOPS_UNDO_SCHEMA)?;
+    }
+    conn.execute_batch(NAME_ADDRESSES)?;
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     conn.commit()?;
     Ok(())
@@ -264,51 +293,97 @@ mod tests {
     use super::*;
     use crate::store::{Reader, Writer, sandbox::sandbox_global};
 
-    #[test]
-    fn migrates_the_v030_schema_without_replacing_sandbox_data() {
+    fn assert_appops_undo(undo: Vec<crate::store::sandbox::AppOpsUndo>, version: i32) {
+        assert_eq!(undo.len(), usize::from(version == APPOPS_UNDO_VERSION));
+        if let Some(row) = undo.first() {
+            assert_eq!(row.uid, 10100);
+            assert_eq!(row.package, "com.example.app");
+            assert_eq!(row.install_id, "installation");
+            assert_eq!(row.preimage, "android:camera=default");
+            assert_eq!(row.attempts, 2);
+        }
+    }
+
+    fn upgrade_preserves_data(version: i32) {
         let dir =
-            std::env::temp_dir().join(format!("bbd-test-journal-upgrade-{}", std::process::id()));
+            std::env::temp_dir().join(format!("bbd-test-upgrade-{version}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("sandbox-file");
+        std::fs::write(&file, b"app data").unwrap();
         let db = dir.join("bb.db");
-        let writer = Writer::open(&db).unwrap();
-        let entry = crate::store::tests::sandbox_entry_for(10100);
-        writer.put_sandbox(&entry).unwrap();
-        writer
-            .put_sandbox_packages(entry.uid, std::slice::from_ref(&entry.package))
-            .unwrap();
-        writer
-            .put_sandbox_global(&[("location", "coarse")])
-            .unwrap();
-        drop(writer);
         let conn = Connection::open(&db).unwrap();
-        conn.execute_batch("DROP TABLE sandbox_appops_undo; PRAGMA user_version = 12;")
+        for batch in [SCHEMA, RETIRED_SANDBOX, SANDBOX_AUTO_SCHEMA, NET_SCHEMA] {
+            conn.execute_batch(batch).unwrap();
+        }
+        conn.execute_batch(
+            "INSERT INTO sandbox VALUES
+               (10100, 'com.example.app', 1, 'aabbccdd11223344', 'android:camera=0',
+                'CAMERA=granted', 123, 'network=on', 'installation');
+             INSERT INTO sandbox_global VALUES ('location', 'coarse');
+             INSERT INTO sandbox_packages VALUES (10100, 'com.example.app');
+             INSERT INTO net_rule VALUES (10100, 'domain:example.test', 123, 1);
+             INSERT INTO net_recording VALUES (10100, 123);
+             INSERT INTO net_dest VALUES
+               (10100, 0, 'example.test', '203.0.113.7', 443, 1, 0, 0, 0, 0, 123, 123);
+             INSERT INTO access VALUES
+               (0, 10100, 'com.example.app', 'files', '/fixture', 1, 1, 0, 123, 123, 0);
+             INSERT INTO path VALUES (1, '/fixture');
+             INSERT INTO event VALUES (10100, 1, 1, 123, 1, 0);",
+        )
+        .unwrap();
+        if version == APPOPS_UNDO_VERSION {
+            conn.execute_batch(APPOPS_UNDO_SCHEMA).unwrap();
+            conn.execute_batch(
+                "INSERT INTO sandbox_appops_undo VALUES
+                   (10100, 'com.example.app', 'installation', 'android:camera=default', 2);",
+            )
             .unwrap();
-        drop(conn);
+        }
+        conn.pragma_update(None, "user_version", version).unwrap();
 
         check_module_database(&db).unwrap();
         let before = Reader::open(&db).unwrap();
-        assert_eq!(
-            before.sandbox_entries().unwrap().as_slice(),
-            std::slice::from_ref(&entry)
-        );
-        assert!(before.appops_undo().unwrap().is_empty());
+        assert_appops_undo(before.appops_undo().unwrap(), version);
+        let entries = before.sandbox_entries().unwrap();
+        let rules = before.net_rules(10100).unwrap();
+        let net = before.net_rows(10100, 0, 3600).unwrap();
+        let history = serde_json::to_value(before.history(10100, "/fixture", 0).unwrap()).unwrap();
+        assert_eq!(version_of(&conn).unwrap(), version);
         drop(before);
 
-        let migrated = Writer::open(&db).unwrap();
+        let writer = Writer::open(&db).unwrap();
+        assert_eq!(version_of(&conn).unwrap(), SCHEMA_VERSION);
+        assert_eq!(writer.sandbox_entries().unwrap(), entries);
+        assert_eq!(writer.sandbox_global().unwrap(), "location=coarse");
         assert_eq!(
-            migrated.sandbox_entries().unwrap().as_slice(),
-            std::slice::from_ref(&entry)
+            writer.sandbox_packages(10100).unwrap(),
+            ["com.example.app".to_owned()].into()
         );
+        assert_eq!(writer.net_rules().unwrap(), rules);
+        assert_eq!(writer.net_recording().unwrap()[&10100], 123);
+        assert_appops_undo(writer.appops_undo().unwrap(), version);
+        assert!(writer.name_addresses(123).unwrap().is_empty());
+
+        let after = Reader::open(&db).unwrap();
+        assert_appops_undo(after.appops_undo().unwrap(), version);
+        assert_eq!(after.net_rows(10100, 0, 3600).unwrap(), net);
         assert_eq!(
-            migrated.sandbox_packages(entry.uid).unwrap(),
-            [entry.package].into()
+            serde_json::to_value(after.history(10100, "/fixture", 0).unwrap()).unwrap(),
+            history
         );
-        assert_eq!(migrated.sandbox_global().unwrap(), "location=coarse");
-        assert!(migrated.appops_undo().unwrap().is_empty());
-        assert_eq!(
-            version_of(&Connection::open(&db).unwrap()).unwrap(),
-            SCHEMA_VERSION
-        );
+        assert_eq!(std::fs::read(file).unwrap(), b"app data");
+        drop((after, writer, conn));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn migrates_v030_and_creates_an_empty_appops_journal() {
+        upgrade_preserves_data(V030_SCHEMA);
+    }
+
+    #[test]
+    fn migrates_the_helper_transaction_schema_and_keeps_its_undo_journal() {
+        upgrade_preserves_data(APPOPS_UNDO_VERSION);
     }
 
     #[test]
@@ -324,7 +399,7 @@ mod tests {
         assert!(Reader::open(&db).is_ok());
         check_module_database(&db).unwrap();
 
-        for version in [0, PREVIOUS_SCHEMA - 1, SCHEMA_VERSION + 1] {
+        for version in [0, V030_SCHEMA - 1, SCHEMA_VERSION + 1] {
             Connection::open(&db)
                 .unwrap()
                 .pragma_update(None, "user_version", version)

@@ -41,6 +41,7 @@ internal data class BbdSandboxedApp(
     val appOpsChecking: Boolean,
     val networkRules: Int,
     val recordingSince: Long?,
+    val nameRulesNotInEffect: Int = 0,
     val hookHealth: Map<SandboxPart, SandboxHookState> = emptyMap(),
 )
 
@@ -54,6 +55,7 @@ internal fun BbdSandboxedApp.asExternalModel(): SandboxedApp = SandboxedApp(
     unmet = unmet,
     appOpsChecking = appOpsChecking,
     networkRules = networkRules,
+    nameRulesNotInEffect = nameRulesNotInEffect,
     recordingSince = recordingSince,
     hookHealth = hookHealth,
 )

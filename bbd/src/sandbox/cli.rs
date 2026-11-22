@@ -63,6 +63,13 @@ pub fn restore_lines(db: &Path) -> anyhow::Result<Vec<String>> {
     Ok(lines)
 }
 
+/// Remove live networking effects even when Jail cannot answer commands.
+pub fn remove_network(db: &Path) -> anyhow::Result<()> {
+    let filters = super::network::remove_filter();
+    let covers = super::resolver::detach_all_covers(db);
+    filters.and(covers)
+}
+
 /// Send `request` to the daemon and print its answer: as the JSON line the
 /// daemon sent with `json`, otherwise for a person to read.
 pub fn command(db: &Path, request: Request, json: bool) -> anyhow::Result<()> {
@@ -159,6 +166,13 @@ fn print_list(out: &mut impl std::io::Write, listed: &Listed) -> std::io::Result
         writeln!(out, "{:<10} {state:<9} {}{not_on}", app.uid, app.package)?;
         if app.appops_checking {
             writeln!(out, "{:<20} checking Android restrictions", "")?;
+        }
+        if app.name_rules_not_in_effect > 0 {
+            writeln!(
+                out,
+                "{:<20} saved name rules not in effect: {}",
+                "", app.name_rules_not_in_effect
+            )?;
         }
         for (item, parts) in &app.unmet {
             let parts: Vec<&str> = parts
@@ -345,6 +359,7 @@ mod tests {
                         unmet: BTreeMap::new(),
                         appops_checking: false,
                         network_rules: 0,
+                        name_rules_not_in_effect: 0,
                         recording_since: None,
                     },
                     ListedApp {
@@ -361,6 +376,7 @@ mod tests {
                         )]),
                         appops_checking: true,
                         network_rules: 0,
+                        name_rules_not_in_effect: 0,
                         recording_since: None,
                     },
                 ],

@@ -148,14 +148,13 @@ fn start_sandbox(context: SandboxStart<'_>) -> Option<LiveSandbox> {
     let ruled = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let destinations = Destinations::start(&mut probes.ebpf, sandbox.book(), ruled.clone());
     let network = Network::start(&mut probes.ebpf, ruled);
-    let names = start_name_relay(
+    let (names, recording_covers) = start_name_relay(
         &sandbox,
         tracer,
         storage.is_ok(),
         relay.clone(),
         names_stopped,
     );
-    let recording_covers = names.is_some();
     let found = found.clone();
     appops.on_found(move || found.notify_one());
     let helper_restarted = helper_restarted.clone();
@@ -222,7 +221,7 @@ fn start_name_relay(
     gate: bool,
     relay: Serving,
     stopped: Arc<Notify>,
-) -> Option<Arc<Names>> {
+) -> (Arc<Names>, bool) {
     // The names apps look up, heard by standing between them and netd.
     let names = Arc::new(Names::default());
     let (lookups_refused, refused_lookups) = RefusedLookups::channel();
@@ -239,15 +238,14 @@ fn start_name_relay(
         .inspect_err(|e| eprintln!("bbd: warning: the names apps look up are not known: {e:#}"))
         .is_ok();
     tracer.write_coverage("coverage_net_names", i64::from(relay.alive()));
-    let names = started.then_some(names);
     tracer.refused_lookups = started.then_some(refused_lookups);
     tracer.net = Some(sandbox::destinations::View {
         snapshot: sandbox.snapshot(),
         global: sandbox.global(),
         book: sandbox.book(),
-        names: names.clone(),
+        names: Some(names.clone()),
     });
-    names
+    (names, started)
 }
 
 fn build_storage_effect(
@@ -287,7 +285,7 @@ fn build_net_effects(
     sandbox: &mut Sandbox,
     destinations: anyhow::Result<Destinations>,
     network: anyhow::Result<Network>,
-    names: Option<Arc<Names>>,
+    names: Arc<Names>,
 ) {
     // What went over a connection is told by another program, which reads
     // the same list of apps.
@@ -302,8 +300,13 @@ fn build_net_effects(
     match destinations {
         Ok(mut destinations) => {
             destinations.with_traffic(traffic.is_ok());
-            if let Some(names) = names {
-                destinations.with_names(names);
+            destinations.with_recording(matches!(
+                tracer.writer.meta("coverage_network"),
+                Ok(Some(1))
+            ));
+            destinations.with_names(names);
+            if let Err(e) = destinations.load_addresses(&tracer.writer) {
+                eprintln!("bbd: warning: cannot restore saved name addresses: {e:#}");
             }
             sandbox.add_effect(Box::new(destinations));
         }

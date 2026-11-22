@@ -218,6 +218,7 @@ pub enum Part {
     AdIdHook,
     PacketFilter,
     DnsNames,
+    Recording,
 }
 
 impl Part {
@@ -232,6 +233,7 @@ impl Part {
             Part::AdIdHook => "ad_id_hook",
             Part::PacketFilter => "packet_filter",
             Part::DnsNames => "dns_names",
+            Part::Recording => "recording",
         }
     }
 }
@@ -246,6 +248,8 @@ pub struct InPlace {
     pub uri_grants_hook: bool,
     pub ad_id_hook: bool,
     pub packet_filter: bool,
+    pub network_dns: bool,
+    pub recording: bool,
     pub dns_names: bool,
 }
 
@@ -445,7 +449,9 @@ impl Settings {
             }
             let mut missing = Vec::new();
             // The network's mount is the one over the resolver's socket.
-            if matches!(item, Item::Storage | Item::CpuInfo | Item::Network) && !parts.mounts {
+            if (matches!(item, Item::Storage | Item::CpuInfo) && !parts.mounts)
+                || (item == Item::Network && !parts.network_dns)
+            {
                 missing.push(Part::Mounts);
             }
             if self.held_for(item).into_iter().any(|name| !held(name)) {
@@ -466,8 +472,12 @@ impl Settings {
             if item == Item::Network && !parts.packet_filter {
                 missing.push(Part::PacketFilter);
             }
-            if item == Item::NetworkRecord && !parts.dns_names {
-                missing.push(Part::DnsNames);
+            if item == Item::NetworkRecord {
+                if !parts.recording {
+                    missing.push(Part::Recording);
+                } else if !parts.dns_names {
+                    missing.push(Part::DnsNames);
+                }
             }
             if !missing.is_empty() {
                 unmet.insert(item, missing);
@@ -580,14 +590,22 @@ mod tests {
             items.set(item, Some(Mode::Off)).unwrap();
         }
         items.set(Item::NetworkRecord, Some(Mode::On)).unwrap();
-        let unmet = items.unmet(&InPlace::default(), |_| true);
+        let missing_map = items.unmet(&InPlace::default(), |_| true);
         assert_eq!(
-            serde_json::to_value(unmet).unwrap(),
-            serde_json::json!({"network_record": ["dns_names"]})
+            serde_json::to_value(missing_map).unwrap(),
+            serde_json::json!({"network_record": ["recording"]})
+        );
+        let recording = InPlace {
+            recording: true,
+            ..InPlace::default()
+        };
+        assert_eq!(
+            items.unmet(&recording, |_| true)[&Item::NetworkRecord],
+            [Part::DnsNames]
         );
         let names = InPlace {
             dns_names: true,
-            ..InPlace::default()
+            ..recording
         };
         assert!(items.unmet(&names, |_| true).is_empty());
     }
@@ -601,6 +619,8 @@ mod tests {
             uri_grants_hook: true,
             ad_id_hook: true,
             packet_filter: true,
+            network_dns: true,
+            recording: true,
             dns_names: true,
         };
         let items = Settings::all_on();
@@ -672,6 +692,8 @@ mod tests {
             uri_grants_hook: true,
             ad_id_hook: true,
             packet_filter: true,
+            network_dns: true,
+            recording: true,
             dns_names: true,
         };
         assert!(items.unmet(&all, |_| true).is_empty());

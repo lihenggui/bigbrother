@@ -230,8 +230,10 @@
         <item quantity="one">%1$d blocked</item>
         <item quantity="other">%1$d blocked</item>
     </plurals>
+    <string name="jail_network_name_rules_not_in_effect">Saved domain rules have limited enforcement</string>
+    <string name="jail_network_recording_unavailable">Connection recording unavailable</string>
     <string name="jail_network_no_permission">The app does not request network access</string>
-    <string name="jail_not_in_effect_packet_filter">Not in effect: network filtering unavailable on this kernel</string>
+    <string name="jail_not_in_effect_packet_filter">Network filtering unavailable</string>
     <string name="jail_not_in_effect_resolver">Partly in effect: name lookups are not blocked</string>
     <string name="jail_network_global_note">For isolated apps without their own setting. With no network, connections fail at once; apps are not restarted.</string>
 

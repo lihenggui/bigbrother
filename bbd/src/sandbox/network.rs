@@ -52,6 +52,7 @@
 //! the network, and given back with it.
 
 use std::{
+    cell::Cell,
     collections::BTreeSet,
     io::Write as _,
     path::Path,
@@ -122,15 +123,23 @@ impl Family {
 
 /// Runs the tools of the packet filter.
 pub trait Tools: Send {
+    fn available(&self, _family: Family) -> anyhow::Result<bool> {
+        Ok(true)
+    }
+
     /// Run `tool` with `args`, giving it `input`; what it exited with.
-    fn run(&mut self, tool: &str, args: &[&str], input: &str) -> anyhow::Result<i32>;
+    fn run(&self, tool: &str, args: &[&str], input: &str) -> anyhow::Result<i32>;
 }
 
 /// The tools of the device.
 struct System;
 
 impl Tools for System {
-    fn run(&mut self, tool: &str, args: &[&str], input: &str) -> anyhow::Result<i32> {
+    fn available(&self, family: Family) -> anyhow::Result<bool> {
+        Ok(Path::new(TOOLS).join(family.tool()).try_exists()?)
+    }
+
+    fn run(&self, tool: &str, args: &[&str], input: &str) -> anyhow::Result<i32> {
         let mut child = Command::new(Path::new(TOOLS).join(tool))
             .args(args)
             .stdin(Stdio::piped())
@@ -156,6 +165,7 @@ impl Tools for System {
 /// The uids the program refuses.
 pub trait Listed: Send {
     fn insert(&mut self, uid: u32) -> anyhow::Result<()>;
+    fn contains(&self, uid: u32) -> anyhow::Result<bool>;
     /// Does nothing for a uid that is not listed.
     fn remove(&mut self, uid: u32) -> anyhow::Result<()>;
 }
@@ -163,6 +173,14 @@ pub trait Listed: Send {
 impl Listed for BpfHashMap<MapData, u32, u32> {
     fn insert(&mut self, uid: u32) -> anyhow::Result<()> {
         BpfHashMap::insert(self, &uid, &1, 0).context("listing the uid")
+    }
+
+    fn contains(&self, uid: u32) -> anyhow::Result<bool> {
+        match self.get(&uid, 0) {
+            Ok(_) => Ok(true),
+            Err(MapError::KeyNotFound) => Ok(false),
+            Err(e) => Err(e).context("reading the uid list"),
+        }
     }
 
     fn remove(&mut self, uid: u32) -> anyhow::Result<()> {
@@ -192,7 +210,7 @@ fn chains() -> String {
 }
 
 /// Run `tool` on one rule or chain.
-fn single(tools: &mut dyn Tools, tool: &str, action: &[&str]) -> anyhow::Result<i32> {
+fn single(tools: &dyn Tools, tool: &str, action: &[&str]) -> anyhow::Result<i32> {
     let args: Vec<&str> = ["-w", LOCK_WAIT].iter().chain(action).copied().collect();
     tools.run(tool, &args, "")
 }
@@ -200,7 +218,7 @@ fn single(tools: &mut dyn Tools, tool: &str, action: &[&str]) -> anyhow::Result<
 /// Write the chains of `family` and have `OUTPUT` jump to them. Chains
 /// that are there are replaced in one step, and from then on name the
 /// program pinned now.
-fn install(tools: &mut dyn Tools, family: Family) -> anyhow::Result<()> {
+fn install(tools: &dyn Tools, family: Family) -> anyhow::Result<()> {
     let (tool, restore) = (family.tool(), family.restore());
     let code = tools.run(restore, &["--noflush", "-w", LOCK_WAIT], &chains())?;
     anyhow::ensure!(code == 0, "{restore} failed ({code})");
@@ -216,28 +234,71 @@ fn install(tools: &mut dyn Tools, family: Family) -> anyhow::Result<()> {
     }
 }
 
-/// Remove the chains of `family` and the jump to them, if they are there.
-fn uninstall(tools: &mut dyn Tools, family: Family) -> anyhow::Result<()> {
+/// Remove the jump before touching either chain, including after a partial
+/// install or an interrupted removal.
+fn uninstall(tools: &dyn Tools, family: Family) -> anyhow::Result<()> {
     let tool = family.tool();
-    // Without the chain nothing jumps to it: a jump to a chain that is not
-    // there cannot be asked about, only the chain.
-    match single(tools, tool, &["-S", CHAIN])? {
-        0 => {}
-        NOT_THERE => return Ok(()),
-        code => anyhow::bail!("{tool} -S failed ({code})"),
-    }
-    // The jump first: from then on no packet passes the chains, whatever
-    // becomes of the rest.
-    let code = single(tools, tool, &["-D", "OUTPUT", "-j", CHAIN])?;
-    anyhow::ensure!(code == 0 || code == NOT_THERE, "{tool} -D failed ({code})");
-    // The one that jumps to the other first.
-    for chain in [CHAIN, REFUSE] {
-        for action in ["-F", "-X"] {
-            let code = single(tools, tool, &[action, chain])?;
-            anyhow::ensure!(code == 0, "{tool} {action} failed ({code})");
+    if chain_exists(tools, tool, CHAIN)? {
+        // Android's firewall managers can preserve duplicate jumps.
+        let mut removed = false;
+        for _ in 0..64 {
+            match single(tools, tool, &["-D", "OUTPUT", "-j", CHAIN])? {
+                0 => {}
+                NOT_THERE => {
+                    removed = true;
+                    break;
+                }
+                code => anyhow::bail!("{tool} -D failed ({code})"),
+            }
         }
+        anyhow::ensure!(removed, "{tool} still has sandbox jumps");
+        remove_chain(tools, tool, CHAIN)?;
+    }
+    if chain_exists(tools, tool, REFUSE)? {
+        remove_chain(tools, tool, REFUSE)?;
     }
     Ok(())
+}
+
+fn chain_exists(tools: &dyn Tools, tool: &str, chain: &str) -> anyhow::Result<bool> {
+    match single(tools, tool, &["-S", chain])? {
+        0 => Ok(true),
+        NOT_THERE => Ok(false),
+        code => anyhow::bail!("{tool} -S failed ({code})"),
+    }
+}
+
+fn remove_chain(tools: &dyn Tools, tool: &str, chain: &str) -> anyhow::Result<()> {
+    for action in ["-F", "-X"] {
+        let code = single(tools, tool, &[action, chain])?;
+        anyhow::ensure!(code == 0, "{tool} {action} failed ({code})");
+    }
+    Ok(())
+}
+
+pub fn remove_filter() -> anyhow::Result<()> {
+    uninstall_all(&System)?;
+    match std::fs::remove_file(PIN) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            Err(e).context("removing the pinned packet filter")
+        }
+        _ => Ok(()),
+    }
+}
+
+fn uninstall_all(tools: &dyn Tools) -> anyhow::Result<()> {
+    both(|family| {
+        if tools.available(family)? {
+            uninstall(tools, family)?;
+        }
+        Ok(())
+    })
+}
+
+fn both(mut apply: impl FnMut(Family) -> anyhow::Result<()>) -> anyhow::Result<()> {
+    let v4 = apply(Family::V4);
+    let v6 = apply(Family::V6);
+    v4.and(v6)
 }
 
 /// What is known of the sandbox's rules in the kernel.
@@ -255,9 +316,11 @@ pub struct Network {
     tools: Box<dyn Tools>,
     listed: Box<dyn Listed>,
     rollback_errors: Limited,
-    /// The uids listed.
+    /// The uids the saved policy says to refuse.
     refused: BTreeSet<u32>,
     rules: Rules,
+    repair: Cell<bool>,
+    pending_map: BTreeSet<u32>,
     /// Whether the apps sandboxed when the daemon started have been taken
     /// up again ([`Effect::resume`]). Until then the rules are left as the
     /// daemon before wrote them, with the uids it listed: written for the
@@ -309,6 +372,8 @@ impl Network {
             rollback_errors: Limited::new(SANDBOX_INTERVAL, Policy::Shared),
             refused: BTreeSet::new(),
             rules: Rules::Unknown,
+            repair: Cell::new(false),
+            pending_map: BTreeSet::new(),
             resumed: false,
             destinations,
         }
@@ -337,24 +402,25 @@ impl Network {
         } else {
             Rules::Absent
         };
-        if self.rules == as_wanted {
+        if self.rules == as_wanted && !self.repair.get() {
             return Ok(());
         }
         self.rules = Rules::Unknown;
-        for family in Family::BOTH {
+        self.repair.set(true);
+        both(|family| {
             if wanted {
-                install(self.tools.as_mut(), family)?;
+                install(self.tools.as_ref(), family)
             } else {
-                uninstall(self.tools.as_mut(), family)?;
+                uninstall(self.tools.as_ref(), family)
             }
-        }
+        })?;
         self.rules = as_wanted;
+        self.repair.set(false);
         Ok(())
     }
 
     /// Refuse `uid` the network from now on.
     fn refuse(&mut self, uid: u32) -> anyhow::Result<()> {
-        // Listed before the rules are there: once they are, it is refused.
         self.listed.insert(uid)?;
         if self.resumed
             && let Err(e) = self.write_rules(true)
@@ -362,6 +428,7 @@ impl Network {
             if !self.refused.contains(&uid)
                 && let Err(rollback) = self.listed.remove(uid)
             {
+                self.pending_map.insert(uid);
                 self.rollback_errors.log(format_args!(
                     "bbd: sandbox: cannot roll back a network map entry: {rollback:#}"
                 ));
@@ -369,24 +436,40 @@ impl Network {
             return Err(e);
         }
         self.refused.insert(uid);
+        self.pending_map.remove(&uid);
         Ok(())
     }
 
-    /// Refuse `uid` the network no longer.
+    /// A previous generation's rules may refer to a map we cannot change.
     fn allow(&mut self, uid: u32) -> anyhow::Result<()> {
         self.listed.remove(uid)?;
-        self.refused.remove(&uid);
-        // Removed with the last app, and written again where they are not
-        // known to be as meant: rules a daemon before left would go on
-        // refusing the app by that daemon's list.
-        if self.resumed
-            && let Err(e) = self.write_rules(self.wanted())
-        {
-            // Off this daemon's list all the same; the rules are written
-            // again with the next change.
-            eprintln!("bbd: warning: the packet filter's rules are not as meant: {e:#}");
+        let was_refused = self.refused.remove(&uid);
+        if let Err(e) = self.settle() {
+            if was_refused {
+                // The enclosing settings change failed and keeps its old policy.
+                self.refused.insert(uid);
+                if self.listed.insert(uid).is_err() {
+                    self.pending_map.insert(uid);
+                }
+            }
+            return Err(e);
         }
+        self.pending_map.remove(&uid);
         Ok(())
+    }
+
+    fn retry(&mut self) -> anyhow::Result<()> {
+        for uid in std::mem::take(&mut self.pending_map) {
+            let result = if self.refused.contains(&uid) {
+                self.listed.insert(uid)
+            } else {
+                self.listed.remove(uid)
+            };
+            if result.is_err() {
+                self.pending_map.insert(uid);
+            }
+        }
+        self.settle()
     }
 }
 
@@ -398,7 +481,7 @@ impl Effect for Network {
     fn enable(&mut self, entry: &mut Entry, _: &[String], items: &Settings) -> anyhow::Result<()> {
         if items.network_refused() {
             self.refuse(entry.uid)?;
-        } else if self.refused.contains(&entry.uid) {
+        } else if self.refused.contains(&entry.uid) || self.pending_map.contains(&entry.uid) {
             // Retry a removal that failed while retiring the previous
             // installation before admitting its successor.
             self.allow(entry.uid)?;
@@ -432,11 +515,13 @@ impl Effect for Network {
     fn resume(&mut self, apps: &[Resumed]) {
         self.resumed = true;
         for app in apps.iter().filter(|app| app.items.network_refused()) {
-            match self.listed.insert(app.entry.uid) {
-                Ok(()) => {
-                    self.refused.insert(app.entry.uid);
-                }
-                Err(e) => eprintln!("bbd: warning: uid {} has the network: {e:#}", app.entry.uid),
+            let uid = app.entry.uid;
+            self.refused.insert(uid);
+            if let Err(e) = self.listed.insert(uid) {
+                self.pending_map.insert(uid);
+                eprintln!("bbd: warning: uid {uid} has the network: {e:#}");
+            } else {
+                self.pending_map.remove(&uid);
             }
         }
         // Written also where they are: the rules of the daemon before
@@ -450,9 +535,10 @@ impl Effect for Network {
     }
 
     fn forget(&mut self, uid: u32) {
-        if self.refused.contains(&uid)
-            && let Err(e) = self.allow(uid)
-        {
+        self.refused.remove(&uid);
+        self.pending_map.remove(&uid);
+        if let Err(e) = self.listed.remove(uid) {
+            self.pending_map.insert(uid);
             eprintln!("bbd: sandbox: cannot clear the retired uid {uid}'s network rule: {e:#}");
         }
         // The destinations it was kept from went before this: without any
@@ -462,8 +548,41 @@ impl Effect for Network {
         }
     }
 
+    fn retry_network(&mut self, _: &super::Snapshot) {
+        if let Err(e) = self.retry() {
+            self.rollback_errors.log(format_args!(
+                "bbd: sandbox: cannot reconcile the packet filter: {e:#}"
+            ));
+        }
+    }
+
     fn report(&self, status: &mut Status) {
-        status.network = self.rules != Rules::Unknown;
+        status.network = match self.rules {
+            Rules::Absent => true,
+            Rules::Unknown => false,
+            Rules::Present => {
+                let intact = Family::BOTH.into_iter().all(|family| {
+                    matches!(
+                        single(
+                            self.tools.as_ref(),
+                            family.tool(),
+                            &["-C", "OUTPUT", "-j", CHAIN]
+                        ),
+                        Ok(0)
+                    )
+                });
+                self.repair.set(!intact);
+                intact
+            }
+        };
+        if self.rules == Rules::Present && status.network {
+            status.network_uids.extend(
+                self.refused
+                    .iter()
+                    .copied()
+                    .filter(|uid| matches!(self.listed.contains(*uid), Ok(true))),
+            );
+        }
     }
 }
 
@@ -472,12 +591,16 @@ impl Effect for Network {
 /// network there.
 pub struct Unavailable {
     tools: Box<dyn Tools>,
+    cleanup_pending: bool,
+    cleanup_errors: Limited,
 }
 
 impl Unavailable {
     pub fn new() -> Self {
         Self {
             tools: Box::new(System),
+            cleanup_pending: true,
+            cleanup_errors: Limited::new(SANDBOX_INTERVAL, Policy::Shared),
         }
     }
 }
@@ -496,7 +619,7 @@ impl Effect for Unavailable {
     }
 
     fn disable(&mut self, _: &mut Entry, _: &[String], _: &Settings) -> anyhow::Result<()> {
-        Ok(())
+        self.cleanup()
     }
 
     fn update(
@@ -508,20 +631,17 @@ impl Effect for Unavailable {
     ) -> anyhow::Result<()> {
         // Only turning the item on is refused: an app that had it on when
         // the packet filter went can still have its other items changed.
-        if before.network_refused() {
-            return Ok(());
+        match (before.network_refused(), after.network_refused()) {
+            (true, false) => self.cleanup(),
+            (true, true) => Ok(()),
+            _ => self.enable(entry, packages, after),
         }
-        self.enable(entry, packages, after)
     }
 
     fn resume(&mut self, apps: &[Resumed]) {
         // What a daemon before left would go on refusing the apps it
         // listed, with no way to give one the network back.
-        for family in Family::BOTH {
-            if let Err(e) = uninstall(self.tools.as_mut(), family) {
-                eprintln!("bbd: warning: the packet filter's rules were not removed: {e:#}");
-            }
-        }
+        self.retry_cleanup();
         let refused = apps
             .iter()
             .filter(|app| app.items.network_refused())
@@ -531,6 +651,27 @@ impl Effect for Unavailable {
                 "bbd: warning: {refused} sandboxed apps have the network: the packet filter is not available"
             );
         }
+    }
+    fn retry_network(&mut self, _: &super::Snapshot) {
+        self.retry_cleanup();
+    }
+}
+
+impl Unavailable {
+    fn retry_cleanup(&mut self) {
+        if let Err(e) = self.cleanup() {
+            self.cleanup_errors.log(format_args!(
+                "bbd: warning: the packet filter's rules were not removed: {e:#}"
+            ));
+        }
+    }
+
+    fn cleanup(&mut self) -> anyhow::Result<()> {
+        if self.cleanup_pending {
+            uninstall_all(self.tools.as_ref())?;
+            self.cleanup_pending = false;
+        }
+        Ok(())
     }
 }
 
@@ -555,6 +696,7 @@ mod tests {
         failing: Vec<&'static str>,
         /// Whether the list cannot be changed.
         list_fails: bool,
+        fail_insert: Option<u32>,
         runs: u32,
         /// Whether an app is kept from single destinations.
         destinations: Arc<AtomicBool>,
@@ -564,7 +706,7 @@ mod tests {
     struct Fake(Rc<RefCell<Kernel>>);
 
     impl Tools for Fake {
-        fn run(&mut self, tool: &str, args: &[&str], input: &str) -> anyhow::Result<i32> {
+        fn run(&self, tool: &str, args: &[&str], input: &str) -> anyhow::Result<i32> {
             let mut kernel = self.0.borrow_mut();
             kernel.runs += 1;
             if kernel.failing.contains(&tool) {
@@ -622,9 +764,16 @@ mod tests {
     impl Listed for Fake {
         fn insert(&mut self, uid: u32) -> anyhow::Result<()> {
             let mut kernel = self.0.borrow_mut();
-            anyhow::ensure!(!kernel.list_fails, "the list is full");
+            anyhow::ensure!(
+                !kernel.list_fails && kernel.fail_insert != Some(uid),
+                "the list is full"
+            );
             kernel.listed.insert(uid);
             Ok(())
+        }
+
+        fn contains(&self, uid: u32) -> anyhow::Result<bool> {
+            Ok(self.0.borrow().listed.contains(&uid))
         }
 
         fn remove(&mut self, uid: u32) -> anyhow::Result<()> {
@@ -924,17 +1073,96 @@ mod tests {
         fake.0.borrow_mut().list_fails = false;
         assert_eq!(fake.refused(), [10001]);
 
-        // Rules that cannot be removed do not keep the app: it is off the
-        // list, and they go with the next change.
+        // A failed withdrawal leaves the settings unchanged and is retryable.
         fake.0.borrow_mut().failing = vec!["iptables"];
-        network.disable(&mut entry(10001), &[], &on).unwrap();
-        assert!(fake.0.borrow().listed.is_empty());
+        assert!(network.disable(&mut entry(10001), &[], &on).is_err());
+        assert_eq!(fake.0.borrow().listed, BTreeSet::from([10001]));
         assert!(!in_place(&network));
         fake.0.borrow_mut().failing.clear();
-        network.enable(&mut entry(10003), &[], &on).unwrap();
-        network.disable(&mut entry(10003), &[], &on).unwrap();
+        network.retry().unwrap();
+        network.disable(&mut entry(10001), &[], &on).unwrap();
         assert!(!fake.has_rules());
         assert!(in_place(&network));
+    }
+
+    #[test]
+    fn a_failed_resume_insert_is_reported_for_its_uid_only() {
+        let fake = Fake::default();
+        fake.0.borrow_mut().fail_insert = Some(10002);
+        let mut network = fake.network();
+        network.resume(&[10001, 10002].map(|uid| Resumed {
+            entry: entry(uid),
+            packages: Vec::new(),
+            items: items(Mode::On),
+        }));
+        let mut status = Status::default();
+        network.report(&mut status);
+        assert!(status.network);
+        assert_eq!(status.network_uids, BTreeSet::from([10001]));
+
+        fake.0.borrow_mut().listed.remove(&10001);
+        let mut status = Status::default();
+        network.report(&mut status);
+        assert!(status.network_uids.is_empty());
+    }
+
+    #[test]
+    fn losing_one_output_jump_is_visible_and_repaired() {
+        let fake = Fake::default();
+        let mut network = fake.started();
+        network
+            .enable(&mut entry(10001), &[], &items(Mode::On))
+            .unwrap();
+        fake.0.borrow_mut().jumps.retain(|family| *family == "v4");
+        assert!(!in_place(&network));
+
+        network.retry().unwrap();
+        assert_eq!(fake.refused(), [10001]);
+        assert!(in_place(&network));
+    }
+
+    #[test]
+    fn stale_generations_cannot_acknowledge_a_failed_withdrawal() {
+        let fake = Fake::default();
+        let on = items(Mode::On);
+        let mut network = fake.started();
+        network.enable(&mut entry(10001), &[], &on).unwrap();
+        fake.0.borrow_mut().failing = vec!["iptables-restore"];
+        let mut restarted = fake.network();
+        restarted.resume(&[10001, 10002].map(|uid| Resumed {
+            entry: entry(uid),
+            packages: Vec::new(),
+            items: on.clone(),
+        }));
+
+        assert!(restarted.disable(&mut entry(10001), &[], &on).is_err());
+        fake.0.borrow_mut().failing.clear();
+        restarted.retry().unwrap();
+        restarted.disable(&mut entry(10001), &[], &on).unwrap();
+        assert_eq!(fake.refused(), [10002]);
+    }
+
+    #[test]
+    fn offline_cleanup_removes_duplicate_jumps_and_orphaned_chains() {
+        let fake = Fake::default();
+        fake.started()
+            .enable(&mut entry(10001), &[], &items(Mode::On))
+            .unwrap();
+        fake.0.borrow_mut().jumps.push("v4");
+        fake.0.borrow_mut().jumps.retain(|family| *family == "v4");
+        fake.0.borrow_mut().chains.remove(&("v6", CHAIN.to_owned()));
+        fake.0
+            .borrow_mut()
+            .chains
+            .insert(("v6", "other_firewall".into()));
+
+        uninstall_all(&fake).unwrap();
+        uninstall_all(&fake).unwrap();
+        assert!(fake.0.borrow().jumps.is_empty());
+        assert_eq!(
+            fake.0.borrow().chains,
+            HashSet::from([("v6", "other_firewall".into())])
+        );
     }
 
     #[test]
@@ -946,6 +1174,8 @@ mod tests {
             .unwrap();
         let mut network = Unavailable {
             tools: Box::new(fake.clone()),
+            cleanup_pending: true,
+            cleanup_errors: Limited::new(SANDBOX_INTERVAL, Policy::Shared),
         };
         network.resume(&[]);
         assert!(!fake.has_rules());

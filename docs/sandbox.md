@@ -303,7 +303,9 @@ itself once the system is up, with what the database says each app still
 sandboxed had (`bbd sandbox-restore-lines`). A root-only recovery directory
 under `/data/adb/big_brother_recovery` retains each pending request and the
 helper. Each restored item is checked and journaled. The helper rechecks the
-installation before changing an app op or permission.
+installation before changing an app op or permission. After stopping the
+daemon, uninstall also removes the module's IPv4 and IPv6 packet-filter
+chains and detaches its resolver covers in running app namespaces.
 
 Disabling the module also gives back the AppOps modes, runtime permissions,
 notification listener access, and accessibility access saved by Jail. The
@@ -390,7 +392,10 @@ that has such rules, and for no other, it reads the destination of the
 packet and looks it up among them. A name is refused where it is looked up
 (see The resolver), and the addresses the app was already given for it are
 refused with it, so that a connection it has, or an address it kept, does
-not go on. Two things follow from a name being more than one address and an
+not go on. The addresses already given to that installation are saved with
+the rule and restored after a daemon restart. The Android resolver reply
+carries no DNS TTL, so those address blocks expire one day after the
+answer was seen. Two things follow from a name being more than one address and an
 address more than one name: a name that shares an address with one the app
 is kept from is not reached either, and an app that finds the address of a
 name by itself, without the system's resolver, is not kept from it; the
@@ -452,7 +457,8 @@ group netd's is open to, and serves only the apps given it, a few lookups
 of each at once: any process can find the socket, and an app kept from the
 network is to have no resolver at all. Where
 the daemon's domain may not label a socket so, `bbd sandbox status`
-reports name rules as unavailable. With the gate in place, a saved
+reports name rules as unavailable. Jail shows saved rules as unenforced when
+the app has no working resolver cover. With the gate in place, a saved
 name rule keeps DNS blocked while its relay is unavailable. The next
 daemon replaces the cover when it can serve lookups.
 

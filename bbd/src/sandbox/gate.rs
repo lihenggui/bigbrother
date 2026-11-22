@@ -449,10 +449,10 @@ impl Storage {
     }
 
     fn set_resolver(&self, entry: &Entry, policy: Resolver) -> anyhow::Result<bool> {
-        if policy == Resolver::Record {
-            resolver::record(entry, &self.shared.relay)
-        } else {
-            resolver::set(entry, policy.cover()).map(|()| true)
+        match policy {
+            Resolver::Record => resolver::record(entry, &self.shared.relay),
+            Resolver::Names => resolver::serve_names(entry, &self.shared.relay),
+            _ => resolver::set(entry, policy.cover()).map(|()| true),
         }
     }
 }
@@ -506,7 +506,16 @@ impl Effect for Storage {
             .map(|gated| gated.packages.clone());
         // Not held so far: the packages are needed for the storage mounts
         // only, which such an app has none of.
-        self.change(entry, &packages.unwrap_or_default(), was, wanted)
+        let result = self.change(entry, &packages.unwrap_or_default(), was, wanted);
+        if let Err(e) = &result
+            && !items.network_refused()
+            && has_name_rules(&self.book, entry.uid)
+        {
+            self.resolver_unknown.insert(entry.uid);
+            eprintln!("bbd: sandbox: could not cover the resolver for name rules: {e:#}");
+            return Ok(());
+        }
+        result
     }
 
     fn resume(&mut self, apps: &[Resumed]) {
@@ -571,6 +580,14 @@ impl Effect for Storage {
         let stats = lock(&self.shared.stats);
         status.gate = self.shared.open.load(Ordering::Relaxed);
         status.dns_names = status.gate && self.shared.relay.alive();
+        if status.gate {
+            status
+                .network_dns_uids
+                .extend(apps.iter().filter_map(|(&uid, app)| {
+                    (app.resolver == Resolver::Block && !self.resolver_unknown.contains(&uid))
+                        .then_some(uid)
+                }));
+        }
         if status.dns_names {
             status.dns_uids.extend(apps.iter().filter_map(|(uid, app)| {
                 let failed = app.relay_failed.as_ref()?;
