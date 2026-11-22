@@ -15,7 +15,7 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    packages::{Packages, app_id_of},
+    packages::{PackageVersions, Packages, app_id_of},
     store::Writer,
     sync::lock,
 };
@@ -59,6 +59,41 @@ impl Sandbox {
         apps.sort_by_key(|app| app.entry.uid);
         for effect in &mut self.effects {
             effect.resume(&apps);
+        }
+    }
+
+    pub fn watches_package_updates(&self) -> bool {
+        self.effects
+            .iter()
+            .any(|effect| effect.watches_package_updates())
+    }
+
+    pub fn note_package_update(&mut self, packages: &mut Packages, previous: &mut PackageVersions) {
+        if packages.refresh() && !packages.is_empty() {
+            let changed = packages.updated_app_ids(previous);
+            if !changed.is_empty() {
+                for effect in &mut self.effects {
+                    effect.packages_updated(&changed);
+                }
+            }
+        }
+    }
+
+    pub fn storage_ready(&mut self) {
+        let apps: Vec<_> = self
+            .snapshot_read()
+            .values()
+            .filter_map(|entry| {
+                let items = self.items(entry);
+                (items.mounts().any() && self.owns(entry)).then(|| Resumed {
+                    packages: Vec::new(),
+                    entry: entry.clone(),
+                    items,
+                })
+            })
+            .collect();
+        for effect in &mut self.effects {
+            effect.storage_ready(&apps);
         }
     }
 

@@ -140,6 +140,10 @@ pub struct Status {
     #[serde(skip)]
     pub gated_uids: BTreeSet<u32>,
     #[serde(skip)]
+    pub mount_failures: BTreeMap<u32, Part>,
+    #[serde(skip)]
+    pub mount_launch_refused: BTreeSet<u32>,
+    #[serde(skip)]
     pub network_uids: BTreeSet<u32>,
     #[serde(skip)]
     pub network_dns_uids: BTreeSet<u32>,

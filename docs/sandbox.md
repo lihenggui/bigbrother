@@ -233,11 +233,22 @@ read of the switch for [newly installed apps](#newly-installed-apps).
 
 A start is held for a few milliseconds.
 
-A start that cannot be given a required mount is killed. If the daemon's
-thread is stuck for more than three seconds or has ended, the kernel
-refuses those starts. A recording cover by itself never holds the app.
+The kernel journals the PID and its start time before stopping it. An
+independent reader ends a stop after three seconds, or when the mount
+worker exits. A start that still requires mounts is ended. A start whose
+policy needs no mounts is resumed. The next daemon also checks the
+journal for starts left stopped by a crash.
 
-The thread has no timer: with no sandboxed app starting, it does not run.
+If the gate stops working, future starts continue and Jail reports the
+mounts as unavailable. While the gate is working, a UID whose required
+mount fails cannot start with that isolation enabled. Jail shows the
+cause and how to let the app start by turning off the affected items or
+removing it from Jail. Mounts are tried on the next launch after the
+mount settings change, an installed package version changes, the
+daemon starts, or storage becomes accessible at unlock. A recorded
+failure keeps the daemon from restarting the running app on its own.
+A recording cover by itself never holds the app. The deadline timer is
+armed only while a start is held.
 
 ### App ops
 
@@ -564,8 +575,8 @@ minutes.
 ## Starting and stopping
 
 - When the daemon starts, at boot or after a restart, it takes up the
-  sandboxed apps again and ends those of their processes that should have
-  been given mounts and started without them. The supervisor restarts a
+  sandboxed apps again. If the gate is ready for an app's requested
+  mounts, the daemon restarts processes that started without them. The supervisor restarts a
   daemon that died at once. Until then such a process runs with the real
   storage, and what it read in that time it keeps. Early in boot that is
   little: shared storage cannot be read before the user first unlocks the
@@ -582,7 +593,10 @@ minutes.
   device's.
 - An app started before the user first unlocks the device, when its sandbox
   directory cannot be reached yet, gets empty, read-only storage in its
-  place.
+  place. When the kernel makes credential-encrypted storage accessible,
+  the daemon verifies the sandbox directory and restarts only processes
+  still using the stand-in. Kernels without the unlock probe can replace
+  it on the next normal app start or daemon restart.
 - An entry whose uid Android has since given to another app is taken out.
 - On a device where a hook target has an unsupported signature,
   `bbd sandbox status --json` reports that part as incompatible. A part that

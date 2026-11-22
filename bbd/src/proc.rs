@@ -31,6 +31,12 @@ impl Process {
         Self::open_pidfd(pid).map_err(|error| Self::normalize_open_error(pid, error))
     }
 
+    /// The signal syscall also accepts an open proc PID directory. This
+    /// keeps recovery safe when the kernel refuses pidfd_open.
+    pub fn open_proc(pid: u32) -> io::Result<Self> {
+        Ok(Self(File::open(format!("/proc/{pid}"))?.into()))
+    }
+
     fn normalize_open_error(pid: i32, error: io::Error) -> io::Error {
         // Kernels use either errno when a task has no thread-group leader at this ID.
         if pid > 0
@@ -110,7 +116,7 @@ impl Stat<'_> {
     }
 
     /// Field 22, in clock ticks after boot. The suffix starts at field 3.
-    fn start_time(&self) -> Option<u64> {
+    pub fn start_time(&self) -> Option<u64> {
         self.fields
             .split_ascii_whitespace()
             .nth(22 - 3)?

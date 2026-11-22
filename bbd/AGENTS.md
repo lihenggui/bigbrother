@@ -56,13 +56,12 @@ daemon loop build on the lower layers, with the CLI at the top.
   AppOps preimage before a transaction mutates it. A runtime permission or
   service access regranted while held is saved before the helper takes it again.
 
-- A start with an established gate policy that cannot be given its sandbox
-  is killed. The kernel does the same when the gate thread is stuck or gone.
-  Auto-isolation has a separate, bounded hold. Release starts for installations
-  that cannot be isolated and retry them on recovery events.
-- A starting app waits for the gate thread (`sandbox/gate/admission.rs`).
-  The thread never waits for the main loop, the database or a helper program,
-  and has no timer. It blocks until a sandboxed app starts.
+- A working gate refuses starts after a required mount fails. Retry the
+  mount on a later launch after a recovery event. An unavailable gate
+  releases new starts. Auto-isolation has a separate, bounded hold.
+- A starting app waits for the mount worker (`sandbox/gate/admission.rs`).
+  The independent watchdog owns process completion. Neither waits for
+  the database or a helper, and only held starts arm a deadline.
 - A sandbox directory belongs to the sandboxed app. As root, use the layout
   in `src/sandbox/dirs.rs` and reach into it only through the directory
   descriptors in `src/dir.rs`, one name at a time without following symbolic
@@ -113,7 +112,8 @@ The daemon runs on every device all the time; its cost is the product's cost.
   `/data/system` is watched with inotify for the package list being
   replaced, and `/data/user_de` and each user's directory in it for new
   directories; while a new app waits to be tried again, a timer runs until
-  then. With that off nothing is watched and there is no timer.
+  then. With that off only the package list is watched while a mount
+  policy needs package updates, and no timer is armed for the watch.
 - Rate-limit repeated work such as helper restarts and back off on failure.
 - Filter as early as possible: in the kernel if the decision can be made there
   (see `bb-ebpf/AGENTS.md`), otherwise before allocating or storing.

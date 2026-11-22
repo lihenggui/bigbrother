@@ -54,9 +54,9 @@ These programs run on every file open and many system calls of every process.
   An app's uid also has the auto-isolation switch read (`AUTO_ISOLATE`), and
   while that is on, its bit in the known app ids; an app installed since
   costs one lookup more (`KNOWN_UIDS`). A new app not known yet is stopped
-  and reported while the auto-isolation hold is active. If the gate cannot
-  accept the start, a new app can continue. An app with an established
-  gate policy is killed in that case.
+  and reported while the auto-isolation hold is active. The kernel only
+  requests a stop after reserving room to report and journal it. If the
+  gate cannot accept a start, the app continues.
 
 - `network_refused` is not a recorder: the packet filter runs it for every
   packet leaving the device while an app is kept from the network, and not
