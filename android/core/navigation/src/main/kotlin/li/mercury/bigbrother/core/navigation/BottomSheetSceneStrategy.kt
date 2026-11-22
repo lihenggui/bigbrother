@@ -16,12 +16,15 @@
 
 package li.mercury.bigbrother.core.navigation
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SheetState
 import androidx.compose.material3.SheetValue
 import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
 import androidx.navigation3.runtime.NavEntry
 import androidx.navigation3.scene.OverlayScene
 import androidx.navigation3.scene.Scene
@@ -75,7 +78,11 @@ private class BottomSheetScene<T : Any>(
         sheetState = state
         // Dismissing the sheet, by swiping it away or with back, pops the entry.
         ModalBottomSheet(onDismissRequest = onBack, sheetState = state) {
-            entry.Content()
+            // Entries load what they show while the sheet opens. A sheet as tall
+            // as its content moves its stops under the opening animation, which
+            // then overshoots to full height and drops back to half; at full
+            // height the stops stay where they are.
+            Box(Modifier.fillMaxHeight()) { entry.Content() }
         }
     }
 
