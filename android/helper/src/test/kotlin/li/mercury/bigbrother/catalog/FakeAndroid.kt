@@ -45,6 +45,10 @@ import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.MODE_IGNORED
  *   granted: allowing it grants it, clears the mark and allows its op;
  *   denying it changes only its flags (`KotlinUtils` of the permission
  *   controller). `pm` grants and revokes, and changes no flag.
+ * - A uid mode on the op of all files access, a permission that is not a
+ *   runtime one, is dropped as soon as it is set unless the app requests
+ *   the permission, as Android 16 does. Every change of it counts in
+ *   [allFilesChanges]: the system ends the app's processes on each.
  * - An app uninstalled loses its grants, flags and uid modes.
  */
 internal class FakeAndroid :
@@ -73,6 +77,13 @@ internal class FakeAndroid :
     /** The helper's revocations are refused, without an error, as for a permission fixed by policy. */
     var refuseToRevoke = false
 
+    /** Whether the app requests all files access. */
+    var requestsAllFiles = false
+
+    /** How many times the mode of all files access changed. */
+    var allFilesChanges = 0
+        private set
+
     private val granted = mutableMapOf<String, Boolean>()
     private val permissionFlags = mutableMapOf<String, Int>()
     private val modes = mutableMapOf<Int, Int>()
@@ -85,6 +96,7 @@ internal class FakeAndroid :
         // Kept under the coarse location op.
         GuardedOp("android:wifi_scan", WIFI_SCAN_OP, COARSE_LOCATION_OP, MODE_ALLOWED, COARSE),
         GuardedOp("android:camera", CAMERA_OP, CAMERA_OP, MODE_ALLOWED, CAMERA),
+        GuardedOp(ALL_FILES_OP_NAME, ALL_FILES_OP, ALL_FILES_OP, MODE_DEFAULT, ALL_FILES),
     )
 
     init {
@@ -123,7 +135,7 @@ internal class FakeAndroid :
 
     override fun describe(e: Throwable): String = e.toString()
 
-    override fun requesting(uid: Int, permission: String): List<String> = if (installed && permission in REQUESTED) listOf(PACKAGE) else emptyList()
+    override fun requesting(uid: Int, permission: String): List<String> = if (installed && (permission in REQUESTED || (permission == ALL_FILES && requestsAllFiles))) listOf(PACKAGE) else emptyList()
 
     override fun isGranted(uid: Int, permission: String): Boolean = installed && granted[permission] == true
 
@@ -235,6 +247,16 @@ internal class FakeAndroid :
 
     /** `AppOpsService.setUidMode` called from outside the permission policy. */
     private fun setModeFromOutside(switch: Int, mode: Int) {
+        if (switch == ALL_FILES_OP) {
+            val before = modes[switch]
+            store(switch, mode)
+            if (modes[switch] != before) allFilesChanges++
+            if (!requestsAllFiles && switch in modes) {
+                modes.remove(switch)
+                allFilesChanges++
+            }
+            return
+        }
         updateRevokedCompat(switch, mode)
         store(switch, mode)
         if (!syncsLate) return syncOps()
@@ -301,6 +323,10 @@ internal class FakeAndroid :
         const val BACKGROUND = "android.permission.ACCESS_BACKGROUND_LOCATION"
         const val CAMERA = "android.permission.CAMERA"
 
+        /** Not a runtime permission: the app has it if it requests it and the user allows it. */
+        const val ALL_FILES = "android.permission.MANAGE_EXTERNAL_STORAGE"
+        const val ALL_FILES_OP_NAME = "android:manage_external_storage"
+
         // Not one the app requests.
         private const val BACKGROUND_CAMERA = "android.permission.BACKGROUND_CAMERA"
 
@@ -315,6 +341,7 @@ internal class FakeAndroid :
         private const val READ_CALENDAR_OP = 8
         private const val WIFI_SCAN_OP = 10
         private const val CAMERA_OP = 26
+        private const val ALL_FILES_OP = 92
 
         /** The permission each switch op stands for (`AppOpsManager.opToPermission`). */
         private val PERMISSION_OF_SWITCH = mapOf(

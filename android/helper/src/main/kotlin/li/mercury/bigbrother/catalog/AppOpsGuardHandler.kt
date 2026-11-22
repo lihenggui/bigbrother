@@ -113,9 +113,10 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
         // Written down first, so that a `release` after a failure
         // below puts back whatever was done.
         guarded[uid] = guard
-        val taken = targets.ops.count { (name, mode) -> setKnown(name, uid, mode) }
+        val holding = holdable(uid, targets.ops)
+        val taken = holding.count { (name, mode) -> setKnown(name, uid, mode) }
         // Ops this Android version doesn't have are nothing to hold.
-        if (targets.ops.keys.any(::isKnown) && taken == 0) error("the system took none of the modes")
+        if (holding.keys.any(::isKnown) && taken == 0) error("the system took none of the modes")
         // Reported first, as the check does: holding can fail.
         reportChosen(uid, chosen)
         for (permission in targets.permissions) holdKnown(uid, permission)
@@ -149,8 +150,9 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
             held = guard.held - givenBack,
             reported = guard.reported - givenBack,
         )
-        taken += targets.ops.count { (name, mode) -> setKnown(name, uid, mode) }
-        val known = command.resets.ops.any { (name, _) -> isKnown(name) } || targets.ops.keys.any(::isKnown)
+        val holding = holdable(uid, targets.ops)
+        taken += holding.count { (name, mode) -> setKnown(name, uid, mode) }
+        val known = command.resets.ops.any { (name, _) -> isKnown(name) } || holding.keys.any(::isKnown)
         if (known && taken == 0) error("the system took none of the modes")
         // Reported first, as the check does: holding can fail.
         reportChosen(uid, chosen)
@@ -304,6 +306,17 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
         (known[name] ?: taking(name).state(uid, name))?.let { name to it }
     }.toMap()
 
+    /**
+     * The ops of [targets] to hold [uid] to: all but those of a permission
+     * that is not a runtime one and that the uid does not request
+     * ([RuntimePermissionChanges.isUnrequestedAppOp]). Asked at each
+     * check, so that an update that requests one has it held.
+     */
+    private fun holdable(uid: Int, targets: Map<String, Int>): Map<String, Int> = targets.filterKeys { name ->
+        val op = ops.find { it.name == name }
+        op == null || !runtimePermissions.isUnrequestedAppOp(op, uid)
+    }
+
     /** Whether this device knows the op [name]. */
     private fun isKnown(name: String): Boolean = ops.any { it.name == name }
 
@@ -354,15 +367,16 @@ internal class AppOpsGuardHandler(private val system: AppOpsSystem) {
     private fun verify(uid: Int): List<String> {
         system.requireOwner(uid)
         val targets = guarded[uid]?.targets ?: return emptyList()
-        val again = AppOpsGuardProtocol.opsToSetAgain(states(uid), targets.ops)
+        val holding = holdable(uid, targets.ops)
+        val again = AppOpsGuardProtocol.opsToSetAgain(states(uid), holding)
         for (name in again) {
-            if (setKnown(name, uid, targets.ops.getValue(name))) {
+            if (setKnown(name, uid, holding.getValue(name))) {
                 system.emit(AppOpsGuardProtocol.revertedLine(uid, name))
             }
         }
         // Read again only when something was set again: otherwise every op
         // was found as it is held.
-        val unheld = if (again.isEmpty()) mutableListOf() else AppOpsGuardProtocol.opsToSetAgain(states(uid), targets.ops).toMutableList()
+        val unheld = if (again.isEmpty()) mutableListOf() else AppOpsGuardProtocol.opsToSetAgain(states(uid), holding).toMutableList()
         for (permission in targets.permissions) {
             try {
                 // Changed by the user while held: their choice since it was

@@ -60,6 +60,25 @@ internal class RuntimePermissionChanges(private val system: AppOpsSystem) : Taki
     }
 
     /**
+     * Whether [op] stands for a permission that is not a runtime one, such
+     * as all files access, and that no package of [uid] requests. Its op
+     * at the default keeps the data from the app already, and Android 16
+     * drops a uid mode set on it at once: holding it would only change it
+     * back and forth, and the system ends the app's processes on every
+     * change of all files access. `false` where that cannot be told.
+     */
+    fun isUnrequestedAppOp(op: GuardedOp, uid: Int): Boolean {
+        val permission = op.permission ?: return false
+        val connected = system.permissions ?: return false
+        return try {
+            runtimeOf(connected, permission) == null && connected.requesting(uid, permission).isEmpty()
+        } catch (e: Throwable) {
+            system.warn("requests of ${op.name} for $uid: ${system.describe(e)}")
+            false
+        }
+    }
+
+    /**
      * Leave the permission of [op], and its background permission, marked
      * `REVOKED_COMPAT` for [uid] only where the user had them so before
      * the uid was held ([saved] and [grantThen]), its grant having changed
