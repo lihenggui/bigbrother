@@ -68,6 +68,7 @@ internal data class BbdSandboxStatus(
     val netRecord: Boolean,
     val dnsNames: Boolean,
     val traffic: Boolean,
+    val newAppsFailed: Int = 0,
 )
 
 internal fun BbdSandboxStatus.asExternalModel(): SandboxStatus = SandboxStatus(
@@ -78,6 +79,7 @@ internal fun BbdSandboxStatus.asExternalModel(): SandboxStatus = SandboxStatus(
     uriGrantsHook = uriGrantsHook,
     adIdHook = adIdHook,
     newAppsPending = newAppsPending,
+    newAppsFailed = newAppsFailed,
     newAppsHeld = newAppsHeld,
     network = network,
     netRecord = netRecord,

@@ -53,7 +53,7 @@ use anyhow::Context as _;
 use aya::maps::{Array, HashMap as BpfHashMap, MapData, MapError, RingBuf};
 
 use super::{
-    Effect, Entry, Resumed, Status,
+    Effect, Entry, Resumed, Status, auto,
     destinations::Book,
     dirs::{self, MEDIA_RW},
     items::{Mounts, Settings},
@@ -110,6 +110,7 @@ struct Gated {
 struct Shared {
     /// The uids held at the gate.
     apps: RwLock<HashMap<u32, Gated>>,
+    auto: Arc<RwLock<auto::Admission>>,
     stats: Mutex<Stats>,
     /// False once the thread has ended.
     open: AtomicBool,
@@ -183,6 +184,7 @@ impl Storage {
 
         let shared = Arc::new(Shared {
             apps: RwLock::default(),
+            auto: Arc::default(),
             stats: Mutex::default(),
             open: AtomicBool::new(true),
             admitted: Mutex::new(None),
@@ -197,6 +199,10 @@ impl Storage {
             names: None,
             resolver_unknown: HashSet::new(),
         })
+    }
+
+    pub(super) fn auto_admission(&self) -> Arc<RwLock<auto::Admission>> {
+        self.shared.auto.clone()
     }
 
     /// Give the apps whose connections are recorded, and those kept from

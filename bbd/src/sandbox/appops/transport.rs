@@ -276,6 +276,7 @@ impl Shared {
 pub(super) fn supervise(shared: &Shared) {
     let mut failures = 0;
     let mut last_said = String::new();
+    let mut notify_restart = false;
     loop {
         {
             let mut state = shared.state();
@@ -284,13 +285,19 @@ pub(super) fn supervise(shared: &Shared) {
             }
         }
         let started = Instant::now();
-        let ended = run_helper(shared);
+        let ended = run_helper(shared, &mut notify_restart);
         // Ended on purpose: started at once when wanted again.
         if std::mem::take(&mut shared.state().dismissed) {
             failures = 0;
+            notify_restart = false;
             continue;
         }
         failures = RESTART_BACKOFF.failures_after_run(failures, started.elapsed());
+        if failures == 1 {
+            // Another crash during the same recovery must not turn a
+            // retried auto-enable into an endless series of attempts.
+            notify_restart = !shared.state().guarded.is_empty();
+        }
         // The same reason again says nothing new.
         let said = format!("{ended:#}");
         if said != last_said {
@@ -312,7 +319,7 @@ pub(super) fn supervise(shared: &Shared) {
 
 /// Run the helper until it ends, passing its answers on. Returns why it
 /// ended, which it is not meant to.
-fn run_helper(shared: &Shared) -> anyhow::Error {
+fn run_helper(shared: &Shared, notify_restart: &mut bool) -> anyhow::Error {
     let mut helper = match helper::spawn(HELPER_CLASS, std::iter::empty()) {
         Ok(helper) => helper,
         Err(e) => return e,
@@ -344,6 +351,12 @@ fn run_helper(shared: &Shared) -> anyhow::Error {
     }
     for line in BufReader::new(output).lines().map_while(Result::ok) {
         shared.receive(&line);
+        if *notify_restart && parse_unheld(&line).is_some() {
+            *notify_restart = false;
+            if let Some(wake) = shared.on_restart.get() {
+                wake();
+            }
+        }
     }
     // Closes its input, if it is still there to notice. The next helper
     // reports again on every uid it is told of.

@@ -99,6 +99,9 @@
     <plurals name="jail_status_new_apps_held">
         <item quantity="other">%d 个新安装的应用尚未隔离，已阻止其启动</item>
     </plurals>
+    <plurals name="jail_status_new_apps_failed">
+        <item quantity="other">未能隔离 %d 个新应用，这些应用可正常启动。</item>
+    </plurals>
     <plurals name="jail_status_new_apps_pending">
         <item quantity="other">%d 个新安装的应用尚未隔离</item>
     </plurals>

@@ -150,6 +150,7 @@ struct Shared {
     changed: Condvar,
     /// Called when the helper reports a permission changed by the user.
     on_found: OnceLock<Box<dyn Fn() + Send + Sync>>,
+    on_restart: OnceLock<Box<dyn Fn() + Send + Sync>>,
 }
 
 pub struct AppOps {
@@ -174,6 +175,11 @@ impl AppOps {
     pub fn on_found(&self, wake: impl Fn() + Send + Sync + 'static) {
         // The original callback belongs to the only consumer.
         let _ = self.shared.on_found.set(Box::new(wake));
+    }
+
+    /// Wake auto-isolation when a supervised restart restores helper replies.
+    pub fn on_restart(&self, wake: impl Fn() + Send + Sync + 'static) {
+        let _ = self.shared.on_restart.set(Box::new(wake));
     }
 
     /// What tells, through the helper, libraries from apps (see `auto`).
@@ -396,7 +402,8 @@ impl Effect for AppOps {
                         .map(|(_, _, values)| values)
                 },
                 |_, values| values,
-            )?
+            )
+            .map_err(super::auto::Transient)?
             .context("the app ops helper could not read the original values")?;
         (entry.saved_ops, entry.saved_permissions) = split_saved(&saved);
         Ok(())
@@ -439,7 +446,7 @@ impl Effect for AppOps {
                     .state()
                     .rollback(&Command::Release(uid).to_string());
                 self.shared.rest_if_unused();
-                failed?;
+                failed.map_err(super::auto::Transient)?;
                 anyhow::bail!("the system did not take the app ops")
             }
         }

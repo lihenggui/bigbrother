@@ -65,6 +65,7 @@ END;
 /// app installed since, already dealt with. There is a row for each package
 /// of the app id or uid. A library row is one package of an app id that the
 /// package manager has as a library, left alone while it is installed.
+/// A failed UID is left out of the start gate while awaiting a recovery event.
 const SCHEMA: &str = "
 CREATE TABLE access (
     hour     INTEGER NOT NULL,   -- unix time / 3600
@@ -145,7 +146,7 @@ CREATE TABLE sandbox_known (
     user    INTEGER NOT NULL,   -- the Android user; -1 for every user
     package TEXT    NOT NULL,   -- known while one of its packages is installed: tells it
                                 -- apart from an app given the app id after this one
-    library INTEGER NOT NULL,   -- 1: this package alone, a library
+    library INTEGER NOT NULL,   -- 0: app, 1: library, 2: failed, 3: missing profile
     PRIMARY KEY (app_id, user, package)
 ) WITHOUT ROWID;
 ";

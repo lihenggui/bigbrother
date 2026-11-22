@@ -36,6 +36,7 @@ internal fun JSONObject.toBbdSandboxStatus(): BbdSandboxStatus {
         uriGrantsHook = hook.getBoolean("uri_grants"),
         adIdHook = hook.getBoolean("ad_id"),
         newAppsPending = getInt("new_apps_pending"),
+        newAppsFailed = optInt("new_apps_failed"),
         newAppsHeld = getBoolean("new_apps_held"),
         network = getBoolean("network"),
         netRecord = getBoolean("net_record"),

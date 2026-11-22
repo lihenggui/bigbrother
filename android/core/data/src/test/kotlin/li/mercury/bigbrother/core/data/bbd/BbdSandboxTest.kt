@@ -65,7 +65,7 @@ class BbdSandboxTest {
         val status = RootShellBbdDataSource(shell, Dispatchers.Unconfined).getSandboxStatus()
 
         assertEquals(
-            BbdSandboxStatus(true, false, true, false, true, false, 2, true, true, true, false, true),
+            BbdSandboxStatus(true, false, true, false, true, false, 2, true, true, true, false, true, newAppsFailed = 1),
             status,
         )
         assertContains(shell.lines.single(), "sandbox status --json;")

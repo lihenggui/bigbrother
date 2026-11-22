@@ -261,7 +261,9 @@ impl Sandbox {
         now: i64,
     ) -> anyhow::Result<Enabled> {
         let uid = uid_of(packages, package, user)?;
-        self.enable_uid(writer, packages, package, uid, now)
+        let enabled = self.enable_uid(writer, packages, package, uid, now)?;
+        self.auto_enabled(writer, uid, package);
+        Ok(enabled)
     }
 
     pub(super) fn enable_uid(
@@ -283,10 +285,12 @@ impl Sandbox {
         let (owner, install_id) =
             self.verify_install(package, uid, before.as_ref(), &sharing, &recorded)?;
         if let Some(held) = self.snapshot_read().get(&uid) {
-            anyhow::ensure!(
-                owner.as_ref().is_some_and(|owner| owner == &held.package) && self.owns(held),
-                "the uid still has an unverified sandbox entry"
-            );
+            if !owner.as_ref().is_some_and(|owner| owner == &held.package) || !self.owns(held) {
+                return Err(auto::Transient(anyhow::anyhow!(
+                    "the uid still has an unverified sandbox entry"
+                ))
+                .into());
+            }
             return Ok(Enabled { uid, also });
         }
 
