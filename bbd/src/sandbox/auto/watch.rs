@@ -66,13 +66,18 @@ pub struct Watch {
     failed: bool,
 }
 
+#[derive(Default)]
+pub struct Change {
+    pub packages: bool,
+    profiles: bool,
+}
+
 struct Inotify {
     fd: AsyncFd<OwnedFd>,
     /// The watch of the package list's directory.
     list: i32,
     /// The watch of the directory of all users' data, and that directory.
-    users: i32,
-    users_dir: PathBuf,
+    users: Option<(i32, PathBuf)>,
     /// The watches of each user's data directory.
     user_dirs: BTreeSet<i32>,
     /// Failures already reported while this watch is armed.
@@ -80,17 +85,22 @@ struct Inotify {
 }
 
 impl Watch {
-    /// Watch `list_dir`, the package list's directory, and `users_dir`, the
-    /// users' data directories, while `on`, and stop when not. True when the
+    /// Watch the package list while `on`. Only automatic isolation also
+    /// needs to watch the users' data directories. True when the
     /// watch has just begun: what changed before it did was not seen, and is
     /// to be looked at.
-    pub fn arm(&mut self, on: bool, list_dir: &Path, users_dir: &Path) -> bool {
+    pub fn arm(&mut self, on: bool, list_dir: &Path, users_dir: Option<&Path>) -> bool {
         if !on {
             self.inotify = None;
             self.failed = false;
             return false;
         }
-        if self.inotify.is_some() || self.failed {
+        if self
+            .inotify
+            .as_ref()
+            .is_some_and(|watch| watch.users.is_some() == users_dir.is_some())
+            || self.failed
+        {
             return false;
         }
         match Inotify::new(list_dir, users_dir) {
@@ -111,7 +121,7 @@ impl Watch {
 
     /// Wait until an app may have been installed. Never, while not armed.
     /// Every event there is is read, so that one change is reported once.
-    pub async fn changed(&mut self) -> io::Result<()> {
+    pub async fn changed(&mut self) -> io::Result<Change> {
         let Some(inotify) = &mut self.inotify else {
             return std::future::pending().await;
         };
@@ -130,8 +140,9 @@ impl Watch {
                     }
                 }
             }
-            if inotify.note(&events) {
-                return Ok(());
+            let changed = inotify.note(&events);
+            if changed.packages || changed.profiles {
+                return Ok(changed);
             }
         }
     }
@@ -147,7 +158,7 @@ impl Watch {
 }
 
 impl Inotify {
-    fn new(list_dir: &Path, users_dir: &Path) -> io::Result<Self> {
+    fn new(list_dir: &Path, users_dir: Option<&Path>) -> io::Result<Self> {
         let fd = unsafe { libc::inotify_init1(libc::IN_NONBLOCK | libc::IN_CLOEXEC) };
         if fd < 0 {
             return Err(io::Error::last_os_error());
@@ -155,7 +166,9 @@ impl Inotify {
         // SAFETY: just opened, and owned by nothing else.
         let fd = unsafe { OwnedFd::from_raw_fd(fd) };
         let list = add_watch(&fd, list_dir, LIST_MASK)?;
-        let users = add_watch(&fd, users_dir, USERS_MASK)?;
+        let users = users_dir
+            .map(|dir| add_watch(&fd, dir, USERS_MASK).map(|wd| (wd, dir.to_owned())))
+            .transpose()?;
         // SAFETY: the OwnedFd owns its fd, which stays open and unchanged
         // for as long as the AsyncFd owns the OwnedFd.
         let fd = unsafe { AsyncFd::register_with_interest(fd, Interest::READABLE) }
@@ -164,7 +177,6 @@ impl Inotify {
             fd,
             list,
             users,
-            users_dir: users_dir.to_path_buf(),
             user_dirs: BTreeSet::new(),
             failed_user_dirs: BTreeSet::new(),
         };
@@ -175,7 +187,8 @@ impl Inotify {
     /// Watch the data directory of every user there is. One that cannot be
     /// watched is still covered by the package list and the gate.
     fn watch_users(&mut self) {
-        let users: Vec<Vec<u8>> = std::fs::read_dir(&self.users_dir)
+        let Some((_, path)) = &self.users else { return };
+        let users: Vec<Vec<u8>> = std::fs::read_dir(path)
             .into_iter()
             .flatten()
             .flatten()
@@ -191,7 +204,8 @@ impl Inotify {
         if !is_user {
             return;
         }
-        let dir = self.users_dir.join(std::ffi::OsStr::from_bytes(name));
+        let Some((_, path)) = &self.users else { return };
+        let dir = path.join(std::ffi::OsStr::from_bytes(name));
         match add_watch(self.fd.get_ref(), &dir, USER_MASK) {
             Ok(wd) => {
                 self.user_dirs.insert(wd);
@@ -205,29 +219,29 @@ impl Inotify {
         }
     }
 
-    /// Take in `events`, and say whether an app may have been installed.
-    fn note(&mut self, events: &[Event]) -> bool {
-        let mut installed = false;
+    fn note(&mut self, events: &[Event]) -> Change {
+        let mut changed = Change::default();
         for event in events {
             if event.mask & libc::IN_Q_OVERFLOW != 0 {
                 // Any of what was lost may have been an install, or a new
                 // user.
                 self.watch_users();
-                installed = true;
+                changed.packages = true;
+                changed.profiles |= self.users.is_some();
             } else if event.mask & libc::IN_IGNORED != 0 {
                 // A user removed: the kernel dropped the watch.
                 self.user_dirs.remove(&event.wd);
             } else if event.wd == self.list {
-                installed |= event.name == PACKAGE_LIST;
-            } else if event.wd == self.users {
+                changed.packages |= event.name == PACKAGE_LIST;
+            } else if self.users.as_ref().is_some_and(|(wd, _)| event.wd == *wd) {
                 self.watch_user(&event.name);
-                installed = true;
+                changed.profiles = true;
             } else if self.user_dirs.contains(&event.wd) {
                 // The directory itself changing says nothing.
-                installed |= !event.name.is_empty();
+                changed.profiles |= !event.name.is_empty();
             }
         }
-        installed
+        changed
     }
 }
 
@@ -366,7 +380,7 @@ mod tests {
     async fn a_failed_user_watch_is_reported_once_and_can_still_be_added() {
         let f = Fixture::new("auto-watch-failure");
         let (system, users) = layout(&f);
-        let mut watch = Inotify::new(&system, &users).unwrap();
+        let mut watch = Inotify::new(&system, Some(&users)).unwrap();
         let watched = watch.user_dirs.len();
 
         watch.watch_user(b"10");
@@ -380,13 +394,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_package_only_watch_ignores_profile_changes() {
+        let f = Fixture::new("gate-package-watch");
+        let (system, users) = layout(&f);
+        let mut watch = Watch::default();
+        assert!(watch.arm(true, &system, None));
+        std::fs::create_dir(users.join("0/com.example.new")).unwrap();
+        assert!(!reports(&mut watch).await);
+
+        std::fs::write(system.join("packages.list"), "x").unwrap();
+        let change = tokio::time::timeout(Duration::from_secs(2), watch.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(change.packages);
+        assert!(!change.profiles);
+    }
+
+    #[tokio::test]
     async fn installs_are_seen_in_the_list_and_the_data_directories() {
         let f = Fixture::new("auto-watch");
         let (system, users) = layout(&f);
         let mut watch = Watch::default();
-        assert!(!watch.arm(false, &system, &users));
-        assert!(watch.arm(true, &system, &users));
-        assert!(!watch.arm(true, &system, &users));
+        assert!(!watch.arm(false, &system, Some(&users)));
+        assert!(watch.arm(true, &system, Some(&users)));
+        assert!(!watch.arm(true, &system, Some(&users)));
         assert!(watch.armed());
 
         // As Android writes the list: a new file renamed over the old one.
@@ -423,13 +455,13 @@ mod tests {
         std::fs::remove_dir_all(users.join("10")).unwrap();
         assert!(!reports(&mut watch).await);
 
-        assert!(!watch.arm(false, &system, &users));
+        assert!(!watch.arm(false, &system, Some(&users)));
         assert!(!watch.armed());
         // What cannot be watched is given up on until turned off and on.
-        assert!(!watch.arm(true, &f.dir.join("absent"), &users));
-        assert!(!watch.arm(true, &system, &users));
-        watch.arm(false, &system, &users);
-        assert!(watch.arm(true, &system, &users));
+        assert!(!watch.arm(true, &f.dir.join("absent"), Some(&users)));
+        assert!(!watch.arm(true, &system, Some(&users)));
+        watch.arm(false, &system, Some(&users));
+        assert!(watch.arm(true, &system, Some(&users)));
     }
 
     #[test]
@@ -443,7 +475,7 @@ mod tests {
             .unwrap();
         let (renamed, seen) = runtime.block_on(async {
             let mut watch = Watch::default();
-            assert!(watch.arm(true, &system, &users));
+            assert!(watch.arm(true, &system, Some(&users)));
             // Two writes of the list, the second while the first is being
             // looked at.
             let writer = {
@@ -499,7 +531,7 @@ mod tests {
         let mut sandbox = f.sandbox();
         sandbox.set_auto(&f.writer, &mut f.packages, true).unwrap();
         let mut watch = Watch::default();
-        assert!(watch.arm(true, &f.dir, &f.user_data()));
+        assert!(watch.arm(true, &f.dir, Some(&f.user_data())));
         let new_two = "com.example.two 10231 0 /d default:targetSdkVersion=35 none 0 1 1 @null";
 
         // The list first: the app is installed for no user yet.

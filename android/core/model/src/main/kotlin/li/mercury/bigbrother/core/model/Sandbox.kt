@@ -139,6 +139,10 @@ enum class SandboxItem(val id: String) {
 enum class SandboxPart(val id: String) {
     /** Mounts made as the app starts. */
     MOUNTS("mounts"),
+    MOUNT_START_FAILED("mount_start_failed"),
+    MOUNT_SETUP_FAILED("mount_setup_failed"),
+    MOUNT_TIMED_OUT("mount_timed_out"),
+    MOUNT_LAUNCH_REFUSED("mount_launch_refused"),
 
     /** The app's app ops, held by the daemon. */
     APP_OPS("app_ops"),
@@ -280,14 +284,29 @@ data class SandboxStatus(
     fun unmet(item: SandboxItem): Set<SandboxPart> = item.parts.filterTo(mutableSetOf()) { part ->
         when (part) {
             SandboxPart.MOUNTS -> !gate
+
+            SandboxPart.MOUNT_START_FAILED,
+            SandboxPart.MOUNT_SETUP_FAILED,
+            SandboxPart.MOUNT_TIMED_OUT,
+            SandboxPart.MOUNT_LAUNCH_REFUSED,
+            -> false
+
             SandboxPart.APP_OPS -> !appOps
+
             SandboxPart.APP_OPS_UNKNOWN -> false
+
             SandboxPart.ANDROID_ID_HOOK -> !androidIdHook
+
             SandboxPart.APP_LIST_HOOK -> !appListHook
+
             SandboxPart.URI_GRANTS_HOOK -> !uriGrantsHook
+
             SandboxPart.AD_ID_HOOK -> !adIdHook
+
             SandboxPart.PACKET_FILTER -> !network
+
             SandboxPart.DNS_NAMES -> !dnsNames
+
             SandboxPart.RECORDING -> !netRecord
         }
     }

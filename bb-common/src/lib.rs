@@ -473,6 +473,10 @@ assert_no_padding!(GateEvent {
 });
 
 impl GateEvent {
+    pub fn process_key(&self) -> [u32; 3] {
+        [self.pid, self.start_low, self.start_high]
+    }
+
     pub fn at_ns(&self) -> u64 {
         u64::from(self.at_ns_high) << 32 | u64::from(self.at_ns_low)
     }
@@ -509,12 +513,12 @@ pub const GATE_NEW: u32 = 1;
 /// A recording cover can be placed while the app is already running.
 pub const GATE_RECORD: u32 = 2;
 
-/// How long the daemon may leave a stopped process waiting before the kernel
-/// side takes it to be stuck and refuses further starts requiring the
-/// gate (see `GATE_WAITING_SINCE` in bb-ebpf).
-pub const GATE_STALE_NS: u64 = 3_000_000_000;
-/// Stored in place of a time once the daemon's gate thread has ended.
-pub const GATE_CLOSED: u64 = 1;
+/// Credential-encrypted storage may have become accessible.
+pub const GATE_STORAGE_READY: u32 = 3;
+/// The kernel could not stop a start that needed the gate.
+pub const GATE_MISSED: u32 = 4;
+
+pub const GATE_WAIT_NS: u64 = 3_000_000_000;
 
 /// Android multi-user layout: uid = user_id * PER_USER_RANGE + app_id.
 pub const PER_USER_RANGE: u32 = 100_000;

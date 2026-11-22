@@ -334,8 +334,7 @@ pub(super) fn socket_id(path: &str) -> io::Result<SocketId> {
     Ok((metadata.dev(), metadata.ino()))
 }
 
-/// The socket served by this generation. Holding the guard through a
-/// bind mount prevents that mount from racing the sweep at relay shutdown.
+/// The socket served by this generation.
 #[derive(Clone, Default)]
 pub struct Serving(Arc<Mutex<Option<SocketId>>>);
 
@@ -346,6 +345,11 @@ impl Serving {
 
     pub(super) fn socket(&self) -> MutexGuard<'_, Option<SocketId>> {
         lock(&self.0)
+    }
+
+    #[cfg(test)]
+    pub(super) fn listening(id: SocketId) -> Self {
+        Self(Arc::new(Mutex::new(Some(id))))
     }
 
     pub fn stop(&self) -> bool {

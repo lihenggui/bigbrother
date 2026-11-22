@@ -20,7 +20,7 @@
 //! Several packages can share one app_id (sharedUserId).
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     fs,
     time::{Duration, Instant},
 };
@@ -54,6 +54,9 @@ pub struct Packages {
     from_system: HashSet<u32>,
     loaded_at: Option<Instant>,
 }
+
+#[derive(Default)]
+pub struct PackageVersions(HashMap<String, (u32, Option<u64>)>);
 
 impl Packages {
     pub fn new(source: impl Into<String>) -> Self {
@@ -122,6 +125,19 @@ impl Packages {
         self.app_id_by_name
             .get(package)
             .and_then(|(_, version)| *version)
+    }
+
+    /// Compare snapshots taken at package-list events so that an unrelated
+    /// refresh cannot consume the update before its event is handled.
+    pub fn updated_app_ids(&self, previous: &mut PackageVersions) -> BTreeSet<u32> {
+        let mut updated = BTreeSet::new();
+        for (name, current) in &self.app_id_by_name {
+            if previous.0.get(name).is_some_and(|old| old != current) {
+                updated.insert(current.0);
+            }
+        }
+        previous.0.clone_from(&self.app_id_by_name);
+        updated
     }
 
     /// Every app id in the list as it was last read, with its packages.
@@ -222,6 +238,27 @@ fn came_with_system(fields: &[&str]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_package_update_reports_only_the_changed_app_id() {
+        let mut packages = Packages::new("/dev/null");
+        let mut previous = PackageVersions::default();
+        let initial = parse(
+            "com.example.a 10100 0 /d default none 0 1\ncom.example.b 10101 0 /d default none 0 2",
+        );
+        packages.app_id_by_name = initial.app_id_by_name;
+        assert!(packages.updated_app_ids(&mut previous).is_empty());
+
+        let updated = parse(
+            "com.example.a 10100 0 /d default none 0 3\ncom.example.b 10101 0 /d default none 0 2",
+        );
+        packages.app_id_by_name = updated.app_id_by_name;
+        assert_eq!(
+            packages.updated_app_ids(&mut previous),
+            BTreeSet::from([10100])
+        );
+        assert!(packages.updated_app_ids(&mut previous).is_empty());
+    }
 
     #[test]
     fn parses_shared_uids_and_skips_garbage() {

@@ -516,6 +516,14 @@ pub(super) fn record_here(serving: SocketId) -> io::Result<()> {
     cover_here(Cover::Relay)
 }
 
+pub(super) fn uncover_recording_here(serving: SocketId) -> io::Result<()> {
+    // The socket can disappear when the relay closes.
+    if socket_id(SOCKET).ok() == Some(serving) {
+        uncover_here()?;
+    }
+    Ok(())
+}
+
 /// Put `cover` on the socket in the namespace the calling thread is in,
 /// where nothing is on it.
 pub fn cover_here(cover: Cover) -> io::Result<()> {

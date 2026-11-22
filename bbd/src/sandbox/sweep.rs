@@ -42,21 +42,56 @@
 //! and leaves the app in the stopped state, where it gets no broadcasts
 //! until the user opens it.
 
-use std::{fs, os::unix::fs::MetadataExt as _, path::Path};
+use std::{collections::HashMap, fs, os::unix::fs::MetadataExt as _, path::Path};
 
 use super::{
     Effect, Entry, Resumed, dirs,
+    gate::MountReadiness,
     items::{Mounts, Settings},
     mounts,
 };
 use crate::{
-    proc::Process,
+    proc::{Process, parse_stat, uid_of_pid},
     sandbox_item::{Item, Mode},
 };
 
 /// Ends an app's processes as it enters or leaves the sandbox. The last of
 /// the effects: by then everything the next start will find is in place.
-pub struct Restart;
+#[derive(Default)]
+pub struct Restart {
+    gate: Option<MountReadiness>,
+    resumed: HashMap<u32, (String, Mounts)>,
+}
+
+impl Restart {
+    pub fn new(gate: MountReadiness) -> Self {
+        Self {
+            gate: Some(gate),
+            resumed: HashMap::new(),
+        }
+    }
+
+    fn ready(&self, entry: &Entry, mounts: Mounts) -> bool {
+        self.gate
+            .as_ref()
+            .is_some_and(|gate| gate.ready(entry, mounts))
+    }
+
+    pub(super) fn resume_with(&mut self, apps: &[Resumed], mut restart: impl FnMut(&Entry, Which)) {
+        for app in apps {
+            let entry = &app.entry;
+            let mounts = app.items.mounts();
+            if !mounts.any() || !self.ready(entry, mounts) {
+                continue;
+            }
+            let policy = (entry.install_id.clone(), mounts);
+            if self.resumed.get(&entry.uid) != Some(&policy) {
+                self.resumed.insert(entry.uid, policy);
+                restart(entry, Which::Lacking(mounts));
+            }
+        }
+    }
+}
 
 impl Effect for Restart {
     fn name(&self) -> &'static str {
@@ -66,17 +101,23 @@ impl Effect for Restart {
     fn enable(&mut self, entry: &mut Entry, _: &[String], items: &Settings) -> anyhow::Result<()> {
         // What the app read before is gone with the processes that hold it.
         // Those that started since the gate held them have their mounts.
-        if items.mounts().any() {
-            end(entry, Which::Lacking(items.mounts()));
+        let mounts = items.mounts();
+        if mounts.any() {
+            if self.ready(entry, mounts) {
+                end(entry, Which::Lacking(mounts), || self.ready(entry, mounts));
+                self.resumed
+                    .insert(entry.uid, (entry.install_id.clone(), mounts));
+            }
         } else if items.any_held_by_a_process() {
-            end(entry, Which::All);
+            end(entry, Which::All, || true);
         }
         Ok(())
     }
 
     fn disable(&mut self, entry: &mut Entry, _: &[String], items: &Settings) -> anyhow::Result<()> {
+        self.resumed.remove(&entry.uid);
         if items.any_held_by_a_process() {
-            end(entry, Which::All);
+            end(entry, Which::All, || true);
         }
         Ok(())
     }
@@ -93,25 +134,53 @@ impl Effect for Restart {
                 && before.mode(item) == Mode::Off
                 && after.mode(item) != Mode::Off
         });
-        if before.mounts() != after.mounts() || turned_on {
-            end(entry, Which::All);
+        let mounts = after.mounts();
+        if (before.mounts() != mounts || turned_on) && (!mounts.any() || self.ready(entry, mounts))
+        {
+            end(entry, Which::All, || {
+                !mounts.any() || self.ready(entry, mounts)
+            });
+            self.resumed
+                .insert(entry.uid, (entry.install_id.clone(), mounts));
         }
         Ok(())
     }
 
     fn resume(&mut self, apps: &[Resumed]) {
-        for app in apps.iter().filter(|app| app.items.mounts().any()) {
-            end(&app.entry, Which::Lacking(app.items.mounts()));
+        let gate = self.gate.clone();
+        self.resume_with(apps, |entry, which| {
+            let Which::Lacking(mounts) = which else {
+                return;
+            };
+            end(entry, which, || {
+                gate.as_ref().is_some_and(|gate| gate.ready(entry, mounts))
+            });
+        });
+    }
+
+    fn storage_ready(&mut self, apps: &[Resumed]) {
+        for app in apps {
+            let mounts = app.items.mounts();
+            if mounts.storage && self.ready(&app.entry, mounts) {
+                end(&app.entry, Which::StandIn, || {
+                    self.ready(&app.entry, mounts)
+                });
+            }
         }
+    }
+
+    fn forget(&mut self, uid: u32) {
+        self.resumed.remove(&uid);
     }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Which {
+pub(super) enum Which {
     All,
     /// Those without the given mounts: started without the gate holding
     /// them.
     Lacking(Mounts),
+    StandIn,
 }
 
 /// Most passes over the processes for one uid, and the pause between two.
@@ -121,22 +190,37 @@ const PASS_PAUSE: std::time::Duration = std::time::Duration::from_millis(20);
 /// End processes of `uid`, looking again until a pass finds none to end:
 /// one may fork while the others are being ended, or have been about to
 /// take the uid when it was looked for.
-fn end(entry: &Entry, which: Which) {
+fn end(entry: &Entry, which: Which, ready: impl Fn() -> bool) {
     let uid = entry.uid;
-    // Looked up once: it is the same for every process of the uid. If it
-    // cannot be, a process with its sandbox is ended too, and gets it again
-    // as it starts.
-    let sandboxes = dirs::sandboxes_name(Path::new(&mounts::media_of(uid))).unwrap_or_else(|e| {
-        eprintln!("bbd: warning: looking up the sandbox directory: {e}");
+    let media = mounts::media_of(uid);
+    let media = Path::new(&media);
+    let real_storage = matches!(
+        which,
+        Which::StandIn | Which::Lacking(Mounts { storage: true, .. })
+    ) && dirs::open_sandbox(media, uid, &format!("{uid}-{}", entry.install_id))
+        .is_ok();
+    if which == Which::StandIn && !real_storage {
+        return;
+    }
+    let sandboxes = if matches!(which, Which::Lacking(Mounts { storage: true, .. })) {
+        dirs::sandboxes_name(media).unwrap_or_else(|e| {
+            eprintln!("bbd: warning: looking up the sandbox directory: {e}");
+            None
+        })
+    } else {
         None
-    });
-    for pass in 0..PASSES {
+    };
+    let passes = if which == Which::StandIn { 1 } else { PASSES };
+    for pass in 0..passes {
+        if !ready() {
+            break;
+        }
         if pass > 0 {
             std::thread::sleep(PASS_PAUSE);
         }
-        // Twice at least: what was just about to take the uid is not seen
-        // the first time.
-        if end_once(entry, which, sandboxes.as_deref()) == 0 && pass > 0 {
+        // A process about to take the UID may have been missed in the
+        // first pass of a policy change.
+        if end_once(entry, which, sandboxes.as_deref(), real_storage, &ready) == 0 && pass > 0 {
             break;
         }
     }
@@ -145,7 +229,13 @@ fn end(entry: &Entry, which: Which) {
 /// One pass; returns how many were ended. A process that cannot be looked
 /// at has ended already. `sandboxes` is the name of the directory of the
 /// sandboxes, if it could be found.
-fn end_once(entry: &Entry, which: Which, sandboxes: Option<&str>) -> u32 {
+fn end_once(
+    entry: &Entry,
+    which: Which,
+    sandboxes: Option<&str>,
+    real_storage: bool,
+    ready: &impl Fn() -> bool,
+) -> u32 {
     let uid = entry.uid;
     let Ok(processes) = fs::read_dir("/proc") else {
         return 0;
@@ -160,7 +250,11 @@ fn end_once(entry: &Entry, which: Which, sandboxes: Option<&str>) -> u32 {
             continue;
         };
         // The directory of a process belongs to the user it runs as.
-        let runs_as = |uid: u32| process.metadata().is_ok_and(|meta| meta.uid() == uid);
+        let runs_as = |uid: u32| {
+            process.metadata().is_ok_and(|meta| {
+                meta.uid() == uid || (meta.uid() == 0 && uid_of_pid(pid as u32) == Some(uid))
+            })
+        };
         if !runs_as(uid) {
             continue;
         }
@@ -173,13 +267,19 @@ fn end_once(entry: &Entry, which: Which, sandboxes: Option<&str>) -> u32 {
         if !runs_as(uid) {
             continue;
         }
-        let to_end = match which {
-            Which::All => true,
-            Which::Lacking(wanted) => fs::read_to_string(format!("/proc/{pid}/mountinfo"))
-                .map_or(true, |mountinfo| {
-                    !has_mounts(&mountinfo, uid, sandboxes, &entry.install_id, wanted)
-                }),
-        };
+        if matches!(which, Which::Lacking(_))
+            && fs::read_to_string(format!("/proc/{pid}/stat"))
+                .ok()
+                .and_then(|stat| parse_stat(&stat)?.state_and_parent())
+                .is_some_and(|(state, _)| state == 'T')
+        {
+            // The gate may still be installing this start's mounts.
+            continue;
+        }
+        let to_end = which == Which::All
+            || fs::read_to_string(format!("/proc/{pid}/mountinfo")).is_ok_and(|mountinfo| {
+                needs_restart(&mountinfo, entry, which, sandboxes, real_storage)
+            });
         if to_end
             && matches!(
                 dirs::matches_install(
@@ -190,6 +290,7 @@ fn end_once(entry: &Entry, which: Which, sandboxes: Option<&str>) -> u32 {
                 ),
                 Ok(true)
             )
+            && ready()
             && held.signal(libc::SIGKILL).is_ok()
         {
             ended += 1;
@@ -198,19 +299,30 @@ fn end_once(entry: &Entry, which: Which, sandboxes: Option<&str>) -> u32 {
     ended
 }
 
-/// Whether a process with these mounts (`/proc/<pid>/mountinfo`) of `uid`
-/// has those the sandbox gives it as `wanted` says. What else it has is
-/// not looked at: a mount on `/proc/cpuinfo` may be the system's, or
-/// another module's, in every app.
-fn has_mounts(
+fn needs_restart(
     mountinfo: &str,
-    uid: u32,
+    entry: &Entry,
+    which: Which,
     sandboxes: Option<&str>,
-    installation: &str,
-    wanted: Mounts,
+    real_storage: bool,
 ) -> bool {
-    (!wanted.storage || has_sandbox(mountinfo, uid, sandboxes, installation))
-        && (!wanted.cpu_info || has_cpu_info(mountinfo))
+    match which {
+        Which::All => true,
+        Which::Lacking(wanted) => {
+            (wanted.storage
+                && !has_sandbox(
+                    mountinfo,
+                    entry.uid,
+                    sandboxes,
+                    &entry.install_id,
+                    !real_storage,
+                ))
+                || (wanted.cpu_info && !has_cpu_info(mountinfo))
+        }
+        Which::StandIn => {
+            real_storage && has_sandbox(mountinfo, entry.uid, None, &entry.install_id, true)
+        }
+    }
 }
 
 /// Whether a process with these mounts has something mounted on
@@ -231,33 +343,46 @@ fn has_cpu_info(mountinfo: &str) -> bool {
 /// A line is `<id> <parent> <dev> <root> <mount point> <options> ... -
 /// <type> <source> ...`, where the root is the mounted directory's path in
 /// its own filesystem.
-fn has_sandbox(mountinfo: &str, uid: u32, sandboxes: Option<&str>, installation: &str) -> bool {
+fn has_sandbox(
+    mountinfo: &str,
+    uid: u32,
+    sandboxes: Option<&str>,
+    installation: &str,
+    allow_stand_in: bool,
+) -> bool {
     let storage = mounts::storage_root_of(uid);
     let directory = sandboxes.map(|name| format!("/{name}/{uid}-{installation}"));
-    mountinfo.lines().any(|line| {
-        let mut fields = line.split(' ');
-        let (Some(root), Some(mount_point), Some(options)) =
-            (fields.nth(3), fields.next(), fields.next())
-        else {
-            return false;
-        };
-        if mount_point != storage {
-            return false;
-        }
-        let mut after_separator = fields.skip_while(|field| *field != "-").skip(1);
-        let (fstype, super_options) = (after_separator.next(), after_separator.nth(1));
-        let stand_in = fstype == Some("tmpfs")
-            && options.split(',').any(|option| option == "ro")
-            && super_options.is_some_and(|super_options| {
-                super_options
-                    .split(',')
-                    .any(|option| option == mounts::STAND_IN_SIZE)
-            });
-        stand_in
-            || directory
-                .as_deref()
-                .is_some_and(|directory| root.ends_with(directory))
-    })
+    mountinfo
+        .lines()
+        .rev()
+        .find_map(|line| {
+            let mut fields = line.split(' ');
+            let (Some(root), Some(mount_point), Some(options)) =
+                (fields.nth(3), fields.next(), fields.next())
+            else {
+                return None;
+            };
+            if mount_point != storage {
+                return None;
+            }
+            let mut after_separator = fields.skip_while(|field| *field != "-").skip(1);
+            let (fstype, super_options) = (after_separator.next(), after_separator.nth(1));
+            let stand_in = root == "/"
+                && fstype == Some("tmpfs")
+                && options.split(',').any(|option| option == "ro")
+                && super_options.is_some_and(|super_options| {
+                    super_options
+                        .split(',')
+                        .any(|option| option == mounts::STAND_IN_SIZE)
+                });
+            Some(
+                (allow_stand_in && stand_in)
+                    || directory
+                        .as_deref()
+                        .is_some_and(|directory| root.ends_with(directory)),
+            )
+        })
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -269,8 +394,73 @@ mod tests {
         2101 2100 0:96 / /storage/emulated rw,nosuid,nodev,noexec,noatime master:30 - fuse /dev/fuse rw,lazytime,user_id=0,group_id=0,allow_other\n\
         2102 2101 254:48 /media/0/Android/data/com.app /storage/emulated/0/Android/data/com.app rw,nosuid,nodev,noatime master:1 - ext4 /dev/block/dm-48 rw,seclabel\n";
 
+    fn has_sandbox(mountinfo: &str, uid: u32, sandboxes: Option<&str>, installation: &str) -> bool {
+        super::has_sandbox(mountinfo, uid, sandboxes, installation, true)
+    }
+
+    fn has_mounts(
+        mountinfo: &str,
+        uid: u32,
+        sandboxes: Option<&str>,
+        installation: &str,
+        wanted: Mounts,
+    ) -> bool {
+        (!wanted.storage || has_sandbox(mountinfo, uid, sandboxes, installation))
+            && (!wanted.cpu_info || has_cpu_info(mountinfo))
+    }
+
     const INSTALLATION: &str = "a03066efd0d34a02991a2cc106c71680";
     const SANDBOXES: Option<&str> = Some(".5f0c9a2e");
+
+    fn storage_app() -> Resumed {
+        Resumed {
+            entry: Entry {
+                uid: 10100,
+                package: "com.example.app".into(),
+                install_id: INSTALLATION.into(),
+                enabled: true,
+                android_id: String::new(),
+                saved_ops: String::new(),
+                saved_permissions: String::new(),
+                created: 0,
+                settings: String::new(),
+            },
+            packages: Vec::new(),
+            items: Settings::default(),
+        }
+    }
+
+    #[test]
+    fn resuming_with_an_unavailable_gate_never_restarts_a_mounted_app() {
+        let app = storage_app();
+        assert!(app.items.mounts().any());
+        let mut restarted = Vec::new();
+        Restart::default().resume_with(&[app], |entry, _| restarted.push(entry.uid));
+        assert!(restarted.is_empty());
+    }
+
+    #[test]
+    fn unlocking_restarts_only_a_verified_stand_in_when_real_storage_is_ready() {
+        let entry = storage_app().entry;
+        let stand_in = format!(
+            "{ZYGOTE_MOUNTS}2200 2101 0:120 / /storage/emulated/0 ro,relatime - tmpfs tmpfs ro,size=4k,mode=555\n"
+        );
+        let real = format!(
+            "{ZYGOTE_MOUNTS}2200 2101 254:48 /media/0/.5f0c9a2e/10100-{INSTALLATION} /storage/emulated/0 rw - ext4 /dev/block/dm-48 rw\n"
+        );
+        let needed =
+            |mountinfo, ready| needs_restart(mountinfo, &entry, Which::StandIn, SANDBOXES, ready);
+        assert!(!needed(&stand_in, false));
+        assert!(needed(&stand_in, true));
+        assert!(!needed(&real, true));
+        assert!(!needed(ZYGOTE_MOUNTS, true));
+        let startup = Which::Lacking(Mounts {
+            storage: true,
+            cpu_info: false,
+        });
+        assert!(!needs_restart(&stand_in, &entry, startup, None, false));
+        assert!(needs_restart(&stand_in, &entry, startup, SANDBOXES, true));
+    }
 
     #[test]
     fn a_process_with_the_sandbox_over_its_storage_is_sandboxed() {
