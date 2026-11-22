@@ -42,8 +42,14 @@ class BbdSandboxTest {
         assertEquals(2, app.networkRules)
         assertEquals(true, app.appOpsChecking)
         assertEquals(mapOf(SandboxItem.CAMERA to SandboxMode.OFF), app.settings)
-        assertEquals(mapOf(SandboxItem.CAMERA to SandboxMode.OFF), app.items)
-        assertEquals(mapOf(SandboxItem.CAMERA to setOf(SandboxPart.APP_OPS)), app.unmet)
+        assertEquals(
+            mapOf(SandboxItem.CAMERA to SandboxMode.OFF, SandboxItem.NETWORK_RECORD to SandboxMode.ON),
+            app.items,
+        )
+        assertEquals(
+            mapOf(SandboxItem.CAMERA to setOf(SandboxPart.APP_OPS), SandboxItem.NETWORK_RECORD to setOf(SandboxPart.DNS_NAMES)),
+            app.unmet,
+        )
         assertNull(app.recordingSince)
         assertContains(shell.lines.single(), "sandbox list --json;")
     }

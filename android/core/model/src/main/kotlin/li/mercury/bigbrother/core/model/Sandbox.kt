@@ -160,6 +160,8 @@ enum class SandboxPart(val id: String) {
 
     /** The kernel's packet filter, refusing the app's connections. */
     PACKET_FILTER("packet_filter"),
+
+    DNS_NAMES("dns_names"),
     ;
 
     companion object {
@@ -264,6 +266,7 @@ data class SandboxStatus(
             SandboxPart.URI_GRANTS_HOOK -> !uriGrantsHook
             SandboxPart.AD_ID_HOOK -> !adIdHook
             SandboxPart.PACKET_FILTER -> !network
+            SandboxPart.DNS_NAMES -> !dnsNames
         }
     }
 

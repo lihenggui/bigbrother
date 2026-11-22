@@ -16,7 +16,7 @@
 //! user has the connections recorded of connected to, an hour at a time,
 //! and the destinations each app is kept from.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use rusqlite::{Transaction, params};
 
@@ -258,6 +258,17 @@ impl Reader {
     /// The destinations `uid` is kept from, oldest first.
     pub fn net_rules(&self, uid: u32) -> anyhow::Result<Vec<NetRule>> {
         net_rules(self.connection(), Some(uid))
+    }
+
+    /// Preserve resolver covers for name rules and any future rule kind
+    /// that an offline reader cannot classify as an address rule.
+    pub fn net_uids_with_non_address_rules(&self) -> anyhow::Result<HashSet<u32>> {
+        let mut stmt = self
+            .connection()
+            .prepare("SELECT DISTINCT uid FROM net_rule WHERE target NOT GLOB 'ip:*'")?;
+        Ok(stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<_, _>>()?)
     }
 
     /// Since when the connections of each uid are recorded.

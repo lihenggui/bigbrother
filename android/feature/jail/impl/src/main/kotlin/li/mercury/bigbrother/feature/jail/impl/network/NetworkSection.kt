@@ -118,7 +118,14 @@ internal fun LazyListScope.networkSection(
         )
     }
     item(key = SandboxItem.NETWORK_RECORD.id) {
-        RecordRow(recording, app.recordingSince, actions.onSetRecording, index = 1, count = count)
+        RecordRow(
+            recording,
+            app.recordingSince,
+            namesUnavailable = SandboxPart.DNS_NAMES in app.unmet[SandboxItem.NETWORK_RECORD].orEmpty(),
+            actions.onSetRecording,
+            index = 1,
+            count = count,
+        )
     }
     // Always an item, so the row can grow in and out as recording is switched.
     item(key = "network_activity") {
@@ -185,13 +192,20 @@ internal fun LazyListScope.globalNetworkSection(
  * long, or since when. The whole row toggles it, at once.
  */
 @Composable
-private fun RecordRow(recording: Boolean, since: Long?, onCheckedChange: (Boolean) -> Unit, index: Int, count: Int) {
+private fun RecordRow(
+    recording: Boolean,
+    since: Long?,
+    namesUnavailable: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    index: Int,
+    count: Int,
+) {
     SegmentedSwitchRow(
         title = stringResource(R.string.jail_network_record),
-        summary = if (recording && since != null) {
-            stringResource(R.string.jail_network_recording_since, timeWithDateIfNotToday(since))
-        } else {
-            stringResource(R.string.jail_network_record_summary)
+        summary = when {
+            recording && namesUnavailable -> stringResource(R.string.jail_net_names_missing_title)
+            recording && since != null -> stringResource(R.string.jail_network_recording_since, timeWithDateIfNotToday(since))
+            else -> stringResource(R.string.jail_network_record_summary)
         },
         checked = recording,
         onCheckedChange = onCheckedChange,

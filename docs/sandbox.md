@@ -232,10 +232,9 @@ read of the switch for [newly installed apps](#newly-installed-apps).
 
 A start is held for a few milliseconds.
 
-A start that cannot be given its sandbox is killed, never let through; the
-system starts the app again when it is next wanted. If the daemon's thread
-is stuck for more than three seconds, or has ended, the kernel side kills
-such starts by itself. Other apps are not affected in either case.
+A start that cannot be given a required mount is killed. If the daemon's
+thread is stuck for more than three seconds or has ended, the kernel
+refuses those starts. A recording cover by itself never holds the app.
 
 The thread has no timer: with no sandboxed app starting, it does not run.
 
@@ -392,9 +391,11 @@ Where an app connects is recorded once `network_record` is on for it, and
 of no other app: the probes that report connections drop destinations on
 the internet in the kernel unless the app is listed. A row is an hour in
 which the app connected to a port of an address, under the name it was
-given the address for, with how many connections were tried and how many
-the sandbox refused. An app has rows for some hundreds of destinations
-in an hour; what it connects to past them is counted together. When a TCP
+given the address for when the app uses the relay, with how many connections
+were tried and how many the sandbox refused. Without a relay cover, the
+connections are recorded by address and port. An app has rows for some
+hundreds of destinations in an hour; what it connects to past them is
+counted together. When a TCP
 connection ends, the kernel's own counts
 of the bytes sent and received over it are read once and added to the row;
 nothing is counted packet by packet, and other protocols have connection
@@ -429,10 +430,10 @@ which an app's are: in one that shares them, it would take the resolver
 from every process. It shows among the app's own mounts as `/null` of
 `/dev`.
 
-An app whose connections are recorded, or that is kept from a name, is
-given a socket of the daemon's in place of netd's, in the same way, and
-the daemon stands between the two. It passes each request on to netd on a
-connection made with the app's uid as the effective one, so that netd
+A sandboxed app whose connections are recorded or that is kept from a
+name can use the daemon's socket in place of netd's. The daemon passes
+each allowed request on to
+netd on a connection made with the app's uid as the effective one, so netd
 chooses the network of the app and not of the daemon, and passes the
 answer back; it remembers which name the app was given each address for,
 and does not ask for a name the app is kept from. One request is taken on
@@ -441,11 +442,23 @@ an app connect to it without a rule added to the policy, is open to the
 group netd's is open to, and serves only the apps given it, a few lookups
 of each at once: any process can find the socket, and an app kept from the
 network is to have no resolver at all. Where
-the daemon's domain may not label a socket so, names are not available:
-`bbd sandbox status` says so, connections are recorded under addresses,
-and an app cannot be kept from a name. While there is no daemon, the
-lookups of these apps fail; the daemon that starts next gives their
-processes its own socket.
+the daemon's domain may not label a socket so, `bbd sandbox status`
+reports name rules as unavailable. With the gate in place, a saved
+name rule keeps DNS blocked while its relay is unavailable. The next
+daemon replaces the cover when it can serve lookups.
+
+For an app that uses the relay only to record connections, the cover is
+optional. When recording is the only reason for telling the gate about a
+start, the process keeps running as the cover is placed. An early lookup
+can go directly to Android. A failed recording cover leaves lookups to
+Android. If the relay stops serving, its covers are removed from those
+running apps. If the daemon exits abruptly, the supervisor reads the
+saved policies and detaches optional covers before it waits to restart
+the daemon or gives up. The next daemon keeps a cover only if it leads
+to its own live listener, replaces a stale cover if the relay is
+serving, or removes the optional cover if the relay is unavailable.
+`bbd sandbox list` reports missing domain names under `network_record`
+when the app has no working relay.
 
 On a kernel where starting apps cannot be held, the resolver is left to
 the app; `bbd sandbox list` then names the mounts as missing for
@@ -529,9 +542,8 @@ minutes.
 - The packet filter's rules stay when the daemon stops or dies, with the
   uids listed then, and are written again by the one that starts next. They
   do not outlast a restart of the device: until the daemon has started, an
-  app has the network. The resolver stays covered in the processes that
-  have it so; one that started while there was no daemon is given the
-  mount by the daemon that starts next.
+  app has the network. Required resolver covers stay in place when the
+  daemon stops. The next daemon reconciles the covers of running apps.
 - Isolated processes of a sandboxed app (a service declared
   `isolatedProcess`, a WebView renderer) run under uids of their own and
   are not given the mounts. Android gives them no shared storage, no

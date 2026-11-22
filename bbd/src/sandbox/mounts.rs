@@ -125,11 +125,23 @@ pub fn apply<S: Sys>(
     }
     sys.replace_files(files)
         .context("replacing kernel information files")?;
-    if resolver != Cover::None {
-        sys.cover_resolver(resolver)
-            .context("covering the resolver's socket")?;
-    }
+    apply_resolver(resolver, false, |cover| sys.cover_resolver(cover))?;
     Ok(())
+}
+
+pub(super) fn apply_resolver(
+    cover: Cover,
+    optional: bool,
+    mount: impl FnOnce(Cover) -> io::Result<()>,
+) -> anyhow::Result<bool> {
+    if cover == Cover::None {
+        return Ok(false);
+    }
+    match mount(cover) {
+        Ok(()) => Ok(true),
+        Err(_) if optional => Ok(false),
+        Err(e) => Err(e).context("covering the resolver's socket"),
+    }
 }
 
 /// The storage part of [`apply`].
@@ -417,6 +429,7 @@ mod tests {
         storage: Vec<&'static str>,
         /// What binding the sandbox fails with, if it is to fail.
         bind_error: Option<i32>,
+        relay_error: Option<i32>,
         symlink_at: Option<&'static str>,
     }
 
@@ -426,6 +439,11 @@ mod tests {
 
         fn cover_resolver(&mut self, cover: Cover) -> io::Result<()> {
             self.steps.push(format!("cover the resolver: {cover:?}"));
+            if cover == Cover::Relay
+                && let Some(error) = self.relay_error
+            {
+                return Err(io::Error::from_raw_os_error(error));
+            }
             Ok(())
         }
 
@@ -583,6 +601,33 @@ mod tests {
         );
         sys.steps.clear();
         assert!(sys.steps.is_empty());
+    }
+
+    #[test]
+    fn a_missing_relay_mount_admits_recording_only_but_refuses_name_rules() {
+        use crate::sandbox::{gate::resolver_cover, items::Settings};
+        use crate::sandbox_item::{Item, Mode};
+
+        let mut items = Settings::default();
+        items.set(Item::NetworkRecord, Some(Mode::On)).unwrap();
+        let mut sys = Recorder {
+            relay_error: Some(libc::ENOENT),
+            ..Default::default()
+        };
+
+        let recording = resolver_cover(&items, true, false, true);
+        assert_eq!(recording, crate::sandbox::gate::Resolver::Record);
+        assert!(!apply_resolver(Cover::Relay, true, |cover| sys.cover_resolver(cover)).unwrap());
+        assert_eq!(sys.steps, ["cover the resolver: Relay"]);
+
+        let names = resolver_cover(&items, true, true, true);
+        assert_eq!(names, crate::sandbox::gate::Resolver::Names);
+        let error = apply(&mut sys, 10100, &[], &[], false, Cover::Relay).unwrap_err();
+        assert_eq!(error.to_string(), "covering the resolver's socket");
+        assert_eq!(
+            sys.steps,
+            ["cover the resolver: Relay", "cover the resolver: Relay"]
+        );
     }
 
     #[test]

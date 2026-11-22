@@ -33,9 +33,9 @@
 //! first, either way, and the processes the app has are gone through
 //! after.
 //!
-//! An app whose connections are recorded, or that is kept from names, is
-//! given the daemon's own socket in place of netd's. The daemon passes
-//! its lookups on.
+//! An app kept from names or whose connections are recorded can use the
+//! daemon's socket. When recording is the only reason for the cover,
+//! an unavailable relay leaves netd's socket in place.
 //!
 //! A connection the app opened before and kept is not closed by this.
 //!
@@ -48,7 +48,7 @@
 //! `/dev`, which names nothing of the sandbox.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     ffi::CString,
     fs::{self, File},
     io,
@@ -58,8 +58,8 @@ use std::{
 
 use anyhow::Context as _;
 
-use super::{Entry, dirs};
-use crate::proc::Process;
+use super::{Entry, dirs, items::Settings, items_of, names::Serving};
+use crate::{proc::Process, store::Reader};
 
 /// Where netd listens for the lookups of apps.
 pub const SOCKET: &str = "/dev/socket/dnsproxyd";
@@ -112,10 +112,23 @@ impl Cover {
     }
 }
 
-/// What is on the socket in a namespace with these mounts: `Some` of a
-/// cover (none included), or `None` for a mount that is none of them, as
-/// the socket of a daemon that has ended is.
-pub fn found(mountinfo: &str) -> Option<Cover> {
+pub(super) type SocketId = (u64, u64);
+
+pub(super) fn socket_id(path: &str) -> io::Result<SocketId> {
+    let metadata = fs::metadata(path)?;
+    Ok((metadata.dev(), metadata.ino()))
+}
+
+/// The old relay's file may still be linked if its replacement could not
+/// start. Both forms of the mount belong to us.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Mounted {
+    Known(Cover),
+    StaleRelay,
+    Other,
+}
+
+fn found(mountinfo: &str) -> Mounted {
     // The last mount on the point is the one in view.
     let Some(root) = mountinfo
         .lines()
@@ -123,13 +136,55 @@ pub fn found(mountinfo: &str) -> Option<Cover> {
         .filter_map(|line| line.split(' ').nth(3))
         .next_back()
     else {
-        return Some(Cover::None);
+        return Mounted::Known(Cover::None);
     };
-    // The root of a mount of one file is the file's path in its
-    // filesystem, which for both is the one mounted at `/dev`.
-    [Cover::Null, Cover::Relay]
-        .into_iter()
-        .find(|cover| cover.source().and_then(|path| path.strip_prefix("/dev")) == Some(root))
+    let dev_path = |path: &'static str| path.strip_prefix("/dev");
+    if dev_path(STAND_IN) == Some(root) {
+        Mounted::Known(Cover::Null)
+    } else if dev_path(RELAY_SOCKET) == Some(root) {
+        Mounted::Known(Cover::Relay)
+    } else if dev_path(RELAY_SOCKET) == root.strip_suffix("//deleted") {
+        Mounted::StaleRelay
+    } else {
+        Mounted::Other
+    }
+}
+
+enum Change {
+    Set(Cover),
+    Record(Serving),
+    RemoveRelay,
+}
+
+impl Change {
+    /// If the namespace needs a change, whether to detach the old mount
+    /// first and what to put in its place.
+    fn plan(
+        &self,
+        mounted: Mounted,
+        serving: Option<SocketId>,
+        covered: Option<SocketId>,
+    ) -> anyhow::Result<Option<(bool, Cover)>> {
+        let cover = match *self {
+            Self::Set(cover) if mounted == Mounted::Known(cover) => return Ok(None),
+            Self::Set(cover) => cover,
+            Self::Record(_) if serving.is_some() && serving == covered => return Ok(None),
+            Self::Record(_) if serving.is_some() => Cover::Relay,
+            Self::Record(_) if mounted == Mounted::Known(Cover::None) => return Ok(None),
+            Self::Record(_) => Cover::None,
+            Self::RemoveRelay => {
+                return Ok(
+                    matches!(mounted, Mounted::Known(Cover::Relay) | Mounted::StaleRelay)
+                        .then_some((true, Cover::None)),
+                );
+            }
+        };
+        anyhow::ensure!(
+            mounted != Mounted::Other,
+            "a different mount covers the resolver's socket"
+        );
+        Ok(Some((mounted != Mounted::Known(Cover::None), cover)))
+    }
 }
 
 /// Whether a mount made on the socket in a namespace with these mounts
@@ -160,10 +215,56 @@ pub fn spreads(mountinfo: &str) -> Option<bool> {
 /// directory with no other, and one that cannot come back is left behind
 /// rather than returned to the daemon.
 pub fn set(entry: &Entry, cover: Cover) -> anyhow::Result<()> {
-    let entry = entry.clone();
+    change(vec![(entry.clone(), Change::Set(cover))]).map(|_| ())
+}
+
+/// A failed optional bind leaves Android's socket in place. Failure to
+/// remove the previous cover is returned to the caller separately.
+pub(super) fn record(entry: &Entry, relay: &Serving) -> anyhow::Result<bool> {
+    change(vec![(entry.clone(), Change::Record(relay.clone()))])
+}
+
+pub(super) fn optional_cover(items: &Settings, has_name_rules: bool) -> bool {
+    !items.network_refused() && !has_name_rules
+}
+
+/// Recover DNS after the supervisor has reaped the daemon. Only the
+/// committed policies can still require a resolver cover.
+pub fn detach_recording_covers(db: &Path) -> anyhow::Result<()> {
+    if !db.try_exists().context("checking for sandbox policy")? {
+        return Ok(());
+    }
+    let entries = offline_recording_covers(db).map_err(|_| {
+        anyhow::anyhow!("cannot read committed sandbox policy for resolver cleanup")
+    })?;
+    remove_old_relays(entries.into_iter())
+}
+
+fn offline_recording_covers(db: &Path) -> anyhow::Result<Vec<Entry>> {
+    let reader = Reader::open(db)?;
+    let global = Settings::parse(&reader.sandbox_global()?);
+    let protected = reader.net_uids_with_non_address_rules()?;
+    Ok(reader
+        .sandbox_entries()?
+        .into_iter()
+        .filter(|entry| {
+            entry.enabled
+                && optional_cover(&items_of(entry, &global), protected.contains(&entry.uid))
+        })
+        .collect())
+}
+
+pub(super) fn remove_old_relays(entries: impl Iterator<Item = Entry>) -> anyhow::Result<()> {
+    change(entries.map(|entry| (entry, Change::RemoveRelay)).collect()).map(|_| ())
+}
+
+fn change(entries: Vec<(Entry, Change)>) -> anyhow::Result<bool> {
+    if entries.is_empty() {
+        return Ok(true);
+    }
     std::thread::Builder::new()
         .name("resolver".into())
-        .spawn(move || in_namespaces(&entry, cover))
+        .spawn(move || in_namespaces(entries))
         .context("starting the thread")?
         .join()
         .map_err(|_| anyhow::anyhow!("the thread ended early"))?
@@ -175,7 +276,7 @@ fn identity(namespace: &File) -> io::Result<(u64, u64)> {
     Ok((meta.dev(), meta.ino()))
 }
 
-fn in_namespaces(entry: &Entry, cover: Cover) -> anyhow::Result<()> {
+fn in_namespaces(entries: Vec<(Entry, Change)>) -> anyhow::Result<bool> {
     if unsafe { libc::unshare(libc::CLONE_FS) } != 0 {
         return Err(io::Error::last_os_error()).context("unshare(CLONE_FS)");
     }
@@ -187,33 +288,55 @@ fn in_namespaces(entry: &Entry, cover: Cover) -> anyhow::Result<()> {
         identity(&home)?,
         identity(&File::open("/proc/1/ns/mnt").context("opening the first namespace")?)?,
     ];
-    // The uid may have gone to another app since.
-    if !dirs::matches_install(
-        Path::new("/data/user_de"),
-        &entry.package,
-        entry.uid,
-        &entry.install_id,
-    )? {
-        return Ok(());
+    let mut changes = HashMap::new();
+    for (entry, change) in entries {
+        // The uid may have gone to another app since.
+        match dirs::matches_install(
+            Path::new("/data/user_de"),
+            &entry.package,
+            entry.uid,
+            &entry.install_id,
+        ) {
+            Ok(true) => {
+                changes.insert(entry.uid, change);
+            }
+            Ok(false) => {}
+            Err(e) if matches!(change, Change::RemoveRelay) => {
+                eprintln!("bbd: sandbox: cannot verify installation for resolver cleanup: {e}");
+            }
+            Err(e) => return Err(e.into()),
+        }
     }
+    if changes.is_empty() {
+        return Ok(false);
+    }
+    let mut complete = true;
     for pass in 0..PASSES {
         if pass > 0 {
             std::thread::sleep(PASS_PAUSE);
         }
         // Twice at least: what was just about to take the uid is not seen
         // the first time.
-        if pass_once(entry.uid, cover, &home, &kept)? == 0 && pass > 0 {
+        let (changed, recorded) = pass_once(&changes, &home, &kept)?;
+        complete &= recorded;
+        if changed == 0 && pass > 0 {
             break;
         }
     }
-    Ok(())
+    Ok(complete)
 }
 
-/// One pass over the processes of `uid`; how many namespaces were changed.
-/// A process that cannot be looked at has ended.
-fn pass_once(uid: u32, cover: Cover, home: &File, kept: &[(u64, u64)]) -> anyhow::Result<u32> {
+/// One pass over the processes of the selected UIDs. A process that
+/// cannot be looked at has ended.
+fn pass_once(
+    changes: &HashMap<u32, Change>,
+    home: &File,
+    kept: &[(u64, u64)],
+) -> anyhow::Result<(u32, bool)> {
     let mut seen = HashSet::new();
     let mut changed = 0;
+    let mut complete = true;
+    let mut record_error = None;
     for process in fs::read_dir("/proc")
         .context("listing the processes")?
         .flatten()
@@ -226,16 +349,17 @@ fn pass_once(uid: u32, cover: Cover, home: &File, kept: &[(u64, u64)]) -> anyhow
             continue;
         };
         // The directory of a process belongs to the user it runs as.
-        let runs_as = |uid: u32| process.metadata().is_ok_and(|meta| meta.uid() == uid);
-        if !runs_as(uid) {
+        let owner = || process.metadata().ok().map(|meta| meta.uid());
+        let Some(uid) = owner() else { continue };
+        let Some(change) = changes.get(&uid) else {
             continue;
-        }
+        };
         // Held open, then looked at again: what is read of the pid from
         // here on is of this process, or it has ended.
         let Ok(held) = Process::open(pid) else {
             continue;
         };
-        if !runs_as(uid) {
+        if owner() != Some(uid) {
             continue;
         }
         let Ok(theirs) = File::open(format!("/proc/{pid}/ns/mnt")) else {
@@ -253,27 +377,68 @@ fn pass_once(uid: u32, cover: Cover, home: &File, kept: &[(u64, u64)]) -> anyhow
         if kept.contains(&namespace) || !seen.insert(namespace) {
             continue;
         }
-        let has = found(&mountinfo);
-        if has == Some(cover) {
-            continue;
-        }
-        anyhow::ensure!(
-            spreads(&mountinfo) == Some(false),
-            "a process of the app shares its mounts with others"
-        );
-        enter(&theirs).context("entering a namespace")?;
-        let done = (|| -> io::Result<()> {
-            if has != Some(Cover::None) {
-                uncover_here()?;
+        let mounted = found(&mountinfo);
+        let record = matches!(change, Change::Record(_));
+        let plan = if record {
+            // The visible socket's inode is read after entering the namespace.
+            None
+        } else {
+            let Some(plan) = change.plan(mounted, None, None)? else {
+                continue;
+            };
+            Some(plan)
+        };
+        let enter_target = || -> anyhow::Result<()> {
+            anyhow::ensure!(
+                spreads(&mountinfo) == Some(false),
+                "a process of the app shares its mounts with others"
+            );
+            enter(&theirs).context("entering a namespace")
+        };
+        let done = match enter_target() {
+            Ok(()) => {
+                let mounted = (|| -> anyhow::Result<bool> {
+                    if let Change::Record(relay) = change {
+                        let serving = relay.socket();
+                        let covered = socket_id(SOCKET).ok();
+                        let Some((detach, cover)) = change.plan(mounted, *serving, covered)? else {
+                            return Ok(false);
+                        };
+                        if detach {
+                            uncover_here()?;
+                        }
+                        if let Some(id) = serving.filter(|_| cover == Cover::Relay)
+                            && record_here(id).is_err()
+                        {
+                            complete = false;
+                            return Ok(detach);
+                        }
+                    } else if let Some((detach, cover)) = plan {
+                        if detach {
+                            uncover_here()?;
+                        }
+                        cover_here(cover)?;
+                    }
+                    Ok(true)
+                })();
+                // A thread that cannot come back must stop visiting namespaces.
+                enter(home).context("returning from a namespace")?;
+                mounted.context("changing what is at the resolver's socket")
             }
-            cover_here(cover)
-        })();
-        // A thread that cannot come back ends here, with the change.
-        enter(home).context("returning from a namespace")?;
-        done.context("changing what is at the resolver's socket")?;
-        changed += 1;
+            Err(e) => Err(e),
+        };
+        match done {
+            Ok(used) => changed += u32::from(used),
+            Err(e) if record => {
+                record_error.get_or_insert(e);
+            }
+            Err(e) if matches!(change, Change::RemoveRelay) => {
+                eprintln!("bbd: sandbox: cannot remove an old resolver relay: {e:#}");
+            }
+            Err(e) => return Err(e),
+        }
     }
-    Ok(changed)
+    record_error.map_or(Ok((changed, complete)), Err)
 }
 
 fn enter(namespace: &File) -> io::Result<()> {
@@ -281,6 +446,16 @@ fn enter(namespace: &File) -> io::Result<()> {
         return Err(io::Error::last_os_error());
     }
     Ok(())
+}
+
+pub(super) fn record_here(serving: SocketId) -> io::Result<()> {
+    if socket_id(RELAY_SOCKET)? != serving {
+        return Err(io::Error::other("the relay socket changed"));
+    }
+    if socket_id(SOCKET).ok() == Some(serving) {
+        return Ok(());
+    }
+    cover_here(Cover::Relay)
 }
 
 /// Put `cover` on the socket in the namespace the calling thread is in,
@@ -329,28 +504,158 @@ mod tests {
 
     #[test]
     fn what_is_on_the_socket_is_told_by_what_is_mounted_there() {
-        assert_eq!(found(APP), Some(Cover::None));
-        assert_eq!(found(""), Some(Cover::None));
+        assert_eq!(found(APP), Mounted::Known(Cover::None));
+        assert_eq!(found(""), Mounted::Known(Cover::None));
         let with = |root: &str| {
             format!(
                 "{APP}19010 16380 0:18 {root} /dev/socket/dnsproxyd rw,nosuid,relatime master:2 - tmpfs tmpfs rw,seclabel\n"
             )
         };
-        assert_eq!(found(&with("/null")), Some(Cover::Null));
-        assert_eq!(found(&with("/socket/dnsproxyd_relay")), Some(Cover::Relay));
+        assert_eq!(found(&with("/null")), Mounted::Known(Cover::Null));
+        assert_eq!(
+            found(&with("/socket/dnsproxyd_relay")),
+            Mounted::Known(Cover::Relay)
+        );
         // The socket of a daemon that has ended, or anything else.
-        assert_eq!(found(&with("/socket/dnsproxyd_relay//deleted")), None);
-        assert_eq!(found(&with("/zero")), None);
+        assert_eq!(
+            found(&with("/socket/dnsproxyd_relay//deleted")),
+            Mounted::StaleRelay
+        );
+        assert_eq!(found(&with("/zero")), Mounted::Other);
         // Another socket, or a directory that only begins the same.
         let other = format!(
             "{APP}19010 16380 0:18 /null /dev/socket/dnsproxyd2 rw master:2 - tmpfs tmpfs rw\n"
         );
-        assert_eq!(found(&other), Some(Cover::None));
+        assert_eq!(found(&other), Mounted::Known(Cover::None));
         // The last mounted there is the one in view.
         let twice = format!("{}{}", with("/null"), with("/socket/dnsproxyd_relay"))
             .replacen(APP, "", 1)
             .replacen(APP, "", 1);
-        assert_eq!(found(&twice), Some(Cover::Relay));
+        assert_eq!(found(&twice), Mounted::Known(Cover::Relay));
+    }
+
+    #[test]
+    fn offline_cleanup_preserves_covers_required_by_saved_rules() {
+        use super::super::tests::Fixture;
+        use crate::store::net::RuleChange;
+
+        let fixture = Fixture::new("offline-recording-covers");
+        let writer = &fixture.writer;
+        writer
+            .put_sandbox_global(&[("network", "on"), ("network_record", "on")])
+            .unwrap();
+        for uid in 10100..=10107 {
+            let settings = match uid {
+                10105 => "",
+                10107 => "network=off,network_record=off",
+                _ => "network=off",
+            };
+            writer
+                .put_sandbox(&Entry {
+                    package: format!("com.example.app{uid}"),
+                    install_id: format!("installation-{uid}"),
+                    uid,
+                    enabled: uid != 10104,
+                    android_id: format!("{uid:016x}"),
+                    saved_ops: String::new(),
+                    saved_permissions: String::new(),
+                    created: 1,
+                    settings: settings.into(),
+                })
+                .unwrap();
+        }
+        for (uid, target) in [
+            (10101, "host:t.example.com"),
+            (10102, "domain:example.com"),
+            (10103, "ip:203.0.113.7:443"),
+            (10106, "future:example.com"),
+        ] {
+            writer
+                .change_net_rule(
+                    uid,
+                    target,
+                    RuleChange::Block {
+                        created: 1,
+                        manual: true,
+                    },
+                    || Ok(()),
+                )
+                .unwrap();
+        }
+
+        let selected = offline_recording_covers(&fixture.dir.join("bb.db")).unwrap();
+        assert_eq!(
+            selected.iter().map(|entry| entry.uid).collect::<Vec<_>>(),
+            [10100, 10103, 10107]
+        );
+        assert_eq!(
+            Change::RemoveRelay
+                .plan(Mounted::Known(Cover::Relay), None, None)
+                .unwrap(),
+            Some((true, Cover::None))
+        );
+    }
+
+    #[test]
+    fn restart_uncovers_linked_and_deleted_relays_without_a_listener() {
+        let plan = Change::RemoveRelay;
+        for root in [
+            "/socket/dnsproxyd_relay",
+            "/socket/dnsproxyd_relay//deleted",
+        ] {
+            let mounts = format!("{APP}19010 16380 0:18 {root} {SOCKET} rw - tmpfs tmpfs rw\n");
+            assert_eq!(
+                plan.plan(found(&mounts), None, None).unwrap(),
+                Some((true, Cover::None))
+            );
+        }
+        for root in ["/null", "/zero", "/socket/dnsproxyd_relay_other"] {
+            let mounts = format!("{APP}19010 16380 0:18 {root} {SOCKET} rw - tmpfs tmpfs rw\n");
+            assert_eq!(plan.plan(found(&mounts), None, None).unwrap(), None);
+        }
+        assert_eq!(plan.plan(found(APP), None, None).unwrap(), None);
+    }
+
+    #[test]
+    fn recording_keeps_only_the_listener_of_this_generation() {
+        let record = Change::Record(Serving::default());
+        let this = Some((1, 2));
+        let previous = Some((1, 1));
+        assert_eq!(
+            record
+                .plan(Mounted::Known(Cover::Relay), this, this)
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            record
+                .plan(Mounted::Known(Cover::Relay), this, previous)
+                .unwrap(),
+            Some((true, Cover::Relay))
+        );
+        assert_eq!(
+            record
+                .plan(Mounted::Known(Cover::Relay), None, previous)
+                .unwrap(),
+            Some((true, Cover::None))
+        );
+        assert_eq!(
+            record.plan(Mounted::StaleRelay, None, previous).unwrap(),
+            Some((true, Cover::None))
+        );
+    }
+
+    #[test]
+    fn restart_replaces_a_deleted_relay_when_names_are_still_blocked() {
+        let plan = Change::Set(Cover::Relay);
+        assert_eq!(
+            plan.plan(Mounted::StaleRelay, None, None).unwrap(),
+            Some((true, Cover::Relay))
+        );
+        assert_eq!(
+            plan.plan(Mounted::Known(Cover::Relay), None, None).unwrap(),
+            None
+        );
     }
 
     #[test]

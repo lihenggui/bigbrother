@@ -221,6 +221,7 @@ pub enum Part {
     UriGrantsHook,
     AdIdHook,
     PacketFilter,
+    DnsNames,
 }
 
 impl Part {
@@ -233,6 +234,7 @@ impl Part {
             Part::UriGrantsHook => "uri_grants_hook",
             Part::AdIdHook => "ad_id_hook",
             Part::PacketFilter => "packet_filter",
+            Part::DnsNames => "dns_names",
         }
     }
 }
@@ -247,6 +249,7 @@ pub struct InPlace {
     pub uri_grants_hook: bool,
     pub ad_id_hook: bool,
     pub packet_filter: bool,
+    pub dns_names: bool,
 }
 
 /// What the sandbox mounts in an app's namespace as it starts.
@@ -466,6 +469,9 @@ impl Settings {
             if item == Item::Network && !parts.packet_filter {
                 missing.push(Part::PacketFilter);
             }
+            if item == Item::NetworkRecord && !parts.dns_names {
+                missing.push(Part::DnsNames);
+            }
             if !missing.is_empty() {
                 unmet.insert(item, missing);
             }
@@ -605,6 +611,25 @@ mod tests {
     }
 
     #[test]
+    fn recording_reports_when_dns_names_are_unavailable() {
+        let mut items = Settings::default();
+        for item in Item::ALL {
+            items.set(item, Some(Mode::Off)).unwrap();
+        }
+        items.set(Item::NetworkRecord, Some(Mode::On)).unwrap();
+        let unmet = items.unmet(&InPlace::default(), |_| true);
+        assert_eq!(
+            serde_json::to_value(unmet).unwrap(),
+            serde_json::json!({"network_record": ["dns_names"]})
+        );
+        let names = InPlace {
+            dns_names: true,
+            ..InPlace::default()
+        };
+        assert!(items.unmet(&names, |_| true).is_empty());
+    }
+
+    #[test]
     fn an_item_is_in_effect_only_with_all_its_parts() {
         let all = InPlace {
             mounts: true,
@@ -613,6 +638,7 @@ mod tests {
             uri_grants_hook: true,
             ad_id_hook: true,
             packet_filter: true,
+            dns_names: true,
         };
         let items = Settings::all_on();
         assert!(items.unmet(&all, |_| true).is_empty());
@@ -683,6 +709,7 @@ mod tests {
             uri_grants_hook: true,
             ad_id_hook: true,
             packet_filter: true,
+            dns_names: true,
         };
         assert!(items.unmet(&all, |_| true).is_empty());
         let unmet = items.unmet(&all, |name| name != SCREEN_ACCESS);

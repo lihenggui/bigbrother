@@ -147,10 +147,11 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         permissions,
         net_cleared,
     };
-    recording
+    let outcome = recording
         .run_loop(requests.as_ref(), opts.retention_days, &mut binder)
-        .await?;
-    shutdown(&opts, &probes, &mut binder, sandbox, &mut recording).await
+        .await;
+    let stopped = shutdown(&opts, &probes, &mut binder, sandbox, &mut recording).await;
+    outcome.and(stopped)
 }
 
 fn adopt_sensor_sessions(writer: &Writer) -> anyhow::Result<sensors::Sensors> {
