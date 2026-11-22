@@ -38,6 +38,10 @@ internal class MainActivityViewModel @Inject constructor(
     firstLaunch: FirstLaunchRepository,
 ) : ViewModel() {
     private val showGuide = MutableStateFlow<Boolean?>(null)
+
+    /** Whether this session may still show the guide, read before the claim below settles it. */
+    val mayShowGuide: Boolean = firstLaunch.isUnclaimed()
+
     val uiState: StateFlow<MainActivityUiState> = combine(
         userDataRepository.userData,
         showGuide.filterNotNull(),

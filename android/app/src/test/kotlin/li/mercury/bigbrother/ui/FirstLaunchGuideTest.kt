@@ -81,12 +81,12 @@ class FirstLaunchGuideTest {
     }
 
     @Test
-    fun givenThirdPage_whenAnimatingToLastPage_thenStartWaitsForThePageToSettle() {
+    fun givenSecondPage_whenAnimatingToLastPage_thenStartWaitsForTheLastPage() {
         compose.setContent {
             BigBrotherTheme {
                 FirstLaunchGuide(
                     onDismiss = {},
-                    pager = rememberPagerState(initialPage = GuidePage.Jail.ordinal) { GuidePage.entries.size },
+                    pager = rememberPagerState(initialPage = GuidePage.Timeline.ordinal) { GuidePage.entries.size },
                 )
             }
         }
@@ -100,7 +100,7 @@ class FirstLaunchGuideTest {
     }
 
     @Test
-    fun givenGuideInProgress_whenRestored_thenContinuesAndFinishesOnFourthPage() {
+    fun givenGuideInProgress_whenRestored_thenContinuesAndFinishesOnThirdPage() {
         var dismissed = 0
         val restoration = StateRestorationTester(compose)
         restoration.setContent {
@@ -111,8 +111,6 @@ class FirstLaunchGuideTest {
         visible(R.string.guide_timeline_title)
         click(R.string.guide_next)
         visible(R.string.guide_jail_title)
-        click(R.string.guide_next)
-        visible(R.string.guide_framework_title)
         click(R.string.guide_start)
         compose.runOnIdle { assertEquals(1, dismissed) }
     }
@@ -132,14 +130,21 @@ class FirstLaunchGuideTest {
     }
 
     @Test
-    fun givenFrameworkPage_whenWindowSizeChanges_thenProtectionsAndSetupAreVisible() {
-        for (device in listOf(DefaultTestDevices.PHONE, DefaultTestDevices.TABLET)) {
-            compose.captureForDevice(device.description, device.spec, "FirstLaunchFramework") {
-                FirstLaunchGuide(
-                    onDismiss = {},
-                    pager = rememberPagerState(initialPage = GuidePage.Framework.ordinal) { GuidePage.entries.size },
-                )
-            }
+    fun givenFirstPage_whenShownInDarkTheme_thenTheSearchlightMatchesItsDesign() {
+        val device = DefaultTestDevices.PHONE
+        compose.captureForDevice(device.description, device.spec, "FirstLaunchAccessDark", darkMode = true) {
+            FirstLaunchGuide(onDismiss = {})
+        }
+    }
+
+    @Test
+    fun givenJailPage_whenShownOnTablet_thenArtAndCopyAreSideBySide() {
+        val device = DefaultTestDevices.TABLET
+        compose.captureForDevice(device.description, device.spec, "FirstLaunchJail") {
+            FirstLaunchGuide(
+                onDismiss = {},
+                pager = rememberPagerState(initialPage = GuidePage.Jail.ordinal) { GuidePage.entries.size },
+            )
         }
     }
 
