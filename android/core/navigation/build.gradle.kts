@@ -22,6 +22,7 @@ plugins {
 
 android {
     namespace = "li.mercury.bigbrother.core.navigation"
+    testOptions.unitTests.isIncludeAndroidResources = true
 }
 
 dependencies {
@@ -33,4 +34,8 @@ dependencies {
     implementation(libs.androidx.compose.runtime)
     implementation(libs.androidx.lifecycle.viewModel.navigation3)
     implementation(libs.androidx.savedstate.compose)
+
+    testImplementation(libs.kotlin.test.junit)
+    testImplementation(libs.robolectric)
+    testImplementation(projects.core.screenshotTesting)
 }
