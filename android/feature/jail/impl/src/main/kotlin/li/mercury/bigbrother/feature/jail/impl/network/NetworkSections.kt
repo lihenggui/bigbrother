@@ -60,6 +60,7 @@ import li.mercury.bigbrother.core.designsystem.component.ShapedIcon
 import li.mercury.bigbrother.core.model.NetworkActivity
 import li.mercury.bigbrother.core.ui.MenuFilterChip
 import li.mercury.bigbrother.core.ui.MenuOption
+import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.core.ui.timeWithDateIfNotToday
 import li.mercury.bigbrother.feature.jail.impl.R
 import li.mercury.bigbrother.feature.jail.impl.SandboxWarningCard
@@ -77,6 +78,7 @@ internal fun LazyListScope.notices(activity: NetworkActivity, actions: NetworkAc
                 containerColor = MaterialTheme.colorScheme.secondaryContainer,
                 contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
                 action = stringResource(R.string.jail_net_start) to { actions.onSetRecording(true) },
+                modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
             )
         }
     }
@@ -88,6 +90,7 @@ internal fun LazyListScope.notices(activity: NetworkActivity, actions: NetworkAc
                 body = stringResource(R.string.jail_net_no_network_body),
                 containerColor = MaterialTheme.colorScheme.tertiaryContainer,
                 contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
             )
         }
     }
@@ -96,7 +99,7 @@ internal fun LazyListScope.notices(activity: NetworkActivity, actions: NetworkAc
             SandboxWarningCard(
                 title = stringResource(R.string.jail_net_names_missing_title),
                 body = stringResource(R.string.jail_net_names_missing_body),
-                modifier = Modifier.padding(bottom = 8.dp),
+                modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme).padding(bottom = 8.dp),
             )
         }
     }
@@ -110,10 +113,11 @@ private fun NoticeCard(
     body: String,
     containerColor: Color,
     contentColor: Color,
+    modifier: Modifier = Modifier,
     action: Pair<String, () -> Unit>? = null,
 ) {
     Surface(
-        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+        modifier = modifier.fillMaxWidth().padding(bottom = 8.dp),
         shape = MaterialTheme.shapes.large,
         color = containerColor,
         contentColor = contentColor,
@@ -133,9 +137,9 @@ private fun NoticeCard(
 
 /** Recording, with nothing recorded yet: since when, and no empty chart. */
 @Composable
-internal fun Empty(since: Long) {
+internal fun Empty(since: Long, modifier: Modifier = Modifier) {
     Column(
-        Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 48.dp),
+        modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 48.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -155,10 +159,10 @@ internal fun Empty(since: Long) {
  * Choosing another range cross-fades it rather than growing the bars.
  */
 @Composable
-internal fun Summary(state: NetworkActivityUiState, activity: NetworkActivity, onSelect: (Long?) -> Unit) {
+internal fun Summary(state: NetworkActivityUiState, activity: NetworkActivity, onSelect: (Long?) -> Unit, modifier: Modifier = Modifier) {
     val totals = state.totals
     val numbers = NumberFormat.getIntegerInstance()
-    Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceBright, modifier = Modifier.fillMaxWidth()) {
+    Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceBright, modifier = modifier.fillMaxWidth()) {
         val enter = fadeIn(MaterialTheme.motionScheme.defaultEffectsSpec())
         val exit = fadeOut(MaterialTheme.motionScheme.fastEffectsSpec())
         AnimatedContent(
@@ -215,9 +219,9 @@ internal fun Summary(state: NetworkActivityUiState, activity: NetworkActivity, o
 
 /** The chosen period, the blocked filter and the order. */
 @Composable
-internal fun Filters(state: NetworkActivityUiState, actions: NetworkActivityActions) {
+internal fun Filters(state: NetworkActivityUiState, actions: NetworkActivityActions, modifier: Modifier = Modifier) {
     Row(
-        Modifier
+        modifier
             .fillMaxWidth()
             .horizontalScroll(rememberScrollState())
             .padding(top = 8.dp),
@@ -262,8 +266,8 @@ private val DestinationSort.label: Int
     }
 
 @Composable
-internal fun ShowAll(count: Int, onClick: () -> Unit) {
-    TextButton(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+internal fun ShowAll(count: Int, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    TextButton(onClick = onClick, modifier = modifier.fillMaxWidth()) {
         Text(stringResource(R.string.jail_net_show_all, count))
         Spacer(Modifier.size(6.dp))
         Icon(Icons.Outlined.ExpandMore, contentDescription = null)

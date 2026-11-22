@@ -186,7 +186,8 @@ private fun LazyListScope.recordHistorySection(state: RecordUiState, fromPermiss
             BigBrotherLoadingIndicator(Modifier.animatedRow(this, MaterialTheme.motionScheme).fillMaxWidth().padding(vertical = 24.dp))
         }
     } else {
-        itemsIndexed(periods, key = { index, _ -> "period:$index" }) { index, period ->
+        val keys = periodKeys(periods)
+        itemsIndexed(periods, key = { index, _ -> keys[index] }) { index, period ->
             PeriodItem(period, fromPermissions, index, periods.size, Modifier.animatedRow(this, MaterialTheme.motionScheme))
         }
         if (state.partialHistory) {
@@ -199,6 +200,20 @@ private fun LazyListScope.recordHistorySection(state: RecordUiState, fromPermiss
                 )
             }
         }
+    }
+}
+
+/**
+ * Keys that stay with a period when newer ones are added above it, so that
+ * the rows move rather than change. Periods alike in every field are told
+ * apart by their order among themselves.
+ */
+private fun periodKeys(periods: List<AccessPeriod>): List<String> {
+    val seen = HashMap<String, Int>()
+    return periods.map { period ->
+        val key = with(period) { "period:$time:$action:$viaProvider:$subject" }
+        val repeat = seen.merge(key, 1, Int::plus) ?: 1
+        if (repeat == 1) key else "$key#$repeat"
     }
 }
 

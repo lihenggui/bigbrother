@@ -72,6 +72,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import li.mercury.bigbrother.core.designsystem.component.SegmentedSwitchRow
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.UserSettingsWriter
+import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.core.ui.failureReason
 import li.mercury.bigbrother.core.ui.rememberSettingsWriteSnackbar
 import li.mercury.bigbrother.core.ui.R as UiR
@@ -195,7 +196,7 @@ private fun SettingsTopBar(background: Color, scrollBehavior: TopAppBarScrollBeh
 
 private fun LazyListScope.recorderSection(state: SettingsUiState, unavailable: List<String>) {
     val status = state.status
-    item(key = "recording") { SectionHeader(stringResource(R.string.section_recording)) }
+    item(key = "recording") { SectionHeader(stringResource(R.string.section_recording), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
     val recordingRows = 2 + if (unavailable.isNotEmpty()) 1 else 0
     item(key = "status") {
         Row(
@@ -216,6 +217,7 @@ private fun LazyListScope.recorderSection(state: SettingsUiState, unavailable: L
             ).distinct().joinToString(stringResource(UiR.string.dot_separator)),
             index = 0,
             count = recordingRows,
+            modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
         )
     }
     if (unavailable.isNotEmpty()) {
@@ -226,6 +228,7 @@ private fun LazyListScope.recorderSection(state: SettingsUiState, unavailable: L
                 summary = unavailable.joinToString(stringResource(UiR.string.summary_separator)),
                 index = 1,
                 count = recordingRows,
+                modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
             )
         }
     }
@@ -236,6 +239,7 @@ private fun LazyListScope.recorderSection(state: SettingsUiState, unavailable: L
             summary = stringResource(R.string.lsposed_summary),
             index = recordingRows - 1,
             count = recordingRows,
+            modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
         )
     }
 }
@@ -245,7 +249,7 @@ private fun LazyListScope.displaySection(
     onShowSystemApps: (Boolean) -> Unit,
     onUseDynamicColor: (Boolean) -> Unit,
 ) {
-    item(key = "display") { SectionHeader(stringResource(R.string.section_display)) }
+    item(key = "display") { SectionHeader(stringResource(R.string.section_display), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
     item(key = "system-apps") {
         SegmentedSwitchRow(
             leadingContent = { Icon(Icons.Outlined.VisibilityOff, contentDescription = null) },
@@ -253,6 +257,7 @@ private fun LazyListScope.displaySection(
             summary = stringResource(R.string.setting_system_apps_summary),
             checked = state.userData.showSystemApps,
             onCheckedChange = onShowSystemApps,
+            modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
             index = 0,
             count = 2,
         )
@@ -264,6 +269,7 @@ private fun LazyListScope.displaySection(
             summary = stringResource(R.string.dynamic_color_summary),
             checked = state.userData.useDynamicColor,
             onCheckedChange = onUseDynamicColor,
+            modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
             index = 1,
             count = 2,
         )
@@ -276,9 +282,9 @@ private fun LazyListScope.aboutSection(
     onExportLogs: () -> Unit,
     onOpenSource: () -> Unit,
 ) {
-    item(key = "about") { SectionHeader(stringResource(R.string.section_about)) }
+    item(key = "about") { SectionHeader(stringResource(R.string.section_about), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
     item(key = "version") {
-        Row(icon = Icons.Outlined.Info, title = stringResource(R.string.version), summary = appVersion, index = 0, count = 4)
+        Row(icon = Icons.Outlined.Info, title = stringResource(R.string.version), summary = appVersion, index = 0, count = 4, modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme))
     }
     item(key = "export-logs") {
         Row(
@@ -291,6 +297,7 @@ private fun LazyListScope.aboutSection(
             },
             index = 1,
             count = 4,
+            modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
             onClick = onExportLogs,
         )
     }
@@ -301,11 +308,12 @@ private fun LazyListScope.aboutSection(
             summary = SOURCE_URL.removePrefix("https://"),
             index = 2,
             count = 4,
+            modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
             onClick = onOpenSource,
         )
     }
     item(key = "license") {
-        Row(icon = Icons.Outlined.Gavel, title = stringResource(R.string.license), summary = "GPL-3.0", index = 3, count = 4)
+        Row(icon = Icons.Outlined.Gavel, title = stringResource(R.string.license), summary = "GPL-3.0", index = 3, count = 4, modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme))
     }
 }
 
@@ -317,6 +325,7 @@ private fun Row(
     summary: String,
     index: Int,
     count: Int,
+    modifier: Modifier = Modifier,
     iconTint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
     onClick: (() -> Unit)? = null,
 ) {
@@ -325,6 +334,7 @@ private fun Row(
     if (onClick != null) {
         ListItem(
             onClick = onClick,
+            modifier = modifier,
             shapes = ListItemDefaults.segmentedShapes(index, count),
             colors = ListItemDefaults.segmentedColors(),
             leadingContent = leading,
@@ -332,6 +342,7 @@ private fun Row(
         ) { Text(title) }
     } else {
         ListItem(
+            modifier = modifier,
             shapes = ListItemDefaults.segmentedShapes(index, count),
             colors = ListItemDefaults.segmentedColors(),
             leadingContent = leading,

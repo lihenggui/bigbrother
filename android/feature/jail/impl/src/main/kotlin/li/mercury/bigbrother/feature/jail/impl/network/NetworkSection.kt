@@ -47,6 +47,7 @@ import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxPart
 import li.mercury.bigbrother.core.model.SandboxedApp
 import li.mercury.bigbrother.core.ui.SectionHeader
+import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.core.ui.failureReason
 import li.mercury.bigbrother.core.ui.timeWithDateIfNotToday
 import li.mercury.bigbrother.feature.jail.impl.ItemRow
@@ -92,9 +93,9 @@ internal fun LazyListScope.networkSection(
     expanded: Boolean,
     actions: NetworkSectionActions,
 ) {
-    item(key = "network_header") { SectionHeader(stringResource(R.string.jail_section_network)) }
+    item(key = "network_header") { SectionHeader(stringResource(R.string.jail_section_network), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
     if (requested != null && !SandboxItem.NETWORK.concerns(requested)) {
-        item(key = "network_none") { NoPermissionRow() }
+        item(key = "network_none") { NoPermissionRow(Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
         return
     }
     val recording = app.modeOf(SandboxItem.NETWORK_RECORD).isOn
@@ -116,6 +117,7 @@ internal fun LazyListScope.networkSection(
             onChoose = actions.onChoose,
             index = 0,
             count = count,
+            modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
             checked = mode.allowsNetwork,
         )
     }
@@ -127,12 +129,14 @@ internal fun LazyListScope.networkSection(
             actions.onSetRecording,
             index = 1,
             count = count,
+            modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
         )
     }
     // Always an item, so the row can grow in and out as recording is switched.
     item(key = "network_activity") {
         AnimatedVisibility(
             visible = activityShown,
+            modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
             enter = expandVertically(MaterialTheme.motionScheme.defaultSpatialSpec()) +
                 fadeIn(MaterialTheme.motionScheme.defaultEffectsSpec()),
             exit = shrinkVertically(MaterialTheme.motionScheme.defaultSpatialSpec()) +
@@ -170,7 +174,7 @@ internal fun LazyListScope.globalNetworkSection(
     onSetAllowed: (Boolean) -> Unit,
     onChoose: (SandboxMode) -> Unit,
 ) {
-    item(key = "network_header") { SectionHeader(stringResource(R.string.jail_section_network)) }
+    item(key = "network_header") { SectionHeader(stringResource(R.string.jail_section_network), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
     item(key = SandboxItem.NETWORK.id) {
         ItemRow(
             item = SandboxItem.NETWORK,
@@ -184,10 +188,11 @@ internal fun LazyListScope.globalNetworkSection(
             onChoose = { chosen -> if (chosen != null) onChoose(chosen) },
             index = 0,
             count = 1,
+            modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
             checked = mode.allowsNetwork,
         )
     }
-    item(key = "network_note") { Note(stringResource(R.string.jail_network_global_note), Modifier.padding(top = 8.dp)) }
+    item(key = "network_note") { Note(stringResource(R.string.jail_network_global_note), Modifier.animatedRow(this, MaterialTheme.motionScheme).padding(top = 8.dp)) }
 }
 
 /**
@@ -202,6 +207,7 @@ private fun RecordRow(
     onCheckedChange: (Boolean) -> Unit,
     index: Int,
     count: Int,
+    modifier: Modifier = Modifier,
 ) {
     SegmentedSwitchRow(
         title = stringResource(R.string.jail_network_record),
@@ -216,6 +222,7 @@ private fun RecordRow(
         index = index,
         count = count,
         leadingContent = { ShapedIcon(Icons.Outlined.FiberManualRecord) },
+        modifier = modifier,
         showThumbIcon = true,
     )
 }
@@ -223,8 +230,9 @@ private fun RecordRow(
 /** The only line of the section for an app that cannot connect anyway. */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun NoPermissionRow() {
+private fun NoPermissionRow(modifier: Modifier = Modifier) {
     ListItem(
+        modifier = modifier,
         shapes = ListItemDefaults.segmentedShapes(0, 1),
         colors = ListItemDefaults.segmentedColors(),
         leadingContent = { ShapedIcon(Icons.Outlined.Public) },

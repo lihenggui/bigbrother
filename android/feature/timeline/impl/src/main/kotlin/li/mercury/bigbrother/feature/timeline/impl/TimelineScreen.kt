@@ -74,6 +74,7 @@ import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.MenuFilterChip
 import li.mercury.bigbrother.core.ui.MenuOption
 import li.mercury.bigbrother.core.ui.Message
+import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.core.ui.dateWithWeekday
 import li.mercury.bigbrother.core.ui.failureTitle
 import li.mercury.bigbrother.core.ui.namedList
@@ -228,7 +229,7 @@ private fun Timeline(
     ) {
         if (items.isEmpty() && state.nextBefore == null) {
             item(key = "empty") {
-                Message(stringResource(R.string.timeline_empty), "", Modifier.fillParentMaxHeight(0.7f))
+                Message(stringResource(R.string.timeline_empty), "", Modifier.animatedRow(this, MaterialTheme.motionScheme).fillParentMaxHeight(0.7f))
             }
         }
         items(items, key = { it.key }) { item ->
@@ -246,11 +247,12 @@ private fun LazyItemScope.TimelineRow(
     onOpenEntry: (TimelineEntry, TimeRange) -> Unit,
 ) {
     val context = LocalContext.current
+    val modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme)
     when (item) {
         is TimelineItem.Day -> Text(
             text = dayLabel(item.dayStart),
             style = MaterialTheme.typography.titleMediumEmphasized,
-            modifier = Modifier
+            modifier = modifier
                 .padding(start = 16.dp, top = 16.dp, bottom = 4.dp)
                 .semantics { heading() },
         )
@@ -259,7 +261,7 @@ private fun LazyItemScope.TimelineRow(
             text = timeOfDay(context, item.hourStart),
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 6.dp),
+            modifier = modifier.padding(start = 16.dp, top = 8.dp, bottom = 6.dp),
         )
 
         is TimelineItem.Row -> {
@@ -277,7 +279,7 @@ private fun LazyItemScope.TimelineRow(
                 onClick = {
                     onOpenEntry(first, rangeCovering(first, System.currentTimeMillis() / 1000))
                 },
-                modifier = Modifier.animateItem(),
+                modifier = modifier,
             )
         }
     }
@@ -287,7 +289,7 @@ private fun LazyItemScope.TimelineRow(
 private fun LazyListScope.pagingFooter(state: TimelineUiState, onLoadMore: () -> Unit) {
     if (state.loadingMore) {
         item(key = "loading-more") {
-            Row(Modifier.fillMaxWidth().padding(vertical = 16.dp), horizontalArrangement = Arrangement.Center) {
+            Row(Modifier.animatedRow(this, MaterialTheme.motionScheme).fillMaxWidth().padding(vertical = 16.dp), horizontalArrangement = Arrangement.Center) {
                 LoadingIndicator()
             }
         }
@@ -295,7 +297,7 @@ private fun LazyListScope.pagingFooter(state: TimelineUiState, onLoadMore: () ->
     if (state.loadMoreFailure != null) {
         item(key = "load-more-failed") {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 8.dp),
+                modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme).fillMaxWidth().padding(start = 16.dp, top = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(

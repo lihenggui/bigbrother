@@ -28,8 +28,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
@@ -43,6 +43,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -71,6 +72,7 @@ import li.mercury.bigbrother.core.ui.MenuOption
 import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.UserSettingsWriter
+import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.core.ui.categoriesSummary
 import li.mercury.bigbrother.core.ui.categoryDetail
 import li.mercury.bigbrother.core.ui.label
@@ -252,9 +254,19 @@ private fun AppList(
     onOpen: (AppSummary) -> Unit,
     onShowSystemApps: () -> Unit,
 ) {
-    // A different filter or order is a different list: start it at the top
-    // instead of keeping whichever row happened to be first.
-    val listState = rememberSaveable(sort, category, showSystemApps, saver = LazyListState.Saver) { LazyListState() }
+    // A different filter or order is a different list: it starts at the top
+    // instead of at whichever row happened to be first. The state is kept,
+    // since it holds what animates the rows to their new places; a restored
+    // screen keeps its position.
+    val listState = rememberLazyListState()
+    val filter = "$sort/$category/$showSystemApps"
+    var listed by rememberSaveable { mutableStateOf(filter) }
+    SideEffect {
+        if (listed != filter) {
+            listed = filter
+            listState.requestScrollToItem(0)
+        }
+    }
     val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -264,12 +276,12 @@ private fun AppList(
     ) {
         if (groups.all { (_, members) -> members.isEmpty() }) {
             item(key = "empty") {
-                EmptyAppList(hiddenApps, category, onShowSystemApps, Modifier.fillParentMaxHeight(0.7f))
+                EmptyAppList(hiddenApps, category, onShowSystemApps, Modifier.animatedRow(this, MaterialTheme.motionScheme).fillParentMaxHeight(0.7f))
             }
         }
         for ((title, members) in groups) {
             if (title != null) {
-                item(key = "header:$title") { SectionHeader(pluralStringResource(title, members.size, members.size)) }
+                item(key = "header:$title") { SectionHeader(pluralStringResource(title, members.size, members.size), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
             }
             itemsIndexed(members, key = { _, entry -> entry.app.uid }) { index, entry ->
                 AppListItem(
@@ -287,7 +299,7 @@ private fun AppList(
                     count = members.size,
                     selected = entry.app.uid == selectedUid,
                     onClick = { onOpen(entry.app) },
-                    modifier = Modifier.animateItem(),
+                    modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
                 )
             }
         }

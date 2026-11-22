@@ -112,7 +112,7 @@ internal fun Listing(
                     }
                     if (entries.isEmpty()) {
                         item(key = "no-files") {
-                            NoFiles(readOnly, filtering, onShowAll, Modifier.fillParentMaxHeight(if (groups.isEmpty()) 0.7f else 0.35f))
+                            NoFiles(readOnly, filtering, onShowAll, Modifier.animatedRow(this, MaterialTheme.motionScheme).fillParentMaxHeight(if (groups.isEmpty()) 0.7f else 0.35f))
                         }
                     }
                     itemsIndexed(groups, key = { _, group -> group.location }) { index, group ->
@@ -127,7 +127,7 @@ internal fun Listing(
                     text = stringResource(R.string.results_truncated),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 12.dp),
+                    modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme).padding(horizontal = 4.dp, vertical = 12.dp),
                 )
             }
         }

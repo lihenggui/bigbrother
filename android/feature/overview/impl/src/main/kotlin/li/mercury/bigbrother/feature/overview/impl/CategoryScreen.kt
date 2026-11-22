@@ -57,6 +57,7 @@ import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.SectionHeader
+import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.core.ui.categoryDetail
 import li.mercury.bigbrother.core.ui.label
 import li.mercury.bigbrother.core.ui.readFiles
@@ -147,13 +148,13 @@ private fun AppsByCategory(
     ) {
         if (apps.isEmpty()) {
             item(key = "empty") {
-                Message(stringResource(UiR.string.empty_title), "", Modifier.fillParentMaxHeight(0.7f))
+                Message(stringResource(UiR.string.empty_title), "", Modifier.animatedRow(this, MaterialTheme.motionScheme).fillParentMaxHeight(0.7f))
             }
         }
         for ((title, members) in groups) {
             if (title != null) {
                 item(key = "header:$title") {
-                    SectionHeader(pluralStringResource(title, members.size, members.size))
+                    SectionHeader(pluralStringResource(title, members.size, members.size), Modifier.animatedRow(this, MaterialTheme.motionScheme))
                 }
             }
             itemsIndexed(members, key = { _, app -> app.uid }) { index, app ->
@@ -166,7 +167,7 @@ private fun AppsByCategory(
                     count = members.size,
                     selected = app.uid == selectedUid,
                     onClick = { onOpenApp(app, state.range) },
-                    modifier = Modifier.animateItem(),
+                    modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
                 )
             }
         }

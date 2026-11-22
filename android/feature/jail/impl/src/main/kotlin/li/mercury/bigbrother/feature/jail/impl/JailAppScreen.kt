@@ -79,6 +79,7 @@ import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.SectionHeader
+import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.core.ui.appNameWithUser
 import li.mercury.bigbrother.core.ui.failureReason
 import li.mercury.bigbrother.feature.jail.impl.network.NetworkSectionActions
@@ -269,7 +270,7 @@ private fun JailAppItems(
         verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
     ) {
         item(key = "header") {
-            Actions(onRelease = onRelease, onOpenRecords = { onOpenRecords(app.uid, app.packageName) })
+            Actions(onRelease = onRelease, onOpenRecords = { onOpenRecords(app.uid, app.packageName) }, modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme))
         }
         jailAppItemSection(state, app, expanded, showAll, onExpand, onToggleShowAll, onSetOn, onChoose, onReset)
         networkSection(
@@ -287,7 +288,7 @@ private fun JailAppItems(
                 onOpenActivity = { onOpenNetwork(app.uid, app.packageName) },
             ),
         )
-        item(key = "restart") { Note(stringResource(R.string.jail_restart_note), Modifier.padding(top = 8.dp)) }
+        item(key = "restart") { Note(stringResource(R.string.jail_restart_note), Modifier.animatedRow(this, MaterialTheme.motionScheme).padding(top = 8.dp)) }
     }
 }
 
@@ -306,7 +307,7 @@ private fun LazyListScope.jailAppItemSection(
     val concerned = state.requested?.let { requested -> ITEM_ORDER.filter { it.concerns(requested) } } ?: ITEM_ORDER
     val others = ITEM_ORDER - concerned.toSet()
     item(key = "items") {
-        Row {
+        Row(Modifier.animatedRow(this, MaterialTheme.motionScheme)) {
             SectionHeader(
                 stringResource(R.string.jail_section_items),
                 Modifier
@@ -320,11 +321,11 @@ private fun LazyListScope.jailAppItemSection(
             }
         }
     }
-    item(key = "summary") { Note(stringResource(R.string.jail_items_summary)) }
+    item(key = "summary") { Note(stringResource(R.string.jail_items_summary), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
     jailItemRows(concerned, state, app, expanded, onExpand, onSetOn, onChoose)
     if (others.isNotEmpty()) {
         item(key = "more") {
-            ShowAllToggle(showAll, others.size, onToggleShowAll)
+            ShowAllToggle(showAll, others.size, onToggleShowAll, Modifier.animatedRow(this, MaterialTheme.motionScheme))
         }
         if (showAll) jailItemRows(others, state, app, expanded, onExpand, onSetOn, onChoose)
     }
@@ -355,15 +356,15 @@ private fun LazyListScope.jailItemRows(
                 onChoose = { mode -> onChoose(item, mode) },
                 index = index,
                 count = items.size,
-                modifier = Modifier.animateItem(),
+                modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
             )
         }
     }
 }
 
 @Composable
-private fun ShowAllToggle(showAll: Boolean, count: Int, onClick: () -> Unit) {
-    TextButton(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+private fun ShowAllToggle(showAll: Boolean, count: Int, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    TextButton(onClick = onClick, modifier = modifier.fillMaxWidth()) {
         Text(
             if (showAll) {
                 stringResource(R.string.jail_fewer_items)
@@ -378,8 +379,8 @@ private fun ShowAllToggle(showAll: Boolean, count: Int, onClick: () -> Unit) {
 
 /** What can be done with the app: take it out of the sandbox, or see what it did. */
 @Composable
-private fun Actions(onRelease: () -> Unit, onOpenRecords: () -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+private fun Actions(onRelease: () -> Unit, onOpenRecords: () -> Unit, modifier: Modifier = Modifier) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = modifier.padding(top = 8.dp)) {
         OutlinedButton(onClick = onRelease, modifier = Modifier.weight(1f)) {
             Icon(CageIcons.Open, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.size(8.dp))

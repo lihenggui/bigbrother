@@ -71,6 +71,7 @@ import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.SectionHeader
+import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.feature.jail.impl.network.globalNetworkSection
 
 /** The global settings of the jail, item by item, and what works on this device. */
@@ -228,13 +229,13 @@ private fun LazyListScope.globalItemsSection(
             checked = state.autoIsolate,
             onCheckedChange = onSetAutoIsolate,
             leadingContent = { ShapedIcon(Icons.Outlined.InstallMobile) },
-            modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
+            modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme).padding(top = 8.dp, bottom = 16.dp),
             showThumbIcon = true,
         )
     }
-    item(key = "summary") { Note(stringResource(R.string.jail_items_summary)) }
+    item(key = "summary") { Note(stringResource(R.string.jail_items_summary), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
     for (group in ItemGroup.entries) {
-        item(key = group.name) { SectionHeader(stringResource(group.title)) }
+        item(key = group.name) { SectionHeader(stringResource(group.title), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
         group.items.forEachIndexed { index, item ->
             item(key = item.id) {
                 val mode = global[item] ?: SandboxMode.ON
@@ -251,11 +252,12 @@ private fun LazyListScope.globalItemsSection(
                     onChoose = { chosen -> if (chosen != null) onChoose(item, chosen) },
                     index = index,
                     count = group.items.size,
+                    modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
                 )
             }
         }
     }
-    item(key = "restart") { Note(stringResource(R.string.jail_restart_note), Modifier.padding(top = 8.dp)) }
+    item(key = "restart") { Note(stringResource(R.string.jail_restart_note), Modifier.animatedRow(this, MaterialTheme.motionScheme).padding(top = 8.dp)) }
     globalNetworkSection(
         mode = global[SandboxItem.NETWORK] ?: SandboxItem.NETWORK.default,
         unmet = state.status?.unmet(SandboxItem.NETWORK).orEmpty(),
@@ -267,8 +269,8 @@ private fun LazyListScope.globalItemsSection(
 }
 
 private fun LazyListScope.statusSection(state: JailSettingsUiState, holdNeeded: Boolean, onConfirmRelease: () -> Unit) {
-    item(key = "status_header") { SectionHeader(stringResource(R.string.jail_section_status)) }
-    item(key = "status") { StatusRow(state.status, state.autoIsolate && holdNeeded) }
+    item(key = "status_header") { SectionHeader(stringResource(R.string.jail_section_status), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+    item(key = "status") { StatusRow(state.status, state.autoIsolate && holdNeeded, Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
     item(key = "release_all") {
         LinkRow(
             title = stringResource(R.string.jail_release_all),
@@ -277,6 +279,7 @@ private fun LazyListScope.statusSection(state: JailSettingsUiState, holdNeeded: 
             index = 1,
             count = 2,
             leading = { ShapedIcon(CageIcons.Open) },
+            modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
         )
     }
 }
@@ -299,7 +302,7 @@ private fun ReleaseAllDialog(isolated: Int, onDismiss: () -> Unit, onConfirm: ()
 /** Which parts of the sandbox work on this device; until known, neither good nor bad. */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun StatusRow(status: SandboxStatus?, holdExpected: Boolean) {
+private fun StatusRow(status: SandboxStatus?, holdExpected: Boolean, modifier: Modifier = Modifier) {
     val problems = buildList {
         if (status != null && !status.gate) add(stringResource(R.string.jail_status_gate_missing))
         if (status != null) {
@@ -331,6 +334,7 @@ private fun StatusRow(status: SandboxStatus?, holdExpected: Boolean) {
     }
     val colors = MaterialTheme.colorScheme
     ListItem(
+        modifier = modifier,
         shapes = ListItemDefaults.segmentedShapes(0, 2),
         colors = ListItemDefaults.segmentedColors(),
         leadingContent = {

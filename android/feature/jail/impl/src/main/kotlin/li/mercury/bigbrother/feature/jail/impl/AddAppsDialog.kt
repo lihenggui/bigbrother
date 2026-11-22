@@ -81,6 +81,7 @@ import li.mercury.bigbrother.core.ui.AppIcon
 import li.mercury.bigbrother.core.ui.ContentKind
 import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.Message
+import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.core.ui.failureReason
 import li.mercury.bigbrother.core.ui.rememberPredictiveDismissProgress
 import li.mercury.bigbrother.core.ui.R as UiR
@@ -287,7 +288,7 @@ private fun AddAppsList(apps: List<InstalledApp>, selected: Set<String>, onToggl
         itemsIndexed(apps, key = { _, app -> app.packageName }) { index, app ->
             val checked = app.packageName in selected
             ListItem(
-                modifier = Modifier
+                modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme)
                     .clip(segmentShape(index, apps.size))
                     .toggleable(value = checked, role = Role.Checkbox, onValueChange = { onToggle(app.packageName) }),
                 shapes = ListItemDefaults.segmentedShapes(index, apps.size),
