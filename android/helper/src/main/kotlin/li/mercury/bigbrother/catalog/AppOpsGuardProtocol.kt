@@ -363,6 +363,7 @@ internal object AppOpsGuardProtocol {
 
     fun restoreUidMode(desiredMode: () -> Int, writeMode: (Int) -> Boolean, readMode: () -> Int): Boolean {
         val expected = desiredMode()
+        if (readMode() == expected) return true
         if (!writeMode(expected)) return false
         if (readMode() == expected) return true
 

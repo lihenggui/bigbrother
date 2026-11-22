@@ -245,6 +245,17 @@ items that are on, remembers what they were, and sets them again when the
 system changes them, which it does whenever the app's permissions change.
 The helper runs only while a sandboxed app has such an item on.
 
+The helper skips modes that already match and keeps reapplying ordinary
+app ops whenever Android resets them. All-files mode changes, runtime
+permission revocations, and disabling notification listeners or
+accessibility services can end processes or unbind services. For each of
+these restrictions, the helper retries at most three times per UID in any
+ten-minute period. If the conflict continues, Jail shows the restriction as
+unavailable. The helper tracks the budget in memory. It resets when the UID's
+targets change, the app leaves Jail, or its installation is replaced.
+All-files access is also shown as unavailable when the helper cannot read
+which packages request it.
+
 An item left to the app in the foreground has its ops held at
 "foreground" instead, which the system keeps for the ops of runtime
 permissions as it keeps "ignored": the app gets the data while it is in
@@ -258,12 +269,12 @@ with precise location and gives it none at all. Location made coarse is
 the system's own approximate location instead. The helper revokes the
 precise location permission (`ACCESS_FINE_LOCATION`) of every package of
 the app that requests it, keeps the approximate one, and marks it as the
-user's choice not to be asked again, as Android's settings do; it revokes
-it again if the system or the user grants it while location is coarse,
-and then gives it back granted when location is no longer coarse: the
-user's latest choice. So it does when the user revokes it, which leaves
-it no longer marked so: it goes back revoked. The app's settings show
-precise location as turned off.
+user's choice not to be asked again, as Android's settings do. If the
+system or user grants it while location is coarse, the helper records the
+choice and attempts to revoke it again within the retry budget. A user
+revocation clears the fixed mark. When location is no longer coarse, the
+helper restores the user's latest choice. Android's settings show precise
+location as turned off while the restriction is effective.
 
 What the ops were, and whether the precise location permission was granted
 and with which of the user's choices, is kept in the database and put back
@@ -296,10 +307,8 @@ listeners the user gave the access to, and what is on screen to the
 accessibility services the user turned on, past any app op. With
 `notification_content` or `screen_content` on, the helper takes that
 access from every such service of the app, as the system's settings do,
-and keeps it taken: given again while the app is isolated, it is taken
-back within a minute, by the helper's regular check (neither service
-reports such a change to it), and that is what the app gets once it is
-out. Which
+and keeps it taken. The helper checks for regrants once a minute and
+takes them back within the retry budget. Which
 services had the access is saved with the entry (`saved_permissions`,
 under the permission the system binds such services with), and the access
 goes back to those services and no others: one the user never turned on
