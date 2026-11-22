@@ -15,10 +15,9 @@
 //! The names sandboxed apps look up: which, and with what answer.
 //!
 //! An app asks netd for the addresses of a name over a socket
-//! (`/dev/socket/dnsproxyd`). For an app whose connections are recorded,
-//! or that is kept from names, a socket of the daemon's is mounted over
-//! that one in the app's mount namespaces ([`super::resolver`]), and the
-//! daemon stands between the two:
+//! (`/dev/socket/dnsproxyd`). For an app whose connections are recorded
+//! or that is kept from names, the daemon's socket can cover it in that
+//! app's mount namespaces ([`super::resolver`]):
 //!
 //! - A name the app is kept from is not asked for: the app's connection
 //!   is closed, and its lookup fails.
@@ -32,12 +31,10 @@
 //!
 //! The socket is in a directory every process sees, whatever is mounted
 //! for it. It is open to whom netd's is, the group of the apps with the
-//! network permission, and serves only the apps that are given it: those
-//! in the sandbox whose connections are recorded or that are kept from a
-//! name, and never one kept from the network, which is to have no
-//! resolver at all. Nobody gets through it what netd would not give them
-//! directly. An app has a few lookups relayed at once and no more, so
-//! that one app cannot keep the others from theirs.
+//! network permission. It serves sandboxed apps whose connections are
+//! recorded or that are kept from a name, while they have network access.
+//! An app has a few lookups relayed at once, so it cannot keep the others
+//! from theirs.
 //! - The addresses in the answer are remembered for the name
 //!   ([`Names`]): a connection the app then makes to one of them is
 //!   recorded under the name.
@@ -66,7 +63,7 @@ use std::{
         },
     },
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, MutexGuard,
         atomic::{AtomicU64, AtomicUsize, Ordering},
         mpsc::{Receiver, SyncSender, TrySendError, sync_channel},
     },
@@ -74,11 +71,12 @@ use std::{
 };
 
 use anyhow::Context as _;
+use tokio::sync::Notify;
 
 use self::protocol::{Asked, Parsed, addresses_in};
 use super::{
     Sandbox, items_of,
-    resolver::{RELAY_SOCKET, SOCKET as NETD},
+    resolver::{RELAY_SOCKET, SOCKET as NETD, SocketId, socket_id},
     target::Target,
 };
 use crate::sync::{lock, read};
@@ -241,12 +239,7 @@ impl Sandbox {
                 };
                 let items = items_of(entry, &read(&global));
                 !items.network_refused()
-                    && (items.network_recorded()
-                        || lock(&book).get(&uid).is_some_and(|targets| {
-                            targets
-                                .iter()
-                                .any(|target| !matches!(target, Target::Ip(..)))
-                        }))
+                    && (items.network_recorded() || super::destinations::has_name_rules(&book, uid))
             })
         };
         (serves, refuses)
@@ -338,6 +331,38 @@ impl Shared {
     }
 }
 
+/// The socket served by this generation. Holding the guard through a
+/// bind mount prevents that mount from racing the sweep at relay shutdown.
+#[derive(Clone, Default)]
+pub struct Serving(Arc<Mutex<Option<SocketId>>>);
+
+impl Serving {
+    pub fn alive(&self) -> bool {
+        self.socket().is_some()
+    }
+
+    pub(super) fn socket(&self) -> MutexGuard<'_, Option<SocketId>> {
+        lock(&self.0)
+    }
+
+    pub fn stop(&self) -> bool {
+        lock(&self.0).take().is_some()
+    }
+}
+
+struct ListenerLifetime {
+    serving: Serving,
+    stopped: Arc<Notify>,
+}
+
+impl Drop for ListenerLifetime {
+    fn drop(&mut self) {
+        if self.serving.stop() {
+            self.stopped.notify_one();
+        }
+    }
+}
+
 /// Start listening for the lookups of the apps given the daemon's socket,
 /// on a thread that does nothing else. Fails where the socket cannot be
 /// made as an app's process must find it.
@@ -346,6 +371,8 @@ pub fn start(
     serves: Serves,
     refuses: Refuses,
     refused: RefusalReporter,
+    serving: Serving,
+    stopped: Arc<Notify>,
 ) -> anyhow::Result<()> {
     let shared = Arc::new(Shared {
         names,
@@ -361,9 +388,13 @@ pub fn start(
         .spawn(move || {
             // The label a socket gets is the thread's to set, and stays
             // set for this thread: it makes no other socket.
-            let listener = listen();
-            let listener = match listener {
-                Ok(listener) => {
+            let lifetime = ListenerLifetime { serving, stopped };
+            let listener = match listen().and_then(|listener| {
+                let id = socket_id(RELAY_SOCKET).context("identifying the relay socket")?;
+                Ok((listener, id))
+            }) {
+                Ok((listener, id)) => {
+                    *lock(&lifetime.serving.0) = Some(id);
                     let _ = ready.send(Ok(()));
                     listener
                 }
@@ -372,7 +403,24 @@ pub fn start(
                     return;
                 }
             };
-            for client in listener.incoming().flatten() {
+            for client in listener.incoming() {
+                let client = match client {
+                    Ok(client) => client,
+                    Err(e)
+                        if matches!(
+                            e.kind(),
+                            io::ErrorKind::Interrupted | io::ErrorKind::ConnectionAborted
+                        ) =>
+                    {
+                        continue;
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "bbd: warning: the resolver relay stopped accepting lookups: {e}"
+                        );
+                        break;
+                    }
+                };
                 // Whose it is, and whether it is served, before anything
                 // is spent on it: the socket can be found by any process.
                 let Ok(uid) = peer_uid(&client) else {
@@ -393,7 +441,8 @@ pub fn start(
                 if spawned.is_err() {
                     // The closure was not run, nor its place left.
                     shared.leave_place(uid);
-                    std::thread::sleep(Duration::from_millis(100));
+                    eprintln!("bbd: warning: the resolver relay could not start a lookup worker");
+                    break;
                 }
             }
         })
@@ -610,6 +659,53 @@ fn pump(client: &mut UnixStream, netd: &mut UnixStream, until: Instant) -> io::R
 mod tests {
     use super::*;
     use std::net::Ipv4Addr;
+
+    #[test]
+    fn serves_a_recording_app_without_name_rules() {
+        use std::collections::BTreeMap;
+
+        use crate::sandbox::tests::Fixture;
+        use crate::sandbox_item::{Item, Mode};
+
+        let mut f = Fixture::new("recording-resolver");
+        let mut sandbox = f.sandbox();
+        sandbox
+            .enable(&f.writer, &mut f.packages, "com.app", 0, 1000)
+            .unwrap();
+        let (serves, refuses) = sandbox.name_policy();
+        assert!(!serves(10100));
+
+        sandbox
+            .configure(
+                &f.writer,
+                &mut f.packages,
+                "com.app",
+                0,
+                &BTreeMap::from([(Item::NetworkRecord, Some(Mode::On))]),
+            )
+            .unwrap();
+        assert!(serves(10100));
+        assert!(!refuses(10100, Some("example.com")));
+        assert!(!serves(10200));
+    }
+
+    #[tokio::test]
+    async fn a_listener_that_exits_reports_it_is_no_longer_serving() {
+        let serving = Serving::default();
+        assert!(!serving.alive());
+        let stopped = Arc::new(Notify::new());
+        let listener = ListenerLifetime {
+            serving: serving.clone(),
+            stopped: stopped.clone(),
+        };
+        *lock(&serving.0) = Some((1, 2));
+        assert!(serving.alive());
+        drop(listener);
+        assert!(!serving.alive());
+        tokio::time::timeout(Duration::ZERO, stopped.notified())
+            .await
+            .unwrap();
+    }
 
     #[test]
     fn an_app_has_a_few_lookups_at_once_and_all_apps_some_more() {

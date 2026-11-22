@@ -446,14 +446,27 @@ fn read(db: &Path, package: &str, user: u32, chart: &Chart) -> anyhow::Result<Re
     let global = Settings::parse(&reader.sandbox_global()?);
     let meta = reader.stats()?.meta;
     let can = |key: &str| meta.get(key).copied().unwrap_or(0) > 0;
+    let rules = reader.net_rules(entry.uid)?;
+    let items = items_of(&entry, &global);
+    let blocked = entry.enabled && items.network_refused();
+    let names = entry.enabled
+        && !blocked
+        && can("coverage_net_names")
+        && (items.network_recorded()
+            || rules.iter().any(|rule| {
+                matches!(
+                    Target::parse(&rule.target),
+                    Some(Target::Host(_) | Target::Domain(_))
+                )
+            }));
     Ok(Read {
         uid: entry.uid,
         rows: reader.net_rows(entry.uid, chart.rows_since(), chart.until)?,
-        rules: reader.net_rules(entry.uid)?,
+        rules,
         recording: reader.net_recording()?.get(&entry.uid).copied(),
-        blocked: entry.enabled && items_of(&entry, &global).network_refused(),
+        blocked,
         traffic: can("coverage_net_traffic"),
-        names: can("coverage_net_names"),
+        names,
     })
 }
 

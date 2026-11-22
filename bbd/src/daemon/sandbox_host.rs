@@ -39,7 +39,7 @@ use crate::{
         auto,
         destinations::Destinations,
         gate::Storage,
-        names::{self, Names, RefusedLookups},
+        names::{self, Names, RefusedLookups, Serving},
         network::Network,
     },
     store::Writer,
@@ -71,6 +71,7 @@ pub(super) fn start(
     // which is kept in its entry at once (`Sandbox::keep_found`, below).
     let found = Arc::new(Notify::new());
     let helper_restarted = Arc::new(Notify::new());
+    let names_stopped = Arc::new(Notify::new());
     let sandbox = if opts.sandbox {
         start_sandbox(SandboxStart {
             probes,
@@ -79,6 +80,7 @@ pub(super) fn start(
             new_starts: new_starts_sender,
             found: &found,
             helper_restarted: &helper_restarted,
+            names_stopped: names_stopped.clone(),
         })
     } else {
         None
@@ -95,6 +97,7 @@ pub(super) fn start(
             new_starts,
             found,
             helper_restarted,
+            names_stopped,
             net_cleared: net_cleared_sender,
         })
         .inspect_err(|e| eprintln!("bbd: warning: the sandbox is off: {e:#}"))
@@ -110,6 +113,7 @@ struct SandboxStart<'a> {
     new_starts: tokio::sync::mpsc::Sender<u32>,
     found: &'a Arc<Notify>,
     helper_restarted: &'a Arc<Notify>,
+    names_stopped: Arc<Notify>,
 }
 
 /// Load the sandbox, attach its gate and put the apps that were sandboxed
@@ -118,7 +122,7 @@ struct SandboxStart<'a> {
 /// take apps in. The gate sends `new_starts` the uid of each new app whose
 /// start it ended (see `sandbox::auto`), and the app ops helper wakes
 /// `found` when it finds a permission changed by the user.
-fn start_sandbox(context: SandboxStart<'_>) -> Option<Sandbox> {
+fn start_sandbox(context: SandboxStart<'_>) -> Option<LiveSandbox> {
     let SandboxStart {
         probes,
         tracer,
@@ -126,6 +130,7 @@ fn start_sandbox(context: SandboxStart<'_>) -> Option<Sandbox> {
         new_starts,
         found,
         helper_restarted,
+        names_stopped,
     } = context;
     let user_data = Path::new(USER_DATA);
     let mut sandbox = match Sandbox::load(&tracer.writer, Vec::new(), Some(user_data)) {
@@ -135,14 +140,22 @@ fn start_sandbox(context: SandboxStart<'_>) -> Option<Sandbox> {
             return None;
         }
     };
-    let storage = attach_gate(probes, tracer, db);
+    let relay = Serving::default();
+    let storage = attach_gate(probes, tracer, db, sandbox.book(), relay.clone());
     let appops = AppOps::start();
     // Whether an app is kept from single destinations: what the one effect
     // finds out and the other needs the packet filter's rules for.
     let ruled = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let destinations = Destinations::start(&mut probes.ebpf, sandbox.book(), ruled.clone());
     let network = Network::start(&mut probes.ebpf, ruled);
-    let names = start_name_relay(&sandbox, tracer);
+    let names = start_name_relay(
+        &sandbox,
+        tracer,
+        storage.is_ok(),
+        relay.clone(),
+        names_stopped,
+    );
+    let recording_covers = names.is_some();
     let found = found.clone();
     appops.on_found(move || found.notify_one());
     let helper_restarted = helper_restarted.clone();
@@ -153,7 +166,6 @@ fn start_sandbox(context: SandboxStart<'_>) -> Option<Sandbox> {
         storage,
         &appops,
         network.is_ok(),
-        names.is_some(),
         new_starts,
     );
     // Libraries are told from apps by the package manager, through the
@@ -172,10 +184,20 @@ fn start_sandbox(context: SandboxStart<'_>) -> Option<Sandbox> {
     sandbox.resume(&tracer.writer, &mut tracer.packages);
     sandbox.note_recording(&tracer.writer);
     sandbox.resume_auto(new_apps, &tracer.writer, &mut tracer.packages);
-    Some(sandbox)
+    Some(LiveSandbox {
+        sandbox,
+        relay,
+        recording_covers,
+    })
 }
 
-fn attach_gate(probes: &mut Probes, tracer: &mut Tracer, db: &Path) -> anyhow::Result<Storage> {
+fn attach_gate(
+    probes: &mut Probes,
+    tracer: &mut Tracer,
+    db: &Path,
+    book: sandbox::destinations::Book,
+    relay: Serving,
+) -> anyhow::Result<Storage> {
     // Attached while no uid is listed for it, so it holds nothing yet. The
     // uids are listed next, and what started in between is ended last
     // (`sweep`): no start falls between the two.
@@ -186,7 +208,7 @@ fn attach_gate(probes: &mut Probes, tracer: &mut Tracer, db: &Path) -> anyhow::R
         probes.selinux,
         &probes.offsets,
     )
-    .and_then(|_| Storage::start(&mut probes.ebpf, &db.with_file_name("scratch")));
+    .and_then(|_| Storage::start(&mut probes.ebpf, &db.with_file_name("scratch"), book, relay));
     tracer.write_coverage(
         &format!("coverage_{}", syscalls::GATE.name),
         i64::from(storage.is_ok()),
@@ -194,18 +216,31 @@ fn attach_gate(probes: &mut Probes, tracer: &mut Tracer, db: &Path) -> anyhow::R
     storage
 }
 
-fn start_name_relay(sandbox: &Sandbox, tracer: &mut Tracer) -> Option<Arc<Names>> {
+fn start_name_relay(
+    sandbox: &Sandbox,
+    tracer: &mut Tracer,
+    gate: bool,
+    relay: Serving,
+    stopped: Arc<Notify>,
+) -> Option<Arc<Names>> {
     // The names apps look up, heard by standing between them and netd.
     let names = Arc::new(Names::default());
     let (lookups_refused, refused_lookups) = RefusedLookups::channel();
     let (serves, refuses) = sandbox.name_policy();
-    let relay = names::start(names.clone(), serves, refuses, lookups_refused);
-    if let Err(e) = &relay {
-        eprintln!("bbd: warning: the names apps look up are not known: {e:#}");
-    }
-    tracer.write_coverage("coverage_net_names", i64::from(relay.is_ok()));
-    let names = relay.is_ok().then_some(names);
-    tracer.refused_lookups = relay.is_ok().then_some(refused_lookups);
+    let started = gate
+        && names::start(
+            names.clone(),
+            serves,
+            refuses,
+            lookups_refused,
+            relay.clone(),
+            stopped,
+        )
+        .inspect_err(|e| eprintln!("bbd: warning: the names apps look up are not known: {e:#}"))
+        .is_ok();
+    tracer.write_coverage("coverage_net_names", i64::from(relay.alive()));
+    let names = started.then_some(names);
+    tracer.refused_lookups = started.then_some(refused_lookups);
     tracer.net = Some(sandbox::destinations::View {
         snapshot: sandbox.snapshot(),
         global: sandbox.global(),
@@ -221,7 +256,6 @@ fn build_storage_effect(
     storage: anyhow::Result<Storage>,
     appops: &AppOps,
     network_available: bool,
-    names_available: bool,
     new_starts: tokio::sync::mpsc::Sender<u32>,
 ) -> (Box<dyn sandbox::Effect>, Option<auto::Kernel>) {
     match storage {
@@ -230,9 +264,6 @@ fn build_storage_effect(
             // The resolver goes with the network, and stays without it.
             if network_available {
                 storage.with_network();
-            }
-            if names_available {
-                storage.with_names(sandbox.book());
             }
             // Not waited for: the gate thread waits for nothing.
             storage.on_unknown(move |uid| {
@@ -245,7 +276,7 @@ fn build_storage_effect(
         }
         Err(e) => {
             eprintln!("bbd: warning: the sandbox is not available: {e:#}");
-            (Box::new(sandbox::gate::Unavailable), None)
+            (Box::new(sandbox::gate::Unavailable(sandbox.book())), None)
         }
     }
 }
@@ -288,9 +319,30 @@ fn build_net_effects(
     sandbox.add_effect(network);
 }
 
+struct LiveSandbox {
+    sandbox: Sandbox,
+    relay: Serving,
+    recording_covers: bool,
+}
+
+impl LiveSandbox {
+    fn stop_relay(&mut self) {
+        self.relay.stop();
+        if std::mem::take(&mut self.recording_covers) {
+            self.sandbox.uncover_recording_dns();
+        }
+    }
+}
+
+impl Drop for LiveSandbox {
+    fn drop(&mut self) {
+        self.stop_relay();
+    }
+}
+
 /// What the sandbox's thread is started with.
 struct SandboxParts {
-    sandbox: Sandbox,
+    sandbox: LiveSandbox,
     db: std::path::PathBuf,
     packages_list: String,
     /// Starts the gate ended for a new app or a stale entry.
@@ -299,6 +351,7 @@ struct SandboxParts {
     /// user, which is kept in its entry at once (`Sandbox::keep_found`).
     found: Arc<Notify>,
     helper_restarted: Arc<Notify>,
+    names_stopped: Arc<Notify>,
     /// The apps whose network records the sandbox cleared, for the event
     /// loop to drop what it holds of them.
     net_cleared: mpsc::Sender<u32>,
@@ -348,12 +401,13 @@ async fn run_sandbox(
     listening: mpsc::Sender<()>,
 ) {
     let SandboxParts {
-        mut sandbox,
+        sandbox: mut live,
         db,
         packages_list,
         mut new_starts,
         found,
         helper_restarted,
+        names_stopped,
         net_cleared,
     } = parts;
     let commands = listen_commands(&db);
@@ -372,21 +426,22 @@ async fn run_sandbox(
     tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
     loop {
         if package_watch.arm(
-            sandbox.auto_on(),
+            live.sandbox.auto_on(),
             Path::new(auto::watch::PACKAGE_DIR),
             Path::new(USER_DATA),
         ) {
             // What was installed before the watch began.
-            sandbox.isolate_new(&writer, &mut packages);
+            live.sandbox.isolate_new(&writer, &mut packages);
         }
         // A new app left out of the sandbox is tried again then; no timer
         // while none is.
-        let next_look = sandbox.auto_next_look();
+        let next_look = live.sandbox.auto_next_look();
         tokio::select! {
             _ = &mut stopped => break,
-            _ = tick.tick() => sandbox.retry_net_refresh(),
+            _ = tick.tick() => live.sandbox.retry_net_refresh(),
             _ = found.notified() => {}
-            _ = helper_restarted.notified() => sandbox.auto_helper_restarted(&writer, &mut packages),
+            _ = helper_restarted.notified() => live.sandbox.auto_helper_restarted(&writer, &mut packages),
+            _ = names_stopped.notified() => stop_relay(&mut live, &writer),
             // A command is read without holding up the others, and carried
             // out once it has arrived.
             stream = next_request(commands.as_ref()) => {
@@ -398,15 +453,15 @@ async fn run_sandbox(
                 continue;
             }
             Some(read) = command_reads.join_next(), if !command_reads.is_empty() => {
-                respond_to_command(read, &mut sandbox, &writer, &mut packages, &mut command_read_errors);
+                respond_to_command(read, &mut live.sandbox, &writer, &mut packages, &mut command_read_errors);
             }
             // An app was installed, updated or removed.
             changed = package_watch.changed(), if package_watch.armed() => match changed {
-                Ok(()) => sandbox.auto_packages_changed(&writer, &mut packages),
+                Ok(()) => live.sandbox.auto_packages_changed(&writer, &mut packages),
                 Err(e) => package_watch.give_up(&e),
             },
             _ = sleep_until(next_look), if next_look.is_some() => {
-                sandbox.isolate_new(&writer, &mut packages);
+                live.sandbox.isolate_new(&writer, &mut packages);
             }
             // The gate ended a start for a new app or a stale entry.
             Some(uid) = new_starts.recv() => {
@@ -414,14 +469,22 @@ async fn run_sandbox(
                 while let Ok(uid) = new_starts.try_recv() {
                     starts.insert(uid);
                 }
-                sandbox.auto_started(&writer, &mut packages, starts);
+                live.sandbox.auto_started(&writer, &mut packages, starts);
             }
         }
-        sandbox.release_reassigned(&writer, &mut packages);
-        sandbox.keep_found(&writer);
+        live.sandbox.release_reassigned(&writer, &mut packages);
+        live.sandbox.keep_found(&writer);
     }
+    stop_relay(&mut live, &writer);
     control::unlisten_commands(&db);
-    sandbox.keep_found(&writer);
+    live.sandbox.keep_found(&writer);
+}
+
+fn stop_relay(live: &mut LiveSandbox, writer: &Writer) {
+    live.stop_relay();
+    if let Err(e) = writer.set_meta("coverage_net_names", 0) {
+        eprintln!("bbd: warning: could not update resolver coverage: {e:#}");
+    }
 }
 
 fn open_sandbox_writer(db: &Path, net_cleared: mpsc::Sender<u32>) -> Option<Writer> {
@@ -470,5 +533,68 @@ fn respond_to_command(
             };
             command_read_errors.log(format_args!("bbd: sandbox: command read task {outcome}"));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+    use crate::sandbox::{Effect, Entry, items::Settings};
+
+    struct RecordingGate(Arc<AtomicUsize>);
+
+    impl Effect for RecordingGate {
+        fn name(&self) -> &'static str {
+            "recording gate"
+        }
+
+        fn enable(&mut self, _: &mut Entry, _: &[String], _: &Settings) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn disable(&mut self, _: &mut Entry, _: &[String], _: &Settings) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn update(
+            &mut self,
+            _: &mut Entry,
+            _: &[String],
+            _: &Settings,
+            _: &Settings,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn relay_stopped(&mut self) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn relay_loss_and_shutdown_start_the_recording_cover_cleanup_once() {
+        let writer = Writer::open(Path::new(":memory:")).unwrap();
+        let cleanups = Arc::new(AtomicUsize::new(0));
+        let live = || LiveSandbox {
+            sandbox: Sandbox::load(
+                &writer,
+                vec![Box::new(RecordingGate(cleanups.clone()))],
+                None,
+            )
+            .unwrap(),
+            relay: Serving::default(),
+            recording_covers: true,
+        };
+
+        let mut after_loss = live();
+        stop_relay(&mut after_loss, &writer);
+        assert_eq!(cleanups.load(Ordering::Relaxed), 1);
+        drop(after_loss);
+        assert_eq!(cleanups.load(Ordering::Relaxed), 1);
+
+        drop(live());
+        assert_eq!(cleanups.load(Ordering::Relaxed), 2);
     }
 }

@@ -49,12 +49,25 @@ ionice -c 2 -n 7 true 2>/dev/null && priority="$priority ionice -c 2 -n 7"
 
 pid=
 sleeping=
+cleanup_pending=
+# Backoff can last minutes, so restore recorded apps' DNS before waiting
+# for another daemon. A stop signal can arrive between reap and cleanup.
+detach_covers() {
+    [ -n "$cleanup_pending" ] || return 0
+    if ! "$MODDIR/bin/bbd" sandbox-detach-covers >>"$LOG" 2>&1; then
+        log "could not detach recording resolver covers"
+    fi
+    cleanup_pending=
+}
+
 # Asked to stop: take the daemon down too, and wait so that it can flush.
 stop() {
     if [ -n "$pid" ]; then
         kill "$pid" 2>/dev/null
         wait "$pid" 2>/dev/null
+        pid=
     fi
+    detach_covers
     [ -n "$sleeping" ] && kill "$sleeping" 2>/dev/null
     rm -f "$DATA/bbd.pid"
     exit 0
@@ -78,13 +91,13 @@ while :; do
     rm -f "$DATA/bbd.sock" "$DATA/bbd.ctl"
     # Unquoted: a command with its arguments, or nothing.
     $priority "$MODDIR/bin/bbd" run >>"$LOG" 2>&1 &
-    pid=$!
+    pid=$! cleanup_pending=1
     echo "$pid" >"$DATA/bbd.pid"
     wait "$pid"
-    code=$?
     # Gone: its pid may be handed to another process.
-    pid=
+    code=$? pid=
     ran=$(($(uptime_seconds) - started))
+    detach_covers
 
     # The daemon exits with status 0 only when it is asked to stop.
     if [ "$code" -eq 0 ]; then

@@ -28,6 +28,9 @@ shared with the daemon are in [bbd-cli-errors.txt](../bbd-cli-errors.txt).
 | `sandbox global` (write) | `ITEM=MODE ... --json` | Exit status |
 | `sandbox auto` | `on\|off --json` | Exit status |
 
+In `sandbox list`, `unmet.network_record` can contain `dns_names` when
+connections are recorded without domain names.
+
 Network responses share `ok` and optional `error` fields. Bucket entries
 contain `t`, `conn`, `refused`. Rule entries contain `target`, `created`,
 `manual`. A destination contains `site` or `addr`, and can include `hosts`

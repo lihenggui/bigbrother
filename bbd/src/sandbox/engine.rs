@@ -547,6 +547,7 @@ impl Sandbox {
                     uri_grants_hook: status.hook.uri_grants,
                     ad_id_hook: status.hook.ad_id,
                     packet_filter: status.network,
+                    dns_names: status.dns_uids.contains(&entry.uid),
                 };
                 let settings = Settings::parse(&entry.settings);
                 let items = settings.over(&global);

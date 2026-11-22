@@ -71,6 +71,9 @@ pub trait Effect: Send {
     /// carries on.
     fn resume(&mut self, _apps: &[Resumed]) {}
 
+    /// Drop optional resolver admission work once the relay stops.
+    fn relay_stopped(&mut self) {}
+
     /// Drop bookkeeping without changing permissions or signalling the successor.
     fn forget(&mut self, _uid: u32) {}
 

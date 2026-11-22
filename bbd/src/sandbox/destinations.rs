@@ -47,6 +47,14 @@ use crate::sync::{lock, read};
 /// between what changes them (the commands) and what carries them out.
 pub type Book = Arc<Mutex<HashMap<u32, BTreeSet<Target>>>>;
 
+pub(super) fn has_name_rules(book: &Book, uid: u32) -> bool {
+    lock(book).get(&uid).is_some_and(|targets| {
+        targets
+            .iter()
+            .any(|target| !matches!(target, Target::Ip(..)))
+    })
+}
+
 /// What tells, of a connection an app tried, whether the sandbox refused
 /// it: the app is kept from the network, or from that destination.
 pub struct View {
@@ -372,7 +380,6 @@ impl Effect for Destinations {
     fn report(&self, status: &mut Status) {
         status.net_record = true;
         status.traffic = self.traffic;
-        status.dns_names = self.names.is_some();
     }
 }
 
@@ -524,6 +531,36 @@ mod tests {
         own.over(&Settings::default())
     }
 
+    struct NameGate;
+
+    impl Effect for NameGate {
+        fn name(&self) -> &'static str {
+            "name gate"
+        }
+
+        fn enable(&mut self, _: &mut Entry, _: &[String], _: &Settings) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn disable(&mut self, _: &mut Entry, _: &[String], _: &Settings) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn update(
+            &mut self,
+            _: &mut Entry,
+            _: &[String],
+            _: &Settings,
+            _: &Settings,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn report(&self, status: &mut Status) {
+            status.dns_names = true;
+        }
+    }
+
     fn sandbox_with_filter(
         f: &mut SandboxFixture,
         names: Arc<Names>,
@@ -534,6 +571,7 @@ mod tests {
         } = fixture_with(sandbox.book());
         effect.with_names(names);
         sandbox.add_effect(Box::new(effect));
+        sandbox.add_effect(Box::new(NameGate));
         sandbox
             .enable(&f.writer, &mut f.packages, "com.app", 0, 1000)
             .unwrap();

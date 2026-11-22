@@ -137,6 +137,9 @@ pub struct Status {
     /// what [`Sandbox::list`] reports per app.
     #[serde(skip)]
     pub gated_uids: BTreeSet<u32>,
+    /// Uids whose DNS uses the active relay.
+    #[serde(skip)]
+    pub dns_uids: BTreeSet<u32>,
     #[serde(skip)]
     pub held_ops: BTreeMap<u32, BTreeSet<String>>,
     #[serde(skip)]
