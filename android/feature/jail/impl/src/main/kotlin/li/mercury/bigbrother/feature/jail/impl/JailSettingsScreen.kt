@@ -66,6 +66,8 @@ import li.mercury.bigbrother.core.model.SandboxHookState
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxStatus
+import li.mercury.bigbrother.core.ui.ContentKind
+import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.SectionHeader
@@ -140,26 +142,28 @@ internal fun JailSettingsScreen(
             )
         },
     ) { padding ->
-        val global = state.global
-        when {
-            state.failure != null -> LoadFailureMessage(state.failure, onRetry = onRefresh, modifier = Modifier.padding(padding))
+        FadeThrough(state, kind = { ContentKind.of(it.failure, it.global) }) { shown ->
+            val global = shown.global
+            when {
+                shown.failure != null -> LoadFailureMessage(shown.failure, onRetry = onRefresh, modifier = Modifier.padding(padding))
 
-            global == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize().padding(padding))
+                global == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize().padding(padding))
 
-            else -> {
-                var expanded by rememberSaveable { mutableStateOf<SandboxItem?>(null) }
-                JailSettingsList(
-                    state = state,
-                    global = global,
-                    padding = padding,
-                    expanded = expanded,
-                    onExpand = { expanded = it },
-                    onSetOn = onSetOn,
-                    onChoose = onChoose,
-                    onSetAutoIsolate = onSetAutoIsolate,
-                    onAllowNetwork = onAllowNetwork,
-                    onConfirmRelease = { confirming = true },
-                )
+                else -> {
+                    var expanded by rememberSaveable { mutableStateOf<SandboxItem?>(null) }
+                    JailSettingsList(
+                        state = shown,
+                        global = global,
+                        padding = padding,
+                        expanded = expanded,
+                        onExpand = { expanded = it },
+                        onSetOn = onSetOn,
+                        onChoose = onChoose,
+                        onSetAutoIsolate = onSetAutoIsolate,
+                        onAllowNetwork = onAllowNetwork,
+                        onConfirmRelease = { confirming = true },
+                    )
+                }
             }
         }
     }

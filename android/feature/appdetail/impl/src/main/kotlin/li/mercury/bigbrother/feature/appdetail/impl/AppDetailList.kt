@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import li.mercury.bigbrother.core.model.Action
 import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.SectionHeader
+import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.core.ui.label
 import li.mercury.bigbrother.core.ui.shortTime
 import li.mercury.bigbrother.core.ui.R as UiR

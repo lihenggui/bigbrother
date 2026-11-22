@@ -50,6 +50,7 @@ import li.mercury.bigbrother.core.model.Access
 import li.mercury.bigbrother.core.model.Action
 import li.mercury.bigbrother.core.ui.LocalWallClock
 import li.mercury.bigbrother.core.ui.Message
+import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.core.ui.label
 import li.mercury.bigbrother.core.ui.relativeTime
 import li.mercury.bigbrother.feature.appdetail.impl.tree.FileNode

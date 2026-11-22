@@ -74,6 +74,8 @@ import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxedApp
+import li.mercury.bigbrother.core.ui.ContentKind
+import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.SectionHeader
@@ -159,39 +161,48 @@ internal fun JailAppScreen(
             )
         },
     ) { padding ->
-        val app = state.app
-        when {
-            state.failure != null -> LoadFailureMessage(state.failure, onRetry = onRefresh, modifier = Modifier.padding(padding))
+        FadeThrough(state, kind = { it.kind() }) { shown ->
+            val app = shown.app
+            when {
+                shown.failure != null -> LoadFailureMessage(shown.failure, onRetry = onRefresh, modifier = Modifier.padding(padding))
 
-            state.loading -> BigBrotherLoadingIndicator(Modifier.fillMaxSize().padding(padding))
+                shown.loading -> BigBrotherLoadingIndicator(Modifier.fillMaxSize().padding(padding))
 
-            // Only while the page leaves, for an app that was not in the
-            // sandbox when it opened.
-            app == null -> Unit
+                // Only while the page leaves, for an app that was not in the
+                // sandbox when it opened.
+                app == null -> Unit
 
-            else -> {
-                var expanded by rememberSaveable { mutableStateOf(initiallyExpanded) }
-                var showAll by rememberSaveable { mutableStateOf(false) }
-                JailAppItems(
-                    state = state,
-                    app = app,
-                    padding = padding,
-                    expanded = expanded,
-                    showAll = showAll,
-                    onExpand = { expanded = it },
-                    onToggleShowAll = { showAll = !showAll },
-                    onRelease = onRelease,
-                    onOpenRecords = onOpenRecords,
-                    onOpenNetwork = onOpenNetwork,
-                    onReset = onReset,
-                    onSetOn = onSetOn,
-                    onChoose = onChoose,
-                    onAllowNetwork = onAllowNetwork,
-                    onSetRecording = onSetRecording,
-                )
+                else -> {
+                    var expanded by rememberSaveable { mutableStateOf(initiallyExpanded) }
+                    var showAll by rememberSaveable { mutableStateOf(false) }
+                    JailAppItems(
+                        state = shown,
+                        app = app,
+                        padding = padding,
+                        expanded = expanded,
+                        showAll = showAll,
+                        onExpand = { expanded = it },
+                        onToggleShowAll = { showAll = !showAll },
+                        onRelease = onRelease,
+                        onOpenRecords = onOpenRecords,
+                        onOpenNetwork = onOpenNetwork,
+                        onReset = onReset,
+                        onSetOn = onSetOn,
+                        onChoose = onChoose,
+                        onAllowNetwork = onAllowNetwork,
+                        onSetRecording = onSetRecording,
+                    )
+                }
             }
         }
     }
+}
+
+private fun JailAppUiState.kind(): ContentKind = when {
+    failure != null -> ContentKind.Failure
+    loading -> ContentKind.Loading
+    app == null -> ContentKind.Empty
+    else -> ContentKind.Content
 }
 
 @Composable

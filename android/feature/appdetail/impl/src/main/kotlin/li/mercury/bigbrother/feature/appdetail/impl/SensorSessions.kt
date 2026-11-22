@@ -226,11 +226,11 @@ private fun sessionSpan(start: Long, end: Long?): String {
 
 /** Under the sessions: the rates are those the app asked for. */
 @Composable
-internal fun SensorSessionsNote() {
+internal fun SensorSessionsNote(modifier: Modifier = Modifier) {
     Text(
         text = stringResource(R.string.sensor_sessions_note),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        modifier = modifier.padding(horizontal = 16.dp, vertical = 8.dp),
     )
 }

@@ -62,7 +62,9 @@ import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.ui.AppListItem
+import li.mercury.bigbrother.core.ui.ContentKind
 import li.mercury.bigbrother.core.ui.DataCategory
+import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.MenuFilterChip
 import li.mercury.bigbrother.core.ui.MenuOption
@@ -152,22 +154,26 @@ internal fun AppListScreen(
                 onRefresh = onRefresh,
                 modifier = Modifier.fillMaxSize(),
             ) {
-                when {
-                    state.failure != null -> LoadFailureMessage(state.failure, onRetry = onRefresh)
+                FadeThrough(presentation, kind = { ContentKind.of(it.state.failure, it.groups) }) { shown ->
+                    val shownState = shown.state
+                    val shownGroups = shown.groups
+                    when {
+                        shownState.failure != null -> LoadFailureMessage(shownState.failure, onRetry = onRefresh)
 
-                    groups == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
+                        shownGroups == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
 
-                    else -> AppList(
-                        groups = groups,
-                        appInfo = state.appInfo,
-                        sort = sort,
-                        category = category,
-                        hiddenApps = state.hiddenApps,
-                        showSystemApps = state.showSystemApps,
-                        selectedUid = selectedUid,
-                        onOpen = { app -> onOpen(app, state.range, category) },
-                        onShowSystemApps = { onShowSystemApps(true) },
-                    )
+                        else -> AppList(
+                            groups = shownGroups,
+                            appInfo = shownState.appInfo,
+                            sort = shown.filter.sort,
+                            category = shown.filter.category,
+                            hiddenApps = shownState.hiddenApps,
+                            showSystemApps = shownState.showSystemApps,
+                            selectedUid = selectedUid,
+                            onOpen = { app -> onOpen(app, shownState.range, shown.filter.category) },
+                            onShowSystemApps = { onShowSystemApps(true) },
+                        )
+                    }
                 }
             }
         }

@@ -49,6 +49,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import li.mercury.bigbrother.core.designsystem.component.BigBrotherLoadingIndicator
 import li.mercury.bigbrother.core.designsystem.icon.CageIcons
 import li.mercury.bigbrother.core.ui.AppIcon
+import li.mercury.bigbrother.core.ui.ContentKind
+import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.appDisplayName
@@ -120,21 +122,23 @@ internal fun AppDetailScreen(
             AppDetailTopBar(state, name, background, scrollBehavior, onBack, onRequestJail)
         },
     ) { padding ->
-        val records = state.records
-        when {
-            state.failure != null -> LoadFailureMessage(state.failure, onRetry, Modifier.padding(padding))
+        FadeThrough(state, kind = { ContentKind.of(it.failure, it.records) }) { shown ->
+            val records = shown.records
+            when {
+                shown.failure != null -> LoadFailureMessage(shown.failure, onRetry, Modifier.padding(padding))
 
-            records == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize().padding(padding))
+                records == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize().padding(padding))
 
-            else -> AppDetailList(
-                records = records,
-                state = state,
-                padding = padding,
-                focusCategory = focusCategory,
-                openRecord = openRecord,
-                onOpenFiles = onOpenFiles,
-                onOpenRecord = onOpenRecord,
-            )
+                else -> AppDetailList(
+                    records = records,
+                    state = shown,
+                    padding = padding,
+                    focusCategory = focusCategory,
+                    openRecord = openRecord,
+                    onOpenFiles = onOpenFiles,
+                    onOpenRecord = onOpenRecord,
+                )
+            }
         }
     }
 }

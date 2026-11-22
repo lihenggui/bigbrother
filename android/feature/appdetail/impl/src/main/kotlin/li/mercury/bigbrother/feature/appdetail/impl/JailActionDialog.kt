@@ -20,8 +20,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.res.stringResource
+import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.failureReason
 
 @Composable
@@ -32,7 +32,9 @@ internal fun JailActionDialog(action: JailAction?, appName: String, onConfirm: (
             AlertDialog(
                 onDismissRequest = { if (!busy) onDismiss() },
                 title = { Text(stringResource(R.string.isolate_app_title, appName)) },
-                text = { Text(stringResource(if (busy) R.string.isolating_app else R.string.isolate_app_summary)) },
+                text = {
+                    FadeThrough(if (busy) R.string.isolating_app else R.string.isolate_app_summary, kind = { it }) { Text(stringResource(it)) }
+                },
                 confirmButton = {
                     TextButton(onClick = onConfirm, enabled = !busy) { Text(stringResource(R.string.isolate_app)) }
                 },

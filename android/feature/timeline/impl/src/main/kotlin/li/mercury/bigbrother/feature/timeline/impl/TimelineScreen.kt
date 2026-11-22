@@ -67,7 +67,9 @@ import li.mercury.bigbrother.core.model.Category
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.model.TimelineEntry
 import li.mercury.bigbrother.core.ui.AppListItem
+import li.mercury.bigbrother.core.ui.ContentKind
 import li.mercury.bigbrother.core.ui.DataCategory
+import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.MenuFilterChip
 import li.mercury.bigbrother.core.ui.MenuOption
@@ -139,18 +141,22 @@ internal fun TimelineScreen(
                 onRefresh = onRefresh,
                 modifier = Modifier.fillMaxSize(),
             ) {
-                when {
-                    state.failure != null -> LoadFailureMessage(state.failure, onRetry = onRefresh)
+                FadeThrough(presentation, kind = { ContentKind.of(it.state.failure, it.items) }) { shown ->
+                    val shownState = shown.state
+                    val shownItems = shown.items
+                    when {
+                        shownState.failure != null -> LoadFailureMessage(shownState.failure, onRetry = onRefresh)
 
-                    items == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
+                        shownItems == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
 
-                    else -> Timeline(
-                        state = state,
-                        items = items,
-                        selectedUid = selectedUid,
-                        onLoadMore = onLoadMore,
-                        onOpenEntry = onOpenEntry,
-                    )
+                        else -> Timeline(
+                            state = shownState,
+                            items = shownItems,
+                            selectedUid = selectedUid,
+                            onLoadMore = onLoadMore,
+                            onOpenEntry = onOpenEntry,
+                        )
+                    }
                 }
             }
         }

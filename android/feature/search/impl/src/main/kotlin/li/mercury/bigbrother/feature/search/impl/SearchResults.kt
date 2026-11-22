@@ -39,7 +39,9 @@ import li.mercury.bigbrother.core.designsystem.component.ShapedIcon
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.PathMatch
 import li.mercury.bigbrother.core.ui.AppListItem
+import li.mercury.bigbrother.core.ui.ContentKind
 import li.mercury.bigbrother.core.ui.DataCategory
+import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.VOLUME_ROOT
@@ -55,19 +57,33 @@ internal sealed interface SearchDestination {
     data class Category(val category: DataCategory) : SearchDestination
 }
 
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 internal fun Results(
     results: SearchUiState,
     onResultClick: (SearchDestination) -> Unit,
     onRetry: () -> Unit,
 ) {
-    results.failure?.let { failure ->
-        LoadFailureMessage(failure, onRetry = onRetry)
-        return
+    FadeThrough(results, kind = { it.kind() }) { shown ->
+        when (shown.kind()) {
+            ContentKind.Failure -> LoadFailureMessage(checkNotNull(shown.failure), onRetry = onRetry)
+
+            // The expanded bar stays empty until there is a query.
+            ContentKind.Empty -> Unit
+
+            else -> ResultList(shown, onResultClick)
+        }
     }
-    // The expanded bar stays empty until there is a query.
-    if (results.query.isEmpty() && results.complete) return
+}
+
+private fun SearchUiState.kind(): ContentKind = when {
+    failure != null -> ContentKind.Failure
+    query.isEmpty() && complete -> ContentKind.Empty
+    else -> ContentKind.Content
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun ResultList(results: SearchUiState, onResultClick: (SearchDestination) -> Unit) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
@@ -79,18 +95,24 @@ internal fun Results(
         // new text is looked up, the previous results stay, but the label
         // does not speak for them.
         item(key = "label") {
-            Text(
-                text = when {
-                    !results.complete -> stringResource(R.string.searching)
-                    nothing -> stringResource(UiR.string.no_matches)
-                    else -> stringResource(R.string.results)
-                },
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            val label = when {
+                !results.complete -> R.string.searching
+                nothing -> UiR.string.no_matches
+                else -> R.string.results
+            }
+            FadeThrough(
+                state = label,
+                kind = { it },
                 modifier = Modifier
                     .padding(start = 16.dp, top = 8.dp)
                     .semantics { liveRegion = LiveRegionMode.Polite },
-            )
+            ) { shown ->
+                Text(
+                    text = stringResource(shown),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         if (results.apps.isNotEmpty()) {
             item(key = "apps") { SectionHeader(stringResource(R.string.section_apps)) }

@@ -80,6 +80,8 @@ import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.SandboxHookState
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxStatus
+import li.mercury.bigbrother.core.ui.ContentKind
+import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.SectionHeader
@@ -178,11 +180,13 @@ internal fun JailScreen(
                 .fillMaxSize()
                 .padding(top = padding.calculateTopPadding()),
         ) {
-            val apps = state.apps
-            when {
-                state.failure != null -> LoadFailureMessage(state.failure, onRetry = onRefresh)
-                apps == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
-                else -> JailList(state, apps, listState, selectedUid, settingsSelected, onOpenApp, onOpenSettings, onAdd)
+            FadeThrough(state, kind = { ContentKind.of(it.failure, it.apps) }) { shown ->
+                val apps = shown.apps
+                when {
+                    shown.failure != null -> LoadFailureMessage(shown.failure, onRetry = onRefresh)
+                    apps == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
+                    else -> JailList(shown, apps, listState, selectedUid, settingsSelected, onOpenApp, onOpenSettings, onAdd)
+                }
             }
         }
     }

@@ -59,12 +59,14 @@ import li.mercury.bigbrother.core.model.AccessPeriod
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.ClipboardUse
 import li.mercury.bigbrother.core.model.clipboardUse
+import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.InlineMessage
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.LocalWallClock
 import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.SectionHeader
+import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.core.ui.appDisplayName
 import li.mercury.bigbrother.core.ui.exactDateTime
 import li.mercury.bigbrother.core.ui.failureReason
@@ -114,20 +116,20 @@ internal fun RecordScreen(
         verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
     ) {
         item(key = "header") {
-            Header(state, uid, packageName, onClose)
+            Header(state, uid, packageName, onClose, Modifier.animatedRow(this, MaterialTheme.motionScheme))
         }
         when {
             state.failure != null -> item(key = "failure") {
-                LoadFailureMessage(state.failure, onRetry, Modifier.fillParentMaxHeight(0.5f))
+                LoadFailureMessage(state.failure, onRetry, Modifier.animatedRow(this, MaterialTheme.motionScheme).fillParentMaxHeight(0.5f))
             }
 
             !state.loaded -> item(key = "loading") {
-                BigBrotherLoadingIndicator(Modifier.fillMaxWidth().padding(vertical = 48.dp))
+                BigBrotherLoadingIndicator(Modifier.animatedRow(this, MaterialTheme.motionScheme).fillMaxWidth().padding(vertical = 48.dp))
             }
 
             // Records age out of the range, so a link can outlive them.
             group == null -> item(key = "gone") {
-                Message(stringResource(UiR.string.empty_title), "", Modifier.fillParentMaxHeight(0.5f))
+                Message(stringResource(UiR.string.empty_title), "", Modifier.animatedRow(this, MaterialTheme.motionScheme).fillParentMaxHeight(0.5f))
             }
 
             else -> {
@@ -143,8 +145,8 @@ private fun LazyListScope.recordDetailsSection(group: TopicGroup) {
     val details = recordDetails(group.accesses.map { it.path }, titled = topicTitle(group.topic) != null)
         .filterIsInstance<RecordDetail.Plain>()
     if (details.isNotEmpty()) {
-        item(key = "details-header") { SectionHeader(stringResource(R.string.record_details)) }
-        item(key = "details") { Details(details) }
+        item(key = "details-header") { SectionHeader(stringResource(R.string.record_details), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+        item(key = "details") { Details(details, Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
     }
 }
 
@@ -155,6 +157,7 @@ private fun LazyListScope.sensorSessionsSection(state: RecordUiState, now: Long,
             InlineMessage(
                 title = stringResource(R.string.sensor_sessions),
                 body = failureReason(state.sensorSessionsFailure),
+                modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
                 actionLabel = stringResource(UiR.string.retry),
                 onAction = onRetry,
             )
@@ -163,28 +166,28 @@ private fun LazyListScope.sensorSessionsSection(state: RecordUiState, now: Long,
         val groups = groupSessions(sessions)
         // A few are shown open; many, each sensor folded.
         val open = sessions.size <= SESSIONS_SHOWN_OPEN
-        item(key = "sensors-header") { SectionHeader(stringResource(R.string.sensor_sessions)) }
+        item(key = "sensors-header") { SectionHeader(stringResource(R.string.sensor_sessions), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
         for (sensorGroup in groups) {
             item(key = "sensor:${sensorGroup.sensor}") {
-                SensorGroup(sensorGroup, now, initiallyExpanded = open, modifier = Modifier.padding(bottom = 8.dp))
+                SensorGroup(sensorGroup, now, initiallyExpanded = open, modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme).padding(bottom = 8.dp))
             }
         }
-        item(key = "sensors-note") { SensorSessionsNote() }
+        item(key = "sensors-note") { SensorSessionsNote(Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
     }
 }
 
 private fun LazyListScope.recordHistorySection(state: RecordUiState, fromPermissions: Boolean, onRetry: () -> Unit) {
     val periods = state.periods
-    item(key = "history-header") { SectionHeader(stringResource(R.string.record_history)) }
+    item(key = "history-header") { SectionHeader(stringResource(R.string.record_history), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
     if (state.historyFailure != null) {
-        item(key = "history-failure") { HistoryFailure(onRetry) }
+        item(key = "history-failure") { HistoryFailure(onRetry, Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
     } else if (periods == null) {
         item(key = "history-loading") {
-            BigBrotherLoadingIndicator(Modifier.fillMaxWidth().padding(vertical = 24.dp))
+            BigBrotherLoadingIndicator(Modifier.animatedRow(this, MaterialTheme.motionScheme).fillMaxWidth().padding(vertical = 24.dp))
         }
     } else {
         itemsIndexed(periods, key = { index, _ -> "period:$index" }) { index, period ->
-            PeriodItem(period, fromPermissions, index, periods.size)
+            PeriodItem(period, fromPermissions, index, periods.size, Modifier.animatedRow(this, MaterialTheme.motionScheme))
         }
         if (state.partialHistory) {
             item(key = "partial") {
@@ -192,7 +195,7 @@ private fun LazyListScope.recordHistorySection(state: RecordUiState, fromPermiss
                     text = stringResource(R.string.record_history_partial),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme).padding(horizontal = 16.dp, vertical = 12.dp),
                 )
             }
         }
@@ -201,9 +204,9 @@ private fun LazyListScope.recordHistorySection(state: RecordUiState, fromPermiss
 
 /** The history could not be loaded, though the record itself could. */
 @Composable
-private fun HistoryFailure(onRetry: () -> Unit) {
+private fun HistoryFailure(onRetry: () -> Unit, modifier: Modifier = Modifier) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 8.dp),
+        modifier = modifier.fillMaxWidth().padding(start = 16.dp, top = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -218,12 +221,9 @@ private fun HistoryFailure(onRetry: () -> Unit) {
 
 /** What the record is, whose, how often and when last; and a way to close it. */
 @Composable
-private fun Header(state: RecordUiState, uid: Int, packageName: String, onClose: () -> Unit) {
+private fun Header(state: RecordUiState, uid: Int, packageName: String, onClose: () -> Unit, modifier: Modifier = Modifier) {
     val group = state.group
-    Column(
-        modifier = Modifier.padding(start = 8.dp, top = 8.dp, bottom = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
+    Column(modifier.padding(start = 8.dp, top = 8.dp, bottom = 8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             val title = group?.let { topicTitle(it.topic) }
             ShapedIcon(topicIcon(group?.topic?.takeIf { title != null }), size = 48.dp, iconSize = 24.dp)
@@ -248,29 +248,35 @@ private fun Header(state: RecordUiState, uid: Int, packageName: String, onClose:
                 Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.close))
             }
         }
-        if (group != null) {
-            val clock = LocalWallClock.current
-            val asked = remember(group) { appsAsked(group) }
-            val last = remember(group, clock) { relativeTime(group.lastSeen, clock.millis()) }
-            val records = remember(group) { group.records }
-            val summary = if (group.allowed == 0) {
-                topicRecordsSummary(group.topic, records)
-                    ?: pluralStringResource(R.plurals.total_blocked, group.denied, group.denied)
-            } else {
-                outcome(group, group.allowed, asked)
-            } + stringResource(R.string.time_separator) + last
-            if (group.allowed == 0) DeniedText(summary) else Text(summary, style = MaterialTheme.typography.bodyLarge)
-        }
+        // The summary arrives with the record; the header grows to make room
+        // for it. It carries its own gap, so that there is none without it.
+        FadeThrough(group, kind = { it != null }) { shown -> shown?.let { Summary(it, Modifier.padding(top = 12.dp)) } }
     }
+}
+
+/** How often the record happened, how it ended and when last. */
+@Composable
+private fun Summary(group: TopicGroup, modifier: Modifier = Modifier) {
+    val clock = LocalWallClock.current
+    val asked = remember(group) { appsAsked(group) }
+    val last = remember(group, clock) { relativeTime(group.lastSeen, clock.millis()) }
+    val records = remember(group) { group.records }
+    val summary = if (group.allowed == 0) {
+        topicRecordsSummary(group.topic, records)
+            ?: pluralStringResource(R.plurals.total_blocked, group.denied, group.denied)
+    } else {
+        outcome(group, group.allowed, asked)
+    } + stringResource(R.string.time_separator) + last
+    if (group.allowed == 0) DeniedText(summary, modifier) else Text(summary, modifier, style = MaterialTheme.typography.bodyLarge)
 }
 
 /** What exactly was accessed: commands run, addresses contacted. */
 @Composable
-private fun Details(details: List<RecordDetail.Plain>) {
+private fun Details(details: List<RecordDetail.Plain>, modifier: Modifier = Modifier) {
     var showAll by rememberSaveable { mutableStateOf(false) }
     val shown = if (showAll) details else details.take(DETAILS_SHOWN)
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -301,7 +307,7 @@ private val ClipboardUse.label: Int
 /** One access, or several in the same second. */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun PeriodItem(period: AccessPeriod, fromPermissions: Boolean, index: Int, count: Int) {
+private fun PeriodItem(period: AccessPeriod, fromPermissions: Boolean, index: Int, count: Int, modifier: Modifier = Modifier) {
     // The system's permission records say a permission was used, not how;
     // the clipboard's say which way.
     val clipboard = period.subject?.let(::clipboardUse)
@@ -311,6 +317,7 @@ private fun PeriodItem(period: AccessPeriod, fromPermissions: Boolean, index: In
         else -> actionLabel(period.action, period.viaProvider)
     }
     ListItem(
+        modifier = modifier,
         shapes = ListItemDefaults.segmentedShapes(index, count),
         colors = ListItemDefaults.segmentedColors(),
         supportingContent = {
