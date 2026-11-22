@@ -87,7 +87,7 @@ mod tests;
 
 pub use crate::store::SandboxEntry as Entry;
 pub use answers::{HookStatus, Status};
-pub use cli::{command, restore_lines};
+pub use cli::{command, remove_network, restore_lines};
 pub use effect::{Effect, Resumed};
 pub use engine::{Global, Sandbox, Snapshot, items_of};
 

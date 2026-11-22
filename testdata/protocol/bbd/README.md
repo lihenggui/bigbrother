@@ -18,7 +18,7 @@ shared with the daemon are in [bbd-cli-errors.txt](../bbd-cli-errors.txt).
 | `net block` | `PACKAGE TARGET`, optional `--manual`, `--user USER --json` | Shared network fields only |
 | `net unblock` | `PACKAGE TARGET --user USER --json` | Shared network fields only |
 | `net clear` | `PACKAGE --user USER --json` | `deleted` |
-| `sandbox list` | `--json` | `apps` rows with `uid`, `package`, `enabled`, `created`, `settings`, `items`, `unmet`, `appops_checking`, `network_rules`, `recording_since` |
+| `sandbox list` | `--json` | `apps` rows with `uid`, `package`, `enabled`, `created`, `settings`, `items`, `unmet`, `appops_checking`, `network_rules`, `name_rules_not_in_effect`, `recording_since` |
 | `sandbox global` (read) | `--json` | `items`, `auto` |
 | `sandbox status` | `--json` | `gate`, `appops`, `hook` with `android_id`, `app_list`, `uri_grants`, `ad_id`, plus `new_apps_pending`, `new_apps_held`, `network`, `net_record`, `dns_names`, `traffic` |
 | `sandbox enable` | `PACKAGE --user USER --json` | Exit status |
@@ -28,8 +28,10 @@ shared with the daemon are in [bbd-cli-errors.txt](../bbd-cli-errors.txt).
 | `sandbox global` (write) | `ITEM=MODE ... --json` | Exit status |
 | `sandbox auto` | `on\|off --json` | Exit status |
 
-In `sandbox list`, `unmet.network_record` can contain `dns_names` when
-connections are recorded without domain names.
+In `sandbox list`, `unmet.network_record` can contain `recording` when
+connections cannot be recorded or `dns_names` when they are recorded
+without domain names. `name_rules_not_in_effect` counts saved name rules
+for an enabled app whose resolver cover does not lead to a serving relay.
 
 Network responses share `ok` and optional `error` fields. Bucket entries
 contain `t`, `conn`, `refused`. Rule entries contain `target`, `created`,

@@ -217,9 +217,10 @@ released_all && online=true
 rm -rf /data/system/big_brother_sandbox /data/system/big_brother_sandbox.status \
     /data/system/big_brother_sandbox.new /data/system/big_brother_hook
 
+# An interrupted daemon can leave rules and mounts even after it has stopped.
+network_removed=false
+"$BBD" sandbox-remove-network && network_removed=true
 with_recovery_lock stage_uninstall || exit 1
+"$network_removed" || exit 1
 rm -rf "$DATA"
-# The program the packet filter's rules name. The rules went with the last
-# app taken out, and with the restart of the device otherwise.
-rm -f /sys/fs/bpf/bb_network
 # Sandboxed apps keep their files on shared storage.

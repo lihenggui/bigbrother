@@ -397,6 +397,7 @@ impl Writer {
         )?;
         self.delete_unused_paths()?;
         self.prune_net(cutoff)?;
+        self.prune_name_addresses(now)?;
         Ok(self
             .conn
             .execute("DELETE FROM access WHERE last_ts < ?1", params![cutoff])?)

@@ -64,7 +64,11 @@ SH
     cat >"$mod/bin/bbd" <<'SH'
 #!/bin/sh
 case "$1" in
-module-stop) exit 0 ;;
+module-stop) touch "$state/stopped" ;;
+sandbox-remove-network)
+    [ -f "$state/stopped" ] && [ -f "$state/data/adb/big_brother/bb.db" ] || exit 2
+    touch "$state/network-removed"
+    ;;
 sandbox-restore-lines)
     echo 'bound com.example.owner aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa restore 10100 android:camera=4'
     echo 'bound com.example.profile bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb restore 1010101 android:camera=4'
@@ -159,7 +163,7 @@ manager_toggle_retries_and_reenables() (
     wait_for_worker_exit
     [[ $(wc -l <"$state/writes") -eq 4 ]]
     sh "$mod/uninstall.sh"
-    [[ ! -e "$hook" && ! -e "$data" ]]
+    [[ -f "$state/network-removed" && ! -e "$hook" && ! -e "$data" ]]
     check="uninstall recovery worker to finish"
     await test ! -e "${hook%/*}/big_brother_recover.sh"
 )

@@ -58,6 +58,7 @@ internal fun JSONObject.toBbdSandboxedApp(hookHealth: Map<SandboxPart, SandboxHo
     appOpsChecking = optBoolean("appops_checking"),
     hookHealth = hookHealth,
     networkRules = getInt("network_rules"),
+    nameRulesNotInEffect = optInt("name_rules_not_in_effect"),
     recordingSince = if (isNull("recording_since")) null else getLong("recording_since"),
 )
 

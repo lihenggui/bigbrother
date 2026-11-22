@@ -66,6 +66,14 @@ pub struct NetRule {
     pub manual: bool,
 }
 
+pub struct NameAddress {
+    pub uid: u32,
+    pub target: String,
+    pub install_id: String,
+    pub address: String,
+    pub expires: i64,
+}
+
 pub enum RuleChange {
     Block { created: i64, manual: bool },
     Unblock,
@@ -133,6 +141,12 @@ impl Writer {
         )
     }
 
+    pub(super) fn prune_name_addresses(&self, now: i64) -> rusqlite::Result<()> {
+        self.conn
+            .execute("DELETE FROM net_name_address WHERE expires <= ?1", [now])?;
+        Ok(())
+    }
+
     /// Delete what is recorded of the network of `uid`, written or not;
     /// how many rows. The destinations it is kept from stay.
     pub fn net_clear(&self, uid: u32) -> anyhow::Result<usize> {
@@ -160,6 +174,7 @@ impl Writer {
     /// Delete network state for a UID as part of retiring its old owner.
     pub(super) fn delete_net_for_uid(tx: &Transaction<'_>, uid: u32) -> rusqlite::Result<()> {
         tx.execute("DELETE FROM net_dest WHERE uid = ?1", params![uid])?;
+        tx.execute("DELETE FROM net_name_address WHERE uid = ?1", params![uid])?;
         tx.execute("DELETE FROM net_rule WHERE uid = ?1", params![uid])?;
         tx.execute("DELETE FROM net_recording WHERE uid = ?1", params![uid])?;
         Ok(())
@@ -171,12 +186,31 @@ impl Writer {
     }
 
     /// Commit the rule through to disk only if its effects could be applied.
+    pub fn name_addresses(&self, now: i64) -> anyhow::Result<Vec<NameAddress>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT a.uid, a.target, a.install_id, a.address, a.expires
+             FROM net_name_address a JOIN sandbox s USING (uid, install_id)
+             WHERE a.expires > ?1",
+        )?;
+        Ok(stmt
+            .query_map([now], |r| {
+                Ok(NameAddress {
+                    uid: r.get(0)?,
+                    target: r.get(1)?,
+                    install_id: r.get(2)?,
+                    address: r.get(3)?,
+                    expires: r.get(4)?,
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
     pub fn change_net_rule(
         &self,
         uid: u32,
         target: &str,
         change: RuleChange,
-        apply: impl FnOnce() -> anyhow::Result<()>,
+        apply: impl FnOnce() -> anyhow::Result<Vec<NameAddress>>,
     ) -> anyhow::Result<()> {
         self.write_sandbox(|tx| {
             match change {
@@ -189,12 +223,28 @@ impl Writer {
                 }
                 RuleChange::Unblock => {
                     tx.execute(
+                        "DELETE FROM net_name_address WHERE uid = ?1 AND target = ?2",
+                        params![uid, target],
+                    )?;
+                    tx.execute(
                         "DELETE FROM net_rule WHERE uid = ?1 AND target = ?2",
                         params![uid, target],
                     )?;
                 }
             }
-            apply()
+            let addresses = apply()?;
+            if !addresses.is_empty() {
+                let mut put = tx.prepare_cached(
+                    "INSERT INTO net_name_address (uid, target, install_id, address, expires)
+                     SELECT ?1, ?2, ?3, ?4, ?5 WHERE EXISTS
+                         (SELECT 1 FROM net_rule WHERE uid = ?1 AND target = ?2)
+                     ON CONFLICT (uid, target, install_id, address) DO UPDATE SET expires = excluded.expires",
+                )?;
+                for a in addresses {
+                    put.execute(params![a.uid, a.target, a.install_id, a.address, a.expires])?;
+                }
+            }
+            Ok(())
         })
     }
 
@@ -348,7 +398,7 @@ mod tests {
                     created: 3600,
                     manual: true,
                 },
-                || Ok(()),
+                || Ok(Vec::new()),
             )
             .unwrap();
         writer.set_net_recording(&[uid], 3600).unwrap();

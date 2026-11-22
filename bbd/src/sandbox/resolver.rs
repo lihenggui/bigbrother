@@ -153,7 +153,9 @@ fn found(mountinfo: &str) -> Mounted {
 enum Change {
     Set(Cover),
     Record(Serving),
+    Names(Serving),
     RemoveRelay,
+    RemoveCovers,
 }
 
 impl Change {
@@ -168,10 +170,21 @@ impl Change {
         let cover = match *self {
             Self::Set(cover) if mounted == Mounted::Known(cover) => return Ok(None),
             Self::Set(cover) => cover,
-            Self::Record(_) if serving.is_some() && serving == covered => return Ok(None),
-            Self::Record(_) if serving.is_some() => Cover::Relay,
+            Self::Record(_) | Self::Names(_) if serving.is_some() && serving == covered => {
+                return Ok(None);
+            }
+            Self::Record(_) | Self::Names(_) if serving.is_some() => Cover::Relay,
+            Self::Names(_) if mounted == Mounted::Known(Cover::Null) => return Ok(None),
+            Self::Names(_) => Cover::Null,
             Self::Record(_) if mounted == Mounted::Known(Cover::None) => return Ok(None),
             Self::Record(_) => Cover::None,
+            Self::RemoveCovers => {
+                return Ok(matches!(
+                    mounted,
+                    Mounted::Known(Cover::Null | Cover::Relay) | Mounted::StaleRelay
+                )
+                .then_some((true, Cover::None)));
+            }
             Self::RemoveRelay => {
                 return Ok(
                     matches!(mounted, Mounted::Known(Cover::Relay) | Mounted::StaleRelay)
@@ -224,6 +237,11 @@ pub(super) fn record(entry: &Entry, relay: &Serving) -> anyhow::Result<bool> {
     change(vec![(entry.clone(), Change::Record(relay.clone()))])
 }
 
+pub(super) fn serve_names(entry: &Entry, relay: &Serving) -> anyhow::Result<bool> {
+    change(vec![(entry.clone(), Change::Names(relay.clone()))])
+        .map(|covered| covered && relay.alive())
+}
+
 pub(super) fn optional_cover(items: &Settings, has_name_rules: bool) -> bool {
     !items.network_refused() && !has_name_rules
 }
@@ -238,6 +256,24 @@ pub fn detach_recording_covers(db: &Path) -> anyhow::Result<()> {
         anyhow::anyhow!("cannot read committed sandbox policy for resolver cleanup")
     })?;
     remove_old_relays(entries.into_iter())
+}
+
+/// The daemon is stopped before uninstall. Include disabled entries because
+/// a failed release may have left a cover in a running process.
+pub fn detach_all_covers(db: &Path) -> anyhow::Result<()> {
+    if !db.try_exists().context("checking for sandbox policy")? {
+        return Ok(());
+    }
+    let entries = Reader::open(db)
+        .and_then(|reader| reader.sandbox_entries())
+        .map_err(|_| anyhow::anyhow!("cannot read sandbox policy for resolver cleanup"))?;
+    change(
+        entries
+            .into_iter()
+            .map(|entry| (entry, Change::RemoveCovers))
+            .collect(),
+    )?;
+    Ok(())
 }
 
 fn offline_recording_covers(db: &Path) -> anyhow::Result<Vec<Entry>> {
@@ -289,6 +325,7 @@ fn in_namespaces(entries: Vec<(Entry, Change)>) -> anyhow::Result<bool> {
         identity(&File::open("/proc/1/ns/mnt").context("opening the first namespace")?)?,
     ];
     let mut changes = HashMap::new();
+    let mut verify_error = None;
     for (entry, change) in entries {
         // The uid may have gone to another app since.
         match dirs::matches_install(
@@ -304,11 +341,14 @@ fn in_namespaces(entries: Vec<(Entry, Change)>) -> anyhow::Result<bool> {
             Err(e) if matches!(change, Change::RemoveRelay) => {
                 eprintln!("bbd: sandbox: cannot verify installation for resolver cleanup: {e}");
             }
+            Err(e) if matches!(change, Change::RemoveCovers) => {
+                verify_error.get_or_insert(e);
+            }
             Err(e) => return Err(e.into()),
         }
     }
     if changes.is_empty() {
-        return Ok(false);
+        return verify_error.map_or(Ok(false), |e| Err(e.into()));
     }
     let mut complete = true;
     for pass in 0..PASSES {
@@ -323,7 +363,7 @@ fn in_namespaces(entries: Vec<(Entry, Change)>) -> anyhow::Result<bool> {
             break;
         }
     }
-    Ok(complete)
+    verify_error.map_or(Ok(complete), |e| Err(e.into()))
 }
 
 /// One pass over the processes of the selected UIDs. A process that
@@ -336,7 +376,7 @@ fn pass_once(
     let mut seen = HashSet::new();
     let mut changed = 0;
     let mut complete = true;
-    let mut record_error = None;
+    let mut sweep_error = None;
     for process in fs::read_dir("/proc")
         .context("listing the processes")?
         .flatten()
@@ -348,8 +388,14 @@ fn pass_once(
         else {
             continue;
         };
-        // The directory of a process belongs to the user it runs as.
-        let owner = || process.metadata().ok().map(|meta| meta.uid());
+        // Non-dumpable app processes can have root-owned proc directories.
+        let owner = || {
+            let uid = process.metadata().ok()?.uid();
+            if uid != 0 {
+                return Some(uid);
+            }
+            crate::proc::real_uid(&fs::read(format!("/proc/{pid}/status")).ok()?)
+        };
         let Some(uid) = owner() else { continue };
         let Some(change) = changes.get(&uid) else {
             continue;
@@ -378,8 +424,11 @@ fn pass_once(
             continue;
         }
         let mounted = found(&mountinfo);
-        let record = matches!(change, Change::Record(_));
-        let plan = if record {
+        let relay = match change {
+            Change::Record(relay) | Change::Names(relay) => Some(relay),
+            _ => None,
+        };
+        let plan = if relay.is_some() {
             // The visible socket's inode is read after entering the namespace.
             None
         } else {
@@ -398,9 +447,10 @@ fn pass_once(
         let done = match enter_target() {
             Ok(()) => {
                 let mounted = (|| -> anyhow::Result<bool> {
-                    if let Change::Record(relay) = change {
+                    if let Some(relay) = relay {
                         let serving = relay.socket();
                         let covered = socket_id(SOCKET).ok();
+                        complete &= serving.is_some();
                         let Some((detach, cover)) = change.plan(mounted, *serving, covered)? else {
                             return Ok(false);
                         };
@@ -411,7 +461,14 @@ fn pass_once(
                             && record_here(id).is_err()
                         {
                             complete = false;
+                            if matches!(change, Change::Names(_)) {
+                                cover_here(Cover::Null)?;
+                                return Ok(true);
+                            }
                             return Ok(detach);
+                        }
+                        if cover == Cover::Null {
+                            cover_here(cover)?;
                         }
                     } else if let Some((detach, cover)) = plan {
                         if detach {
@@ -429,8 +486,8 @@ fn pass_once(
         };
         match done {
             Ok(used) => changed += u32::from(used),
-            Err(e) if record => {
-                record_error.get_or_insert(e);
+            Err(e) if relay.is_some() || matches!(change, Change::RemoveCovers) => {
+                sweep_error.get_or_insert(e);
             }
             Err(e) if matches!(change, Change::RemoveRelay) => {
                 eprintln!("bbd: sandbox: cannot remove an old resolver relay: {e:#}");
@@ -438,7 +495,7 @@ fn pass_once(
             Err(e) => return Err(e),
         }
     }
-    record_error.map_or(Ok((changed, complete)), Err)
+    sweep_error.map_or(Ok((changed, complete)), Err)
 }
 
 fn enter(namespace: &File) -> io::Result<()> {
@@ -501,6 +558,40 @@ mod tests {
 16381 16380 0:19 / /dev/pts rw,relatime master:3 - devpts devpts rw,seclabel
 16400 14610 0:21 / /proc rw,relatime master:9 - proc proc rw,gid=3009
 ";
+
+    #[test]
+    fn offline_removal_detaches_sandbox_covers_and_leaves_foreign_mounts() {
+        let cleanup = Change::RemoveCovers;
+        for cover in [
+            Mounted::Known(Cover::Null),
+            Mounted::Known(Cover::Relay),
+            Mounted::StaleRelay,
+        ] {
+            assert_eq!(
+                cleanup.plan(cover, None, None).unwrap(),
+                Some((true, Cover::None))
+            );
+        }
+        for cover in [Mounted::Known(Cover::None), Mounted::Other] {
+            assert_eq!(cleanup.plan(cover, None, None).unwrap(), None);
+        }
+    }
+
+    #[test]
+    fn name_rules_replace_a_relay_cover_that_is_not_the_serving_socket() {
+        let names = Change::Names(Serving::default());
+        let cover = Mounted::Known(Cover::Relay);
+        let current = Some((1, 2));
+        assert_eq!(
+            names.plan(cover, current, Some((1, 3))).unwrap(),
+            Some((true, Cover::Relay))
+        );
+        assert_eq!(names.plan(cover, current, current).unwrap(), None);
+        assert_eq!(
+            names.plan(cover, None, current).unwrap(),
+            Some((true, Cover::Null))
+        );
+    }
 
     #[test]
     fn what_is_on_the_socket_is_told_by_what_is_mounted_there() {
@@ -578,7 +669,7 @@ mod tests {
                         created: 1,
                         manual: true,
                     },
-                    || Ok(()),
+                    || Ok(Vec::new()),
                 )
                 .unwrap();
         }

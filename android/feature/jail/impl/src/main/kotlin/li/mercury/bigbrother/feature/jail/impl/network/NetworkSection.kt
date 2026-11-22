@@ -100,6 +100,8 @@ internal fun LazyListScope.networkSection(
     val recording = app.modeOf(SandboxItem.NETWORK_RECORD).isOn
     val activityShown = recording || app.networkRules > 0 || app.recordingSince != null
     val count = if (activityShown) 3 else 2
+    val recordingUnmet = app.unmet[SandboxItem.NETWORK_RECORD].orEmpty()
+    val blocked = app.networkRules - app.nameRulesNotInEffect
     item(key = SandboxItem.NETWORK.id) {
         val mode = app.modeOf(SandboxItem.NETWORK)
         ItemRow(
@@ -121,7 +123,7 @@ internal fun LazyListScope.networkSection(
         RecordRow(
             recording,
             app.recordingSince,
-            namesUnavailable = SandboxPart.DNS_NAMES in app.unmet[SandboxItem.NETWORK_RECORD].orEmpty(),
+            unmet = recordingUnmet,
             actions.onSetRecording,
             index = 1,
             count = count,
@@ -144,7 +146,8 @@ internal fun LazyListScope.networkSection(
                     found == 0 -> stringResource(R.string.jail_net_empty_title)
                     else -> pluralStringResource(R.plurals.jail_network_activity_summary, found, found)
                 },
-                pluralStringResource(R.plurals.jail_network_blocked_count, app.networkRules, app.networkRules).takeIf { app.networkRules > 0 },
+                pluralStringResource(R.plurals.jail_network_blocked_count, blocked, blocked).takeIf { blocked > 0 },
+                stringResource(R.string.jail_network_name_rules_not_in_effect).takeIf { app.nameRulesNotInEffect > 0 },
             ).joinToString(separator)
             LinkRow(
                 title = stringResource(R.string.jail_network_activity),
@@ -195,7 +198,7 @@ internal fun LazyListScope.globalNetworkSection(
 private fun RecordRow(
     recording: Boolean,
     since: Long?,
-    namesUnavailable: Boolean,
+    unmet: Set<SandboxPart>,
     onCheckedChange: (Boolean) -> Unit,
     index: Int,
     count: Int,
@@ -203,7 +206,8 @@ private fun RecordRow(
     SegmentedSwitchRow(
         title = stringResource(R.string.jail_network_record),
         summary = when {
-            recording && namesUnavailable -> stringResource(R.string.jail_net_names_missing_title)
+            recording && SandboxPart.RECORDING in unmet -> stringResource(R.string.jail_network_recording_unavailable)
+            recording && SandboxPart.DNS_NAMES in unmet -> stringResource(R.string.jail_net_names_missing_title)
             recording && since != null -> stringResource(R.string.jail_network_recording_since, timeWithDateIfNotToday(since))
             else -> stringResource(R.string.jail_network_record_summary)
         },

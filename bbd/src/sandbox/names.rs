@@ -114,6 +114,10 @@ const ANSWER_WAIT: Duration = Duration::from_secs(60);
 /// not those of the others.
 const REMEMBERED: usize = 2048;
 
+// The dnsproxyd getaddrinfo answer has no TTL. Bound how long a saved
+// address can keep affecting connections after the app was given it.
+const ADDRESS_LIFETIME: i64 = 24 * 60 * 60;
+
 /// Which name each app was last given an address for.
 #[derive(Default)]
 pub struct Names {
@@ -122,7 +126,7 @@ pub struct Names {
 
 #[derive(Default)]
 struct Known {
-    by_address: HashMap<u32, HashMap<IpAddr, (String, u64)>>,
+    by_address: HashMap<u32, HashMap<IpAddr, Answer>>,
     /// Counts what is remembered, for the order it was in.
     count: u64,
     /// The addresses each app is refused with the names it is kept from
@@ -131,23 +135,39 @@ struct Known {
     refused: HashMap<u32, BTreeSet<IpAddr>>,
 }
 
+struct Answer {
+    install_id: Arc<str>,
+    host: String,
+    order: u64,
+    expires: i64,
+}
+
 impl Names {
     /// Remember that `uid` was given `addresses` for `host`.
-    pub fn learn(&self, uid: u32, host: &str, addresses: &[IpAddr]) {
+    pub fn learn(&self, uid: u32, install_id: Arc<str>, host: &str, addresses: &[IpAddr]) {
         let mut known = lock(&self.known);
         let Known {
             by_address, count, ..
         } = &mut *known;
         let of_app = by_address.entry(uid).or_default();
+        let expires = crate::clock::now() + ADDRESS_LIFETIME;
         for address in addresses {
             *count += 1;
-            of_app.insert(address.to_canonical(), (host.to_string(), *count));
+            of_app.insert(
+                address.to_canonical(),
+                Answer {
+                    install_id: install_id.clone(),
+                    host: host.to_owned(),
+                    order: *count,
+                    expires,
+                },
+            );
         }
         if of_app.len() > REMEMBERED {
-            let mut order: Vec<u64> = of_app.values().map(|(_, at)| *at).collect();
+            let mut order: Vec<u64> = of_app.values().map(|answer| answer.order).collect();
             order.sort_unstable();
             let oldest_kept = order[order.len() - REMEMBERED / 2];
-            of_app.retain(|_, (_, at)| *at >= oldest_kept);
+            of_app.retain(|_, answer| answer.order >= oldest_kept);
         }
     }
 
@@ -184,19 +204,29 @@ impl Names {
             .by_address
             .get(&uid)?
             .get(&address.to_canonical())
-            .map(|(host, _)| host.clone())
+            .map(|answer| answer.host.clone())
     }
 
     /// The addresses `uid` was given for the names `covered` holds for.
-    pub fn addresses_of(&self, uid: u32, covered: impl Fn(&str) -> bool) -> Vec<IpAddr> {
+    pub fn addresses_of(
+        &self,
+        uid: u32,
+        install_id: &str,
+        now: i64,
+        covered: impl Fn(&str) -> bool,
+    ) -> Vec<(IpAddr, i64)> {
         let known = lock(&self.known);
         known
             .by_address
             .get(&uid)
             .into_iter()
             .flatten()
-            .filter(|(_, (host, _))| covered(host))
-            .map(|(address, _)| *address)
+            .filter(|(_, answer)| {
+                answer.install_id.as_ref() == install_id
+                    && answer.expires > now
+                    && covered(&answer.host)
+            })
+            .map(|(address, answer)| (*address, answer.expires))
             .collect()
     }
 }
@@ -205,9 +235,9 @@ impl Names {
 /// that could not be read, which an app kept from any name is refused.
 pub type Refuses = Arc<dyn Fn(u32, Option<&str>) -> bool + Send + Sync>;
 
-/// Whether a uid is one the daemon relays lookups for: an app given the
-/// daemon's socket.
-pub type Serves = Arc<dyn Fn(u32) -> bool + Send + Sync>;
+/// The installation served by the relay, if any. Keep its identity from
+/// when the lookup starts so a late answer cannot follow a reused UID.
+pub type Serves = Arc<dyn Fn(u32) -> Option<Arc<str>> + Send + Sync>;
 
 impl Sandbox {
     pub(crate) fn name_policy(&self) -> (Serves, Refuses) {
@@ -234,12 +264,12 @@ impl Sandbox {
                 // can be found by any process, and an app kept from the
                 // network is to have no resolver at all.
                 let snapshot = read(&snapshot);
-                let Some(entry) = snapshot.get(&uid) else {
-                    return false;
-                };
+                let entry = snapshot.get(&uid)?;
                 let items = items_of(entry, &read(&global));
-                !items.network_refused()
-                    && (items.network_recorded() || super::destinations::has_name_rules(&book, uid))
+                (!items.network_refused()
+                    && (items.network_recorded()
+                        || super::destinations::has_name_rules(&book, uid)))
+                .then(|| Arc::from(entry.install_id.as_str()))
             })
         };
         (serves, refuses)
@@ -426,7 +456,10 @@ pub fn start(
                 let Ok(uid) = peer_uid(&client) else {
                     continue;
                 };
-                if !(shared.serves)(uid) || !shared.take_place(uid) {
+                let Some(install_id) = (shared.serves)(uid) else {
+                    continue;
+                };
+                if !shared.take_place(uid) {
                     continue;
                 }
                 let lookup = shared.clone();
@@ -435,7 +468,7 @@ pub fn start(
                     .spawn(move || {
                         // What fails here fails the app's lookup, and
                         // says nothing: the reason would name the app.
-                        let _ = relay(client, uid, &lookup);
+                        let _ = relay(client, uid, install_id, &lookup);
                         lookup.leave_place(uid);
                     });
                 if spawned.is_err() {
@@ -537,7 +570,12 @@ fn connect_as(uid: u32) -> io::Result<UnixStream> {
     connected
 }
 
-fn relay(mut client: UnixStream, uid: u32, shared: &Shared) -> io::Result<()> {
+fn relay(
+    mut client: UnixStream,
+    uid: u32,
+    install_id: Arc<str>,
+    shared: &Shared,
+) -> io::Result<()> {
     client.set_write_timeout(Some(REQUEST_WAIT))?;
     // The whole request within the time, however slowly it comes.
     let asked_by = Instant::now() + REQUEST_WAIT;
@@ -583,7 +621,11 @@ fn relay(mut client: UnixStream, uid: u32, shared: &Shared) -> io::Result<()> {
         loop {
             match addresses_in(&answer) {
                 Parsed::Whole(addresses) => {
-                    shared.names.learn(uid, host, &addresses);
+                    shared.names.learn(uid, install_id, host, &addresses);
+                    if (shared.refuses)(uid, Some(host)) {
+                        shared.refused.record(uid, host);
+                        return Ok(());
+                    }
                     // All there is to it: the app has no more to wait for.
                     return client.write_all(&answer);
                 }
@@ -673,7 +715,7 @@ mod tests {
             .enable(&f.writer, &mut f.packages, "com.app", 0, 1000)
             .unwrap();
         let (serves, refuses) = sandbox.name_policy();
-        assert!(!serves(10100));
+        assert!(serves(10100).is_none());
 
         sandbox
             .configure(
@@ -684,9 +726,9 @@ mod tests {
                 &BTreeMap::from([(Item::NetworkRecord, Some(Mode::On))]),
             )
             .unwrap();
-        assert!(serves(10100));
+        assert_eq!(serves(10100).as_deref(), Some("com.app"));
         assert!(!refuses(10100, Some("example.com")));
-        assert!(!serves(10200));
+        assert!(serves(10200).is_none());
     }
 
     #[tokio::test]
@@ -712,7 +754,7 @@ mod tests {
         let (refused, _) = RefusedLookups::channel();
         let shared = Shared {
             names: Arc::default(),
-            serves: Arc::new(|_| true),
+            serves: Arc::new(|_| Some(Arc::from("installation"))),
             refuses: Arc::new(|_, _| false),
             refused,
             at_once: AtomicUsize::new(0),
@@ -758,7 +800,7 @@ mod tests {
         }
         let shared = Shared {
             names: Arc::default(),
-            serves: Arc::new(|_| true),
+            serves: Arc::new(|_| Some(Arc::from("installation"))),
             refuses: Arc::new(|_, host| host == Some("blocked.example")),
             refused,
             at_once: AtomicUsize::new(0),
@@ -773,7 +815,8 @@ mod tests {
             .unwrap();
 
         std::thread::scope(|scope| {
-            let task = scope.spawn(move || relay(server, 10002, &shared));
+            let task =
+                scope.spawn(move || relay(server, 10002, Arc::from("installation"), &shared));
             let Ok(closed) = client.read(&mut [0u8]) else {
                 drop(pending);
                 panic!("the refusal waited for space in the queue");
@@ -834,14 +877,14 @@ mod tests {
             "203.0.113.7".parse().unwrap(),
             "2001:db8::5".parse().unwrap(),
         );
-        names.learn(10001, "api.example.com", &[a, b]);
-        names.learn(10002, "cdn.example.net", &[a]);
+        names.learn(10001, Arc::from("installation"), "api.example.com", &[a, b]);
+        names.learn(10002, Arc::from("installation"), "cdn.example.net", &[a]);
         assert_eq!(names.host_of(10001, a).as_deref(), Some("api.example.com"));
         assert_eq!(names.host_of(10001, b).as_deref(), Some("api.example.com"));
         assert_eq!(names.host_of(10002, a).as_deref(), Some("cdn.example.net"));
         assert_eq!(names.host_of(10002, b), None);
         // An address given for another name since is that name's.
-        names.learn(10001, "img.example.com", &[a]);
+        names.learn(10001, Arc::from("installation"), "img.example.com", &[a]);
         assert_eq!(names.host_of(10001, a).as_deref(), Some("img.example.com"));
         // An IPv4 address is the same however it is written.
         assert_eq!(
@@ -850,20 +893,53 @@ mod tests {
                 .as_deref(),
             Some("img.example.com")
         );
-        let mut under: Vec<IpAddr> =
-            names.addresses_of(10001, |host| host.ends_with(".example.com"));
+        let mut under: Vec<IpAddr> = names
+            .addresses_of(10001, "installation", crate::clock::now(), |host| {
+                host.ends_with(".example.com")
+            })
+            .into_iter()
+            .map(|(ip, _)| ip)
+            .collect();
         under.sort();
         assert_eq!(under, [a, b]);
-        assert!(names.addresses_of(10003, |_| true).is_empty());
+        assert!(
+            names
+                .addresses_of(10003, "installation", crate::clock::now(), |_| true)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_late_answer_from_a_previous_installation_cannot_supply_rule_addresses() {
+        let names = Names::default();
+        let ip = "203.0.113.7".parse().unwrap();
+        names.learn(10001, Arc::from("previous"), "example.test", &[ip]);
+        assert!(
+            names
+                .addresses_of(10001, "current", crate::clock::now(), |_| true)
+                .is_empty()
+        );
+        names.learn(10001, Arc::from("current"), "example.test", &[ip]);
+        assert_eq!(
+            names.addresses_of(10001, "current", crate::clock::now(), |_| true)[0].0,
+            ip
+        );
     }
 
     #[test]
     fn the_oldest_half_goes_when_too_much_is_remembered() {
         let names = Names::default();
         for i in 0..=REMEMBERED as u32 {
-            names.learn(10001, "h.example.com", &[IpAddr::V4(Ipv4Addr::from(i))]);
+            names.learn(
+                10001,
+                Arc::from("installation"),
+                "h.example.com",
+                &[IpAddr::V4(Ipv4Addr::from(i))],
+            );
         }
-        let kept = names.addresses_of(10001, |_| true).len();
+        let kept = names
+            .addresses_of(10001, "installation", crate::clock::now(), |_| true)
+            .len();
         assert_eq!(kept, REMEMBERED / 2);
         assert_eq!(names.host_of(10001, IpAddr::V4(Ipv4Addr::from(0))), None);
         assert!(
@@ -877,9 +953,19 @@ mod tests {
     fn an_app_that_looks_up_many_names_keeps_those_of_the_others() {
         let names = Names::default();
         let other = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 9));
-        names.learn(10002, "other.example.com", &[other]);
+        names.learn(
+            10002,
+            Arc::from("installation"),
+            "other.example.com",
+            &[other],
+        );
         for i in 0..=2 * REMEMBERED as u32 {
-            names.learn(10001, "h.example.com", &[IpAddr::V4(Ipv4Addr::from(i))]);
+            names.learn(
+                10001,
+                Arc::from("installation"),
+                "h.example.com",
+                &[IpAddr::V4(Ipv4Addr::from(i))],
+            );
         }
         assert_eq!(
             names.host_of(10002, other).as_deref(),
@@ -891,7 +977,12 @@ mod tests {
     fn nothing_is_remembered_of_a_uid_that_went_to_another_app() {
         let names = Names::default();
         let address = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 9));
-        names.learn(10001, "h.example.com", &[address]);
+        names.learn(
+            10001,
+            Arc::from("installation"),
+            "h.example.com",
+            &[address],
+        );
         names.keep_refused(10001, BTreeSet::from([address]));
         assert!(names.refused(10001, address));
         names.forget(10001);

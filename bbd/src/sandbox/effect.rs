@@ -104,6 +104,17 @@ pub trait Effect: Send {
         Ok(())
     }
 
+    /// Capture addresses before the new name rule takes effect.
+    fn stage_name_rule(&mut self, _entry: &Entry, _target: &super::target::Target) {}
+
+    fn cancel_name_rule(&mut self) {}
+
+    fn name_addresses(&self) -> Vec<crate::store::net::NameAddress> {
+        Vec::new()
+    }
+
+    fn retry_network(&mut self, _snapshot: &super::Snapshot) {}
+
     /// Release state kept for undoing a refresh once its rule is committed
     /// or the previous rules are back in the book.
     fn finish_refresh(&mut self, _uid: u32) {}

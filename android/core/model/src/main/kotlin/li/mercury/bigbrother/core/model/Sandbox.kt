@@ -165,6 +165,7 @@ enum class SandboxPart(val id: String) {
     PACKET_FILTER("packet_filter"),
 
     DNS_NAMES("dns_names"),
+    RECORDING("recording"),
     ;
 
     companion object {
@@ -224,8 +225,9 @@ data class SandboxedApp(
      * each with the parts not in place, as the daemon found them.
      */
     val unmet: Map<SandboxItem, Set<SandboxPart>> = emptyMap(),
-    /** How many destinations are blocked for it. */
+    /** How many destinations have saved rules. */
     val networkRules: Int = 0,
+    val nameRulesNotInEffect: Int = 0,
     /** Since when its connections are recorded, in seconds since the epoch; null if they are not. */
     val recordingSince: Long? = null,
     /** Whether the daemon is still checking this app's Android restrictions. */
@@ -286,6 +288,7 @@ data class SandboxStatus(
             SandboxPart.AD_ID_HOOK -> !adIdHook
             SandboxPart.PACKET_FILTER -> !network
             SandboxPart.DNS_NAMES -> !dnsNames
+            SandboxPart.RECORDING -> !netRecord
         }
     }
 

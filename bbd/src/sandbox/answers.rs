@@ -70,8 +70,10 @@ pub struct ListedApp {
     /// The AppOps helper is still reading back the restrictions for this app.
     #[serde(default)]
     pub appops_checking: bool,
-    /// How many destinations it is kept from.
+    /// How many destinations have saved rules.
     pub network_rules: u32,
+    #[serde(default)]
+    pub name_rules_not_in_effect: u32,
     /// Since when its connections are recorded, in seconds since the
     /// epoch, if they are.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -107,7 +109,7 @@ pub struct Status {
     pub gate: bool,
     /// Personal data is refused through app ops.
     pub appops: bool,
-    /// The packet filter refuses the network to the apps kept from it.
+    /// The packet filter is available to enforce network settings.
     pub network: bool,
     /// The connections of the apps the user chose can be recorded.
     pub net_record: bool,
@@ -137,6 +139,12 @@ pub struct Status {
     /// what [`Sandbox::list`] reports per app.
     #[serde(skip)]
     pub gated_uids: BTreeSet<u32>,
+    #[serde(skip)]
+    pub network_uids: BTreeSet<u32>,
+    #[serde(skip)]
+    pub network_dns_uids: BTreeSet<u32>,
+    #[serde(skip)]
+    pub recording_uids: BTreeSet<u32>,
     /// Uids whose DNS uses the active relay.
     #[serde(skip)]
     pub dns_uids: BTreeSet<u32>,

@@ -198,8 +198,10 @@
     <plurals name="jail_network_blocked_count">
         <item quantity="other">已阻止 %1$d 个</item>
     </plurals>
+    <string name="jail_network_name_rules_not_in_effect">已保存的域名规则未完全生效</string>
+    <string name="jail_network_recording_unavailable">无法记录连接</string>
     <string name="jail_network_no_permission">此应用未申请网络权限</string>
-    <string name="jail_not_in_effect_packet_filter">未生效：此内核不支持网络过滤</string>
+    <string name="jail_not_in_effect_packet_filter">无法进行网络过滤</string>
     <string name="jail_not_in_effect_resolver">部分生效：域名查询未被阻止</string>
     <string name="jail_network_global_note">作用于未单独设置的已隔离应用。禁止联网时连接立即失败，应用不会重新启动。</string>
 

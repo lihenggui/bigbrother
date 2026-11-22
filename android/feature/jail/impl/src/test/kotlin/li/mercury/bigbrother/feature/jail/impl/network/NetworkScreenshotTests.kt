@@ -145,6 +145,13 @@ class NetworkScreenshotTests {
     }
 
     @Test
+    fun givenSavedNameRulesWithoutResolverCoverage_whenPageShown_thenShowsRulesNotEnforced() {
+        capture("JailAppSavedNameRules", "phone_whole", WHOLE_PAGE) {
+            App(nameRulesNotInEffect = 2, unmet = mapOf(SandboxItem.NETWORK_RECORD to setOf(SandboxPart.DNS_NAMES)))
+        }
+    }
+
+    @Test
     fun givenAppWithoutInternetPermission_whenPageShown_thenSectionSaysSo() {
         capture("JailAppNoInternetPermission", "phone_whole", WHOLE_PAGE) {
             App(DemoApp.FLASHLIGHT, settings = emptyMap(), rules = 0, recordingSince = null, requested = setOf("android.permission.CAMERA"))
@@ -481,6 +488,7 @@ class NetworkScreenshotTests {
         app: DemoApp = DemoApp.SHOPPING,
         settings: Map<SandboxItem, SandboxMode> = mapOf(SandboxItem.NETWORK_RECORD to SandboxMode.ON),
         rules: Int = 3,
+        nameRulesNotInEffect: Int = 0,
         recordingSince: Long? = now - 6 * 3_600 - 1_680,
         unmet: Map<SandboxItem, Set<SandboxPart>> = emptyMap(),
         requested: Set<String> = setOf("android.permission.INTERNET", "android.permission.CAMERA"),
@@ -499,6 +507,7 @@ class NetworkScreenshotTests {
                     items = SandboxItem.entries.associateWith { settings[it] ?: it.default },
                     unmet = unmet,
                     networkRules = rules,
+                    nameRulesNotInEffect = nameRulesNotInEffect,
                     recordingSince = recordingSince,
                 ),
                 info = info(app),

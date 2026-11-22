@@ -57,16 +57,11 @@ impl Sandbox {
     ) -> anyhow::Result<serde_json::Value> {
         let uid = uid_of(packages, package, user)?;
         let parsed = Target::parse(target).context("not a domain or an address")?;
-        let status = self.status();
-        match parsed {
-            Target::Ip(..) => anyhow::ensure!(
-                status.network,
+        if matches!(parsed, Target::Ip(..)) {
+            anyhow::ensure!(
+                self.status().network,
                 "the packet filter is not available; destinations cannot be refused"
-            ),
-            Target::Domain(_) | Target::Host(_) => anyhow::ensure!(
-                status.dns_names,
-                "the names apps look up cannot be refused on this device"
-            ),
+            );
         }
         if let Some(targets) = lock(&self.book).get(&uid) {
             anyhow::ensure!(
@@ -109,15 +104,32 @@ impl Sandbox {
     ) -> anyhow::Result<()> {
         let blocked = matches!(change, RuleChange::Block { .. });
         let mut before = None;
+        let entry = self.snapshot_read().get(&uid).cloned();
         let result = writer.change_net_rule(uid, &target.to_text(), change, || {
             before = Some(self.set_net_rule(uid, target, blocked));
-            self.refresh(uid, false)
+            if blocked
+                && !matches!(target, Target::Ip(..))
+                && let Some(entry) = &entry
+            {
+                for effect in &mut self.effects {
+                    effect.stage_name_rule(entry, target);
+                }
+            }
+            self.refresh(uid, false)?;
+            Ok(self
+                .effects
+                .iter()
+                .flat_map(|effect| effect.name_addresses())
+                .collect())
         });
         let Some(before) = before else { return result };
         self.pending_net_refresh.retain(|pending| *pending != uid);
         let result = result.map_err(|error| {
             // The transaction kept the old row. Effects may already have
             // changed part of the filter or the app's resolver.
+            for effect in &mut self.effects {
+                effect.cancel_name_rule();
+            }
             self.set_net_rule(uid, target, before);
             match self.refresh(uid, true) {
                 Ok(()) => error,
@@ -147,6 +159,10 @@ impl Sandbox {
     /// Retry one incomplete restoration per periodic flush, taking turns
     /// when several apps need a retry.
     pub fn retry_net_refresh(&mut self) {
+        let snapshot = self.snapshot();
+        for effect in &mut self.effects {
+            effect.retry_network(&snapshot);
+        }
         if let Some(uid) = self.pending_net_refresh.pop_front()
             && self.refresh(uid, true).is_err()
         {

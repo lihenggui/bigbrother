@@ -744,7 +744,9 @@ impl Sandbox {
                     app_list_hook: status.hook.app_list,
                     uri_grants_hook: status.hook.uri_grants,
                     ad_id_hook: status.hook.ad_id,
-                    packet_filter: status.network,
+                    packet_filter: status.network_uids.contains(&entry.uid),
+                    network_dns: status.network_dns_uids.contains(&entry.uid),
+                    recording: status.recording_uids.contains(&entry.uid),
                     dns_names: status.dns_uids.contains(&entry.uid),
                 };
                 let settings = Settings::parse(&entry.settings);
@@ -769,6 +771,16 @@ impl Sandbox {
                     appops_checking: entry.enabled && status.checking_appops.contains(&entry.uid),
                     items,
                     network_rules: rules.get(&entry.uid).copied().unwrap_or(0),
+                    name_rules_not_in_effect: if entry.enabled && !in_place.dns_names {
+                        lock(&self.book).get(&entry.uid).map_or(0, |targets| {
+                            targets
+                                .iter()
+                                .filter(|target| !matches!(target, Target::Ip(..)))
+                                .count() as u32
+                        })
+                    } else {
+                        0
+                    },
                     recording_since: recording.get(&entry.uid).copied(),
                     uid: entry.uid,
                     package: entry.package,
