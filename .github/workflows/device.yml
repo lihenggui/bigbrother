@@ -9,26 +9,7 @@ on:
   schedule:
     - cron: "17 3 * * *"
   pull_request:
-    paths:
-      - bb-ebpf/**
-      - bb-common/**
-      - bbd/**
-      - Cargo.toml
-      - Cargo.lock
-      - module/**
-      - scripts/**
-      - android/app/**
-      - android/helper/**
-      - android/hook/**
-      - android/canary/**
-      - android/build-logic/**
-      - android/gradle/**
-      - android/build.gradle.kts
-      - android/settings.gradle.kts
-      - .github/actions/setup/**
-      - .github/workflows/device.yml
-      # A change to the guides alone cannot change what runs on a device.
-      - "!**/*.md"
+  merge_group:
 
 permissions:
   contents: read
@@ -45,8 +26,48 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Check changed files
+    runs-on: ubuntu-24.04
+    outputs:
+      run: ${{ steps.paths.outputs.run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Match changed files
+        id: paths
+        shell: bash
+        env:
+          DIFF_RANGE: >-
+            ${{ github.event_name == 'pull_request' &&
+                format('{0}...{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha) ||
+                github.event_name == 'merge_group' &&
+                format('{0}..{1}', github.event.merge_group.base_sha, github.event.merge_group.head_sha) || '' }}
+        run: |
+          run=true
+          if [[ -n "$DIFF_RANGE" ]]; then
+            changed=$(git diff --name-only --no-renames "$DIFF_RANGE" -- \
+              ':(glob)bb-ebpf/**' ':(glob)bb-common/**' ':(glob)bbd/**' Cargo.toml Cargo.lock \
+              ':(glob)module/**' ':(glob)scripts/**' \
+              ':(glob)android/app/**' ':(glob)android/helper/**' ':(glob)android/hook/**' \
+              ':(glob)android/canary/**' ':(glob)android/build-logic/**' ':(glob)android/gradle/**' \
+              android/build.gradle.kts android/settings.gradle.kts \
+              ':(glob).github/actions/setup/**' .github/workflows/device.yml \
+              ':(exclude,glob)**/*.md')
+            if [[ -z "$changed" ]]; then
+              run=false
+            fi
+          fi
+          echo "run=$run" >>"$GITHUB_OUTPUT"
+
   build:
     name: Build
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -208,3 +229,30 @@ jobs:
           path: device-logs
           if-no-files-found: ignore
           retention-days: 14
+
+  result:
+    name: Device result
+    needs: [changes, build, check]
+    if: always()
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+    steps:
+      - name: Fail when a job failed or was cancelled
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
+
+      # A leg cancelled before runner assignment can leave the matrix result green.
+      - name: Verify each emulator result
+        if: needs.check.result == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # A partial rerun can carry forward earlier legs.
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=all&per_page=100" |
+            jq -e '
+              [.[].jobs[] | select(.name | test("^API [0-9]+$"))]
+              | group_by(.name) | map(max_by(.run_attempt))
+              | length == 4 and all(.[]; .conclusion == "success" or .conclusion == "skipped")
+            '

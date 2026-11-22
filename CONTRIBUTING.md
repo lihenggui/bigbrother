@@ -37,9 +37,7 @@ that runs `bbd selftest`, and fails if a probe of the x86_64 build does
 not load, attach or fire on one of them; the arm64 build is checked on
 devices (`check-canary.sh`). It needs `qemu-system-x86_64` and a static
 busybox, and builds a static daemon for musl
-(`x86_64-unknown-linux-musl`, `musl-gcc`) unless given one (`--bbd`). The
-`Kernels` workflow runs it for every change to the daemon or the eBPF
-programs:
+(`x86_64-unknown-linux-musl`, `musl-gcc`) unless given one (`--bbd`).
 
 ```sh
 ./scripts/check-kernels.sh                  # --api 33, or --kernel PATH
@@ -96,12 +94,9 @@ a root manager:
 ./scripts/install-on-emulator.sh
 ```
 
-The Device workflow (`.github/workflows/device.yml`) does this on emulators
-of API 33 to 36, nightly and for pull requests that touch the eBPF
-programs, the daemon, the Cargo manifests, the module, the scripts, the
-app, the hook, the canary, the Gradle build or the build setup, and plays
-the permission matrix there too. Without LSPosed there, the sandbox check
-skips what needs the hook.
+The Device workflow (`.github/workflows/device.yml`) runs these checks and
+the permission matrix on emulators of API 33 to 36. Without LSPosed there,
+the sandbox check skips what needs the hook.
 
 The unit tests include screenshot tests
 ([Roborazzi](https://github.com/takahirom/roborazzi)), which render the
@@ -170,9 +165,32 @@ plugin supplies a debug-signed benchmark variant of the release build.
 
 ## Checks
 
-CI (`.github/workflows/ci.yml`) runs on every push and pull request. Besides
-building and testing, it fails when one of these changes without the
-baseline being updated in the same pull request:
+CI, Device and Kernels report `CI result`, `Device result` and
+`Kernels result` on pull requests and merge groups. Require these three
+checks and up-to-date branches when configuring the branch ruleset. A result
+passes when all jobs succeeded or were skipped. A failed or cancelled job
+fails the result.
+
+Each workflow uses the changed files to decide which work to run on pull
+requests and merge groups. All three exclude Markdown changes.
+
+| Workflow | Runs for these changes |
+| --- | --- |
+| CI | Files outside `docs/`. |
+| Device | The Rust components and Cargo files, the module, scripts, `android/app/`, `android/helper/`, `android/hook/`, `android/canary/`, Gradle build logic and project configuration, `.github/actions/setup/` or `device.yml`. |
+| Kernels | The Rust components and Cargo files, `scripts/check-kernels.sh` or `kernels.yml`. |
+
+CI runs the full build on pushes to `main`. Device runs nightly. Kernels
+also runs on pushes that match its path filter, with temporary queue branches
+handled by the merge group run. All three can be started manually. Run the
+workflow regression tests locally with Python, PyYAML and `jq`.
+
+```sh
+python3 .github/tests/test_ci_gates.py
+```
+
+CI also checks that changes to the following include a baseline update in
+the same pull request.
 
 | Check | Baseline | Update with |
 | --- | --- | --- |

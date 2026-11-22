@@ -4,12 +4,8 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-  # A pull request that changes only documentation builds and tests nothing
-  # new; main still runs everything on push.
   pull_request:
-    paths-ignore:
-      - "**/*.md"
-      - docs/**
+  merge_group:
 
 permissions:
   contents: read
@@ -20,8 +16,42 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Check changed files
+    runs-on: ubuntu-24.04
+    outputs:
+      run: ${{ steps.paths.outputs.run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Match changed files
+        id: paths
+        shell: bash
+        env:
+          DIFF_RANGE: >-
+            ${{ github.event_name == 'pull_request' &&
+                format('{0}...{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha) ||
+                github.event_name == 'merge_group' &&
+                format('{0}..{1}', github.event.merge_group.base_sha, github.event.merge_group.head_sha) || '' }}
+        run: |
+          run=true
+          if [[ -n "$DIFF_RANGE" ]]; then
+            changed=$(git diff --name-only --no-renames "$DIFF_RANGE" -- \
+              ':(exclude,glob)**/*.md' ':(exclude,glob)docs/**')
+            if [[ -z "$changed" ]]; then
+              run=false
+            fi
+          fi
+          echo "run=$run" >>"$GITHUB_OUTPUT"
+
   build:
     name: Build and test
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -111,3 +141,13 @@ jobs:
           path: out/big_brother-*.apk.zip
           if-no-files-found: error
           retention-days: 14
+
+  result:
+    name: CI result
+    needs: [changes, build]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fail when a job failed or was cancelled
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
