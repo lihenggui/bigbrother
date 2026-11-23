@@ -403,6 +403,31 @@ impl Writer {
             .execute("DELETE FROM access WHERE last_ts < ?1", params![cutoff])?)
     }
 
+    /// Delete what was recorded of system paths that `recorded` no longer
+    /// accepts: records made under a rule that has since been dropped, which
+    /// would otherwise stay on every app's page until they age out. Returns
+    /// the number of paths forgotten.
+    pub fn forget_system_paths(&self, recorded: impl Fn(&str) -> bool) -> anyhow::Result<usize> {
+        let dropped: Vec<String> = self
+            .conn
+            .prepare("SELECT DISTINCT path FROM access WHERE cat IN ('device', 'system', 'process') AND path LIKE '/%'")?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .filter(|path| !path.as_ref().is_ok_and(|path| recorded(path)))
+            .collect::<Result<_, _>>()?;
+        for path in &dropped {
+            self.conn
+                .execute("DELETE FROM access WHERE path = ?1", params![path])?;
+            self.conn.execute(
+                "DELETE FROM event WHERE path_id IN (SELECT id FROM path WHERE path = ?1)",
+                params![path],
+            )?;
+        }
+        if !dropped.is_empty() {
+            self.delete_unused_paths()?;
+        }
+        Ok(dropped.len())
+    }
+
     /// Drop paths that no event refers to any more.
     fn delete_unused_paths(&self) -> anyhow::Result<()> {
         self.conn.execute(
@@ -576,6 +601,39 @@ mod tests {
         check_access_history_and_stats(&r, t, &photo);
 
         assert_eq!(w.prune(1, t + 3 * 86_400).unwrap(), 4);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn forgets_system_paths_no_longer_recorded() {
+        let dir = std::env::temp_dir().join(format!("bbd-test-forget-{}", std::process::id()));
+        let db = dir.join("bb.db");
+        let mut w = Writer::open(&db).unwrap();
+        let t = 1_000_000 * 3600;
+        let photo = "/storage/emulated/0/DCIM/a.jpg".to_string();
+        record_accesses(&mut w, t, &photo);
+        let boot_id = "/proc/sys/kernel/random/boot_id";
+        w.record(
+            10100,
+            "com.a",
+            Category::System,
+            boot_id.into(),
+            MODE_READ,
+            true,
+            t + 3,
+            0,
+        );
+        w.flush(&Counters::default(), t + 10).unwrap();
+
+        let forgotten = w
+            .forget_system_paths(|path| path == "/proc/cpuinfo")
+            .unwrap();
+
+        assert_eq!(forgotten, 1);
+        let r = Reader::open(&db).unwrap();
+        assert!(r.history(10100, boot_id, 0).unwrap().is_empty());
+        assert_eq!(r.history(10100, "/proc/cpuinfo", 0).unwrap().len(), 1);
+        assert!(!r.history(10100, &photo, 0).unwrap().is_empty());
         std::fs::remove_dir_all(dir).unwrap();
     }
 

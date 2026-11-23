@@ -44,7 +44,6 @@ import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.Policy
 import androidx.compose.material.icons.outlined.QueryStats
 import androidx.compose.material.icons.outlined.Radar
-import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material.icons.outlined.Router
 import androidx.compose.material.icons.outlined.SdStorage
 import androidx.compose.material.icons.outlined.Sensors
@@ -76,7 +75,6 @@ private val TOPICS: Map<String, TopicInfo> = mapOf(
     "network_state" to TopicInfo(R.string.topic_network_state_title, DataCategory.NETWORK, Icons.Outlined.NetworkCheck),
     "device_serial" to TopicInfo(R.string.topic_device_serial_title, DataCategory.DEVICE_IDS, Icons.Outlined.Tag),
     "soc_info" to TopicInfo(R.string.topic_soc_info_title, DataCategory.DEVICE_PROFILE, Icons.Outlined.DeveloperBoard),
-    "boot_id" to TopicInfo(R.string.topic_boot_id_title, DataCategory.DEVICE_IDS, Icons.Outlined.RestartAlt),
     "cpu_model" to TopicInfo(R.string.topic_cpu_model_title, DataCategory.DEVICE_PROFILE, Icons.Outlined.Memory),
     "kernel_version" to TopicInfo(R.string.topic_kernel_version_title, DataCategory.DEVICE_PROFILE, Icons.Outlined.Terminal),
     "other_processes" to TopicInfo(R.string.topic_other_processes_title, DataCategory.APP_ACTIVITY, Icons.AutoMirrored.Outlined.ManageSearch),

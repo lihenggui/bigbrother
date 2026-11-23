@@ -22,8 +22,8 @@ package li.mercury.bigbrother.feature.appdetail.impl
  *
  * Records are stored under identifiers meant for the daemon, such as
  * `binder:android.content.pm.IPackageManager/getPackageInfo#com.example` or
- * `/proc/sys/kernel/random/boot_id`. The row's title already says what kind
- * of data it was ("Installed apps", "Boot ID"), so only what tells the
+ * `/proc/version`. The row's title already says what kind
+ * of data it was ("Installed apps", "Kernel version"), so only what tells the
  * records of one row apart and means something to the user is kept: which
  * app was asked about (to count them), which command ran, which address was
  * contacted.

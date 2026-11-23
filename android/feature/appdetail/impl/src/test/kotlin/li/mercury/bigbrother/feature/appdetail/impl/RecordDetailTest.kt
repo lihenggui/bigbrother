@@ -48,7 +48,7 @@ class RecordDetailTest {
 
     @Test
     fun givenRecordTheTitleNames_whenDetailed_thenNoDetail() {
-        assertNull(recordDetail("/proc/sys/kernel/random/boot_id"))
+        assertNull(recordDetail("/proc/version"))
         assertNull(recordDetail("content://sms"))
         assertNull(recordDetail("setting:secure/android_id"))
         assertNull(recordDetail("appop:android:read_clipboard"))
