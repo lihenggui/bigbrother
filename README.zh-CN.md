@@ -7,8 +7,8 @@
 [English](README.md) | 简体中文
 
 Big Brother 用于在已 root 的 Android 设备上记录应用对隐私数据的访问，包括读取的文件、
-获取的设备标识、调用的系统服务，以及每次访问的时间。项目由负责采集的 root 模块和用于
-查看记录的应用组成，所有数据仅保存在本机。
+获取的设备标识、调用的系统服务，以及每次访问的时间。项目由以 root 权限运行、负责采集的组件
+和用于查看记录的应用组成，所有数据仅保存在本机。
 
 <p>
   <img src="fastlane/metadata/android/zh-CN/images/phoneScreenshots/1_overview.png" width="24%" alt="概览：读取过文件的应用，以及被访问的其他数据类别">
@@ -47,9 +47,9 @@ Big Brother 用于在已 root 的 Android 设备上记录应用对隐私数据�
 
 - Android 12 及以上，arm64 或 x86_64 架构
 - GKI 2.0 内核（5.10 及以上）并启用 BTF，可通过 `/sys/kernel/btf/vmlinux` 是否存在确认
-- root 权限：[KernelSU](https://kernelsu.org)、
+- root 权限，例如 [KernelSU](https://kernelsu.org)、
   [Magisk](https://github.com/topjohnwu/Magisk) 或 [APatch](https://apatch.dev)。
-  使用其他 root 方案时，记录在打开应用后开始，不随开机启动
+  使用其他 root 方案时，记录不会随开机启动，重启后打开应用时开始
 - 可选：[LSPosed](https://github.com/LSPosed/LSPosed)（Xposed API 101 及以上），
   用于记录经内容提供程序的访问，并为“监狱”提供系统框架中的隔离功能
 
@@ -59,19 +59,18 @@ Big Brother 用于在已 root 的 Android 设备上记录应用对隐私数据�
 ## 安装
 
 从 [Releases](https://github.com/lihenggui/bigbrother/releases/latest) 下载
-`big_brother-<version>.apk.zip`。该文件同时是应用和 root 管理器模块，可选择以下任一方式安装：
-
-- 去掉文件名末尾的 `.zip`，安装得到的 APK，打开应用并授予 root 权限，点击“安装模块”。
-  应用仅凭 root 权限安装模块：立即开始记录，root 管理器的模块列表中不显示。
-- 在 root 管理器中刷入，应用会随之安装。安装后重启设备；KernelSU 无需重启，模块立即生效。
-
-两种方式记录的内容相同。模块运行后，设置页面显示“正在记录”。
+`big_brother-<version>.apk.zip`，去掉文件名末尾的 `.zip` 后安装得到的 APK。
+打开应用，授予 root 权限，点击“启用记录”。记录立即开始，无需重启。记录运行后，设置页面显示“正在记录”。
 
 如需使用这些功能，在 LSPosed 中启用 Big Brother 并保留推荐作用域。媒体、外部存储、下载、
 通讯录、电话和日历提供程序用于记录访问。**系统框架**作用域让“监狱”管理 Android ID、广告 ID、
-已安装应用的可见性和系统文件选择器的文件授权。启用模块后重启设备。
+已安装应用的可见性和系统文件选择器的文件授权。在 LSPosed 中启用后重启设备。
 
-也可以在 root shell 中刷入模块：
+### 作为模块安装
+
+同一文件也是 KernelSU、Magisk 和 APatch 的模块。如需在 root 管理器中列出和管理 Big Brother，
+可在其中刷入，应用会随之安装。KernelSU 立即生效，Magisk 和 APatch 需重启后生效。以此方式刷入的
+模块会取代由应用启用的记录，并保留已有记录。也可以在 root shell 中刷入：
 
 ```sh
 ksud module install big_brother-<version>.apk.zip       # KernelSU
@@ -81,16 +80,16 @@ apd module install big_brother-<version>.apk.zip        # APatch
 
 ### 更新
 
-从早于 v0.3.0 的构建更新时，请先解除已有的应用隔离，按下方步骤移除旧模块和应用，再安装 v0.4.2。
+从早于 v0.3.0 的构建更新时，请先解除已有的应用隔离，在 root 管理器中移除旧模块并卸载应用，再安装 v0.4.2。
 
-后续更新可刷入新版 `.zip`，或将其改为 `.apk` 后覆盖安装，再打开应用更新模块。
+后续更新可将新版 APK 覆盖安装，或刷入新版 `.zip`，然后打开应用，“概览”会完成更新。
 
 ### 卸载
 
-由应用安装的模块在设置页的“移除模块”中移除，已有记录一并删除，之后卸载应用。
-如果先卸载了应用，模块会在下次重启时自行移除。
+在设置中点击“移除记录功能”，然后卸载应用。记录随之停止，已有记录一并删除。如果先卸载了应用，
+记录会持续到下次重启，随后连同已有记录自行移除；使用其他 root 方案时，请先在设置中移除记录功能再卸载应用。
 
-刷入的模块在 root 管理器中移除并重启，已有记录随模块一并删除，之后卸载应用。
+如果以模块方式刷入，请改为在 root 管理器中移除并重启，已有记录一并删除。
 
 ## 使用说明
 
@@ -136,7 +135,7 @@ apd module install big_brother-<version>.apk.zip        # APatch
 
 ### 对续航的影响
 
-模块不持有 WakeLock，设备休眠期间不运行。设备唤醒且空闲时约每 10 秒唤醒一次，仅在有新
+记录功能不持有 WakeLock，设备休眠期间不运行。设备唤醒且空闲时约每 10 秒唤醒一次，仅在有新
 记录时写入数据库。
 
 ### 记录保存位置
@@ -146,7 +145,7 @@ apd module install big_brother-<version>.apk.zip        # APatch
 ## 隐私
 
 应用不具备网络访问能力：清单中已移除 INTERNET 权限，APK 申请任何新权限都会导致 CI 失败。
-记录保存在 `/data/adb/big_brother`，超过 30 天或移除模块时删除。导出的日志包含应用与模块
+记录保存在 `/data/adb/big_brother`，超过 30 天或移除记录功能时删除。导出的日志包含应用与记录功能
 的日志，以及文件中列出的设备和版本信息，仅在用户主动分享时离开设备。
 
 ## 已知限制
@@ -163,7 +162,7 @@ apd module install big_brother-<version>.apk.zip        # APatch
 - 连接在发起时记录，无法得知是否成功。使用移动数据时，运营商分配的私有地址会被视为局域网。
 - 命令行最多记录 6 个参数，每个参数最长 63 字节。
 - 应用委托给特权进程（root、Shizuku）执行的文件操作不会归属于该应用。
-- 模块启动前已打开的文件无法观测。
+- 记录启动前已打开的文件无法观测。
 - 一条记录表示文件被打开过，不代表读取了多少内容。
 
 ## 工作原理
