@@ -22,22 +22,69 @@ import kotlin.test.assertNull
 
 class ReconnectingTest {
     @Test
-    fun givenServiceRegisteredLate_whenAskedAgain_thenConnectsOnceItIsThereAndNoMoreOftenThanAllowed() {
+    fun givenServiceNeverRegistered_whenRetried_thenTheWaitDoublesAndThenNoAttemptIsScheduled() {
+        var now = 0L
+        var attempts = 0
+        val service = Reconnecting<String>(firstNanos = 250, regularNanos = 1500, now = { now }) {
+            attempts++
+            null
+        }
+
+        assertEquals(0, service.retryInNanos())
+        assertNull(service.get())
+        assertEquals(250, service.retryInNanos())
+        now += 250
+        assertNull(service.get())
+        assertEquals(500, service.retryInNanos())
+        now += 500
+        assertNull(service.get())
+        assertEquals(1000, service.retryInNanos())
+        now += 1000
+        assertNull(service.get())
+        assertNull(service.retryInNanos())
+        assertEquals(4, attempts)
+    }
+
+    @Test
+    fun givenAttemptsLeftToTheCaller_whenItsNextCheckComesSoon_thenThatCheckTriesOnce() {
+        var now = 0L
+        var attempts = 0
+        val service = Reconnecting<String>(firstNanos = 250, regularNanos = 1500, now = { now }) {
+            attempts++
+            null
+        }
+        while (service.retryInNanos() != null) {
+            now += checkNotNull(service.retryInNanos())
+            service.get()
+        }
+        val scheduled = attempts
+
+        // Sooner than the last scheduled wait, which must not hold it back.
+        now += 250
+        repeat(4) { assertNull(service.get()) }
+
+        assertEquals(scheduled + 1, attempts)
+        assertNull(service.retryInNanos())
+    }
+
+    @Test
+    fun givenAttemptNotDue_whenAsked_thenNoAttemptIsMade() {
         var now = 0L
         var registered = false
         var attempts = 0
-        val service = Reconnecting(retryNanos = 5, now = { now }) {
+        val service = Reconnecting(firstNanos = 250, regularNanos = 1500, now = { now }) {
             attempts++
             "service".takeIf { registered }
         }
 
         assertNull(service.get())
-        now = 4
         registered = true
+        now = 249
         assertNull(service.get())
+        assertEquals(1, service.retryInNanos())
         assertEquals(1, attempts)
 
-        now = 5
+        now = 250
         assertEquals("service", service.get())
         assertEquals(2, attempts)
     }
@@ -45,7 +92,7 @@ class ReconnectingTest {
     @Test
     fun givenConnectedService_whenAskedAgain_thenItIsNotLookedForAgain() {
         var attempts = 0
-        val service = Reconnecting(retryNanos = 0, now = { 0 }) {
+        val service = Reconnecting(firstNanos = 250, regularNanos = 1500, now = { 0 }) {
             attempts++
             "service"
         }
@@ -53,5 +100,6 @@ class ReconnectingTest {
         repeat(3) { assertEquals("service", service.get()) }
 
         assertEquals(1, attempts)
+        assertNull(service.retryInNanos())
     }
 }
