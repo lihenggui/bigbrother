@@ -113,6 +113,27 @@ class SettingsScreenScreenshotTests {
     }
 
     @Test
+    fun givenEachModuleRemovalStep_whenShown_thenSaysHowItGoes() {
+        for (removal in MODULE_REMOVALS) {
+            capturePhone("SettingsModuleRemoval${removal.screenshotName}") {
+                Settings(SettingsUiState(status = RECORDING, moduleVersion = VERSION, moduleRemovable = true, moduleRemoval = removal))
+            }
+        }
+    }
+
+    @Test
+    fun givenModuleRemovalCases_whenChecked_thenEveryStepHasOne() {
+        assertSamplesCover(ModuleRemoval::class.java, MODULE_REMOVALS)
+    }
+
+    @Test
+    fun givenRemovalAsked_whenShown_thenDialogSaysWhatIsLost() {
+        capturePhone("SettingsRemoveModuleDialog") {
+            Settings(SettingsUiState(status = RECORDING, moduleVersion = VERSION, moduleRemovable = true), confirmingRemoval = true)
+        }
+    }
+
+    @Test
     fun givenLogExportCases_whenChecked_thenEveryStepHasOne() {
         // Ready opens the share sheet and goes back to Idle at once: it has no look of its own.
         assertSamplesCover(LogExport::class.java, LOG_EXPORTS, excluded = setOf(LogExport.Ready::class.java))
@@ -123,7 +144,7 @@ class SettingsScreenScreenshotTests {
     }
 
     @Composable
-    private fun Settings(state: SettingsUiState) {
+    private fun Settings(state: SettingsUiState, confirmingRemoval: Boolean = false) {
         SettingsScreen(
             state = state,
             appVersion = APP_VERSION,
@@ -132,6 +153,8 @@ class SettingsScreenScreenshotTests {
             onUseDynamicColor = {},
             onExportLogs = {},
             onDismissLogExport = {},
+            onRemoveModule = {},
+            initiallyConfirmingRemoval = confirmingRemoval,
         )
     }
 
@@ -140,5 +163,6 @@ class SettingsScreenScreenshotTests {
         const val VERSION = "v$APP_VERSION"
         val RECORDING = RecorderStatus(recording = true)
         val LOG_EXPORTS = listOf(LogExport.Idle, LogExport.Collecting, LogExport.Failed(LoadFailure.Operation.LOG_EXPORT_FAILED))
+        val MODULE_REMOVALS = listOf(ModuleRemoval.Idle, ModuleRemoval.Removing, ModuleRemoval.Failed(LoadFailure.Operation.MODULE_REMOVE_FAILED))
     }
 }

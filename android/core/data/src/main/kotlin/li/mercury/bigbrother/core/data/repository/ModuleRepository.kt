@@ -25,6 +25,8 @@ import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.IO
 import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.root.ModulePaths.BBD
+import li.mercury.bigbrother.core.data.root.ModulePaths.DIRECT_DIR
+import li.mercury.bigbrother.core.data.root.ModulePaths.LOCATE
 import li.mercury.bigbrother.core.data.root.ModulePaths.MODULE_DIR
 import li.mercury.bigbrother.core.data.root.ModulePaths.MODULE_PROP
 import li.mercury.bigbrother.core.data.root.ModulePaths.PENDING_UPDATE_DIR
@@ -37,7 +39,10 @@ import java.security.MessageDigest
 import java.util.zip.ZipFile
 import javax.inject.Inject
 
-/** The root module (KernelSU, Magisk or APatch) that does the recording. */
+/**
+ * The root module that does the recording: flashed in a root manager
+ * (KernelSU, Magisk or APatch), or installed by this app with root alone.
+ */
 interface ModuleRepository {
     /** Whether the module's files are in place, i.e. it is installed and active. */
     suspend fun isActive(): Boolean
@@ -59,14 +64,27 @@ interface ModuleRepository {
     suspend fun isUpdatePending(): Boolean
 
     /**
-     * Flashes the module bundled in this app's own APK, which carries the module files.
+     * Installs the module bundled in this app's own APK with root alone, and
+     * starts it. A root manager is not involved and does not list it.
      *
      * @throws RecordsException if root is missing or the installer fails.
      */
     suspend fun installBundled()
 
+    /** Whether this app installed the module, and so is what removes it. */
+    suspend fun isInstalledByApp(): Boolean
+
+    /**
+     * Removes a module this app installed: gives the apps in Jail their own
+     * state back, stops the daemon and deletes the records.
+     * @throws RecordsException if the module could not be removed; it is then still installed.
+     */
+    suspend fun remove()
+
     /**
      * Starts the daemon through the module's own service script, as at boot.
+     * A module this app installed that turned itself off after a failed boot
+     * is turned on again.
      * @throws RecordsException if the module is disabled or the daemon cannot be started.
      */
     suspend fun startDaemon()
@@ -117,11 +135,16 @@ internal class RootModuleRepository @Inject constructor(
     @Dispatcher(IO) private val ioDispatcher: CoroutineDispatcher,
 ) : ModuleRepository {
 
-    override suspend fun isActive(): Boolean = rootShell.run("[ -x $BBD ]").isSuccess
+    override suspend fun isActive(): Boolean = rootShell.run("$LOCATE; [ -x $BBD ]").isSuccess
 
     override suspend fun compareWithBundled(): InstalledModule {
         val files = (MODULE_FILES + "bin/bbd" + "helper.apk").joinToString(" ") { "$MODULE_DIR/$it" }
-        val installed = rootShell.run("sed -n 's/^versionCode=//p' $MODULE_PROP; sha256sum $files 2>/dev/null").output.lines()
+        // A module this app installed that turned itself off is not replaced
+        // behind the user's back: it is compared once it is started again.
+        val installed = rootShell.run(
+            "$LOCATE; if [ $MODULE_DIR != $DIRECT_DIR ] || [ ! -e $MODULE_DIR/disable ]; then " +
+                "sed -n 's/^versionCode=//p' $MODULE_PROP; sha256sum $files 2>/dev/null; fi",
+        ).output.lines()
         val code = installed.firstOrNull()?.trim()?.toLongOrNull() ?: return InstalledModule.UNKNOWN
         // sha256sum prints the digest, then the file name.
         val digest = installed.drop(1).map { it.substringBefore(' ') }.filter { it.matches(Regex("[a-fA-F0-9]{64}")) }
@@ -182,7 +205,7 @@ internal class RootModuleRepository @Inject constructor(
 
     private companion object {
         /** Module files installed besides the daemon; the list module/customize.sh extracts. */
-        val MODULE_FILES = listOf("module.prop", "service.sh", "supervise.sh", "stop.sh", "uninstall.sh", "action.sh")
+        val MODULE_FILES = listOf("module.prop", "service.sh", "supervise.sh", "stop.sh", "uninstall.sh", "action.sh", "direct.sh")
 
         /** Android ABI -> the architecture name module installers use, as in bin/<arch>/bbd. */
         val ARCH_BY_ABI = mapOf("arm64-v8a" to "arm64", "x86_64" to "x64")
@@ -193,7 +216,7 @@ internal class RootModuleRepository @Inject constructor(
 
     override suspend fun installedVersion(): String {
         val result = rootShell.run(
-            "if [ -e $MODULE_PROP ]; then sed -n 's/^version=//p' $MODULE_PROP; " +
+            "$LOCATE; if [ -e $MODULE_PROP ]; then sed -n 's/^version=//p' $MODULE_PROP; " +
                 "else echo $MODULE_VERSION_MISSING >&2; false; fi",
             label = "read module version",
         )
@@ -206,25 +229,44 @@ internal class RootModuleRepository @Inject constructor(
     override suspend fun isUpdatePending(): Boolean = rootShell.run("[ -d $PENDING_UPDATE_DIR ]").isSuccess
 
     override suspend fun installBundled() {
-        val result = rootShell.run(installCommand(context.applicationInfo.sourceDir), label = "module install")
+        val apk = context.applicationInfo.sourceDir.shellQuoted()
+        // Both the script and payload come from the immutable installed APK.
+        val result = rootShell.run(
+            "(umask 077; d=\$(mktemp -d /data/adb/.bb-install.XXXXXX) || exit 1; " +
+                "trap 'rm -rf \"\$d\"' EXIT; unzip -p $apk direct.sh >\"\$d/direct.sh\" && " +
+                "sh \"\$d/direct.sh\" install $apk) 2>&1",
+            label = "module install",
+        )
         if (!result.isSuccess) throw RecordsException.CommandFailed(moduleInstallerFailure(result.output, LoadFailure.Operation.MODULE_INSTALL_FAILED))
     }
 
+    override suspend fun isInstalledByApp(): Boolean = rootShell.run("$LOCATE; [ $MODULE_DIR = $DIRECT_DIR ] && [ -f $DIRECT_DIR/direct.sh ]").isSuccess
+
+    override suspend fun remove() {
+        val result = rootShell.run(
+            "$LOCATE; [ $MODULE_DIR = $DIRECT_DIR ] && sh $DIRECT_DIR/direct.sh remove </dev/null >/dev/null 2>&1",
+            label = "module remove",
+        )
+        if (!result.isSuccess) throw RecordsException.CommandFailed(LoadFailure.Operation.MODULE_REMOVE_FAILED)
+    }
+
     override suspend fun startDaemon() {
+        // No root manager turns this one on again after its boot guard.
+        rootShell.run("$LOCATE; [ $MODULE_DIR != $DIRECT_DIR ] || rm -f $DIRECT_DIR/disable")
         checkModuleEnabled()
         // The script leaves the supervisor running in the background; with
         // its output detached, the shell returns once it has been started.
         // No `exit` here: the root shell is shared and must stay open.
         val script = "$MODULE_DIR/service.sh"
         val result = rootShell.run(
-            "if [ -f $script ]; then sh $script </dev/null >/dev/null 2>&1; else false; fi",
+            "$LOCATE; if [ -f $script ]; then sh $script </dev/null >/dev/null 2>&1; else false; fi",
             label = "daemon start",
         )
         if (!result.isSuccess) throw RecordsException.CommandFailed(LoadFailure.Operation.DAEMON_START_FAILED)
     }
 
     private suspend fun checkModuleEnabled() {
-        if (rootShell.run("[ -e $MODULE_DIR/disable ] || [ -e $MODULE_DIR/remove ]").isSuccess) {
+        if (rootShell.run("$LOCATE; [ -e $MODULE_DIR/disable ] || [ -e $MODULE_DIR/remove ]").isSuccess) {
             throw RecordsException.CommandFailed(LoadFailure.Operation.MODULE_DISABLED)
         }
     }
@@ -235,46 +277,13 @@ internal fun moduleInstallerFailure(output: String, fallback: LoadFailure.Operat
     for (line in output.lineSequence()) {
         val message = line.trim().removePrefix("!").trim().removePrefix("Error: ")
         when {
-            message.startsWith("No module installer found (") ||
-                message == "This module requires KernelSU, Magisk or APatch" -> return LoadFailure.Operation.INSTALLER_MISSING
-
             message.startsWith("Unsupported architecture:") -> return LoadFailure.Operation.UNSUPPORTED_ARCHITECTURE
-
             message.startsWith("Kernel has no BTF ") -> return LoadFailure.Operation.KERNEL_BTF_MISSING
-
             message.startsWith("Kernel ") && message.endsWith("is too old; 5.10 or newer required") -> return LoadFailure.Operation.KERNEL_TOO_OLD
-
             message.startsWith("Failed to extract ") || message.endsWith(" is missing from the archive") -> return LoadFailure.Operation.MODULE_ARCHIVE_INVALID
-
             message.startsWith("unsupported database schema ") -> return LoadFailure.Operation.DATABASE_INCOMPATIBLE
-
             message == "Module updated; daemon startup was not confirmed" -> return LoadFailure.Operation.DAEMON_NOT_REPORTING
         }
     }
     return fallback
-}
-
-/**
- * A shell command that flashes the module in [apkPath] with the installer of
- * whichever root manager is present.
- *
- * Magisk is tested first because `magisk -V` asks the running daemon, so it
- * only succeeds while Magisk is the active root. The daemons of KernelSU and
- * APatch are found by their files, which can outlive a switch to another
- * manager; KernelSU wins if both exist.
- */
-internal fun installCommand(apkPath: String): String {
-    val apk = apkPath.shellQuoted()
-    return """
-        if magisk -V >/dev/null 2>&1; then
-            magisk --install-module $apk 2>&1
-        elif [ -x /data/adb/ksud ]; then
-            /data/adb/ksud module install $apk 2>&1
-        elif [ -x /data/adb/apd ]; then
-            /data/adb/apd module install $apk 2>&1
-        else
-            echo "No module installer found (KernelSU, Magisk or APatch)."
-            exit 1
-        fi
-    """.trimIndent()
 }

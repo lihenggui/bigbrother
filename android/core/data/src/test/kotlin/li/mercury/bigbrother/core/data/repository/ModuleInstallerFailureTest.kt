@@ -26,8 +26,6 @@ class ModuleInstallerFailureTest {
         val examples = mapOf(
             "! Kernel has no BTF (/sys/kernel/btf/vmlinux); GKI 5.10+ required" to LoadFailure.Operation.KERNEL_BTF_MISSING,
             "! Kernel 5.4 is too old; 5.10 or newer required" to LoadFailure.Operation.KERNEL_TOO_OLD,
-            "No module installer found (KernelSU, Magisk or APatch)." to LoadFailure.Operation.INSTALLER_MISSING,
-            "! This module requires KernelSU, Magisk or APatch" to LoadFailure.Operation.INSTALLER_MISSING,
             "! Unsupported architecture: arm" to LoadFailure.Operation.UNSUPPORTED_ARCHITECTURE,
             "! Failed to extract the daemon for arm64" to LoadFailure.Operation.MODULE_ARCHIVE_INVALID,
             "! Error: unsupported database schema 6 (expected 5)" to LoadFailure.Operation.DATABASE_INCOMPATIBLE,

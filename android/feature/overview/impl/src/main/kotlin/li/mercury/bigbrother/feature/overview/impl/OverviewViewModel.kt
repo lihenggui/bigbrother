@@ -54,13 +54,10 @@ import li.mercury.bigbrother.core.ui.UserSettingsWriter
 import timber.log.Timber
 import javax.inject.Inject
 
-/** Progress of flashing the module from inside the app. */
+/** Progress of installing the module from inside the app. */
 sealed interface ModuleSetup {
     data object Idle : ModuleSetup
     data object Installing : ModuleSetup
-
-    /** Installed, but the manager could not apply it without a reboot. */
-    data object NeedsReboot : ModuleSetup
     data class Failed(val failure: LoadFailure) : ModuleSetup
 }
 
@@ -235,21 +232,15 @@ class OverviewViewModel @Inject constructor(
         }
     }
 
-    /** Flash the module bundled in this app's APK. */
+    /** Install the module bundled in this app's APK; it starts at once. */
     fun installModule() {
         if (load.value.ui.moduleSetup == ModuleSetup.Installing) return
         updateState { it.copy(moduleSetup = ModuleSetup.Installing) }
         viewModelScope.launch {
             try {
                 moduleRepository.installBundled()
-                if (moduleRepository.isActive()) {
-                    // Already installed: either applied on the spot, or
-                    // staged until the next restart. refresh() tells which.
-                    updateState { it.copy(moduleSetup = ModuleSetup.Idle) }
-                    refresh()
-                } else {
-                    updateState { it.copy(moduleSetup = ModuleSetup.NeedsReboot) }
-                }
+                updateState { it.copy(moduleSetup = ModuleSetup.Idle) }
+                refresh()
             } catch (e: RecordsException) {
                 updateState { it.copy(moduleSetup = ModuleSetup.Failed(e.toLoadFailure())) }
             }

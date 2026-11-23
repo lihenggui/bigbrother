@@ -23,6 +23,14 @@ LOG=$DATA/bbd.log
 # Root managers and adb shells can supply different inherited umasks.
 umask 077
 mkdir -p "$DATA" && chmod 700 "$DATA" || exit 1
+# Flashed in a root manager over the one the app had installed: this one
+# takes over. The other's daemon is stopped first, by the pid files the two
+# share, which stop.sh would discard as not this module's.
+DIRECT=/data/adb/big_brother_direct
+if [ "$MODDIR" != "$DIRECT" ] && [ -d "$DIRECT" ]; then
+    "$MODDIR/bin/bbd" module-stop "$DIRECT" || exit 1
+    rm -rf "$DIRECT" /data/adb/service.d/big_brother.sh
+fi
 . "$MODDIR/stop.sh"
 
 # Boot guard. A marker is left while the system boots and removed once it has

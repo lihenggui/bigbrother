@@ -9,7 +9,7 @@ The app's Jail tab puts apps in the sandbox and sets its items. The same
 can be done from a root shell:
 
 ```sh
-bbd=/data/adb/modules/big_brother/bin/bbd
+bbd=/data/adb/modules/big_brother/bin/bbd   # /data/adb/big_brother_direct/bin/bbd if the app installed it
 $bbd sandbox enable com.example.app      # --user N for another Android user
 $bbd sandbox disable com.example.app     # --all for every app
 $bbd sandbox list
@@ -606,7 +606,8 @@ minutes.
 ## Testing
 
 `scripts/check-module-recovery.sh` exercises the boot guard, the disabled
-module hook and re-enabling on a Linux host with fake Android commands.
+module hook, re-enabling and the module installed without a root manager on
+a Linux host with fake Android commands.
 
 `scripts/check-sandbox.sh` runs the canary app outside the sandbox, inside
 it and outside again, and checks what it reports seeing each time, an

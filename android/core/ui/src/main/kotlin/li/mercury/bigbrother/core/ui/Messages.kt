@@ -132,8 +132,8 @@ fun failureBody(failure: LoadFailure): String = stringResource(
             LoadFailure.Operation.TIMED_OUT -> R.string.timed_out
             LoadFailure.Operation.INVALID_PERIOD -> R.string.invalid_period
             LoadFailure.Operation.MODULE_DISABLED -> R.string.module_disabled
+            LoadFailure.Operation.MODULE_REMOVE_FAILED -> R.string.module_remove_failed
             LoadFailure.Operation.MODULE_VERSION_UNREADABLE -> R.string.module_version_unreadable
-            LoadFailure.Operation.INSTALLER_MISSING -> R.string.installer_missing
             LoadFailure.Operation.UNSUPPORTED_ARCHITECTURE -> R.string.unsupported_architecture
             LoadFailure.Operation.KERNEL_BTF_MISSING -> R.string.kernel_btf_missing
             LoadFailure.Operation.KERNEL_TOO_OLD -> R.string.kernel_too_old

@@ -31,6 +31,13 @@
     <string name="feature_netlink">Netlink 查询</string>
     <string name="feature_binder">系统服务调用</string>
     <string name="feature_appops">权限使用记录</string>
+    <string name="remove_module">移除模块</string>
+    <string name="remove_module_summary">停止记录并删除所有记录</string>
+    <string name="remove_module_removing">正在移除模块…</string>
+    <string name="remove_module_title">移除模块？</string>
+    <string name="remove_module_body">记录将停止，所有记录将被删除。监狱中的应用将恢复读取真实数据并重新启动。</string>
+    <string name="remove_module_confirm">移除</string>
+    <string name="remove_module_cancel">取消</string>
     <string name="lsposed_title">LSPosed 模块</string>
     <string name="lsposed_summary">在 LSPosed 中启用 Big Brother 后，才能记录对媒体库、通讯录、短信和日历的访问。</string>
     <string name="setting_system_apps">显示系统应用</string>

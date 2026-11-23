@@ -22,7 +22,9 @@ PACKAGE=li.mercury.bigbrother.canary
 NO_DECLARATIONS=$PACKAGE.nodeclarations
 APK=android/canary/build/outputs/apk/debug/canary-debug.apk
 NO_DECLARATIONS_APK=android/canary/build/outputs/apk/noDeclarations/canary-noDeclarations.apk
-BBD=/data/adb/modules/big_brother/bin/bbd
+# The module in the root manager, or else the one installed with root alone
+# (module/direct.sh). Worked out by the device's shell in each command.
+BBD='$([ -e /data/adb/modules/big_brother/bin/bbd ] && echo /data/adb/modules/big_brother || echo /data/adb/big_brother_direct)/bin/bbd'
 TAG=BigBrotherSurvival
 STARTS=10
 OPS=(MANAGE_EXTERNAL_STORAGE GET_USAGE_STATS)

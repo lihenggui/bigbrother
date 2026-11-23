@@ -33,6 +33,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.BugReport
 import androidx.compose.material.icons.outlined.Code
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.Gavel
@@ -41,6 +42,7 @@ import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.RadioButtonChecked
 import androidx.compose.material.icons.outlined.RuleFolder
 import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
@@ -52,12 +54,16 @@ import androidx.compose.material3.MediumFlexibleTopAppBar
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -101,6 +107,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel) {
         onUseDynamicColor = viewModel::setUseDynamicColor,
         onExportLogs = viewModel::exportLogs,
         onDismissLogExport = viewModel::dismissLogExport,
+        onRemoveModule = viewModel::removeModule,
         onSettingsWriteResult = viewModel::onMessageShown,
     )
 }
@@ -129,10 +136,13 @@ internal fun SettingsScreen(
     onUseDynamicColor: (Boolean) -> Unit,
     onExportLogs: () -> Unit,
     onDismissLogExport: () -> Unit,
+    onRemoveModule: () -> Unit,
     onSettingsWriteResult: (UserSettingsWriter.Failure, Boolean) -> Unit = { _, _ -> },
+    initiallyConfirmingRemoval: Boolean = false,
 ) {
     val context = LocalContext.current
     ShareLogs(state.logExport as? LogExport.Ready, onDismissLogExport)
+    var confirmingRemoval by rememberSaveable { mutableStateOf(initiallyConfirmingRemoval) }
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val background = MaterialTheme.colorScheme.surfaceContainer
     val snackbar = rememberSettingsWriteSnackbar(state.message, onSettingsWriteResult)
@@ -155,13 +165,37 @@ internal fun SettingsScreen(
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding(), bottom = 24.dp + bottom),
             verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
         ) {
-            recorderSection(state, unavailable)
+            recorderSection(state, unavailable, onRemoveModule = { confirmingRemoval = true })
             displaySection(state, onShowSystemApps, onUseDynamicColor)
             aboutSection(state.logExport, appVersion, onExportLogs) {
                 context.startActivity(Intent(Intent.ACTION_VIEW, SOURCE_URL.toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             }
         }
     }
+    if (confirmingRemoval) {
+        RemoveModuleDialog(
+            onDismiss = { confirmingRemoval = false },
+            onConfirm = {
+                confirmingRemoval = false
+                onRemoveModule()
+            },
+        )
+    }
+}
+
+@Composable
+private fun RemoveModuleDialog(onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.remove_module_title)) },
+        text = { Text(stringResource(R.string.remove_module_body)) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) { Text(stringResource(R.string.remove_module_confirm)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.remove_module_cancel)) }
+        },
+    )
 }
 
 @Composable
@@ -197,10 +231,11 @@ private fun SettingsTopBar(background: Color, scrollBehavior: TopAppBarScrollBeh
     )
 }
 
-private fun LazyListScope.recorderSection(state: SettingsUiState, unavailable: List<String>) {
+private fun LazyListScope.recorderSection(state: SettingsUiState, unavailable: List<String>, onRemoveModule: () -> Unit) {
     val status = state.status
     item(key = "recording") { SectionHeader(stringResource(R.string.section_recording), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
-    val recordingRows = 2 + if (unavailable.isNotEmpty()) 1 else 0
+    val lsposedIndex = 1 + if (unavailable.isNotEmpty()) 1 else 0
+    val recordingRows = lsposedIndex + 1 + if (state.moduleRemovable) 1 else 0
     item(key = "status") {
         Row(
             icon = if (status?.recording == false) Icons.Outlined.ErrorOutline else Icons.Outlined.RadioButtonChecked,
@@ -240,10 +275,28 @@ private fun LazyListScope.recorderSection(state: SettingsUiState, unavailable: L
             icon = Icons.Outlined.Extension,
             title = stringResource(R.string.lsposed_title),
             summary = stringResource(R.string.lsposed_summary),
-            index = recordingRows - 1,
+            index = lsposedIndex,
             count = recordingRows,
             modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
         )
+    }
+    if (state.moduleRemovable) {
+        item(key = "remove-module") {
+            val removal = state.moduleRemoval
+            Row(
+                icon = Icons.Outlined.Delete,
+                title = stringResource(R.string.remove_module),
+                summary = when (removal) {
+                    ModuleRemoval.Removing -> stringResource(R.string.remove_module_removing)
+                    is ModuleRemoval.Failed -> failureReason(removal.failure)
+                    ModuleRemoval.Idle -> stringResource(R.string.remove_module_summary)
+                },
+                index = recordingRows - 1,
+                count = recordingRows,
+                modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
+                onClick = onRemoveModule.takeIf { removal != ModuleRemoval.Removing },
+            )
+        }
     }
 }
 

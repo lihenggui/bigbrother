@@ -37,7 +37,9 @@ cd "$(dirname "$0")/.."
 
 PACKAGE=li.mercury.bigbrother.canary
 APK=android/canary/build/outputs/apk/debug/canary-debug.apk
-BBD=/data/adb/modules/big_brother/bin/bbd
+# The module in the root manager, or else the one installed with root alone
+# (module/direct.sh). Worked out by the device's shell in each command.
+BBD='$([ -e /data/adb/modules/big_brother/bin/bbd ] && echo /data/adb/modules/big_brother || echo /data/adb/big_brother_direct)/bin/bbd'
 MATRIX=testdata/permissions/matrix.tsv
 # The app ops helper, as its command line names it. The brackets keep the
 # pattern from matching the shell that runs pgrep with it.

@@ -220,16 +220,16 @@ private fun StatusAction(label: String, error: Boolean, onAction: () -> Unit) {
     }
 }
 
-/** Shown when the module is absent: offers to flash the copy bundled in this APK. */
+/** Shown when the module is absent: offers to install the copy bundled in this APK. */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-internal fun ModuleSetupMessage(setup: ModuleSetup, onInstall: () -> Unit, onRetry: () -> Unit) {
-    FadeThrough(setup, kind = { it }) { shown -> ModuleSetupStep(shown, onInstall, onRetry) }
+internal fun ModuleSetupMessage(setup: ModuleSetup, onInstall: () -> Unit) {
+    FadeThrough(setup, kind = { it }) { shown -> ModuleSetupStep(shown, onInstall) }
 }
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun ModuleSetupStep(setup: ModuleSetup, onInstall: () -> Unit, onRetry: () -> Unit) {
+private fun ModuleSetupStep(setup: ModuleSetup, onInstall: () -> Unit) {
     when (setup) {
         ModuleSetup.Idle -> Message(
             title = failureTitle(LoadFailure.ModuleMissing),
@@ -246,13 +246,6 @@ private fun ModuleSetupStep(setup: ModuleSetup, onInstall: () -> Unit, onRetry: 
             LoadingIndicator()
             Text(stringResource(R.string.installing_module))
         }
-
-        ModuleSetup.NeedsReboot -> Message(
-            title = stringResource(R.string.reboot_title),
-            body = stringResource(R.string.reboot_body),
-            actionLabel = stringResource(UiR.string.retry),
-            onAction = onRetry,
-        )
 
         is ModuleSetup.Failed -> Message(
             title = stringResource(R.string.install_failed_title),

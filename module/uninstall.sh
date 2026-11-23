@@ -23,7 +23,9 @@ DISABLE_WORKER=/data/adb/service.d/big_brother_restore_disabled.sh
 DISABLED=$RECOVERY/disabled
 MODDIR=${0%/*}
 if [ "$0" = "$DISABLE_WORKER" ]; then
+    # The module in the root manager, or else the one the app installed.
     MODDIR=/data/adb/modules/big_brother
+    [ -e "$MODDIR/bin/bbd" ] || MODDIR=/data/adb/big_brother_direct
 fi
 BBD=$MODDIR/bin/bbd
 

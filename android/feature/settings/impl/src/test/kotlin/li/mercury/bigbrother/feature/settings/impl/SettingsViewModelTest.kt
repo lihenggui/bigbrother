@@ -25,6 +25,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.model.LoadFailure
+import li.mercury.bigbrother.core.model.RecorderStatus
 import li.mercury.bigbrother.core.model.UserData
 import li.mercury.bigbrother.core.testing.MainDispatcherRule
 import li.mercury.bigbrother.core.testing.repository.TestAccessRepository
@@ -36,8 +37,10 @@ import java.io.File
 import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SettingsViewModelTest {
@@ -137,4 +140,70 @@ class SettingsViewModelTest {
         assertEquals(UserData(showSystemApps = true, useDynamicColor = false), viewModel.uiState.value.userData)
         assertNull(viewModel.uiState.value.message)
     }
+
+    @Test
+    fun givenModuleInstalledByApp_whenRefreshing_thenItIsRemovable() = runTest {
+        val viewModel = settingsWith(TestModuleRepository(installedByApp = true))
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
+
+        viewModel.refresh()
+        advanceUntilIdle()
+
+        assertTrue(viewModel.uiState.value.moduleRemovable)
+        assertEquals(ModuleRemoval.Idle, viewModel.uiState.value.moduleRemoval)
+    }
+
+    @Test
+    fun givenModuleFromRootManager_whenRefreshing_thenItIsNotRemovable() = runTest {
+        val viewModel = settingsWith(TestModuleRepository(installedByApp = false))
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
+
+        viewModel.refresh()
+        advanceUntilIdle()
+
+        assertFalse(viewModel.uiState.value.moduleRemovable)
+    }
+
+    @Test
+    fun givenRemovableModule_whenRemoved_thenNoLongerRemovableAndStatusReadAgain() = runTest {
+        val records = TestAccessRepository()
+        val module = TestModuleRepository(installedByApp = true)
+        val viewModel = settingsWith(module, records)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
+        viewModel.refresh()
+        advanceUntilIdle()
+        // The recorder stops with the module: the status read after removal must say so.
+        records.status = RecorderStatus(recording = false)
+
+        viewModel.removeModule()
+        advanceUntilIdle()
+
+        assertFalse(module.installedByApp)
+        assertFalse(viewModel.uiState.value.moduleRemovable)
+        assertEquals(ModuleRemoval.Idle, viewModel.uiState.value.moduleRemoval)
+        assertEquals(RecorderStatus(recording = false), viewModel.uiState.value.status)
+    }
+
+    @Test
+    fun givenRemovalFails_whenRemoved_thenFailureShownAndStillRemovable() = runTest {
+        val failure = RecordsException.CommandFailed(LoadFailure.Operation.MODULE_REMOVE_FAILED)
+        val module = TestModuleRepository(installedByApp = true).apply { removeFailure = failure }
+        val viewModel = settingsWith(module)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
+        viewModel.refresh()
+        advanceUntilIdle()
+
+        viewModel.removeModule()
+        advanceUntilIdle()
+
+        assertTrue(viewModel.uiState.value.moduleRemovable)
+        assertEquals(ModuleRemoval.Failed(LoadFailure.Operation.MODULE_REMOVE_FAILED), viewModel.uiState.value.moduleRemoval)
+    }
+
+    private fun settingsWith(module: TestModuleRepository, records: TestAccessRepository = TestAccessRepository()) = SettingsViewModel(
+        accessRepository = records,
+        moduleRepository = module,
+        userDataRepository = TestUserDataRepository(),
+        diagnosticsRepository = TestDiagnosticsRepository(),
+    )
 }

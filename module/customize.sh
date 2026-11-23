@@ -14,6 +14,7 @@
 
 # Sourced by the module installer of KernelSU, Magisk or APatch, which share
 # one module format. See https://kernelsu.org/guide/module.html
+# Also by direct.sh, which installs the module without a root manager.
 #
 # This module ships inside the Big Brother APK: the same file is both the
 # Android app and a flashable module. The installer must therefore not unpack
@@ -25,7 +26,9 @@ APP_PACKAGE=li.mercury.bigbrother
 
 # Magisk is tested last: KernelSU and APatch also set MAGISK_VER_CODE, for
 # modules that only know Magisk.
-if [ "$APATCH" = true ]; then
+if [ "$DIRECT_INSTALL" = true ]; then
+    ui_print "- Installing with root alone"
+elif [ "$APATCH" = true ]; then
     ui_print "- Installing on APatch"
 elif [ "$KSU" = true ]; then
     ui_print "- Installing on KernelSU"
@@ -55,7 +58,7 @@ ui_print "- Kernel $kernel"
 
 ui_print "- Extracting module files"
 unzip -o "$ZIPFILE" module.prop service.sh supervise.sh stop.sh uninstall.sh \
-    action.sh -d "$MODPATH" >&2 ||
+    action.sh direct.sh -d "$MODPATH" >&2 ||
     abort "! Failed to extract module files"
 # Only the daemon for this device, as bin/bbd (-j drops the bin/$ARCH/ part).
 mkdir -p "$MODPATH/bin"
@@ -63,7 +66,7 @@ unzip -o -j "$ZIPFILE" "bin/$ARCH/bbd" -d "$MODPATH/bin" >&2 ||
     abort "! Failed to extract the daemon for $ARCH"
 # unzip does not reliably fail for a name that is missing from the archive.
 for file in module.prop service.sh supervise.sh stop.sh uninstall.sh \
-    action.sh bin/bbd; do
+    action.sh direct.sh bin/bbd; do
     [ -f "$MODPATH/$file" ] || abort "! $file is missing from the archive"
 done
 # The daemon runs two small programs out of the app's APK (see
