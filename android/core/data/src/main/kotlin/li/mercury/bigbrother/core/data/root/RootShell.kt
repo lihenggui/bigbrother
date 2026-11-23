@@ -98,11 +98,17 @@ open class RootShell @Inject constructor(
 internal fun String.shellQuoted(): String = "'" + replace("'", "'\\''") + "'"
 
 /**
- * Where the module's files live once it is installed. KernelSU, Magisk and
- * APatch use the same layout under /data/adb.
+ * Where the module's files are: flashed in a root manager (KernelSU, Magisk
+ * and APatch use the same layout under /data/adb), or else installed by this
+ * app with root alone (module/direct.sh). A module can be flashed or removed
+ * while the app runs, so the root shell works out which in each command:
+ * one that names these paths starts with [LOCATE]. A manager keeps a
+ * directory without the daemon for a module it applies at the next boot.
  */
 internal object ModulePaths {
-    const val MODULE_DIR = "/data/adb/modules/big_brother"
+    const val DIRECT_DIR = "/data/adb/big_brother_direct"
+    const val LOCATE = "bb=/data/adb/modules/big_brother; [ -e \$bb/bin/bbd ] || bb=$DIRECT_DIR"
+    const val MODULE_DIR = "\$bb"
     const val BBD = "$MODULE_DIR/bin/bbd"
     const val MODULE_PROP = "$MODULE_DIR/module.prop"
 

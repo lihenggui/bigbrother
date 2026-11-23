@@ -24,6 +24,7 @@ import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.root.CommandResult
 import li.mercury.bigbrother.core.data.root.ModulePaths.BBD
+import li.mercury.bigbrother.core.data.root.ModulePaths.LOCATE
 import li.mercury.bigbrother.core.model.Category
 import li.mercury.bigbrother.core.model.TimeRange
 import org.junit.runner.RunWith
@@ -155,6 +156,6 @@ class BbdAccessTest {
 
         assertNull(diagnostics.log)
         assertEquals("cannot read stats", diagnostics.stats)
-        assertEquals(listOf("tail -n 5000 /data/adb/big_brother/bbd.log 2>&1", "$BBD stats 2>&1"), shell.lines)
+        assertEquals(listOf("tail -n 5000 /data/adb/big_brother/bbd.log 2>&1", "$LOCATE; $BBD stats 2>&1"), shell.lines)
     }
 }

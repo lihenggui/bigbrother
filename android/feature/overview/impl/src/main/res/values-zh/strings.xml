@@ -43,7 +43,5 @@
     <string name="update_failed_title">模块更新失败</string>
     <string name="module_pending_reboot">模块更新将在重启后生效</string>
     <string name="installing_module">正在安装模块…</string>
-    <string name="reboot_title">需要重启</string>
-    <string name="reboot_body">设备重启后开始记录。</string>
     <string name="install_failed_title">模块安装失败</string>
 </resources>

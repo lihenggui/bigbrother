@@ -18,6 +18,7 @@ package li.mercury.bigbrother.core.data.root
 
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.root.ModulePaths.BBD
+import li.mercury.bigbrother.core.data.root.ModulePaths.LOCATE
 import li.mercury.bigbrother.core.model.LoadFailure
 
 private const val BBD_MISSING_MARKER = "bbd-not-installed"
@@ -62,7 +63,7 @@ internal suspend fun RootShell.bbd(command: String, args: String = "", json: Boo
     val format = if (json) " --json" else ""
     val label = if (json) "bbd $command ${args.trimStart().substringBefore(' ')}" else "bbd $command"
     val result = run(
-        "if [ -x $BBD ]; then $BBD $command$args$format; else echo $BBD_MISSING_MARKER >&2; false; fi",
+        "$LOCATE; if [ -x $BBD ]; then $BBD $command$args$format; else echo $BBD_MISSING_MARKER >&2; false; fi",
         label = label,
     )
     result.bbdFailure()?.let { throw it }
@@ -70,4 +71,4 @@ internal suspend fun RootShell.bbd(command: String, args: String = "", json: Boo
 }
 
 /** Keep combined output in the archive even when the command exits with an error. */
-internal suspend fun RootShell.bbdStatsForDiagnostics(): String = run("$BBD stats 2>&1", label = "bbd stats").output
+internal suspend fun RootShell.bbdStatsForDiagnostics(): String = run("$LOCATE; $BBD stats 2>&1", label = "bbd stats").output

@@ -25,9 +25,11 @@ class TestModuleRepository(
     var installed: InstalledModule = InstalledModule.CURRENT,
     var active: Boolean = true,
     var updatePending: Boolean = false,
+    var installedByApp: Boolean = false,
 ) : ModuleRepository {
     var comparisonFailure: RecordsException? = null
     var installFailure: RecordsException? = null
+    var removeFailure: RecordsException? = null
     var startFailure: RecordsException? = null
     var updateFailure: RecordsException? = null
     var versionFailure: RecordsException? = null
@@ -60,6 +62,16 @@ class TestModuleRepository(
 
     override suspend fun installBundled() {
         installFailure?.let { throw it }
+        active = true
+        installedByApp = true
+    }
+
+    override suspend fun isInstalledByApp(): Boolean = installedByApp
+
+    override suspend fun remove() {
+        removeFailure?.let { throw it }
+        active = false
+        installedByApp = false
     }
 
     override suspend fun startDaemon() {

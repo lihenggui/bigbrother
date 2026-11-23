@@ -22,6 +22,7 @@ import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.bbd.TestBbdRootShell
 import li.mercury.bigbrother.core.data.root.CommandResult
+import li.mercury.bigbrother.core.data.root.ModulePaths.LOCATE
 import li.mercury.bigbrother.core.data.toLoadFailure
 import li.mercury.bigbrother.core.model.LoadFailure
 import org.junit.Rule
@@ -53,7 +54,7 @@ class RootModuleRepositoryTest {
     @Test
     fun givenMatchingVersionAndPayload_whenCompared_thenBundledModuleIsCurrent() = runTest {
         val apk = directory.newFile("bundled.apk")
-        val files = listOf("module.prop", "service.sh", "supervise.sh", "stop.sh", "uninstall.sh", "action.sh", "bin/x64/bbd")
+        val files = listOf("module.prop", "service.sh", "supervise.sh", "stop.sh", "uninstall.sh", "action.sh", "direct.sh", "bin/x64/bbd")
         ZipOutputStream(apk.outputStream()).use { zip ->
             files.forEach { name ->
                 zip.putNextEntry(ZipEntry(name))
@@ -77,7 +78,17 @@ class RootModuleRepositoryTest {
         assertEquals(InstalledModule.CURRENT, repository.compareWithBundled())
         output = output.replace(hashes.last().substringBefore(' '), "0".repeat(64))
         assertEquals(InstalledModule.OUTDATED, repository.compareWithBundled())
-        assertTrue(shell.lines.first().contains(installedFiles.joinToString(" ") { "/data/adb/modules/big_brother/$it" }))
+        assertTrue(shell.lines.first().startsWith("$LOCATE; "))
+        assertTrue(shell.lines.first().contains(installedFiles.joinToString(" ") { "\$bb/$it" }))
+    }
+
+    @Test
+    fun givenNoReadout_whenCompared_thenBundledModuleIsNotInstalledOverIt() = runTest {
+        // What a module the app installed prints while it is turned off.
+        val shell = TestBbdRootShell("")
+
+        assertEquals(InstalledModule.UNKNOWN, repository(shell).compareWithBundled())
+        assertTrue(shell.lines.single().contains("[ \$bb != /data/adb/big_brother_direct ] || [ ! -e \$bb/disable ]"))
     }
 
     @Test
@@ -99,19 +110,40 @@ class RootModuleRepositoryTest {
 
         assertEquals(LoadFailure.Operation.MODULE_DISABLED, updateFailure.toLoadFailure())
         assertEquals(LoadFailure.Operation.MODULE_DISABLED, startFailure.toLoadFailure())
-        assertEquals(List(2) { "[ -e /data/adb/modules/big_brother/disable ] || [ -e /data/adb/modules/big_brother/remove ]" }, shell.lines)
+        val check = "$LOCATE; [ -e \$bb/disable ] || [ -e \$bb/remove ]"
+        // Only a module the app installed is turned on again by starting it.
+        val enable = "$LOCATE; [ \$bb != /data/adb/big_brother_direct ] || rm -f /data/adb/big_brother_direct/disable"
+        assertEquals(listOf(check, enable, check), shell.lines)
     }
 
     @Test
     fun givenInstallerFailure_whenBundledModuleIsInstalled_thenMapsItToTheInstallerReason() = runTest {
         app.applicationInfo.sourceDir = directory.newFile("bundled module.apk").path
-        val shell = TestBbdRootShell { CommandResult(false, 1, "No module installer found (KernelSU, Magisk or APatch).", "") }
+        val shell = TestBbdRootShell { CommandResult(false, 1, "- Installing with root alone\n! Kernel 5.4 is too old; 5.10 or newer required", "") }
 
         val failure = assertFailsWith<RecordsException.CommandFailed> { repository(shell).installBundled() }
 
-        assertEquals(LoadFailure.Operation.INSTALLER_MISSING, failure.toLoadFailure())
+        assertEquals(LoadFailure.Operation.KERNEL_TOO_OLD, failure.toLoadFailure())
         assertEquals(listOf("module install"), shell.labels)
-        assertTrue(shell.lines.single().contains("magisk --install-module '${app.applicationInfo.sourceDir}'"))
+        // The installer is the app's own, taken out of its package; no root manager is asked.
+        val apk = "'${app.applicationInfo.sourceDir}'"
+        assertTrue(shell.lines.single().contains("unzip -p $apk direct.sh >\"\$d/direct.sh\" && sh \"\$d/direct.sh\" install $apk"))
+    }
+
+    @Test
+    fun givenModuleInstalledByApp_whenRemoved_thenRunsItsOwnScriptAndReportsFailure() = runTest {
+        var removed = true
+        val shell = TestBbdRootShell { CommandResult(removed, if (removed) 0 else 1, "", "") }
+        val repository = repository(shell)
+
+        repository.remove()
+        removed = false
+        val failure = assertFailsWith<RecordsException.CommandFailed> { repository.remove() }
+
+        assertEquals(LoadFailure.Operation.MODULE_REMOVE_FAILED, failure.toLoadFailure())
+        assertEquals(List(2) { "module remove" }, shell.labels)
+        // A module in the root manager is removed there, never from here.
+        assertTrue(shell.lines.all { it.startsWith("$LOCATE; [ \$bb = /data/adb/big_brother_direct ] && sh /data/adb/big_brother_direct/direct.sh remove") })
     }
 
     private fun TestScope.repository(shell: TestBbdRootShell) = RootModuleRepository(app, shell, StandardTestDispatcher(testScheduler))

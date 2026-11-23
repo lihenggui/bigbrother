@@ -213,7 +213,6 @@ class OverviewScreenScreenshotTests {
         val MODULE_SETUPS = listOf(
             ModuleSetup.Idle,
             ModuleSetup.Installing,
-            ModuleSetup.NeedsReboot,
             ModuleSetup.Failed(LoadFailure.Operation.KERNEL_BTF_MISSING),
         )
 
