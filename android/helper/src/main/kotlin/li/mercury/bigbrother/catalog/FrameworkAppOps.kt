@@ -34,6 +34,9 @@ internal object Framework : AppOpsSystem {
     private const val SERVICE_POLL_MS = 250L
     private const val SERVICE_WAIT_MS = 1500L
 
+    /** The least time between two attempts to reach the runtime permissions. */
+    private val RECONNECT_NANOS = TimeUnit.SECONDS.toNanos(5)
+
     /** How often every guarded uid is checked without being asked. */
     private const val CHECK_EVERY_MS = 60_000L
 
@@ -69,9 +72,19 @@ internal object Framework : AppOpsSystem {
     override lateinit var ops: List<GuardedOp>
         private set
 
-    /** The runtime permissions, if this device lets them be reached. */
-    override var permissions: Permissions? = null
-        private set
+    /**
+     * The runtime permissions, if they can be reached. The package manager
+     * starts well after the app-ops service: a program started as the
+     * system boots finds them later, when a check next asks.
+     */
+    override val permissions: Permissions? get() = permissionService.get()
+
+    private var permissionsSought = false
+
+    private val permissionService = Reconnecting(RECONNECT_NANOS) {
+        // Only the first attempt waits: the later ones are made during checks.
+        connectPermissions(if (permissionsSought) 0 else SERVICE_WAIT_MS).also { permissionsSought = true }
+    }
 
     /** Why they cannot be, if they cannot. */
     override var permissionsMissing = ""
@@ -90,18 +103,19 @@ internal object Framework : AppOpsSystem {
         binder.linkToDeath({ exitProcess(1) }, 0)
         ops = resolve(GUARDED_OPS)
         watchModes()
-        connectPermissions()
+        permissionService.get()
     }
 
     /**
      * The system service [name], or `null` if the input closed first. The
      * daemon starts this program while the system is still booting, before
-     * the services are registered, so it waits for them rather than fail.
+     * the services are registered, so it waits [waitMs] for them rather
+     * than fail.
      */
-    fun systemService(name: String): IBinder? {
+    fun systemService(name: String, waitMs: Long = SERVICE_WAIT_MS): IBinder? {
         val getService = Class.forName("android.os.ServiceManager")
             .getMethod("checkService", String::class.java)
-        val until = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SERVICE_WAIT_MS)
+        val until = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(waitMs)
         var binder = getService.invoke(null, name) as IBinder?
         while (binder == null) {
             if (AppOpsGuard.inputClosed || System.nanoTime() >= until) return null
@@ -119,14 +133,15 @@ internal object Framework : AppOpsSystem {
     }
 
     /**
-     * Reach the runtime permissions, and have their changes reported. A
-     * device where that fails still holds ops; a command that names a
-     * permission fails there.
+     * Reach the runtime permissions, waiting [waitMs] for their services,
+     * and have their changes reported. Until that works, ops are still
+     * held and a command that names a permission fails; it is tried again
+     * when they are next asked for.
      */
-    private fun connectPermissions() {
+    private fun connectPermissions(waitMs: Long): Permissions? {
         try {
-            val permissionManager = systemService("permissionmgr") ?: error("no permission service")
-            val packageManager = systemService("package") ?: error("no package service")
+            val permissionManager = systemService("permissionmgr", waitMs) ?: error("no permission service")
+            val packageManager = systemService("package", waitMs) ?: error("no package service")
             val connected = Permissions(
                 Class.forName("android.permission.IPermissionManager\$Stub")
                     .getMethod("asInterface", IBinder::class.java)
@@ -135,15 +150,19 @@ internal object Framework : AppOpsSystem {
                     .getMethod("asInterface", IBinder::class.java)
                     .invoke(null, packageManager)!!,
             )
-            permissions = connected
+            permissionsMissing = ""
             try {
                 connected.watch(ChangeWatcher())
             } catch (e: Throwable) {
                 System.err.println("not watching permission changes, checking every minute only: ${describe(e)}")
             }
+            return connected
         } catch (e: Throwable) {
-            permissionsMissing = describe(e)
-            System.err.println("runtime permissions cannot be reached: $permissionsMissing")
+            val reason = describe(e)
+            // Asked again at every check: said once per reason.
+            if (reason != permissionsMissing) System.err.println("runtime permissions cannot be reached: $reason")
+            permissionsMissing = reason
+            return null
         }
     }
 

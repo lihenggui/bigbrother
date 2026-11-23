@@ -514,6 +514,24 @@ class AppOpsGuardHandlerTest {
     }
 
     @Test
+    fun givenPermissionServiceMissingAtStart_whenItIsReachedLater_thenUnrequestedAllFilesIsNoLongerUnheld() {
+        val android = FakeAndroid()
+        android.permissionServiceAvailable = false
+        val handler = AppOpsGuardHandler(android)
+        val targets = "$ALL_FILES_OP_NAME=1,android:read_contacts=1"
+
+        handler.send("verify $UID $targets")
+        handler.checkAll()
+        assertEquals("unheld $UID $ALL_FILES_OP_NAME", android.printed.last { it.startsWith("unheld ") })
+
+        android.permissionServiceAvailable = true
+        handler.checkAll()
+
+        assertEquals("unheld $UID -", android.printed.last { it.startsWith("unheld ") })
+        assertEquals(0, android.helperWrites.getOrDefault(ALL_FILES_OP_NAME, 0))
+    }
+
+    @Test
     fun givenUnknownAllFilesMetadata_whenSetAppliedAndVerified_thenOnlyThatOpIsUnheldAndNeverWritten() {
         for (serviceAvailable in listOf(true, false)) {
             val android = FakeAndroid()

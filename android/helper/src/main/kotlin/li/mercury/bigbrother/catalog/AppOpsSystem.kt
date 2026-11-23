@@ -72,7 +72,7 @@ internal interface AppOpsSystem {
     /** Whether the app ID has no running process in another user as of this check. */
     fun canChangeAllFilesAccess(uid: Int): Boolean
 
-    /** The runtime permissions, `null` if this device does not let them be reached. */
+    /** The runtime permissions, `null` while they cannot be reached: asked again each time. */
     val permissions: RuntimePermissions?
 
     /** Why they cannot be, if they cannot. */
