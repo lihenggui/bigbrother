@@ -47,8 +47,9 @@ Big Brother 用于在已 root 的 Android 设备上记录应用对隐私数据�
 
 - Android 12 及以上，arm64 或 x86_64 架构
 - GKI 2.0 内核（5.10 及以上）并启用 BTF，可通过 `/sys/kernel/btf/vmlinux` 是否存在确认
-- 支持模块的 root 方案：[KernelSU](https://kernelsu.org)、
-  [Magisk](https://github.com/topjohnwu/Magisk) 或 [APatch](https://apatch.dev)
+- root 权限：[KernelSU](https://kernelsu.org)、
+  [Magisk](https://github.com/topjohnwu/Magisk) 或 [APatch](https://apatch.dev)。
+  使用其他 root 方案时，记录在打开应用后开始，不随开机启动
 - 可选：[LSPosed](https://github.com/LSPosed/LSPosed)（Xposed API 101 及以上），
   用于记录经内容提供程序的访问，并为“监狱”提供系统框架中的隔离功能
 
@@ -58,18 +59,19 @@ Big Brother 用于在已 root 的 Android 设备上记录应用对隐私数据�
 ## 安装
 
 从 [Releases](https://github.com/lihenggui/bigbrother/releases/latest) 下载
-`big_brother-<version>.apk.zip`。该文件同时是模块和应用，可选择以下任一方式安装：
+`big_brother-<version>.apk.zip`。该文件同时是应用和 root 管理器模块，可选择以下任一方式安装：
 
-- 在 root 管理器中刷入，应用会随之安装。
 - 去掉文件名末尾的 `.zip`，安装得到的 APK，打开应用并授予 root 权限，点击“安装模块”。
+  应用仅凭 root 权限安装模块：立即开始记录，root 管理器的模块列表中不显示。
+- 在 root 管理器中刷入，应用会随之安装。安装后重启设备；KernelSU 无需重启，模块立即生效。
 
-安装后重启设备。KernelSU 无需重启，模块立即生效。模块运行后，设置页面显示“正在记录”。
+两种方式记录的内容相同。模块运行后，设置页面显示“正在记录”。
 
 如需使用这些功能，在 LSPosed 中启用 Big Brother 并保留推荐作用域。媒体、外部存储、下载、
 通讯录、电话和日历提供程序用于记录访问。**系统框架**作用域让“监狱”管理 Android ID、广告 ID、
 已安装应用的可见性和系统文件选择器的文件授权。启用模块后重启设备。
 
-也可以在 root shell 中安装模块：
+也可以在 root shell 中刷入模块：
 
 ```sh
 ksud module install big_brother-<version>.apk.zip       # KernelSU
@@ -85,7 +87,10 @@ apd module install big_brother-<version>.apk.zip        # APatch
 
 ### 卸载
 
-在 root 管理器中移除模块并重启，已有记录随模块一并删除，之后卸载应用。
+由应用安装的模块在设置页的“移除模块”中移除，已有记录一并删除，之后卸载应用。
+如果先卸载了应用，模块会在下次重启时自行移除。
+
+刷入的模块在 root 管理器中移除并重启，已有记录随模块一并删除，之后卸载应用。
 
 ## 使用说明
 

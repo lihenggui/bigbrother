@@ -49,6 +49,15 @@ sealed interface LogExport {
     data class Failed(val failure: LoadFailure) : LogExport
 }
 
+/** Removing a module this app installed. */
+sealed interface ModuleRemoval {
+    data object Idle : ModuleRemoval
+    data object Removing : ModuleRemoval
+
+    /** The module is still installed. */
+    data class Failed(val failure: LoadFailure) : ModuleRemoval
+}
+
 data class SettingsUiState(
     val userData: UserData = UserData(),
     /** Null until known, or when it can't be read. */
@@ -56,6 +65,9 @@ data class SettingsUiState(
     /** The installed module's version, if known. */
     val moduleVersion: String? = null,
     val moduleVersionFailure: LoadFailure? = null,
+    /** Only a module this app installed: one from a root manager is removed there. */
+    val moduleRemovable: Boolean = false,
+    val moduleRemoval: ModuleRemoval = ModuleRemoval.Idle,
     val recorderStatusFailure: LoadFailure? = null,
     val logExport: LogExport = LogExport.Idle,
     val message: UserSettingsWriter.Failure? = null,
@@ -70,6 +82,7 @@ class SettingsViewModel @Inject constructor(
 ) : ViewModel() {
     private val recordingDetails = MutableStateFlow(RecordingDetails())
     private val logExport = MutableStateFlow<LogExport>(LogExport.Idle)
+    private val moduleRemoval = MutableStateFlow<ModuleRemoval>(ModuleRemoval.Idle)
 
     private val settingsWriter = UserSettingsWriter(viewModelScope) { Timber.w(it) }
 
@@ -85,26 +98,55 @@ class SettingsViewModel @Inject constructor(
             status = status,
             moduleVersion = details.version,
             moduleVersionFailure = details.versionFailure,
+            moduleRemovable = details.removable,
             recorderStatusFailure = details.statusFailure.takeIf { status == null },
             logExport = export,
             message = message,
         )
     }
+        .combine(moduleRemoval) { state, removal -> state.copy(moduleRemoval = removal) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
 
     fun refresh() {
+        viewModelScope.launch { loadRecordingDetails() }
+    }
+
+    fun removeModule() {
+        if (moduleRemoval.value == ModuleRemoval.Removing) return
+        moduleRemoval.value = ModuleRemoval.Removing
         viewModelScope.launch {
-            val details = try {
-                RecordingDetails(version = moduleRepository.installedVersion())
+            val result = try {
+                moduleRepository.remove()
+                ModuleRemoval.Idle
             } catch (e: RecordsException) {
-                RecordingDetails(versionFailure = e.toLoadFailure())
+                Timber.w("Module not removed: %s", e.toLoadFailure())
+                ModuleRemoval.Failed(e.toLoadFailure())
             }
-            recordingDetails.value = try {
-                accessRepository.getRecorderStatus()
-                details
-            } catch (e: RecordsException) {
-                details.copy(statusFailure = e.toLoadFailure())
-            }
+            // Read back before the row leaves the busy state, so that after
+            // a removal it disappears rather than offering itself again.
+            loadRecordingDetails()
+            moduleRemoval.value = result
+        }
+    }
+
+    private suspend fun loadRecordingDetails() {
+        val details = try {
+            RecordingDetails(version = moduleRepository.installedVersion())
+        } catch (e: RecordsException) {
+            RecordingDetails(versionFailure = e.toLoadFailure())
+        }
+        val removable = try {
+            moduleRepository.isInstalledByApp()
+        } catch (e: RecordsException) {
+            // Removing needs the same root access that just failed: not offered.
+            Timber.w("Module origin unknown: %s", e.toLoadFailure())
+            false
+        }
+        recordingDetails.value = try {
+            accessRepository.getRecorderStatus()
+            details.copy(removable = removable)
+        } catch (e: RecordsException) {
+            details.copy(removable = removable, statusFailure = e.toLoadFailure())
         }
     }
 
@@ -139,6 +181,7 @@ class SettingsViewModel @Inject constructor(
     private data class RecordingDetails(
         val version: String? = null,
         val versionFailure: LoadFailure? = null,
+        val removable: Boolean = false,
         val statusFailure: LoadFailure? = null,
     )
 }

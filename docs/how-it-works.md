@@ -115,6 +115,15 @@ through the store and use `rules::topic_of` to attach the topic IDs defined
 in `bbd/src/topic.rs`. The network queries and sandbox rules share
 destination parsing in `bbd/src/sandbox/target.rs`.
 
+The module is installed in one of two ways, which run the same files. Flashed
+in a root manager, it is in `/data/adb/modules/big_brother` and the manager
+starts it at boot. Installed from the app, which needs root alone, it is in
+`/data/adb/big_brother_direct` (`module/direct.sh`), and a script in
+`/data/adb/service.d`, which KernelSU, Magisk and APatch run at boot, starts
+it; with root from another source, the app starts it when opened. The app
+removes a module it installed, and one whose app has been uninstalled
+removes itself at the next boot.
+
 When the app is updated, it compares the installed module with the one it
 carries, by version code and, for the same version, by the daemon's SHA-256,
 and replaces an older or different module in place (`module/sync.sh`).

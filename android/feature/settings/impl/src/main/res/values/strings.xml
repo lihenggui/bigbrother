@@ -32,6 +32,13 @@
     <string name="feature_netlink">Netlink queries</string>
     <string name="feature_binder">System service calls</string>
     <string name="feature_appops">Permission usage</string>
+    <string name="remove_module">Remove module</string>
+    <string name="remove_module_summary">Stops recording and deletes the records</string>
+    <string name="remove_module_removing">Removing module…</string>
+    <string name="remove_module_title">Remove module?</string>
+    <string name="remove_module_body">Recording stops and the records are deleted. Apps in Jail get real data again and are restarted.</string>
+    <string name="remove_module_confirm">Remove</string>
+    <string name="remove_module_cancel">Cancel</string>
     <string name="lsposed_title">LSPosed module</string>
     <string name="lsposed_summary">Enable Big Brother in LSPosed to record access to the media library, contacts, messages and the calendar.</string>
     <string name="setting_system_apps">Show system apps</string>

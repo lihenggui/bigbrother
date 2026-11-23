@@ -58,9 +58,10 @@ Records are kept for 30 days.
 - Android 12 or later on an arm64 or x86_64 device
 - A GKI 2.0 kernel (5.10 or newer) with BTF; the file
   `/sys/kernel/btf/vmlinux` must exist
-- Root with module support: [KernelSU](https://kernelsu.org),
+- Root: [KernelSU](https://kernelsu.org),
   [Magisk](https://github.com/topjohnwu/Magisk) or
-  [APatch](https://apatch.dev)
+  [APatch](https://apatch.dev). With root from another source, recording
+  starts when the app is opened instead of at boot
 - Optional: [LSPosed](https://github.com/LSPosed/LSPosed) (Xposed API 101
   or newer), for recording access through content providers and for Jail controls
   that run in System Framework
@@ -73,14 +74,16 @@ and KernelSU.
 
 Download `big_brother-<version>.apk.zip` from the
 [latest release](https://github.com/lihenggui/bigbrother/releases/latest).
-The file is both the module and the app. Then either:
+The file is both the app and a module for a root manager. Then either:
 
-- flash it in your root manager, which installs the app as well, or
 - remove the final `.zip` from the filename and install the APK. Open the
-  app, grant it root and tap "Install module".
+  app, grant it root and tap "Install module". The app installs the module
+  with root alone: recording starts at once, and the root manager does not
+  list it as a module; or
+- flash it in your root manager, which installs the app as well. Restart
+  the device, except on KernelSU, which applies the module immediately.
 
-Restart the device, except on KernelSU, which applies the module
-immediately. Settings shows "Recording" once the module is running.
+Both record the same. Settings shows "Recording" once the module is running.
 
 To use these features, enable Big Brother in LSPosed and keep the suggested
 scopes. The media, external storage, download, contacts, telephony and
@@ -88,7 +91,7 @@ calendar providers record accesses. The **System Framework** scope gives
 Jail control over Android ID, advertising IDs, installed app visibility
 and file grants from the system file picker. Restart after enabling the module.
 
-The module can also be installed from a root shell:
+The module can also be flashed from a root shell:
 
 ```sh
 ksud module install big_brother-<version>.apk.zip       # KernelSU
@@ -106,8 +109,12 @@ as an `.apk`, then open the app to update the module.
 
 ### Uninstalling
 
-Remove the module in your root manager and restart; this also deletes the
-records. Then uninstall the app.
+A module the app installed is removed in Settings, under "Remove module";
+this also deletes the records. Then uninstall the app. If the app is
+uninstalled first, the module removes itself at the next restart.
+
+A flashed module is removed in the root manager, followed by a restart;
+this also deletes the records. Then uninstall the app.
 
 ## Usage
 
