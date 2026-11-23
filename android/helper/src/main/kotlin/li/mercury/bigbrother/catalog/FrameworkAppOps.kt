@@ -34,8 +34,8 @@ internal object Framework : AppOpsSystem {
     private const val SERVICE_POLL_MS = 250L
     private const val SERVICE_WAIT_MS = 1500L
 
-    /** The least time between two attempts to reach the runtime permissions. */
-    private val RECONNECT_NANOS = TimeUnit.SECONDS.toNanos(5)
+    /** The wait before the second attempt to reach the runtime permissions; it doubles from there. */
+    private val RECONNECT_FIRST_NANOS = TimeUnit.MILLISECONDS.toNanos(250)
 
     /** How often every guarded uid is checked without being asked. */
     private const val CHECK_EVERY_MS = 60_000L
@@ -75,14 +75,14 @@ internal object Framework : AppOpsSystem {
     /**
      * The runtime permissions, if they can be reached. The package manager
      * starts well after the app-ops service: a program started as the
-     * system boots finds them later, when a check next asks.
+     * system boots finds them later ([checkLoop]).
      */
     override val permissions: Permissions? get() = permissionService.get()
 
     private var permissionsSought = false
 
-    private val permissionService = Reconnecting(RECONNECT_NANOS) {
-        // Only the first attempt waits: the later ones are made during checks.
+    private val permissionService = Reconnecting(RECONNECT_FIRST_NANOS, TimeUnit.MILLISECONDS.toNanos(CHECK_EVERY_MS)) {
+        // Only the first attempt waits: the later ones are made during checks and commands.
         connectPermissions(if (permissionsSought) 0 else SERVICE_WAIT_MS).also { permissionsSought = true }
     }
 
@@ -265,14 +265,26 @@ internal object Framework : AppOpsSystem {
         }
     }
 
-    /** Check every guarded uid after a reported change, and every minute. */
+    /**
+     * Check every guarded uid after a reported change, and every minute.
+     * While the runtime permissions are not reached, also wake to look
+     * for them when the next attempt is due, and check as soon as they
+     * are: what a check reports as unheld without them is held with them.
+     */
     fun checkLoop(lock: Any, handler: AppOpsGuardHandler) {
+        val every = TimeUnit.MILLISECONDS.toNanos(CHECK_EVERY_MS)
+        var checkAt = System.nanoTime() + every
         while (true) {
-            if (changes.poll(CHECK_EVERY_MS, TimeUnit.MILLISECONDS) != null) {
+            val untilCheck = maxOf(0, checkAt - System.nanoTime())
+            val wait = minOf(untilCheck, permissionService.retryInNanos() ?: untilCheck)
+            if (changes.poll(wait, TimeUnit.NANOSECONDS) != null) {
                 Thread.sleep(SETTLE_MS)
                 changes.clear()
+            } else if (System.nanoTime() - checkAt < 0 && synchronized(lock) { permissions } == null) {
+                continue
             }
             synchronized(lock) { handler.checkAll() }
+            checkAt = System.nanoTime() + every
         }
     }
 
