@@ -1,4 +1,4 @@
-package: name='li.mercury.bigbrother' versionCode='11' versionName='0.4.1' platformBuildVersionName='17' platformBuildVersionCode='37' compileSdkVersion='37' compileSdkVersionCodename='17'
+package: name='li.mercury.bigbrother' versionCode='12' versionName='0.4.2' platformBuildVersionName='17' platformBuildVersionCode='37' compileSdkVersion='37' compileSdkVersionCodename='17'
 minSdkVersion:'31'
 targetSdkVersion:'37'
 uses-permission: name='android.permission.QUERY_ALL_PACKAGES'
