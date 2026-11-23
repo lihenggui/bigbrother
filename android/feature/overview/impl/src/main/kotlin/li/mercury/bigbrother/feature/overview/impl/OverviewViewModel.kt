@@ -192,7 +192,22 @@ class OverviewViewModel @Inject constructor(
         Timber.i("Overview loaded in %d ms: %d apps", loadedAt - start, records.apps.size)
         null
     } catch (e: RecordsException) {
-        e.toLoadFailure().also { Timber.w("Overview not loaded: %s", it) }
+        val failure = e.toLoadFailure()
+        Timber.w("Overview not loaded: %s", failure)
+        // A module flashed in a root manager is not in place until the next restart.
+        if (failure == LoadFailure.ModuleMissing) {
+            val pending = isUpdatePending()
+            updateState { it.copy(modulePendingReboot = pending) }
+        }
+        failure
+    }
+
+    private suspend fun isUpdatePending(): Boolean = try {
+        withContext(defaultDispatcher) { moduleRepository.isUpdatePending() }
+    } catch (e: RecordsException) {
+        // Only chooses the wording of the setup message.
+        Timber.w("Staged module unknown: %s", e.toLoadFailure())
+        false
     }
 
     /** A staged module comes first: starting now would run the one it replaces. */

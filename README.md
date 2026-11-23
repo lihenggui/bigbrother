@@ -8,8 +8,8 @@ English | [简体中文](README.zh-CN.md)
 
 Big Brother records which apps on a rooted Android device read your files,
 collect device identifiers or ask the system for other private data, and
-when. It consists of a root module that does the recording and an app to
-browse the records. Nothing leaves the device.
+when. It consists of a part that runs as root and does the recording and an
+app to browse the records. Nothing leaves the device.
 
 <p>
   <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/1_overview.png" width="24%" alt="Overview: the apps that read files, and the other kinds of data accessed">
@@ -58,10 +58,10 @@ Records are kept for 30 days.
 - Android 12 or later on an arm64 or x86_64 device
 - A GKI 2.0 kernel (5.10 or newer) with BTF; the file
   `/sys/kernel/btf/vmlinux` must exist
-- Root: [KernelSU](https://kernelsu.org),
+- Root access, for example from [KernelSU](https://kernelsu.org),
   [Magisk](https://github.com/topjohnwu/Magisk) or
   [APatch](https://apatch.dev). With root from another source, recording
-  starts when the app is opened instead of at boot
+  does not start at boot: it starts when the app is opened after a restart
 - Optional: [LSPosed](https://github.com/LSPosed/LSPosed) (Xposed API 101
   or newer), for recording access through content providers and for Jail controls
   that run in System Framework
@@ -73,25 +73,25 @@ and KernelSU.
 ## Installation
 
 Download `big_brother-<version>.apk.zip` from the
-[latest release](https://github.com/lihenggui/bigbrother/releases/latest).
-The file is both the app and a module for a root manager. Then either:
-
-- remove the final `.zip` from the filename and install the APK. Open the
-  app, grant it root and tap "Install module". The app installs the module
-  with root alone: recording starts at once, and the root manager does not
-  list it as a module; or
-- flash it in your root manager, which installs the app as well. Restart
-  the device, except on KernelSU, which applies the module immediately.
-
-Both record the same. Settings shows "Recording" once the module is running.
+[latest release](https://github.com/lihenggui/bigbrother/releases/latest),
+remove the final `.zip` from the file name, and install the APK. Open the
+app, grant it root and tap "Set up recording". Recording starts at once,
+without a restart. Settings shows "Recording" once it runs.
 
 To use these features, enable Big Brother in LSPosed and keep the suggested
 scopes. The media, external storage, download, contacts, telephony and
 calendar providers record accesses. The **System Framework** scope gives
 Jail control over Android ID, advertising IDs, installed app visibility
-and file grants from the system file picker. Restart after enabling the module.
+and file grants from the system file picker. Restart after enabling it in
+LSPosed.
 
-The module can also be flashed from a root shell:
+### Installing as a module
+
+The same file is a module for KernelSU, Magisk and APatch. Flash it in
+your root manager if you want Big Brother listed and managed there; this
+installs the app as well. KernelSU applies it immediately, Magisk and
+APatch after a restart. A module flashed this way replaces a setup made by
+the app and keeps its records. It can also be flashed from a root shell:
 
 ```sh
 ksud module install big_brother-<version>.apk.zip       # KernelSU
@@ -102,19 +102,22 @@ apd module install big_brother-<version>.apk.zip        # APatch
 ### Updating
 
 When replacing a build older than v0.3.0, take any apps out of Jail first.
-Remove the old module and app as described below, then install v0.4.2.
+Remove the old module in the root manager and uninstall the app, then
+install v0.4.2.
 
-For subsequent updates, flash the new `.zip`, or install it over the app
-as an `.apk`, then open the app to update the module.
+For later updates, install the new APK over the app, or flash the new
+`.zip`, then open the app: the Overview finishes the update.
 
 ### Uninstalling
 
-A module the app installed is removed in Settings, under "Remove module";
-this also deletes the records. Then uninstall the app. If the app is
-uninstalled first, the module removes itself at the next restart.
+In Settings, tap "Remove recording", then uninstall the app. This stops
+recording and deletes the records. If the app is uninstalled first,
+recording continues until the next restart and then removes itself with
+the records; with root from another source, remove recording in Settings
+before uninstalling the app.
 
-A flashed module is removed in the root manager, followed by a restart;
-this also deletes the records. Then uninstall the app.
+If you flashed Big Brother as a module, remove it in the root manager and
+restart instead; this also deletes the records.
 
 ## Usage
 
@@ -168,7 +171,7 @@ and system file picker grants need the LSPosed **System Framework** scope. See
 
 ### Does it drain the battery?
 
-The module holds no wakelocks and does nothing while the device sleeps.
+Recording holds no wakelocks and does nothing while the device sleeps.
 While the device is awake and idle it wakes about once every ten seconds,
 and writes to its database only when there is something to record.
 
@@ -180,8 +183,8 @@ In `/data/adb/big_brother`, readable only by root.
 
 The app has no network access: the INTERNET permission is removed from its
 manifest, and CI fails if the APK requests a new permission. Records stay
-in `/data/adb/big_brother` until they are 30 days old or the module is
-removed. Exported logs contain the app's and the module's logs and the
+in `/data/adb/big_brother` until they are 30 days old or recording is
+removed. Exported logs contain the app's logs and the recording logs and the
 device and version details listed in the file; they are shared only if you
 choose to.
 
@@ -207,7 +210,7 @@ choose to.
 - A command line is recorded up to six arguments of 63 bytes each.
 - File operations an app delegates to a privileged process (root, Shizuku)
   are not attributed to it.
-- Files already open when the module starts are not seen.
+- Files already open when recording starts are not seen.
 - A record means a file was opened, not how much of it was read.
 
 ## How it works

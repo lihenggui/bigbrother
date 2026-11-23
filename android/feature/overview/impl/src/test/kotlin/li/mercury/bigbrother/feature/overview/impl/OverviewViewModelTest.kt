@@ -215,6 +215,26 @@ class OverviewViewModelTest {
     }
 
     @Test
+    fun givenFlashedModuleStagedAndNothingInPlace_whenLoaded_thenSetupIsOfferedWithThePendingModule() = runTest {
+        accessRepository.failure = RecordsException.ModuleMissing()
+        moduleRepository.active = false
+        moduleRepository.updatePending = true
+        val viewModel = collectedViewModel()
+        advanceUntilIdle()
+
+        assertEquals(LoadFailure.ModuleMissing, viewModel.uiState.value.failure)
+        assertTrue(viewModel.uiState.value.modulePendingReboot)
+
+        accessRepository.failure = null
+        viewModel.installModule()
+        advanceUntilIdle()
+
+        assertTrue(moduleRepository.installedByApp)
+        assertEquals(ModuleSetup.Idle, viewModel.uiState.value.moduleSetup)
+        assertNull(viewModel.uiState.value.failure)
+    }
+
+    @Test
     fun givenUpdateFailure_whenOutdatedModuleIsLoaded_thenStateShowsFailure() = runTest {
         accessRepository.failure = RecordsException.ModuleOutdated()
         moduleRepository.updateFailure = RecordsException.CommandFailed(LoadFailure.Operation.MODULE_DISABLED)

@@ -21,7 +21,6 @@
     <string name="recording_active">Recording</string>
     <string name="recording_stopped">Recording stopped</string>
     <string name="recording_unknown">Recording status unknown</string>
-    <string name="module_version">Module %s</string>
     <string name="retention">Records kept for 30 days</string>
     <!-- Kinds of activity the kernel of this device does not let the daemon observe. -->
     <string name="coverage_title">Not supported on this device</string>
@@ -32,13 +31,16 @@
     <string name="feature_netlink">Netlink queries</string>
     <string name="feature_binder">System service calls</string>
     <string name="feature_appops">Permission usage</string>
-    <string name="remove_module">Remove module</string>
+    <string name="remove_module">Remove recording</string>
     <string name="remove_module_summary">Stops recording and deletes the records</string>
-    <string name="remove_module_removing">Removing module…</string>
-    <string name="remove_module_title">Remove module?</string>
-    <string name="remove_module_body">Recording stops and the records are deleted. Apps in Jail get real data again and are restarted.</string>
+    <string name="remove_module_removing">Removing recording…</string>
+    <string name="remove_module_title">Remove recording?</string>
+    <string name="remove_module_body">Recording stops and the records are deleted. Apps in Jail get real data again and are restarted. Recording can be set up again on the Overview.</string>
     <string name="remove_module_confirm">Remove</string>
     <string name="remove_module_cancel">Cancel</string>
+    <string name="module_in_manager">Installed as a module in the root manager</string>
+    <string name="module_in_manager_summary">To remove recording, remove the module there and restart. This deletes the records.</string>
+    <string name="module_in_manager_pending">Takes effect after the next restart</string>
     <string name="lsposed_title">LSPosed module</string>
     <string name="lsposed_summary">Enable Big Brother in LSPosed to record access to the media library, contacts, messages and the calendar.</string>
     <string name="setting_system_apps">Show system apps</string>
@@ -49,6 +51,6 @@
     <string name="source_code">Source code</string>
     <string name="license">License</string>
     <string name="export_logs">Export logs</string>
-    <string name="export_logs_summary">The app\'s and the daemon\'s logs, for a bug report</string>
+    <string name="export_logs_summary">The logs of the app and of recording, for a bug report</string>
     <string name="export_logs_collecting">Collecting logs…</string>
 </resources>

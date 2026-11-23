@@ -120,7 +120,7 @@ internal fun OverviewScreen(
             FadeThrough(state, kind = { it.kind() }) { shown ->
                 val shownFiles = shown.files
                 when (shown.kind()) {
-                    OverviewKind.ModuleSetup -> ModuleSetupMessage(shown.moduleSetup, onInstallModule)
+                    OverviewKind.ModuleSetup -> ModuleSetupMessage(shown.moduleSetup, shown.modulePendingReboot, onInstallModule)
                     OverviewKind.ModuleUpdate -> ModuleUpdateCard(shown.moduleUpdate, onUpdateModule, onStartDaemon)
                     OverviewKind.Failure -> LoadFailureMessage(checkNotNull(shown.failure), onRetry = onRefresh)
                     OverviewKind.Loading -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())

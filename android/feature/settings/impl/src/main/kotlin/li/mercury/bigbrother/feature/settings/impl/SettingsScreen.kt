@@ -235,7 +235,7 @@ private fun LazyListScope.recorderSection(state: SettingsUiState, unavailable: L
     val status = state.status
     item(key = "recording") { SectionHeader(stringResource(R.string.section_recording), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
     val lsposedIndex = 1 + if (unavailable.isNotEmpty()) 1 else 0
-    val recordingRows = lsposedIndex + 1 + if (state.moduleRemovable) 1 else 0
+    val recordingRows = lsposedIndex + 1 + if (state.installation != ModuleInstallation.NONE) 1 else 0
     item(key = "status") {
         Row(
             icon = if (status?.recording == false) Icons.Outlined.ErrorOutline else Icons.Outlined.RadioButtonChecked,
@@ -248,7 +248,6 @@ private fun LazyListScope.recorderSection(state: SettingsUiState, unavailable: L
                 },
             ),
             summary = listOfNotNull(
-                state.moduleVersion?.let { stringResource(R.string.module_version, it) },
                 state.moduleVersionFailure?.let { failureReason(it) },
                 state.recorderStatusFailure?.let { failureReason(it) },
                 stringResource(R.string.retention),
@@ -280,8 +279,15 @@ private fun LazyListScope.recorderSection(state: SettingsUiState, unavailable: L
             modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
         )
     }
-    if (state.moduleRemovable) {
-        item(key = "remove-module") {
+    installationRow(state, index = recordingRows - 1, count = recordingRows, onRemoveModule)
+}
+
+/** How recording is removed: here when this app installed it, in the root manager otherwise. */
+private fun LazyListScope.installationRow(state: SettingsUiState, index: Int, count: Int, onRemoveModule: () -> Unit) {
+    when (state.installation) {
+        ModuleInstallation.NONE -> Unit
+
+        ModuleInstallation.APP -> item(key = "remove-module") {
             val removal = state.moduleRemoval
             Row(
                 icon = Icons.Outlined.Delete,
@@ -291,10 +297,22 @@ private fun LazyListScope.recorderSection(state: SettingsUiState, unavailable: L
                     is ModuleRemoval.Failed -> failureReason(removal.failure)
                     ModuleRemoval.Idle -> stringResource(R.string.remove_module_summary)
                 },
-                index = recordingRows - 1,
-                count = recordingRows,
+                index = index,
+                count = count,
                 modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
                 onClick = onRemoveModule.takeIf { removal != ModuleRemoval.Removing },
+            )
+        }
+
+        ModuleInstallation.MANAGER, ModuleInstallation.MANAGER_PENDING -> item(key = "module-in-manager") {
+            val pending = state.installation == ModuleInstallation.MANAGER_PENDING
+            Row(
+                icon = Icons.Outlined.Info,
+                title = stringResource(R.string.module_in_manager),
+                summary = stringResource(if (pending) R.string.module_in_manager_pending else R.string.module_in_manager_summary),
+                index = index,
+                count = count,
+                modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
             )
         }
     }

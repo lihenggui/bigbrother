@@ -29,10 +29,10 @@
     <string name="empty_title">No records in this time range</string>
     <string name="no_root_title">Root access needed</string>
     <string name="no_root_body">Grant root in your root manager (KernelSU, Magisk or APatch), then try again.</string>
-    <string name="no_module_title">Module not installed</string>
-    <string name="no_module_body">Install the module bundled with this app to start recording.</string>
-    <string name="old_module_title">Module update needed</string>
-    <string name="old_module_body">The installed module does not support this yet. Opening the overview updates it.</string>
+    <string name="no_module_title">Recording not set up</string>
+    <string name="no_module_body">Set up recording on the Overview.</string>
+    <string name="old_module_title">Update not finished</string>
+    <string name="old_module_body">This is not available until the update finishes. Opening the Overview finishes it.</string>
     <string name="error_title">Could not load records</string>
 
     <!-- Kinds of device and system information an app can read. Ids match the
@@ -215,26 +215,26 @@
     <string name="sensor_head_tracker">Head tracker</string>
     <string name="sensor_heading">Heading</string>
     <string name="command_failed">The operation could not be completed.</string>
-    <string name="daemon_bad_response">The daemon returned an unreadable response.</string>
+    <string name="daemon_bad_response">The response could not be read.</string>
     <string name="database_busy">The records database is busy.</string>
-    <string name="daemon_unavailable">The daemon is not running.</string>
+    <string name="daemon_unavailable">Recording is not running.</string>
     <string name="destination_missing">The destination is no longer available.</string>
     <string name="app_missing">This app is no longer installed for this Android user.</string>
     <string name="timed_out">The operation timed out.</string>
     <string name="invalid_period">Choose a shorter, nonempty time range.</string>
-    <string name="module_version_unreadable">The module version could not be read.</string>
-    <string name="unsupported_architecture">The module does not support this device architecture.</string>
+    <string name="module_version_unreadable">The installed version could not be read.</string>
+    <string name="unsupported_architecture">Recording does not support this device\'s processor.</string>
     <string name="kernel_btf_missing">The kernel lacks BTF support. GKI 5.10 or newer is required.</string>
     <string name="kernel_too_old">Kernel 5.10 or newer is required.</string>
-    <string name="module_archive_invalid">The module files could not be read from the app package.</string>
-    <string name="database_incompatible">The records database is incompatible with this module version.</string>
-    <string name="module_install_failed">The module could not be installed.</string>
-    <string name="module_update_failed">The module files could not be replaced.</string>
-    <string name="daemon_start_failed">Could not start the daemon.</string>
+    <string name="module_archive_invalid">Files needed for recording could not be read from the app package. Reinstall the app.</string>
+    <string name="database_incompatible">This version cannot read the existing records.</string>
+    <string name="module_install_failed">Setup did not complete. Export the logs in Settings for a bug report.</string>
+    <string name="module_update_failed">Try again. If it fails again, export the logs in Settings for a bug report.</string>
+    <string name="daemon_start_failed">Recording could not be started.</string>
     <string name="installed_apps_unavailable">The installed apps could not be read.</string>
-    <string name="module_disabled">The module is disabled. Enable it in the root manager.</string>
-    <string name="module_remove_failed">The module could not be removed.</string>
-    <string name="daemon_not_reporting">The daemon was started but is not recording. See /data/adb/big_brother/bbd.log.</string>
+    <string name="module_disabled">The Big Brother module is turned off or set to be removed in the root manager. Change it there.</string>
+    <string name="module_remove_failed">Not removed. Try again.</string>
+    <string name="daemon_not_reporting">It was started but has not recorded anything yet. If this persists, export the logs in Settings for a bug report.</string>
     <string name="file_access_denied">Shared storage is not accessible. Check that root access is granted.</string>
     <string name="export_logs_failed">The logs could not be collected.</string>
 </resources>

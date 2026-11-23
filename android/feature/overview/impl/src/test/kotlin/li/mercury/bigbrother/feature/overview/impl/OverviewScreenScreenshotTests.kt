@@ -127,6 +127,13 @@ class OverviewScreenScreenshotTests {
     }
 
     @Test
+    fun givenModuleStagedInRootManagerAndNothingInPlace_whenShown_thenStillOffersSetup() {
+        capturePhone("OverviewModuleSetupPending") {
+            Overview { OverviewUiState(failure = LoadFailure.ModuleMissing, modulePendingReboot = true) }
+        }
+    }
+
+    @Test
     fun givenDaemonStopped_whenShown_thenOffersToStartIt() {
         capturePhone("OverviewStopped") { Overview { it.copy(recording = false) } }
     }
