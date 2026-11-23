@@ -89,7 +89,7 @@ lint-api = { group = "com.android.tools.lint", name = "lint-api", version.ref = 
 lint-tests = { group = "com.android.tools.lint", name = "lint-tests", version.ref = "lint" }
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
 # Instrumented SDKs selected by Robolectric 4.18 for library and app tests.
-robolectricAndroid24 = { group = "org.robolectric", name = "android-all-instrumented", version = "7.0.0_r1-robolectric-r1-i7" }
+robolectricAndroid24 = { group = "org.robolectric", name = "android-all-instrumented", version = "17-robolectric-16653203-i7" }
 robolectricAndroid37 = { group = "org.robolectric", name = "android-all-instrumented", version = "17-robolectric-16653203-i7" }
 roborazzi = { group = "io.github.takahirom.roborazzi", name = "roborazzi", version.ref = "roborazzi" }
 roborazzi-accessibility-check = { group = "io.github.takahirom.roborazzi", name = "roborazzi-accessibility-check", version.ref = "roborazzi" }
