@@ -35,13 +35,16 @@
     </plurals>
 
     <string name="status_stopped">记录已停止</string>
-    <string name="daemon_stopped">记录守护进程未运行，此期间的访问不会被记录。</string>
-    <string name="daemon_starting">正在启动记录守护进程…</string>
+    <string name="daemon_stopped">此期间的访问不会被记录。</string>
+    <string name="daemon_starting">正在启动记录…</string>
     <string name="start_daemon">启动记录</string>
-    <string name="install_module">安装模块</string>
-    <string name="updating_module">正在更新模块…</string>
-    <string name="update_failed_title">模块更新失败</string>
-    <string name="module_pending_reboot">模块更新将在重启后生效</string>
-    <string name="installing_module">正在安装模块…</string>
-    <string name="install_failed_title">模块安装失败</string>
+    <string name="install_module">启用记录</string>
+    <string name="updating_module">正在完成更新…</string>
+    <string name="update_failed_title">未能完成更新</string>
+    <string name="module_pending_reboot">需要重启</string>
+    <string name="module_pending_reboot_body">在 root 管理器中刷入的模块将在下次重启后生效。</string>
+    <string name="installing_module">正在启用记录…</string>
+    <string name="install_failed_title">无法启用记录</string>
+    <string name="setup_body">Big Brother 通过 root 权限进行记录，启用后立即生效，无需重启。</string>
+    <string name="setup_pending_body">在 root 管理器中刷入的模块将在下次重启后生效，也可以现在启用记录，无需重启。</string>
 </resources>

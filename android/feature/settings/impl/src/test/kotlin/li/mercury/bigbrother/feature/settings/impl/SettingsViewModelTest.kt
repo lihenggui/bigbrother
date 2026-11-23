@@ -40,7 +40,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
-import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SettingsViewModelTest {
@@ -73,7 +72,6 @@ class SettingsViewModelTest {
 
         assertNull(viewModel.uiState.value.moduleVersionFailure)
         assertNull(viewModel.uiState.value.recorderStatusFailure)
-        assertEquals("v0.1.6", viewModel.uiState.value.moduleVersion)
     }
 
     @Test
@@ -149,23 +147,47 @@ class SettingsViewModelTest {
         viewModel.refresh()
         advanceUntilIdle()
 
-        assertTrue(viewModel.uiState.value.moduleRemovable)
+        assertEquals(ModuleInstallation.APP, viewModel.uiState.value.installation)
         assertEquals(ModuleRemoval.Idle, viewModel.uiState.value.moduleRemoval)
     }
 
     @Test
-    fun givenModuleFromRootManager_whenRefreshing_thenItIsNotRemovable() = runTest {
+    fun givenModuleFromRootManager_whenRefreshing_thenItIsShownAsRemovedThere() = runTest {
         val viewModel = settingsWith(TestModuleRepository(installedByApp = false))
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
 
         viewModel.refresh()
         advanceUntilIdle()
 
-        assertFalse(viewModel.uiState.value.moduleRemovable)
+        assertEquals(ModuleInstallation.MANAGER, viewModel.uiState.value.installation)
     }
 
     @Test
-    fun givenRemovableModule_whenRemoved_thenNoLongerRemovableAndStatusReadAgain() = runTest {
+    fun givenModuleStagedInRootManagerOverAppInstallation_whenRefreshing_thenItIsShownAsPendingAndNotRemovable() = runTest {
+        val viewModel = settingsWith(TestModuleRepository(installedByApp = true, updatePending = true))
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
+
+        viewModel.refresh()
+        advanceUntilIdle()
+
+        assertEquals(ModuleInstallation.MANAGER_PENDING, viewModel.uiState.value.installation)
+    }
+
+    @Test
+    fun givenNothingInstalled_whenRefreshing_thenNoInstallationAndStatusSaysNotSetUp() = runTest {
+        val module = TestModuleRepository(active = false).apply { versionFailure = RecordsException.ModuleMissing() }
+        val viewModel = settingsWith(module)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
+
+        viewModel.refresh()
+        advanceUntilIdle()
+
+        assertEquals(ModuleInstallation.NONE, viewModel.uiState.value.installation)
+        assertEquals(LoadFailure.ModuleMissing, viewModel.uiState.value.moduleVersionFailure)
+    }
+
+    @Test
+    fun givenRemovableModule_whenRemoved_thenNoInstallationLeftAndStatusReadAgain() = runTest {
         val records = TestAccessRepository()
         val module = TestModuleRepository(installedByApp = true)
         val viewModel = settingsWith(module, records)
@@ -179,7 +201,7 @@ class SettingsViewModelTest {
         advanceUntilIdle()
 
         assertFalse(module.installedByApp)
-        assertFalse(viewModel.uiState.value.moduleRemovable)
+        assertEquals(ModuleInstallation.NONE, viewModel.uiState.value.installation)
         assertEquals(ModuleRemoval.Idle, viewModel.uiState.value.moduleRemoval)
         assertEquals(RecorderStatus(recording = false), viewModel.uiState.value.status)
     }
@@ -196,7 +218,7 @@ class SettingsViewModelTest {
         viewModel.removeModule()
         advanceUntilIdle()
 
-        assertTrue(viewModel.uiState.value.moduleRemovable)
+        assertEquals(ModuleInstallation.APP, viewModel.uiState.value.installation)
         assertEquals(ModuleRemoval.Failed(LoadFailure.Operation.MODULE_REMOVE_FAILED), viewModel.uiState.value.moduleRemoval)
     }
 

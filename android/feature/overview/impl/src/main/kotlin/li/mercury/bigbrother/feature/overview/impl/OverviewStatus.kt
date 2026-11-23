@@ -50,7 +50,6 @@ import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.Reveal
 import li.mercury.bigbrother.core.ui.RevealNotNull
-import li.mercury.bigbrother.core.ui.failureBody
 import li.mercury.bigbrother.core.ui.failureReason
 import li.mercury.bigbrother.core.ui.failureTitle
 import li.mercury.bigbrother.core.ui.R as UiR
@@ -74,7 +73,7 @@ internal fun RecorderStatusCards(state: OverviewUiState, onUpdateModule: () -> U
             RecorderStatusCard(
                 icon = Icons.Outlined.SystemUpdate,
                 title = stringResource(R.string.module_pending_reboot),
-                body = null,
+                body = stringResource(R.string.module_pending_reboot_body),
                 error = false,
             )
         }
@@ -220,20 +219,24 @@ private fun StatusAction(label: String, error: Boolean, onAction: () -> Unit) {
     }
 }
 
-/** Shown when the module is absent: offers to install the copy bundled in this APK. */
+/**
+ * Shown when the module is absent: offers to install the copy bundled in
+ * this APK. A module flashed in a root manager but not yet in effect
+ * ([pending]) takes over at the next restart; installing now works as well.
+ */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-internal fun ModuleSetupMessage(setup: ModuleSetup, onInstall: () -> Unit) {
-    FadeThrough(setup, kind = { it }) { shown -> ModuleSetupStep(shown, onInstall) }
+internal fun ModuleSetupMessage(setup: ModuleSetup, pending: Boolean, onInstall: () -> Unit) {
+    FadeThrough(setup, kind = { it }) { shown -> ModuleSetupStep(shown, pending, onInstall) }
 }
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun ModuleSetupStep(setup: ModuleSetup, onInstall: () -> Unit) {
+private fun ModuleSetupStep(setup: ModuleSetup, pending: Boolean, onInstall: () -> Unit) {
     when (setup) {
         ModuleSetup.Idle -> Message(
             title = failureTitle(LoadFailure.ModuleMissing),
-            body = failureBody(LoadFailure.ModuleMissing),
+            body = stringResource(if (pending) R.string.setup_pending_body else R.string.setup_body),
             actionLabel = stringResource(R.string.install_module),
             onAction = onInstall,
         )

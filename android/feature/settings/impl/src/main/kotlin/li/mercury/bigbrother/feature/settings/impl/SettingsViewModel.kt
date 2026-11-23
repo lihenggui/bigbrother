@@ -58,15 +58,28 @@ sealed interface ModuleRemoval {
     data class Failed(val failure: LoadFailure) : ModuleRemoval
 }
 
+/** Where the installation comes from, which decides how it is removed. */
+enum class ModuleInstallation {
+    /** Nothing installed, or not known. */
+    NONE,
+
+    /** Installed by this app, which removes it. */
+    APP,
+
+    /** Flashed in a root manager and in effect: removed there. */
+    MANAGER,
+
+    /** Flashed in a root manager and staged for the next restart. */
+    MANAGER_PENDING,
+}
+
 data class SettingsUiState(
     val userData: UserData = UserData(),
     /** Null until known, or when it can't be read. */
     val status: RecorderStatus? = null,
-    /** The installed module's version, if known. */
-    val moduleVersion: String? = null,
+    /** Why the installed module's version could not be read, such as nothing being installed. */
     val moduleVersionFailure: LoadFailure? = null,
-    /** Only a module this app installed: one from a root manager is removed there. */
-    val moduleRemovable: Boolean = false,
+    val installation: ModuleInstallation = ModuleInstallation.NONE,
     val moduleRemoval: ModuleRemoval = ModuleRemoval.Idle,
     val recorderStatusFailure: LoadFailure? = null,
     val logExport: LogExport = LogExport.Idle,
@@ -96,9 +109,8 @@ class SettingsViewModel @Inject constructor(
         SettingsUiState(
             userData = userData,
             status = status,
-            moduleVersion = details.version,
             moduleVersionFailure = details.versionFailure,
-            moduleRemovable = details.removable,
+            installation = details.installation,
             recorderStatusFailure = details.statusFailure.takeIf { status == null },
             logExport = export,
             message = message,
@@ -130,24 +142,37 @@ class SettingsViewModel @Inject constructor(
     }
 
     private suspend fun loadRecordingDetails() {
-        val details = try {
-            RecordingDetails(version = moduleRepository.installedVersion())
+        // The version is not shown; reading it tells whether anything is installed.
+        val versionFailure = try {
+            moduleRepository.installedVersion()
+            null
         } catch (e: RecordsException) {
-            RecordingDetails(versionFailure = e.toLoadFailure())
+            e.toLoadFailure()
         }
-        val removable = try {
-            moduleRepository.isInstalledByApp()
-        } catch (e: RecordsException) {
-            // Removing needs the same root access that just failed: not offered.
-            Timber.w("Module origin unknown: %s", e.toLoadFailure())
-            false
-        }
+        val details = RecordingDetails(versionFailure = versionFailure, installation = installation())
         recordingDetails.value = try {
             accessRepository.getRecorderStatus()
-            details.copy(removable = removable)
+            details
         } catch (e: RecordsException) {
-            details.copy(removable = removable, statusFailure = e.toLoadFailure())
+            details.copy(statusFailure = e.toLoadFailure())
         }
+    }
+
+    private suspend fun installation(): ModuleInstallation = try {
+        when {
+            // A staged module replaces whatever runs now, this app's own included.
+            moduleRepository.isUpdatePending() -> ModuleInstallation.MANAGER_PENDING
+
+            moduleRepository.isInstalledByApp() -> ModuleInstallation.APP
+
+            moduleRepository.isActive() -> ModuleInstallation.MANAGER
+
+            else -> ModuleInstallation.NONE
+        }
+    } catch (e: RecordsException) {
+        // Removing needs the same root access that just failed: not offered.
+        Timber.w("Module origin unknown: %s", e.toLoadFailure())
+        ModuleInstallation.NONE
     }
 
     fun exportLogs() {
@@ -179,9 +204,8 @@ class SettingsViewModel @Inject constructor(
     fun onMessageShown(failure: UserSettingsWriter.Failure, retry: Boolean) = settingsWriter.resolve(failure, retry)
 
     private data class RecordingDetails(
-        val version: String? = null,
         val versionFailure: LoadFailure? = null,
-        val removable: Boolean = false,
+        val installation: ModuleInstallation = ModuleInstallation.NONE,
         val statusFailure: LoadFailure? = null,
     )
 }

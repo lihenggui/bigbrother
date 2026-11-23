@@ -44,13 +44,13 @@ class SettingsScreenScreenshotTests {
 
     @Test
     fun givenRecording_whenShownOnEachDevice_thenMatchesGolden() {
-        composeTestRule.captureMultiDevice("Settings") { Settings(SettingsUiState(status = RECORDING, moduleVersion = VERSION)) }
+        composeTestRule.captureMultiDevice("Settings") { Settings(SettingsUiState(status = RECORDING)) }
     }
 
     @Test
     fun givenRecording_whenShownInDarkTheme_thenMatchesGolden() {
         composeTestRule.captureForDevice("phone_dark", DefaultTestDevices.PHONE.spec, "Settings", darkMode = true) {
-            Settings(SettingsUiState(status = RECORDING, moduleVersion = VERSION))
+            Settings(SettingsUiState(status = RECORDING))
         }
     }
 
@@ -58,7 +58,7 @@ class SettingsScreenScreenshotTests {
     @Config(qualifiers = "zh-rCN")
     fun givenRecording_whenShownInChinese_thenMatchesGolden() {
         composeTestRule.captureForDevice("phone_zh", DefaultTestDevices.PHONE.spec, "Settings") {
-            Settings(SettingsUiState(status = RECORDING, moduleVersion = VERSION))
+            Settings(SettingsUiState(status = RECORDING))
         }
     }
 
@@ -70,7 +70,7 @@ class SettingsScreenScreenshotTests {
     @Test
     fun givenRecordingStopped_whenShown_thenSaysSo() {
         capturePhone("SettingsStopped") {
-            Settings(SettingsUiState(status = RecorderStatus(recording = false), moduleVersion = VERSION))
+            Settings(SettingsUiState(status = RecorderStatus(recording = false)))
         }
     }
 
@@ -79,7 +79,7 @@ class SettingsScreenScreenshotTests {
         capturePhone("SettingsCoverage") {
             // An id this build has no name for is shown as it is.
             val status = RecorderStatus(recording = true, unavailable = listOf("network", "binder", "kprobe"))
-            Settings(SettingsUiState(status = status, moduleVersion = VERSION))
+            Settings(SettingsUiState(status = status))
         }
     }
 
@@ -87,7 +87,28 @@ class SettingsScreenScreenshotTests {
     fun givenSwitchesOn_whenShown_thenSwitchesShowIt() {
         capturePhone("SettingsSwitchesOn") {
             val userData = UserData(showSystemApps = true, useDynamicColor = true)
-            Settings(SettingsUiState(userData = userData, status = RECORDING, moduleVersion = VERSION))
+            Settings(SettingsUiState(userData = userData, status = RECORDING))
+        }
+    }
+
+    @Test
+    fun givenNothingInstalled_whenShown_thenSaysRecordingIsNotSetUp() {
+        capturePhone("SettingsNotSetUp") {
+            Settings(SettingsUiState(moduleVersionFailure = LoadFailure.ModuleMissing, recorderStatusFailure = LoadFailure.ModuleMissing))
+        }
+    }
+
+    @Test
+    fun givenModuleFromRootManager_whenShown_thenSaysItIsRemovedThere() {
+        capturePhone("SettingsModuleInManager") {
+            Settings(SettingsUiState(status = RECORDING, installation = ModuleInstallation.MANAGER))
+        }
+    }
+
+    @Test
+    fun givenModuleStagedInRootManager_whenShown_thenSaysItTakesEffectAfterRestart() {
+        capturePhone("SettingsModuleInManagerPending") {
+            Settings(SettingsUiState(status = RECORDING, installation = ModuleInstallation.MANAGER_PENDING))
         }
     }
 
@@ -107,7 +128,7 @@ class SettingsScreenScreenshotTests {
     fun givenEachLogExportStep_whenShown_thenSaysHowItGoes() {
         for (export in LOG_EXPORTS) {
             capturePhone("SettingsLogExport${export.screenshotName}") {
-                Settings(SettingsUiState(status = RECORDING, moduleVersion = VERSION, logExport = export))
+                Settings(SettingsUiState(status = RECORDING, logExport = export))
             }
         }
     }
@@ -116,7 +137,7 @@ class SettingsScreenScreenshotTests {
     fun givenEachModuleRemovalStep_whenShown_thenSaysHowItGoes() {
         for (removal in MODULE_REMOVALS) {
             capturePhone("SettingsModuleRemoval${removal.screenshotName}") {
-                Settings(SettingsUiState(status = RECORDING, moduleVersion = VERSION, moduleRemovable = true, moduleRemoval = removal))
+                Settings(SettingsUiState(status = RECORDING, installation = ModuleInstallation.APP, moduleRemoval = removal))
             }
         }
     }
@@ -129,7 +150,7 @@ class SettingsScreenScreenshotTests {
     @Test
     fun givenRemovalAsked_whenShown_thenDialogSaysWhatIsLost() {
         capturePhone("SettingsRemoveModuleDialog") {
-            Settings(SettingsUiState(status = RECORDING, moduleVersion = VERSION, moduleRemovable = true), confirmingRemoval = true)
+            Settings(SettingsUiState(status = RECORDING, installation = ModuleInstallation.APP), confirmingRemoval = true)
         }
     }
 
@@ -160,7 +181,6 @@ class SettingsScreenScreenshotTests {
 
     private companion object {
         const val APP_VERSION = "1.2.3"
-        const val VERSION = "v$APP_VERSION"
         val RECORDING = RecorderStatus(recording = true)
         val LOG_EXPORTS = listOf(LogExport.Idle, LogExport.Collecting, LogExport.Failed(LoadFailure.Operation.LOG_EXPORT_FAILED))
         val MODULE_REMOVALS = listOf(ModuleRemoval.Idle, ModuleRemoval.Removing, ModuleRemoval.Failed(LoadFailure.Operation.MODULE_REMOVE_FAILED))

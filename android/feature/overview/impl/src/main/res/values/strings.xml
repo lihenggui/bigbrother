@@ -45,13 +45,16 @@
 
     <!-- Recording status, shown only when something needs attention. -->
     <string name="status_stopped">Recording stopped</string>
-    <string name="daemon_stopped">The recording daemon is not running. Access in the meantime is not recorded.</string>
-    <string name="daemon_starting">Starting the recording daemon…</string>
+    <string name="daemon_stopped">Access in the meantime is not recorded.</string>
+    <string name="daemon_starting">Starting recording…</string>
     <string name="start_daemon">Start recording</string>
-    <string name="install_module">Install module</string>
-    <string name="updating_module">Updating the module…</string>
-    <string name="update_failed_title">Module update failed</string>
-    <string name="module_pending_reboot">Module update takes effect after restart</string>
-    <string name="installing_module">Installing module…</string>
-    <string name="install_failed_title">Module installation failed</string>
+    <string name="install_module">Set up recording</string>
+    <string name="updating_module">Finishing the update…</string>
+    <string name="update_failed_title">Update could not be finished</string>
+    <string name="module_pending_reboot">Restart needed</string>
+    <string name="module_pending_reboot_body">The module flashed in the root manager takes effect after the next restart.</string>
+    <string name="installing_module">Setting up recording…</string>
+    <string name="install_failed_title">Recording could not be set up</string>
+    <string name="setup_body">Big Brother records with root access. Setting it up needs no restart.</string>
+    <string name="setup_pending_body">The module flashed in the root manager takes effect after the next restart. Recording can also be set up now, without a restart.</string>
 </resources>
