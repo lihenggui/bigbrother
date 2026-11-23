@@ -29,6 +29,7 @@ import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.InstalledModule
 import li.mercury.bigbrother.core.data.repository.ModuleUpdate
 import li.mercury.bigbrother.core.data.repository.ModuleUpdater
+import li.mercury.bigbrother.core.data.repository.RecordingAutoStart
 import li.mercury.bigbrother.core.domain.GetAppRecordsUseCase
 import li.mercury.bigbrother.core.domain.GetAppVisibilityUseCase
 import li.mercury.bigbrother.core.model.AppIconSource
@@ -71,10 +72,14 @@ class OverviewViewModelTest {
     private val moduleRepository = TestModuleRepository()
     private val userDataRepository = TestUserDataRepository()
 
+    // One per process, shared by every overview opened in a test.
+    private val recordingAutoStart = RecordingAutoStart(moduleRepository)
+
     private fun viewModel() = OverviewViewModel(
         accessRepository = accessRepository,
         moduleRepository = moduleRepository,
         moduleUpdater = ModuleUpdater(moduleRepository, accessRepository),
+        recordingAutoStart = recordingAutoStart,
         getAppRecords = GetAppRecordsUseCase(accessRepository, appInfoRepository),
         getAppVisibility = GetAppVisibilityUseCase(userDataRepository, OWN_PACKAGE),
         userDataRepository = userDataRepository,
@@ -226,6 +231,89 @@ class OverviewViewModelTest {
         val viewModel = collectedViewModel()
 
         viewModel.startDaemon()
+        advanceUntilIdle()
+
+        assertEquals(LoadFailure.Operation.DAEMON_START_FAILED, viewModel.uiState.value.daemonStartError)
+        assertEquals(false, viewModel.uiState.value.daemonStarting)
+    }
+
+    @Test
+    fun givenAppMadeInstallationStopped_whenOverviewLoads_thenStartsItOnce() = runTest {
+        accessRepository.status = accessRepository.status.copy(recording = false)
+        moduleRepository.installedByApp = true
+        val viewModel = collectedViewModel()
+        runCurrent()
+
+        assertEquals(1, moduleRepository.starts)
+        assertEquals(true, viewModel.uiState.value.daemonStarting)
+
+        accessRepository.status = accessRepository.status.copy(recording = true)
+        advanceUntilIdle()
+
+        assertEquals(false, viewModel.uiState.value.daemonStarting)
+        assertNull(viewModel.uiState.value.daemonStartError)
+        assertEquals(true, viewModel.uiState.value.recording)
+
+        accessRepository.status = accessRepository.status.copy(recording = false)
+        viewModel.refresh()
+        advanceUntilIdle()
+
+        assertEquals(1, moduleRepository.starts)
+        assertEquals(false, viewModel.uiState.value.recording)
+    }
+
+    @Test
+    fun givenAutomaticStartDone_whenOverviewOpenedAgainInTheSameProcess_thenNotStartedAgain() = runTest {
+        accessRepository.status = accessRepository.status.copy(recording = false)
+        moduleRepository.installedByApp = true
+        collectedViewModel()
+        advanceUntilIdle()
+
+        val reopened = collectedViewModel()
+        advanceUntilIdle()
+
+        assertEquals(1, moduleRepository.starts)
+        assertEquals(false, reopened.uiState.value.daemonStarting)
+        assertNull(reopened.uiState.value.daemonStartError)
+    }
+
+    @Test
+    fun givenInstallationTurnedOffByItsBootGuard_whenOverviewLoads_thenLeftOffWithoutFailure() = runTest {
+        accessRepository.status = accessRepository.status.copy(recording = false)
+        moduleRepository.installedByApp = true
+        moduleRepository.turnedOff = true
+        val viewModel = collectedViewModel()
+        advanceUntilIdle()
+
+        assertEquals(0, moduleRepository.starts)
+        assertTrue(moduleRepository.turnedOff)
+        assertEquals(false, viewModel.uiState.value.daemonStarting)
+        assertNull(viewModel.uiState.value.daemonStartError)
+
+        viewModel.startDaemon()
+        advanceUntilIdle()
+
+        assertEquals(1, moduleRepository.starts)
+        assertEquals(false, moduleRepository.turnedOff)
+    }
+
+    @Test
+    fun givenFlashedModuleStopped_whenOverviewLoads_thenNotStarted() = runTest {
+        accessRepository.status = accessRepository.status.copy(recording = false)
+        val viewModel = collectedViewModel()
+        advanceUntilIdle()
+
+        assertEquals(0, moduleRepository.starts)
+        assertEquals(false, viewModel.uiState.value.daemonStarting)
+        assertEquals(false, viewModel.uiState.value.recording)
+    }
+
+    @Test
+    fun givenAutomaticStartFails_whenOverviewLoads_thenFailureShownAsForAManualStart() = runTest {
+        accessRepository.status = accessRepository.status.copy(recording = false)
+        moduleRepository.installedByApp = true
+        moduleRepository.startFailure = RecordsException.CommandFailed(LoadFailure.Operation.DAEMON_START_FAILED)
+        val viewModel = collectedViewModel()
         advanceUntilIdle()
 
         assertEquals(LoadFailure.Operation.DAEMON_START_FAILED, viewModel.uiState.value.daemonStartError)

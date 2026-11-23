@@ -117,6 +117,16 @@ class RootModuleRepositoryTest {
     }
 
     @Test
+    fun givenModuleTurnedOffByItsBootGuard_whenStartedWithoutTurningOn_thenStaysOff() = runTest {
+        val shell = TestBbdRootShell("")
+
+        val failure = assertFailsWith<RecordsException.CommandFailed> { repository(shell).startDaemon(turnOn = false) }
+
+        assertEquals(LoadFailure.Operation.MODULE_DISABLED, failure.toLoadFailure())
+        assertEquals(listOf("$LOCATE; [ -e \$bb/disable ] || [ -e \$bb/remove ]"), shell.lines)
+    }
+
+    @Test
     fun givenInstallerFailure_whenBundledModuleIsInstalled_thenMapsItToTheInstallerReason() = runTest {
         app.applicationInfo.sourceDir = directory.newFile("bundled module.apk").path
         val shell = TestBbdRootShell { CommandResult(false, 1, "- Installing with root alone\n! Kernel 5.4 is too old; 5.10 or newer required", "") }

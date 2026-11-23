@@ -42,6 +42,7 @@ import li.mercury.bigbrother.core.data.repository.AccessRepository
 import li.mercury.bigbrother.core.data.repository.ModuleRepository
 import li.mercury.bigbrother.core.data.repository.ModuleUpdate
 import li.mercury.bigbrother.core.data.repository.ModuleUpdater
+import li.mercury.bigbrother.core.data.repository.RecordingAutoStart
 import li.mercury.bigbrother.core.data.repository.UserDataRepository
 import li.mercury.bigbrother.core.data.toLoadFailure
 import li.mercury.bigbrother.core.domain.AppRecords
@@ -89,6 +90,7 @@ class OverviewViewModel @Inject constructor(
     private val accessRepository: AccessRepository,
     private val moduleRepository: ModuleRepository,
     private val moduleUpdater: ModuleUpdater,
+    private val recordingAutoStart: RecordingAutoStart,
     private val getAppRecords: GetAppRecordsUseCase,
     private val getAppVisibility: GetAppVisibilityUseCase,
     private val userDataRepository: UserDataRepository,
@@ -155,6 +157,8 @@ class OverviewViewModel @Inject constructor(
                 updateModule()
             } else if (failure != null) {
                 updateState { it.copy(failure = failure) }
+            } else if (shouldStartAutomatically()) {
+                startRecording(automatic = true)
             }
         } catch (e: RecordsException) {
             currentCoroutineContext().ensureActive()
@@ -191,6 +195,12 @@ class OverviewViewModel @Inject constructor(
         e.toLoadFailure().also { Timber.w("Overview not loaded: %s", it) }
     }
 
+    /** A staged module comes first: starting now would run the one it replaces. */
+    private suspend fun shouldStartAutomatically(): Boolean {
+        val ui = load.value.ui
+        return ui.recording == false && !ui.modulePendingReboot && recordingAutoStart.claim()
+    }
+
     fun updateModule() {
         runRecorderAction { moduleUpdater.updateInPlace() }
     }
@@ -206,16 +216,23 @@ class OverviewViewModel @Inject constructor(
      * wait for it to report in: it counts as recording only once it has
      * written its first batch, a few seconds after starting.
      */
-    fun startDaemon() {
+    fun startDaemon() = startRecording(automatic = false)
+
+    /**
+     * An automatic start never turns on an installation that its boot guard
+     * turned off: that is left to the user, who is offered the start as before.
+     */
+    private fun startRecording(automatic: Boolean) {
         runRecorderAction {
             updateState { it.copy(daemonStarting = true, daemonStartError = null) }
             val error = try {
-                moduleRepository.startDaemon()
+                moduleRepository.startDaemon(turnOn = !automatic)
                 moduleUpdater.awaitRecording()
                 null
             } catch (e: RecordsException) {
-                e.toLoadFailure()
+                e.toLoadFailure().takeUnless { automatic && it == LoadFailure.Operation.MODULE_DISABLED }
             }
+            if (automatic) Timber.i("Automatic start: %s", error ?: "recording")
             updateState { it.copy(daemonStarting = false, daemonStartError = error) }
         }
     }

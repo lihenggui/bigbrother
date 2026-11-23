@@ -83,11 +83,11 @@ interface ModuleRepository {
 
     /**
      * Starts the daemon through the module's own service script, as at boot.
-     * A module this app installed that turned itself off after a failed boot
-     * is turned on again.
+     * With [turnOn], a module this app installed that turned itself off
+     * after a failed boot is turned on again; without it, it stays off.
      * @throws RecordsException if the module is disabled or the daemon cannot be started.
      */
-    suspend fun startDaemon()
+    suspend fun startDaemon(turnOn: Boolean = true)
 }
 
 /** How the installed module compares with the one bundled in this app. */
@@ -250,9 +250,9 @@ internal class RootModuleRepository @Inject constructor(
         if (!result.isSuccess) throw RecordsException.CommandFailed(LoadFailure.Operation.MODULE_REMOVE_FAILED)
     }
 
-    override suspend fun startDaemon() {
+    override suspend fun startDaemon(turnOn: Boolean) {
         // No root manager turns this one on again after its boot guard.
-        rootShell.run("$LOCATE; [ $MODULE_DIR != $DIRECT_DIR ] || rm -f $DIRECT_DIR/disable")
+        if (turnOn) rootShell.run("$LOCATE; [ $MODULE_DIR != $DIRECT_DIR ] || rm -f $DIRECT_DIR/disable")
         checkModuleEnabled()
         // The script leaves the supervisor running in the background; with
         // its output detached, the shell returns once it has been started.
