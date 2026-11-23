@@ -58,13 +58,20 @@ internal fun locateUidPermission(signature: HookSignature): PermissionArguments?
 
 internal fun isIdentifierBind(signature: HookSignature): Boolean {
     val prefix = listOf("android.app.IApplicationThread", "android.os.IBinder", "android.content.Intent", "java.lang.String", "android.app.IServiceConnection")
-    val suffix = listOf("java.lang.String", "int")
+    val suffix = BIND_SUFFIXES.firstOrNull { signature.parameters.takeLast(it.size) == it } ?: return false
     val middle = signature.parameters.drop(prefix.size).dropLast(suffix.size)
     return signature.returns == "int" &&
         signature.parameters.take(prefix.size) == prefix &&
-        signature.parameters.takeLast(suffix.size) == suffix &&
         middle in BIND_VARIANTS
 }
+
+private val BIND_SUFFIXES = listOf(
+    listOf("java.lang.String", "int"),
+    // OxygenOS 16 adds an overload that the binder entry point calls, and
+    // has the first one pass through to it. The hook reads the intent
+    // alone, which both have in the same place.
+    listOf("java.lang.String", "int", "long"),
+)
 
 private val BIND_VARIANTS = setOf(
     listOf("int", "java.lang.String"),

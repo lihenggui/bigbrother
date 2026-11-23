@@ -188,6 +188,19 @@ class SandboxRulesTest {
     }
 
     @Test
+    fun givenVendorBindOverload_whenValidatingSignatures_thenAcceptsBothOverloads() {
+        val android16 = listOf(
+            "android.app.IApplicationThread", "android.os.IBinder", "android.content.Intent", "java.lang.String", "android.app.IServiceConnection",
+            "long", "java.lang.String", "boolean", "int", "java.lang.String", "android.app.IApplicationThread",
+            "java.lang.String", "int",
+        )
+        assertTrue(isIdentifierBind(HookSignature("int", android16)))
+        assertTrue(isIdentifierBind(HookSignature("int", android16 + "long")))
+        assertFalse(isIdentifierBind(HookSignature("int", android16 + "long" + "long")))
+        assertFalse(isIdentifierBind(HookSignature("int", android16 + "int")))
+    }
+
+    @Test
     fun givenUnknownIdentifierOverloads_whenValidatingSignatures_thenRejectsThem() {
         val provider = HookSignature("android.app.ContentProviderHolder", listOf("android.app.IApplicationThread", "java.lang.String", "java.lang.String", "int", "boolean"))
         val bind = HookSignature("int", listOf("android.app.IApplicationThread", "android.os.IBinder", "android.content.Intent", "java.lang.String", "android.app.IServiceConnection", "int", "java.lang.String", "java.lang.String", "int"))
