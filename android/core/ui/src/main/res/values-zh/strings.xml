@@ -39,7 +39,6 @@
     <string name="topic_network_state_title">网络状态</string>
     <string name="topic_device_serial_title">硬件序列号</string>
     <string name="topic_soc_info_title">SoC 信息</string>
-    <string name="topic_boot_id_title">Boot ID</string>
     <string name="topic_cpu_model_title">处理器型号</string>
     <string name="topic_kernel_version_title">内核版本</string>
     <string name="topic_other_processes_title">其他进程</string>

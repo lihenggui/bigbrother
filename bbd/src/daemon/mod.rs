@@ -89,6 +89,7 @@ pub struct Options<'a> {
 pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     let writer = Writer::open(opts.db)?;
     let pruned = writer.prune(opts.retention_days, now())?;
+    writer.forget_system_paths(|path| crate::rules::topic_of(path).is_some())?;
     let sensors = adopt_sensor_sessions(&writer)?;
     writer.set_meta("started_at", now())?;
 

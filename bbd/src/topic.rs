@@ -27,8 +27,6 @@ pub const NETWORK_STATE: &str = "network_state";
 pub const DEVICE_SERIAL: &str = "device_serial";
 /// Chip model and revision.
 pub const SOC_INFO: &str = "soc_info";
-/// Identifier of the current boot session.
-pub const BOOT_ID: &str = "boot_id";
 /// Processor model and features.
 pub const CPU_MODEL: &str = "cpu_model";
 /// Kernel version and build.

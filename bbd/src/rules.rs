@@ -63,7 +63,14 @@ fn sys_topic(path: &str) -> Option<&'static str> {
         return None;
     }
     if under(path, "/sys/fs") {
-        return under(path, "/sys/fs/selinux").then_some(topic::SELINUX_STATE);
+        // Only the files that tell how SELinux is set up. The rest of
+        // selinuxfs is how a process works with SELinux: zygote opens
+        // `context` in every app it starts, after it has taken the app's uid.
+        return matches!(
+            path,
+            "/sys/fs/selinux/enforce" | "/sys/fs/selinux/policy" | "/sys/fs/selinux/status"
+        )
+        .then_some(topic::SELINUX_STATE);
     }
     let name = file_name(path);
     if has_component(path, "net") {
@@ -93,6 +100,10 @@ fn sys_topic(path: &str) -> Option<&'static str> {
 }
 
 /// Topic of a system-wide path under /proc (not a process directory).
+///
+/// `/proc/sys/kernel/random/boot_id` has none: the system's own libraries
+/// read it in every app process, to name the shared memory device, so a
+/// read of it does not tell an app that asks from one that does not.
 fn proc_topic(path: &str) -> Option<&'static str> {
     match path {
         "/proc/net/arp" => return Some(topic::ARP_TABLE),
@@ -101,7 +112,6 @@ fn proc_topic(path: &str) -> Option<&'static str> {
         "/proc/mounts" | "/proc/filesystems" => return Some(topic::MOUNTS),
         "/proc/modules" | "/proc/kallsyms" => return Some(topic::KERNEL_MODULES),
         "/proc/partitions" => return Some(topic::BLOCK_DEVICES),
-        "/proc/sys/kernel/random/boot_id" => return Some(topic::BOOT_ID),
         "/proc/sys/kernel/osrelease" | "/proc/sys/kernel/version" | "/proc/sys/kernel/ostype" => {
             return Some(topic::KERNEL_VERSION);
         }
@@ -278,6 +288,8 @@ mod tests {
                 topic::BATTERY,
             ),
             ("/sys/fs/selinux/enforce", topic::SELINUX_STATE),
+            ("/sys/fs/selinux/policy", topic::SELINUX_STATE),
+            ("/sys/fs/selinux/status", topic::SELINUX_STATE),
             ("/sys/class/input/event2/device/name", topic::INPUT_DEVICES),
         ] {
             assert_eq!(
@@ -317,6 +329,19 @@ mod tests {
     }
 
     #[test]
+    fn what_the_system_reads_in_every_starting_app_is_not_recorded() {
+        for path in [
+            "/sys/fs/selinux/context",
+            "/sys/fs/selinux/policy_capabilities/memfd_class",
+            "/sys/fs/selinux",
+            "/proc/sys/kernel/random/boot_id",
+        ] {
+            assert_eq!(c(path), None, "{path}");
+            assert_eq!(topic_of(path), None, "{path}");
+        }
+    }
+
+    #[test]
     fn system_wide_proc_entries_are_recorded_with_a_topic() {
         for (path, want) in [
             ("/proc/net/arp", topic::ARP_TABLE),
@@ -324,7 +349,6 @@ mod tests {
             ("/proc/net/unix", topic::NETWORK_STATE),
             ("/proc/cpuinfo", topic::CPU_MODEL),
             ("/proc/version", topic::KERNEL_VERSION),
-            ("/proc/sys/kernel/random/boot_id", topic::BOOT_ID),
             ("/proc/mounts", topic::MOUNTS),
             ("/proc/modules", topic::KERNEL_MODULES),
             ("/proc/partitions", topic::BLOCK_DEVICES),
@@ -490,7 +514,6 @@ mod tests {
             "/proc/net/route",
             "/proc/cpuinfo",
             "/proc/version",
-            "/proc/sys/kernel/random/boot_id",
             "/proc/sys/kernel/osrelease",
             "/proc/mounts",
             "/proc/filesystems",
