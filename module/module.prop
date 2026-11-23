@@ -1,6 +1,6 @@
 id=big_brother
 name=Big Brother
-version=v0.4.1
-versionCode=11
+version=v0.4.2
+versionCode=12
 author=Mercury Li
 description=Records app access to private data. Use Big Brother to browse records and isolate selected apps with Jail.
