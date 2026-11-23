@@ -21,17 +21,15 @@
 #   scripts/install-on-emulator.sh [out/big_brother-<version>.apk.zip]
 #
 # Needs an image on which `adb root` works (google_apis, not
-# google_apis_playstore). The module's own installer, module/customize.sh,
-# does the installing: it is sourced on the device with what a root
-# manager's installer would give it, and service.sh is then run as after a
-# hot install. Nothing is changed in the system image, and the module is
-# gone again with the emulator's data.
+# google_apis_playstore). The module's own module/direct.sh does the
+# installing, as it does when the app installs the module with root alone.
+# Nothing is changed in the system image, and the module is gone again with
+# the emulator's data.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-MODPATH=/data/adb/modules/big_brother
-BBD=$MODPATH/bin/bbd
+BBD=/data/adb/big_brother_direct/bin/bbd
 version="$(sed -n 's/^version=//p' module/module.prop)"
 zip="${1:-out/big_brother-$version.apk.zip}"
 [[ -f "$zip" ]] || {
@@ -66,54 +64,9 @@ stage=$(adb shell 'umask 077; mkdir -p /data/adb && mktemp -d /data/adb/.bb-emul
 [[ $stage =~ ^/data/adb/\.bb-emulator\.[[:alnum:]]+$ ]] || exit 2
 trap 'adb shell "rm -rf $stage" >/dev/null' EXIT
 DEVICE_ZIP=$stage/module.zip
-DEVICE_SCRIPT=$stage/install.sh
-DEVICE_CUSTOMIZE=$stage/customize.sh
+DEVICE_SCRIPT=$stage/direct.sh
 adb push "$zip" "$DEVICE_ZIP" >/dev/null
-# What the installers of Magisk and KernelSU define before they source
-# customize.sh (their util_functions.sh). KSU because, like KernelSU, the
-# module is started here without a reboot.
-adb shell "cat > $DEVICE_SCRIPT" <<EOF
-ZIPFILE=$DEVICE_ZIP
-MODPATH=$MODPATH
-customize=$DEVICE_CUSTOMIZE
-KSU=true
-case "\$(getprop ro.product.cpu.abi)" in
-arm64-v8a) ARCH=arm64 ;;
-x86_64) ARCH=x64 ;;
-*) ARCH="\$(getprop ro.product.cpu.abi)" ;;
-esac
-ui_print() { echo "\$1"; }
-abort() {
-    echo "\$1"
-    rm -rf "\$MODPATH" "\$customize"
-    exit 1
-}
-set_perm() {
-    chown "\$2:\$3" "\$1" && chmod "\$4" "\$1" && chcon "\${5:-u:object_r:system_file:s0}" "\$1"
-}
-set_perm_recursive() {
-    find "\$1" -type d | while read -r dir; do set_perm "\$dir" "\$2" "\$3" "\$4" "\$6"; done
-    find "\$1" -type f -o -type l | while read -r file; do set_perm "\$file" "\$2" "\$3" "\$5" "\$6"; done
-}
-# A previous installation is replaced, as a root manager does on update.
-# Its daemon is stopped before its files are taken away from under it.
-[ -f "\$MODPATH/stop.sh" ] && sh "\$MODPATH/stop.sh"
-rm -rf "\$MODPATH"
-mkdir -p "\$MODPATH"
-unzip -p "\$ZIPFILE" customize.sh >"\$customize" || abort "! customize.sh is missing from the archive"
-. "\$customize"
-rm -f "\$customize"
-# What this script relies on the module asking for: that the installer
-# leaves the archive to customize.sh, and runs service.sh afterwards.
-[ "\$SKIPUNZIP" = 1 ] || abort "! The module no longer extracts its own files"
-[ "\$MODULE_HOT_RUN_SCRIPT" = service.sh ] || abort "! The module no longer asks for service.sh after installing"
-# In a session of its own, so that the daemon outlives this adb shell.
-setsid sh "\$MODPATH/service.sh" </dev/null >/dev/null 2>&1
-EOF
-status=0
-adb shell "sh $DEVICE_SCRIPT" || status=$?
-adb shell "rm -f $DEVICE_SCRIPT $DEVICE_ZIP $DEVICE_CUSTOMIZE"
-((status == 0)) || {
+adb shell "unzip -p $DEVICE_ZIP direct.sh >$DEVICE_SCRIPT && sh $DEVICE_SCRIPT install $DEVICE_ZIP" || {
     echo "error: the module installer failed" >&2
     exit 1
 }

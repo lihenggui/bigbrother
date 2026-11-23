@@ -80,6 +80,7 @@ if ! "$fast"; then
 fi
 step 'Test the daemon' cargo test
 step 'Check shell syntax' check_shell_syntax
+step 'Test the module scripts' ./scripts/check-module-recovery.sh
 step 'Check license headers' check_license_headers
 step "Check the app's formatting and license headers" gradle spotlessCheck :build-logic:convention:spotlessCheck
 

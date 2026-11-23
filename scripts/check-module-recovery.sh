@@ -30,14 +30,20 @@ await() {
     return 1
 }
 
+# $2 is where the module is: in the root manager's directory, unless given.
 fixture() {
     export state=$scratch/$1
-    mod=$state/data/adb/modules/big_brother
+    module=$state/data/adb/modules/big_brother
+    direct=$state/data/adb/big_brother_direct
+    launcher=$state/data/adb/service.d/big_brother.sh
+    packages=$state/data/system/packages.list
+    mod=${2:-$module}
     data=$state/data/adb/big_brother
     hook=$state/data/adb/service.d/big_brother_restore_disabled.sh
     batch=$state/data/adb/big_brother_recovery/disabled
-    mkdir -p "$mod/bin" "$data" "$state/bin" "$state/system/bin"
-    for file in service.sh supervise.sh stop.sh uninstall.sh; do
+    mkdir -p "$mod/bin" "$data" "$state/bin" "$state/system/bin" "${packages%/*}"
+    printf 'com.android.shell 2000 0\nli.mercury.bigbrother 10200 0\n' >"$packages"
+    for file in service.sh supervise.sh stop.sh uninstall.sh direct.sh; do
         sed -e "s|/data/|$state/data/|g" \
             -e "s|/system/bin/app_process|$state/system/bin/app_process|g" \
             -e "s|/sys/fs/bpf/|$state/sys/fs/bpf/|g" \
@@ -64,7 +70,7 @@ SH
     cat >"$mod/bin/bbd" <<'SH'
 #!/bin/sh
 case "$1" in
-module-stop) touch "$state/stopped" ;;
+module-stop) echo "$2" >>"$state/stopped" ;;
 sandbox-remove-network)
     [ -f "$state/stopped" ] && [ -f "$state/data/adb/big_brother/bb.db" ] || exit 2
     touch "$state/network-removed"
@@ -168,13 +174,92 @@ manager_toggle_retries_and_reenables() (
     await test ! -e "${hook%/*}/big_brother_recover.sh"
 )
 
+direct_install_starts_at_boot_until_the_app_is_gone() (
+    fixture direct "$scratch/direct/data/adb/big_brother_direct"
+    printf '1\n' >"$state/boot"
+    mkdir -p "${launcher%/*}"
+    touch "$launcher"
+    sh "$mod/direct.sh" boot
+    check="direct installation to start at boot"
+    await test -f "$state/running"
+    await grep -q "daemon exited normally" "$data/bbd.log"
+
+    # A list without what every device has says nothing about the app.
+    rm "$state/running" "$data/bbd.log"
+    printf 'com.example 10100 0\n' >"$packages"
+    sh "$mod/direct.sh" boot
+    check="direct installation to start whatever an implausible package list says"
+    await test -f "$state/running"
+    await grep -q "daemon exited normally" "$data/bbd.log"
+
+    rm "$state/running"
+    printf 'com.android.shell 2000 0\n' >"$packages"
+    sh "$mod/direct.sh" boot
+    [[ -f "$state/network-removed" && ! -e "$state/running" ]]
+    [[ ! -e "$mod" && ! -e "$launcher" && ! -e "$hook" && ! -e "$data" ]]
+    check="uninstall recovery worker to finish"
+    await test ! -e "${hook%/*}/big_brother_recover.sh"
+)
+
+direct_install_restores_when_disabled() (
+    fixture direct-disabled "$scratch/direct-disabled/data/adb/big_brother_direct"
+    printf '1\n' >"$state/boot"
+    sh "$mod/direct.sh" boot
+    check="direct installation to register its hook and start"
+    await test -f "$state/running"
+    await grep -q "daemon exited normally" "$data/bbd.log"
+    [[ -x "$hook" ]]
+    rm "$state/running"
+    touch "$mod/disable"
+    # The hook finds the installation the app made where there is no module.
+    sh "$hook"
+    check="disabled direct installation to restore"
+    await restored
+    wait_for_worker_exit
+    sh "$mod/direct.sh" boot
+    [[ ! -e "$state/running" ]]
+)
+
+module_takes_over_from_a_direct_install() (
+    fixture takeover
+    printf '1\n' >"$state/boot"
+    mkdir -p "$direct" "${launcher%/*}"
+    touch "$launcher" "$direct/direct.sh"
+    sh "$mod/service.sh"
+    check="flashed module to start"
+    await test -f "$state/running"
+    await grep -q "daemon exited normally" "$data/bbd.log"
+    [[ ! -e "$direct" && ! -e "$launcher" ]]
+    # The other's daemon first: the two share their pid files.
+    [[ $(head -n 1 "$state/stopped") = "$direct" ]]
+)
+
+direct_install_yields_to_a_module_at_boot() (
+    fixture yield "$scratch/yield/data/adb/big_brother_direct"
+    printf '1\n' >"$state/boot"
+    mkdir -p "$module/bin"
+    touch "$module/bin/bbd"
+    sh "$mod/direct.sh" boot
+    [[ ! -e "$state/read-boot" && ! -e "$state/stopped" && -d "$mod" ]]
+)
+
 case "${1:-all}" in
 guard) boot_guard_restores_after_boot ;;
 toggle) manager_toggle_retries_and_reenables ;;
+direct)
+    direct_install_starts_at_boot_until_the_app_is_gone
+    direct_install_restores_when_disabled
+    module_takes_over_from_a_direct_install
+    direct_install_yields_to_a_module_at_boot
+    ;;
 all)
     boot_guard_restores_after_boot
     manager_toggle_retries_and_reenables
+    direct_install_starts_at_boot_until_the_app_is_gone
+    direct_install_restores_when_disabled
+    module_takes_over_from_a_direct_install
+    direct_install_yields_to_a_module_at_boot
     ;;
 *) exit 2 ;;
 esac
-echo "Module disable recovery checks passed"
+echo "Module script checks passed"

@@ -18,14 +18,18 @@ set -eu
 STAGED=$1
 APK=$2
 DAEMON=$3
-MODDIR=/data/adb/modules/big_brother
+# The module in the root manager, or else the one the app installed. A
+# manager keeps a directory without the daemon for a module it has yet to apply.
+MODULE=/data/adb/modules/big_brother
+MODDIR=$MODULE
+[ -e "$MODDIR/bin/bbd" ] || MODDIR=/data/adb/big_brother_direct
 UPDATE=/data/adb/modules_update/big_brother
 NEXT=$STAGED/module
 exec 9>/data/adb/.big_brother_update.lock
 flock -x 0 <&9
 [ -d "$MODDIR" ] && [ ! -e "$MODDIR/remove" ] && [ ! -e "$MODDIR/disable" ] || exit 1
 cp -a "$MODDIR" "$NEXT"
-for file in module.prop service.sh supervise.sh stop.sh uninstall.sh action.sh; do
+for file in module.prop service.sh supervise.sh stop.sh uninstall.sh action.sh direct.sh; do
     rm -f "$NEXT/$file"
     unzip -p "$APK" "$file" > "$NEXT/$file" && [ -s "$NEXT/$file" ] || exit 1
     chmod 644 "$NEXT/$file"
@@ -63,7 +67,7 @@ done
 [ ! -e "$MODDIR/disable" ] && [ ! -e "$MODDIR/remove" ] || exit 1
 # An update the root manager staged that is not newer than these files
 # would only bring them back at the next boot.
-if [ -d "$UPDATE" ]; then
+if [ "$MODDIR" = "$MODULE" ] && [ -d "$UPDATE" ]; then
     staged="$(sed -n 's/^versionCode=//p' "$UPDATE/module.prop" 2>/dev/null)"
     current="$(sed -n 's/^versionCode=//p' "$MODDIR/module.prop")"
     if [ "${staged:-0}" -le "${current:-0}" ]; then

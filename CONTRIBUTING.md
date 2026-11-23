@@ -87,8 +87,8 @@ of the sandbox restores the saved mode and permission after a daemon restart.
 
 These checks run on an emulator as well. On a `google_apis` image, which allows
 `adb root`, `scripts/install-on-emulator.sh` installs the module and the app
-from `out/` with the module's own installer and starts the daemon, without
-a root manager:
+from `out/` with `module/direct.sh`, as the app does with root alone, and
+starts the daemon:
 
 ```sh
 ./scripts/install-on-emulator.sh
