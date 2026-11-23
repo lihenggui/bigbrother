@@ -19,6 +19,7 @@ package li.mercury.bigbrother.core.testing.repository
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.InstalledModule
 import li.mercury.bigbrother.core.data.repository.ModuleRepository
+import li.mercury.bigbrother.core.model.LoadFailure
 
 /** A module whose answers a test sets, counting what it was asked to do. */
 class TestModuleRepository(
@@ -26,6 +27,8 @@ class TestModuleRepository(
     var active: Boolean = true,
     var updatePending: Boolean = false,
     var installedByApp: Boolean = false,
+    /** Turned off by its boot guard. */
+    var turnedOff: Boolean = false,
 ) : ModuleRepository {
     var comparisonFailure: RecordsException? = null
     var installFailure: RecordsException? = null
@@ -37,6 +40,10 @@ class TestModuleRepository(
     var comparisons = 0
         private set
     var updates = 0
+        private set
+
+    /** Starts that got the daemon running. */
+    var starts = 0
         private set
 
     override suspend fun isActive(): Boolean = active
@@ -74,7 +81,10 @@ class TestModuleRepository(
         installedByApp = false
     }
 
-    override suspend fun startDaemon() {
+    override suspend fun startDaemon(turnOn: Boolean) {
+        if (turnOn && installedByApp) turnedOff = false
+        if (turnedOff) throw RecordsException.CommandFailed(LoadFailure.Operation.MODULE_DISABLED)
         startFailure?.let { throw it }
+        starts++
     }
 }
