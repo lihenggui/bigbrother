@@ -272,12 +272,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # A partial rerun can carry forward earlier legs. Four APIs with
-          # three parts each.
-          gh api --paginate --slurp \
-            "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=all&per_page=100" |
-            jq -e '
-              [.[].jobs[] | select(.name | test("^API [0-9]+ "))]
-              | group_by(.name) | map(max_by(.run_attempt))
-              | length == 12 and all(.[]; .conclusion == "success" or .conclusion == "skipped")
-            '
+          # A partial rerun can carry forward earlier legs. The jobs API can
+          # still show a job that has just ended as running, without its
+          # conclusion: it is read again until every leg has ended.
+          for ((attempt = 1; ; attempt++)); do
+            legs="$(gh api --paginate --slurp \
+              "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=all&per_page=100" |
+              jq '[.[].jobs[] | select(.name | test("^API [0-9]+ "))] | group_by(.name) | map(max_by(.run_attempt))')"
+            jq -e 'all(.[]; .status == "completed")' <<<"$legs" >/dev/null && break
+            ((attempt < 12)) || break
+            sleep 5
+          done
+          # Four APIs with three parts each.
+          jq -e 'length == 12 and all(.[]; .conclusion == "success" or .conclusion == "skipped")' <<<"$legs"
