@@ -49,6 +49,18 @@ runs:
     - name: Set up Gradle
       uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
+    # Maven Central answers a burst of downloads from these runners, as when
+    # several pull requests change dependencies at once, with 429 Too Many
+    # Requests. Gradle retries it, but by default for three seconds only:
+    # here for about a minute (2, 4, 8, 16 and 32 seconds apart).
+    - name: Retry downloads for longer
+      shell: bash
+      run: |
+        cat >>"$GRADLE_USER_HOME/gradle.properties" <<'EOF'
+        systemProp.org.gradle.internal.network.retry.max.attempts=6
+        systemProp.org.gradle.internal.network.retry.initial.backOff=2000
+        EOF
+
     # scripts/build.sh uses $ANDROID_NDK_HOME as it is; the image points it at
     # an older NDK than the newest one it carries.
     - name: Select the newest NDK
