@@ -292,7 +292,7 @@ fn parse_events(bytes: &[u8]) -> Vec<Event> {
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     use super::super::tests::{Fixture, NEW, sandboxed};
     use super::*;
@@ -473,7 +473,7 @@ mod tests {
             .enable_all()
             .build()
             .unwrap();
-        let (renamed, seen) = runtime.block_on(async {
+        let looked_at = runtime.block_on(async {
             let mut watch = Watch::default();
             assert!(watch.arm(true, &system, Some(&users)));
             // Two writes of the list, the second while the first is being
@@ -481,48 +481,47 @@ mod tests {
             let writer = {
                 let system = system.clone();
                 std::thread::spawn(move || {
-                    let mut renamed = Vec::new();
-                    for pause in [100, 10] {
+                    for (pause, list) in [(100, "first"), (10, "second")] {
                         std::thread::sleep(Duration::from_millis(pause));
-                        renamed.push(Instant::now());
-                        std::fs::write(system.join("packages.list.tmp"), "x").unwrap();
+                        std::fs::write(system.join("packages.list.tmp"), list).unwrap();
                         std::fs::rename(
                             system.join("packages.list.tmp"),
                             system.join("packages.list"),
                         )
                         .unwrap();
                     }
-                    renamed
                 })
             };
             let (_commands, mut command) = tokio::sync::mpsc::channel::<()>(1);
             let mut flush = tokio::time::interval(Duration::from_secs(30));
             flush.tick().await;
-            let until = tokio::time::Instant::now() + Duration::from_secs(2);
-            let mut seen = Vec::new();
-            while seen.len() < 2 {
+            // Well before the flush, so that only the watch can wake the
+            // loop; how soon it does depends on how busy the machine is.
+            let until = tokio::time::Instant::now() + Duration::from_secs(10);
+            let mut looked_at = Vec::new();
+            while looked_at.last().map(String::as_str) != Some("second") {
                 tokio::select! {
                     _ = flush.tick() => {}
                     _ = command.recv() => {}
                     changed = watch.changed(), if watch.armed() => {
                         changed.unwrap();
-                        seen.push(Instant::now());
                         // A look at the list takes a while.
+                        looked_at.push(std::fs::read_to_string(system.join("packages.list")).unwrap());
                         std::thread::sleep(Duration::from_millis(30));
                     }
-                    _ = tokio::time::sleep_until(until) => break,
+                    () = tokio::time::sleep_until(until) => break,
                 }
             }
-            (writer.join().unwrap(), seen)
+            writer.join().unwrap();
+            looked_at
         });
-        // Each write is seen soon after it was made.
-        for at in renamed {
-            assert!(
-                seen.iter()
-                    .any(|seen| *seen >= at && *seen - at < Duration::from_millis(200)),
-                "a write was not seen in time"
-            );
-        }
+        // The loop caught up with the last write: when it came while the
+        // first was looked at, it woke the loop again.
+        assert_eq!(
+            looked_at.last().map(String::as_str),
+            Some("second"),
+            "{looked_at:?}"
+        );
     }
 
     #[tokio::test]
