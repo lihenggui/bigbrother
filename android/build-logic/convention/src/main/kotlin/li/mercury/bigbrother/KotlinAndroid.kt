@@ -22,7 +22,10 @@ import org.gradle.api.JavaVersion
 /** SDK levels and language level shared by every Android module. */
 internal fun configureKotlinAndroid(commonExtension: CommonExtension) {
     commonExtension.apply {
-        compileSdk = 37
+        // Compose 1.13 requires compiling against the 37.1 platform or later.
+        compileSdk {
+            version = release(37) { minorApiLevel = 2 }
+        }
         defaultConfig.apply {
             // The module requires a GKI 2.0 kernel, which ships with Android 12.
             minSdk = 31

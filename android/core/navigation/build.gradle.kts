@@ -16,7 +16,7 @@
 
 plugins {
     alias(libs.plugins.bigbrother.android.library)
-    alias(libs.plugins.compose)
+    alias(libs.plugins.bigbrother.android.library.compose)
     alias(libs.plugins.kotlin.serialization)
 }
 
