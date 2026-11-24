@@ -95,7 +95,8 @@ starts the daemon:
 ```
 
 The Device workflow (`.github/workflows/device.yml`) runs these checks and
-the permission matrix on emulators of API 33 to 36. Without LSPosed there,
+the permission matrix on emulators of API 33 to 36, with the matrix shared
+between two more emulators of each (`--shard 1/2` and `--shard 2/2`). Without LSPosed there,
 the sandbox check skips what needs the hook.
 
 The unit tests include screenshot tests

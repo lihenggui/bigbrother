@@ -98,10 +98,10 @@ jobs:
           retention-days: 3
 
   check:
-    name: API ${{ matrix.api }}
+    name: API ${{ matrix.api }} ${{ matrix.part }}
     needs: build
     runs-on: ubuntu-24.04
-    timeout-minutes: 150
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -110,6 +110,9 @@ jobs:
         # those of 36.1 and 37.0 (6.12), SurfaceFlinger aborts in the
         # emulator's software rendering and takes the system down with it.
         api: ["33", "34", "35", "36"]
+        # The permission matrix takes longer than the other checks together,
+        # so two emulators share it.
+        part: [checks, permissions-1, permissions-2]
     env:
       IMAGE: system-images;android-${{ matrix.api }};google_apis;x86_64
       LOGS: ${{ github.workspace }}/device-logs
@@ -193,23 +196,44 @@ jobs:
       - name: Install the module
         run: ./scripts/install-on-emulator.sh 2>&1 | tee "$LOGS/install.txt"
 
+      # For minutes after boot and the install the system is busy, and the
+      # app ops helper, a Java runtime started again for each case, can then
+      # take longer to start than the daemon waits for it. The other checks
+      # used to give the emulator that time; the matrix now waits for the
+      # load to come down, for five minutes at most.
+      - name: Wait for the emulator to settle
+        if: startsWith(matrix.part, 'permissions-')
+        run: |
+          for ((i = 0; i < 60; i++)); do
+            load="$(adb shell cat /proc/loadavg | cut -d ' ' -f 1)"
+            awk -v load="$load" 'BEGIN { exit !(load < 1.0) }' && break
+            sleep 5
+          done
+          echo "waited $((i * 5)) s, load $load"
+
       - name: Check the records
+        if: matrix.part == 'checks'
         run: ./scripts/check-canary.sh 2>&1 | tee "$LOGS/check-canary.txt"
 
       # An emulated CPU without a GPU holds starts for longer than a phone:
       # 10 to 75 ms at the 95th percentile on these runners.
       - name: Check the sandbox
+        if: matrix.part == 'checks'
         run: ./scripts/check-sandbox.sh --stress 20 --max-hold-ms 100 2>&1 | tee "$LOGS/check-sandbox.txt"
 
       - name: Check sandboxed process survival
+        if: matrix.part == 'checks'
         timeout-minutes: 14
         run: ./scripts/check-survival.sh 2>&1 | tee "$LOGS/check-survival.txt"
 
-      # Each case installs the canary afresh and starts it once: about half
-      # a minute, more for those that restart the helper or the daemon.
+      # Each case installs the canary afresh and starts it once: about 20
+      # seconds, more for those that restart the helper or the daemon.
       - name: Check the permissions
-        timeout-minutes: 90
-        run: ./scripts/check-permissions.sh 2>&1 | tee "$LOGS/check-permissions.txt"
+        if: startsWith(matrix.part, 'permissions-')
+        timeout-minutes: 45
+        env:
+          PART: ${{ matrix.part }}
+        run: ./scripts/check-permissions.sh --shard "${PART#permissions-}/2" 2>&1 | tee "$LOGS/check-permissions.txt"
 
       - name: Collect the logs
         if: always()
@@ -225,7 +249,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: device-logs-api-${{ matrix.api }}
+          name: device-logs-api-${{ matrix.api }}-${{ matrix.part }}
           path: device-logs
           if-no-files-found: ignore
           retention-days: 14
@@ -248,11 +272,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # A partial rerun can carry forward earlier legs.
+          # A partial rerun can carry forward earlier legs. Four APIs with
+          # three parts each.
           gh api --paginate --slurp \
             "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=all&per_page=100" |
             jq -e '
-              [.[].jobs[] | select(.name | test("^API [0-9]+$"))]
+              [.[].jobs[] | select(.name | test("^API [0-9]+ "))]
               | group_by(.name) | map(max_by(.run_attempt))
-              | length == 4 and all(.[]; .conclusion == "success" or .conclusion == "skipped")
+              | length == 12 and all(.[]; .conclusion == "success" or .conclusion == "skipped")
             '

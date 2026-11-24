@@ -22,6 +22,10 @@
 #
 #   scripts/check-permissions.sh            every case
 #   scripts/check-permissions.sh NAME...    the cases named
+#   scripts/check-permissions.sh --shard K/N [NAME...]
+#                                           every Nth of them from the Kth
+#                                           on, for CI to play the matrix
+#                                           on N emulators
 #
 # Requires adb, a connected and unlocked device with the module installed
 # and running, the sandbox's global settings at their default (every item
@@ -34,6 +38,16 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+
+shard=1 shards=1
+if [[ "${1:-}" == --shard ]]; then
+    if ! [[ "${2:-}" =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]] || ((BASH_REMATCH[1] > BASH_REMATCH[2])); then
+        echo "error: --shard takes K/N, with K from 1 to N" >&2
+        exit 2
+    fi
+    shard="${BASH_REMATCH[1]}" shards="${BASH_REMATCH[2]}"
+    shift 2
+fi
 
 PACKAGE=li.mercury.bigbrother.canary
 APK=android/canary/build/outputs/apk/debug/canary-debug.apk
@@ -521,12 +535,16 @@ no_location="$(tr -d '\r' <<<"$no_location" | sed -n '1{p;q}')"
 # clear-permission-flags, which Android 13 (API 33) added.
 sdk="$(adb shell getprop ro.build.version.sdk | tr -d '\r')"
 
-failed=0 played=0 skipped=0
+failed=0 played=0 skipped=0 index=0
 skip() {
     echo "  skipped $*"
     skipped=$((skipped + 1))
 }
+((shards == 1)) || echo "shard $shard of $shards"
 for line in "${CASES[@]}"; do
+    # Dealt in turn, so that the slow cases, which the matrix keeps
+    # together, are shared out.
+    ((index++ % shards == shard - 1)) || continue
     IFS=$'\t' read -r name subject before steps leave want_permission want_mode want_reads where <<<"$line"
     if (($# > 0)); then
         chosen=false
