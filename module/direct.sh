@@ -21,6 +21,7 @@
 #   direct.sh install <archive>   from a copy taken out of the archive
 #   direct.sh boot                at boot, from /data/adb/service.d
 #   direct.sh remove              by the app, or at boot once the app is gone
+#   direct.sh register            after an update, in case the boot script is gone
 #
 # KernelSU, Magisk and APatch run what is in /data/adb/service.d at
 # late_start, as they run a module's service.sh. Where nothing does, the
@@ -124,5 +125,6 @@ case "${1:-}" in
 install) install "$2" ;;
 boot) boot ;;
 remove) remove ;;
+register) write_launcher ;;
 *) exit 2 ;;
 esac
