@@ -27,7 +27,7 @@
 # and running, the sandbox's global settings at their default (every item
 # on), and the canary built:
 #   (cd android && ./gradlew :canary:assembleDebug)
-# Each case takes half a minute or so. On Android 12 and 12L the cases with
+# Each case takes about 20 seconds. On Android 12 and 12L the cases with
 # settings steps are skipped.
 #
 # Exits non-zero if a case fails.
@@ -309,7 +309,7 @@ run_canary() {
     if [[ "$test_location" == yes ]]; then
         as_shell cmd location providers set-test-provider-location gps --location 52.52,13.405 --accuracy 5
     fi
-    launch_and_wait_for_canary 90 --es ops "android:camera" || return 1
+    launch_and_wait_for_canary 90 --ez personal_data true --es ops "android:camera" || return 1
     view="$canary_view"
     [[ "$subject" != camera ]] || key=ops
     if [[ -z "$(seen "$key")" ]]; then
