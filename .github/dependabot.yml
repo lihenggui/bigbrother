@@ -28,6 +28,10 @@ updates:
       - jitpack
     schedule:
       interval: weekly
+    ignore:
+      # Each pin is the SDK image the Robolectric release expects for one API
+      # level; a newer version is a different API level, not an update.
+      - dependency-name: "org.robolectric:android-all-instrumented"
     groups:
       kotlin:
         patterns:
