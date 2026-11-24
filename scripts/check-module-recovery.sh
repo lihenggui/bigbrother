@@ -184,6 +184,11 @@ direct_install_starts_at_boot_until_the_app_is_gone() (
     await test -f "$state/running"
     await grep -q "daemon exited normally" "$data/bbd.log"
 
+    # An update puts the boot script back where it has been deleted.
+    rm "$launcher"
+    sh "$mod/direct.sh" register
+    [[ -x "$launcher" ]] && grep -q "$mod/direct.sh boot" "$launcher"
+
     # A list without what every device has says nothing about the app.
     rm "$state/running" "$data/bbd.log"
     printf 'com.example 10100 0\n' >"$packages"

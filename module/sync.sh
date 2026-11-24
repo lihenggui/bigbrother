@@ -75,6 +75,13 @@ if [ "$MODDIR" = "$MODULE" ] && [ -d "$UPDATE" ]; then
     fi
 fi
 
+# The script that starts the app's own module at boot may have been deleted
+# since it was installed. Without it the module still runs, started from
+# the app, so this is not worth failing the update for.
+if [ "$MODDIR" != "$MODULE" ]; then
+    sh "$MODDIR/direct.sh" register || echo "Could not register for boot"
+fi
+
 # Stops the running daemon and starts the new one, as at boot.
 sh "$MODDIR/service.sh" 9>&- </dev/null >/dev/null 2>&1
 # Report startup failures after publishing a complete generation.
