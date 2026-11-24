@@ -215,6 +215,25 @@ class OverviewViewModelTest {
     }
 
     @Test
+    fun givenDaemonStillStarting_whenInstallingModule_thenSetupLastsUntilItRecords() = runTest {
+        accessRepository.failure = RecordsException.ModuleMissing()
+        moduleRepository.active = false
+        val viewModel = collectedViewModel()
+        advanceUntilIdle()
+
+        // Installed and started, but its probes are not attached yet.
+        accessRepository.failure = RecordsException.CommandFailed(LoadFailure.Operation.DAEMON_UNAVAILABLE)
+        viewModel.installModule()
+        advanceTimeBy(5_000)
+        assertEquals(ModuleSetup.Installing, viewModel.uiState.value.moduleSetup)
+
+        accessRepository.failure = null
+        advanceUntilIdle()
+        assertEquals(ModuleSetup.Idle, viewModel.uiState.value.moduleSetup)
+        assertNull(viewModel.uiState.value.failure)
+    }
+
+    @Test
     fun givenFlashedModuleStagedAndNothingInPlace_whenLoaded_thenSetupIsOfferedWithThePendingModule() = runTest {
         accessRepository.failure = RecordsException.ModuleMissing()
         moduleRepository.active = false
