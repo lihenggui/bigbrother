@@ -99,9 +99,12 @@ private fun reportKernelInfo(view: (String, () -> Any?) -> Unit) {
     }
 }
 
+/**
+ * How much of the personal data this app is given, and the mode of each app
+ * op the check asks about. `scripts/check-permissions.sh` reads these alone.
+ */
 @Suppress("DEPRECATION")
-private fun Activity.reportPersonalData(view: (String, () -> Any?) -> Unit) {
-    // Personal data: how much of it this app is given.
+internal fun Activity.reportPersonalData(view: (String, () -> Any?) -> Unit) {
     view("contacts") {
         contentResolver.query(ContactsContract.Contacts.CONTENT_URI, null, null, null, null)?.use { it.count }
     }

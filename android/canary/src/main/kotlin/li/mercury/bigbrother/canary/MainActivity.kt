@@ -125,7 +125,11 @@ class MainActivity : Activity() {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus && !started) {
             started = true
-            thread(name = "probes") { runProbes() }
+            if (intent.getBooleanExtra(EXTRA_PERSONAL_DATA, false)) {
+                thread(name = "personal data") { reportPersonalDataOnly() }
+            } else {
+                thread(name = "probes") { runProbes() }
+            }
         }
     }
 
@@ -191,6 +195,13 @@ class MainActivity : Activity() {
         }
         reportSandboxView(::view)
         completeAfterIsolatedProbe()
+    }
+
+    // Without the probes, the sensors' ten seconds and the network's
+    // timeouts: the permission check starts the app for each of its cases.
+    private fun reportPersonalDataOnly() {
+        reportPersonalData(::view)
+        publishResult("done")
     }
 
     private fun completeAfterIsolatedProbe() {
@@ -304,6 +315,12 @@ class MainActivity : Activity() {
 
         /** Set by `scripts/check-sandbox.sh` to have a file picked rather than the probes run. */
         const val EXTRA_PICK = "pick"
+
+        /**
+         * Set by `scripts/check-permissions.sh` to have only the personal
+         * data reported, without the probes.
+         */
+        const val EXTRA_PERSONAL_DATA = "personal_data"
         const val PICK = 1
         val DOWNLOADS: Uri = DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:Download")
 
