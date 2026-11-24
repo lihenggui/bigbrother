@@ -264,13 +264,23 @@ class OverviewViewModel @Inject constructor(
         }
     }
 
-    /** Install the module bundled in this app's APK; it starts at once. */
+    /**
+     * Install the module bundled in this app's APK. The daemon is started
+     * at once and reports some seconds later, when its probes are attached:
+     * until then the records cannot be read, which is not a failure to show.
+     */
     fun installModule() {
         if (load.value.ui.moduleSetup == ModuleSetup.Installing) return
         updateState { it.copy(moduleSetup = ModuleSetup.Installing) }
         viewModelScope.launch {
             try {
                 moduleRepository.installBundled()
+                try {
+                    moduleUpdater.awaitRecording()
+                } catch (e: RecordsException) {
+                    // Installed all the same: the load below shows recording as stopped.
+                    Timber.w("Recording not confirmed after set-up: %s", e.toLoadFailure())
+                }
                 updateState { it.copy(moduleSetup = ModuleSetup.Idle) }
                 refresh()
             } catch (e: RecordsException) {
