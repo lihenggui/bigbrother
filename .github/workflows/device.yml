@@ -206,7 +206,7 @@ jobs:
         run: |
           for ((i = 0; i < 60; i++)); do
             load="$(adb shell cat /proc/loadavg | cut -d ' ' -f 1)"
-            awk -v load="$load" 'BEGIN { exit !(load < 1.0) }' && break
+            awk -v average="$load" 'BEGIN { exit !(average < 1.0) }' && break
             sleep 5
           done
           echo "waited $((i * 5)) s, load $load"
