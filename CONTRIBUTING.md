@@ -205,8 +205,11 @@ Run the same host checks as CI before opening or updating a pull request.
 ./scripts/check.sh
 ```
 
-While working, run `./scripts/check.sh --fast` for formatting, Clippy,
-Rust tests, shell syntax, license headers, Spotless and Kotlin structure lint.
+While working, run `./scripts/check.sh --fast` for the workflow regression
+tests, formatting, Clippy, Rust tests, shell syntax, license headers, Spotless
+and Kotlin structure lint. The host script also runs ShellCheck and checks
+Rust dependency licenses when `shellcheck` and `cargo-deny` are installed.
+CI runs both tools and checks the full Rust dependency graph against RustSec.
 The pre-push hook is opt-in. Enable it for this clone to run the fast checks
 before each push.
 
@@ -217,7 +220,7 @@ git config core.hooksPath .githooks
 Use JDK 21 to match CI. Install `rustfmt` and `clippy` for stable Rust and
 `clippy` for nightly. Clippy checks Rust functions against an 80-line
 threshold. The full check also uses nightly Clippy for both eBPF syscall-state
-backends with the x86_64 configuration.
+backends on x86_64 and aarch64.
 
 `cargo test` checks daemon module cycles at the top level and between
 siblings by following production source paths. To run that check alone,
@@ -241,7 +244,7 @@ Keep the installation and upgrade steps in both READMEs current.
 Set `version` and increase `versionCode` in `module/module.prop`. Update
 the app's badging baseline if it changes. After the release commit passes
 CI, push a tag that matches `version`.
-`release.yml` builds the signed `.zip` and publishes it, with the R8
-mapping, as a GitHub release. It needs the repository secrets
-`SIGNING_KEYSTORE_BASE64`, `SIGNING_STORE_PASSWORD`, `SIGNING_KEY_ALIAS` and
-`SIGNING_KEY_PASSWORD`.
+`release.yml` builds and attests the signed `.zip`, then publishes it with
+the R8 mapping and a SHA-256 checksum file for both assets. It needs the
+repository secrets `SIGNING_KEYSTORE_BASE64`, `SIGNING_STORE_PASSWORD`,
+`SIGNING_KEY_ALIAS` and `SIGNING_KEY_PASSWORD`.

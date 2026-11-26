@@ -142,10 +142,10 @@ fn report_destination(uid: u32, sockaddr: u64, len: u64) -> Result<(), i32> {
         addr,
     };
     let now = unsafe { bpf_ktime_get_ns() };
-    if let Some(last) = unsafe { RECENT_DESTINATIONS.get(&destination) } {
-        if now.wrapping_sub(*last) < REPORT_INTERVAL_NS {
-            return Ok(());
-        }
+    if let Some(last) = unsafe { RECENT_DESTINATIONS.get(&destination) }
+        && now.wrapping_sub(*last) < REPORT_INTERVAL_NS
+    {
+        return Ok(());
     }
     let _ = RECENT_DESTINATIONS.insert(&destination, &now, 0);
 

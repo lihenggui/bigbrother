@@ -1,3 +1,5 @@
+#!/system/bin/sh
+#
 # Copyright (C) 2026 Mercury Li
 #
 # This program is free software: you can redistribute it and/or modify
@@ -88,6 +90,7 @@ sh "$MODDIR/service.sh" 9>&- </dev/null >/dev/null 2>&1
 i=0
 while [ "$i" -lt 10 ]; do
     pid=$(cat /data/adb/big_brother/bbd.pid 2>/dev/null) || pid=
+    # shellcheck disable=SC3013 # Android sh and BusyBox ash can compare the executable inodes.
     if [ -n "$pid" ] && [ "/proc/$pid/exe" -ef "$MODDIR/bin/bbd" ] &&
         "$MODDIR/bin/bbd" stats 2>/dev/null | grep -q '"daemon_running":true'; then
         exit 0

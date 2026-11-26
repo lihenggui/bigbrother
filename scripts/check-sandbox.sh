@@ -37,6 +37,7 @@ PACKAGE=li.mercury.bigbrother.canary
 APK=android/canary/build/outputs/apk/debug/canary-debug.apk
 # The module in the root manager, or else the one installed with root alone
 # (module/direct.sh). Worked out by the device's shell in each command.
+# shellcheck disable=SC2016
 BBD='$([ -e /data/adb/modules/big_brother/bin/bbd ] && echo /data/adb/modules/big_brother || echo /data/adb/big_brother_direct)/bin/bbd'
 # Put in the real shared storage; a sandboxed app must not find it.
 # MARKER in the canary's MainActivity.kt.
@@ -182,7 +183,7 @@ run_canary() {
 # Sets `picked`: what it read, or nothing if the marker was not to be found
 # in the picker.
 pick_marker() {
-    local dump bounds i
+    local dump bounds i left top right bottom
     adb shell am force-stop "$PACKAGE"
     adb logcat -c
     start_canary --ez pick true || { echo "error: $canary_error" >&2; exit 2; }
@@ -195,8 +196,8 @@ pick_marker() {
         [[ -n "$bounds" ]] && break
     done
     [[ -n "$bounds" ]] || return 0
-    set -- $bounds
-    adb shell input tap $((($1 + $3) / 2)) $((($2 + $4) / 2))
+    read -r left top right bottom <<<"$bounds"
+    adb shell input tap $(((left + right) / 2)) $(((top + bottom) / 2))
     wait_for_canary_result 10 || { echo "error: $canary_error" >&2; exit 2; }
     picked="$(seen "$canary_view" picked_file)"
 }
@@ -258,7 +259,9 @@ names_nothing() {
 # canary's do.
 covered() {
     local pid n=0
-    for pid in "$@"; do
+    local -a process_ids
+    read -ra process_ids <<<"$1"
+    for pid in "${process_ids[@]}"; do
         as_root "grep -q /dev/socket/dnsproxyd /proc/$pid/mountinfo" 2>/dev/null && n=$((n + 1))
     done
     echo "$n"
@@ -643,9 +646,9 @@ check "no process but the app's lost the resolver" [ "$(others_covered)" = "$oth
 pids="$(adb shell pidof "$PACKAGE" | tr -d '\r')"
 as_root "$BBD sandbox set $PACKAGE network=off" >/dev/null
 check "the app keeps running when the network is given back" [ "$(adb shell pidof "$PACKAGE" | tr -d '\r')" = "$pids" ]
-check "and has the resolver back in the processes it has" [ "$(covered $pids)" = 0 ]
+check "and has the resolver back in the processes it has" [ "$(covered "$pids")" = 0 ]
 as_root "$BBD sandbox set $PACKAGE network=on" >/dev/null
-check "taking the network again takes the resolver from them" [ "$(covered $pids)" = "$(wc -w <<<"$pids")" ]
+check "taking the network again takes the resolver from them" [ "$(covered "$pids")" = "$(wc -w <<<"$pids")" ]
 check "the app keeps running" [ "$(adb shell pidof "$PACKAGE" | tr -d '\r')" = "$pids" ]
 as_root "$BBD sandbox set $PACKAGE network=off" >/dev/null
 
@@ -674,7 +677,7 @@ names=no
 [[ "$(status_field dns_names)" == true ]] && names=yes
 NO_NAMES="the daemon cannot stand in for the resolver here"
 check_if "$names" "$NO_NAMES" "the app's lookups go through the daemon" \
-    [ "$(covered $(adb shell pidof "$PACKAGE" | tr -d '\r'))" -gt 0 ]
+    [ "$(covered "$(adb shell pidof "$PACKAGE" | tr -d '\r')")" -gt 0 ]
 check_if "$names" "$NO_NAMES" "and reach the resolver ($(seen "$view" resolver))" [ "$(seen "$view" resolver)" = connected ]
 check_if "$names" "$NO_NAMES" "which answers them ($(seen "$view" relay))" [ "$(seen "$view" relay)" = answered ]
 if [[ "$names" == yes ]]; then
@@ -688,7 +691,7 @@ check "no process but the app's has another resolver" [ "$(others_covered)" = "$
 check "what was recorded can be deleted" grep -q '"deleted":[1-9]' <<<"$(as_root "$BBD net clear $PACKAGE --json")"
 pids="$(adb shell pidof "$PACKAGE" | tr -d '\r')"
 as_root "$BBD sandbox set $PACKAGE network_record=off" >/dev/null
-check "recording turned off, the app has the resolver itself" [ "$(covered $pids)" = 0 ]
+check "recording turned off, the app has the resolver itself" [ "$(covered "$pids")" = 0 ]
 check "the app keeps running" [ "$(adb shell pidof "$PACKAGE" | tr -d '\r')" = "$pids" ]
 as_root "$BBD sandbox set $PACKAGE network=on" >/dev/null
 

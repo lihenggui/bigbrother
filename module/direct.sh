@@ -81,15 +81,18 @@ install() {
     trap 'rm -rf "$stage"' 0
     MODPATH=$stage/module
     mkdir "$MODPATH" || abort "! No space to install in"
-    unzip -p "$ZIPFILE" customize.sh >"$stage/customize.sh" && [ -s "$stage/customize.sh" ] ||
+    if ! unzip -p "$ZIPFILE" customize.sh >"$stage/customize.sh" || [ ! -s "$stage/customize.sh" ]; then
         abort "! customize.sh is missing from the archive"
+    fi
     # The module's own installer does the installing, as in a root manager.
     DIRECT_INSTALL=true
+    # shellcheck source=module/customize.sh
     . "$stage/customize.sh"
     # Complete and checked: only now is an earlier one stopped and replaced.
     if [ -d "$DIRECT" ]; then
-        "$MODPATH/bin/bbd" module-stop "$DIRECT" && rm -rf "$DIRECT" ||
+        if ! "$MODPATH/bin/bbd" module-stop "$DIRECT" || ! rm -rf "$DIRECT"; then
             abort "! Could not replace the installed module"
+        fi
     fi
     mv "$MODPATH" "$DIRECT" || abort "! Could not install the module"
     write_launcher || ui_print "! Could not register for boot; the daemon starts when the app is opened"

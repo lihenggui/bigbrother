@@ -215,6 +215,7 @@ stage_uninstall() {
 
 online=false
 released_all && online=true
+# shellcheck source=module/stop.sh
 . "$MODDIR/stop.sh"
 rm -rf /data/system/big_brother_sandbox /data/system/big_brother_sandbox.status \
     /data/system/big_brother_sandbox.new /data/system/big_brother_hook

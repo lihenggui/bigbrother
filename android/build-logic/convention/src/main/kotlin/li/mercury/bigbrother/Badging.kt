@@ -57,9 +57,11 @@ abstract class GenerateBadgingTask : DefaultTask() {
 
     @TaskAction
     fun taskAction() {
-        execOperations.exec {
-            commandLine(aapt2Executable.get().asFile.absolutePath, "dump", "badging", apk.get().asFile.absolutePath)
-            standardOutput = badging.asFile.get().outputStream()
+        badging.asFile.get().outputStream().use { out ->
+            execOperations.exec {
+                commandLine(aapt2Executable.get().asFile.absolutePath, "dump", "badging", apk.get().asFile.absolutePath)
+                standardOutput = out
+            }
         }
     }
 }
