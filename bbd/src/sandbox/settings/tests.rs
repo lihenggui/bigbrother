@@ -249,6 +249,7 @@ fn a_failed_change_of_the_global_settings_leaves_the_hook_list_as_it_was() {
     failing.fail_update = true;
     let mut sandbox = f.sandbox();
     let identity = identity::Identity::new(&sandbox.snapshot(), &sandbox.global());
+    let writes = identity.writes();
     sandbox.add_effect(Box::new(identity.at(&f.dir)));
     sandbox.add_effect(failing);
     for package in ["com.app", "com.shared.one"] {
@@ -265,8 +266,9 @@ fn a_failed_change_of_the_global_settings_leaves_the_hook_list_as_it_was() {
             .to_owned()
     };
     let listed = list();
+    let before = writes.load(std::sync::atomic::Ordering::Relaxed);
 
-    // The first app's change fails after its line was written.
+    // The first app fails after its hook line was staged.
     let off = BTreeMap::from([(Item::InstalledApps, Mode::Off)]);
     assert!(
         sandbox
@@ -274,6 +276,44 @@ fn a_failed_change_of_the_global_settings_leaves_the_hook_list_as_it_was() {
             .is_err()
     );
     assert_eq!(list(), listed);
+    assert_eq!(writes.load(std::sync::atomic::Ordering::Relaxed), before);
+}
+
+#[test]
+fn a_global_hook_change_publishes_once_for_all_apps_and_restores_once_on_commit_failure() {
+    use std::sync::atomic::Ordering::Relaxed;
+
+    let mut f = Fixture::new("sandbox-global-hook-batch");
+    let mut sandbox = f.sandbox();
+    let identity = identity::Identity::new(&sandbox.snapshot(), &sandbox.global());
+    let writes = identity.writes();
+    sandbox.add_effect(Box::new(identity.at(&f.dir)));
+    for package in ["com.app", "com.shared.one"] {
+        sandbox
+            .enable(&f.writer, &mut f.packages, package, 0, 1000)
+            .unwrap();
+    }
+    let list_path = f.dir.join("list");
+    let writes_before = writes.load(Relaxed);
+    let off = BTreeMap::from([(Item::InstalledApps, Mode::Off)]);
+    sandbox
+        .set_global(&f.writer, &mut f.packages, &off)
+        .unwrap();
+    assert_eq!(writes.load(Relaxed), writes_before + 1);
+    let list = std::fs::read_to_string(&list_path).unwrap();
+    for uid in [10100, 10200] {
+        assert!(
+            list.lines()
+                .any(|line| line == format!("items {uid} device_ids,storage"))
+        );
+    }
+    let _fault = reject_global_commit(&f);
+    let on = BTreeMap::from([(Item::InstalledApps, Mode::On)]);
+    assert!(sandbox.set_global(&f.writer, &mut f.packages, &on).is_err());
+    assert_eq!(writes.load(Relaxed), writes_before + 3);
+    let restored = std::fs::read_to_string(&list_path).unwrap();
+    assert!(restored.lines().skip(1).eq(list.lines().skip(1)));
+    assert_eq!(f.writer.sandbox_global().unwrap(), "installed_apps=off");
 }
 
 type CameraUpdate = (u32, Mode, Mode);

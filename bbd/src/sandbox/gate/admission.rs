@@ -375,12 +375,15 @@ fn cover_recording(
 ) -> anyhow::Result<bool> {
     // The relay lock covers only the identity read. A mount can block in
     // the kernel, and status, policy changes and shutdown all need that lock.
-    let serving = *relay.socket();
+    let serving = relay.socket().as_ref().map(|socket| socket.id);
     let Some(id) = serving else { return Ok(false) };
     if !mounts::apply_resolver(Cover::Relay, true, |_| bind(id))? {
         return Ok(false);
     }
-    let still_serving = *relay.socket() == Some(id);
+    let still_serving = relay
+        .socket()
+        .as_ref()
+        .is_some_and(|socket| socket.id == id);
     if keep_cover(still_serving) {
         return Ok(still_serving);
     }

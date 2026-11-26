@@ -92,7 +92,9 @@ impl Tracer {
         let (uid, origin) = self.owner_uid(hdr.uid, hdr.pid);
         // The outcome is not known (see the kernel side); what is
         // recorded is that the app tried.
-        let subject = self.scans.subject(uid, &destination, ts);
+        let Some(subject) = self.scans.subject(uid, &destination, ts) else {
+            return;
+        };
         self.store(
             uid,
             Category::Network,

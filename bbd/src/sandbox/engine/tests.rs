@@ -22,8 +22,8 @@ use crate::{
 
 #[test]
 fn taking_every_app_out_answers_before_the_client_gives_up() {
-    assert!(!DISABLE_ALL_WAIT.is_zero());
-    assert!(DISABLE_ALL_WAIT + appops::ANSWER_WAIT < control::COMMAND_WAIT);
+    assert!(DISABLE_ALL_WAIT >= Duration::from_secs(10));
+    assert!(DISABLE_ALL_WAIT + appops::ANSWER_WAIT * 2 < control::BULK_COMMAND_WAIT);
 }
 
 #[test]

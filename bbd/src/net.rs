@@ -113,6 +113,7 @@ const ANY_PORT: &str = "*";
 /// How many ports of one address an app may contact in an hour before they
 /// stop being listed one by one.
 const LISTED_PORTS: usize = 16;
+const MAX_SCAN_KEYS: usize = 4096;
 
 /// Keeps a port scan from filling the database.
 ///
@@ -129,24 +130,27 @@ pub struct Scans {
 
 impl Scans {
     /// What to store for `uid` contacting `destination` at time `ts`.
-    pub fn subject(&mut self, uid: u32, destination: &Destination, ts: i64) -> String {
+    /// Skip new addresses once the hour's tracking budget is exhausted.
+    pub fn subject(&mut self, uid: u32, destination: &Destination, ts: i64) -> Option<String> {
         if ts / 3600 != self.hour {
             self.hour = ts / 3600;
             self.ports.clear();
         }
-        let ports = self
-            .ports
-            .entry((uid, destination.address.ip()))
-            .or_default();
+        let key = (uid, destination.address.ip());
+        let ports = if self.ports.len() >= MAX_SCAN_KEYS {
+            self.ports.get_mut(&key)?
+        } else {
+            self.ports.entry(key).or_default()
+        };
         let port = destination.port();
         if ports.contains(&port) {
-            return destination.subject();
+            return Some(destination.subject());
         }
         if ports.len() >= LISTED_PORTS {
-            return destination.any_port_subject();
+            return Some(destination.any_port_subject());
         }
         ports.push(port);
-        destination.subject()
+        Some(destination.subject())
     }
 }
 
@@ -432,32 +436,36 @@ mod tests {
         // The first ports are listed, a repeat of one of them too.
         for port in 1..=LISTED_PORTS as u32 {
             let subject = scans.subject(10100, &at(local, port), hour);
-            assert_eq!(subject, format!("net://127.0.0.1:{port}"));
+            assert_eq!(subject, Some(format!("net://127.0.0.1:{port}")));
         }
         assert_eq!(
-            scans.subject(10100, &at(local, 3), hour),
-            "net://127.0.0.1:3"
+            scans.subject(10100, &at(local, 3), hour).as_deref(),
+            Some("net://127.0.0.1:3")
         );
         // Further ones are not.
         for port in 1000..1100 {
             assert_eq!(
-                scans.subject(10100, &at(local, port), hour),
-                "net://127.0.0.1:*"
+                scans.subject(10100, &at(local, port), hour).as_deref(),
+                Some("net://127.0.0.1:*")
             );
         }
         assert_eq!(topic_of("net://127.0.0.1:*"), Some(topic::LOCAL_PORTS));
         // Another app, another address and the next hour start afresh.
         assert_eq!(
-            scans.subject(10200, &at(local, 2000), hour),
-            "net://127.0.0.1:2000"
+            scans.subject(10200, &at(local, 2000), hour).as_deref(),
+            Some("net://127.0.0.1:2000")
         );
         assert_eq!(
-            scans.subject(10100, &at([192, 168, 1, 9], 80), hour),
-            "net://192.168.1.9:80"
+            scans
+                .subject(10100, &at([192, 168, 1, 9], 80), hour)
+                .as_deref(),
+            Some("net://192.168.1.9:80")
         );
         assert_eq!(
-            scans.subject(10100, &at(local, 3000), hour + 3600),
-            "net://127.0.0.1:3000"
+            scans
+                .subject(10100, &at(local, 3000), hour + 3600)
+                .as_deref(),
+            Some("net://127.0.0.1:3000")
         );
         let v6 = Destination::new(
             AF_INET6,
@@ -466,6 +474,33 @@ mod tests {
         );
         assert_eq!(v6.unwrap().any_port_subject(), "net://[fe80::1]:*");
         assert_eq!(topic_of("net://[fe80::1]:*"), Some(topic::LOCAL_NETWORK));
+    }
+
+    #[test]
+    fn an_ip_flood_cannot_displace_tracked_addresses_within_the_hour() {
+        let mut scans = Scans::default();
+        let destination = |offset: usize, port| Destination {
+            address: SocketAddr::new(Ipv4Addr::from(0x7f00_0000 + offset as u32).into(), port),
+            class: NET_LOOPBACK,
+        };
+        for offset in 0..MAX_SCAN_KEYS * 2 {
+            assert_eq!(
+                scans.subject(10100, &destination(offset, 80), 1).is_some(),
+                offset < MAX_SCAN_KEYS
+            );
+        }
+        assert_eq!(scans.ports.len(), MAX_SCAN_KEYS);
+        assert_eq!(
+            scans.subject(10100, &destination(1, 443), 2).as_deref(),
+            Some("net://127.0.0.1:443")
+        );
+        assert!(scans.subject(10200, &destination(1, 80), 2).is_none());
+        assert!(
+            scans
+                .subject(10100, &destination(MAX_SCAN_KEYS, 80), 3600)
+                .is_some()
+        );
+        assert_eq!(scans.ports.len(), 1);
     }
 
     #[test]

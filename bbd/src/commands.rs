@@ -166,6 +166,8 @@ pub struct Searches {
 /// such as [`crate::record::MODE_ISOLATED`], command, time).
 pub type NotFound = (u32, Mode, String, i64);
 
+const MAX_NOT_FOUND: usize = 4096;
+
 impl Searches {
     /// Take in the result of one exec: the syscall's return value, or `None`
     /// if it never arrived (which is how a successful exec from a secondary
@@ -180,14 +182,17 @@ impl Searches {
         ts: i64,
         ret: Option<i32>,
     ) -> Option<bool> {
-        let key = (pid, command.to_string());
         match ret {
             Some(ret) if ret < 0 => {
-                self.not_found.entry(key).or_insert((uid, origin, ts));
+                if self.not_found.len() < MAX_NOT_FOUND {
+                    self.not_found
+                        .entry((pid, command.to_owned()))
+                        .or_insert((uid, origin, ts));
+                }
                 None
             }
             _ => {
-                self.not_found.remove(&key);
+                self.not_found.remove(&(pid, command.to_owned()));
                 Some(true)
             }
         }
@@ -210,6 +215,26 @@ impl Searches {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_execs_are_bounded_until_searches_finish() {
+        let mut searches = Searches::default();
+        let missing = Some(-libc::ENOENT);
+        for pid in 0..MAX_NOT_FOUND as u32 * 2 {
+            assert_eq!(
+                searches.outcome(pid, 10100, 0, "exec:getprop", 100, missing),
+                None
+            );
+        }
+        assert_eq!(searches.not_found.len(), MAX_NOT_FOUND);
+        assert_eq!(
+            searches.outcome(0, 10100, 0, "exec:getprop", 101, Some(0)),
+            Some(true)
+        );
+        assert_eq!(searches.finished(100).len(), MAX_NOT_FOUND - 1);
+        searches.outcome(99, 10100, 0, "exec:getprop", 102, missing);
+        assert_eq!(searches.finished(102).len(), 1);
+    }
 
     #[test]
     fn a_path_search_counts_once() {

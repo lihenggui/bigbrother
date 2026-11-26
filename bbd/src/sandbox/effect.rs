@@ -85,6 +85,17 @@ pub trait Effect: Send {
         after: &Settings,
     ) -> anyhow::Result<()>;
 
+    /// Allow effects with shared state to collect updates for a global change.
+    fn begin_updates(&mut self) {}
+
+    /// Publish the collected updates before the global change is committed.
+    fn publish_updates(&mut self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    /// End the batch and discard any unpublished updates.
+    fn end_updates(&mut self) {}
+
     /// Take up again, in a daemon that just started, the apps that were
     /// sandboxed when the last one stopped. Unlike [`Effect::enable`] this
     /// cannot fail the whole: an effect reports what it could not do and

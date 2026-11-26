@@ -82,19 +82,29 @@ pub enum RuleChange {
 /// Rows not yet written, with when each was first and last added to.
 pub type Pending = HashMap<NetKey, (NetSeen, i64, i64)>;
 
+impl NetKey {
+    fn sample_bytes(&self) -> usize {
+        // Include the key, counters, timestamps and hash table overhead.
+        128 + self.host.capacity() + self.addr.capacity()
+    }
+}
+
 impl Writer {
     /// Add `seen`, at `ts`, to what `key` holds. Buffered like the records.
     pub fn net_record(&mut self, key: NetKey, seen: NetSeen, ts: i64) {
+        if !self.net.get_mut().contains_key(&key) && !self.reserve_sample(key.sample_bytes()) {
+            return;
+        }
         let entry = self
             .net
             .get_mut()
             .entry(key)
             .or_insert((NetSeen::default(), ts, ts));
-        entry.0.conn += seen.conn;
-        entry.0.refused += seen.refused;
-        entry.0.sent += seen.sent;
-        entry.0.recv += seen.recv;
-        entry.0.counted += seen.counted;
+        entry.0.conn = entry.0.conn.saturating_add(seen.conn);
+        entry.0.refused = entry.0.refused.saturating_add(seen.refused);
+        entry.0.sent = entry.0.sent.saturating_add(seen.sent);
+        entry.0.recv = entry.0.recv.saturating_add(seen.recv);
+        entry.0.counted = entry.0.counted.saturating_add(seen.counted);
         entry.1 = entry.1.min(ts);
         entry.2 = entry.2.max(ts);
     }
@@ -165,8 +175,17 @@ impl Writer {
     /// Drop what is held of the network of `uid`, here and, through
     /// [`Self::tell_net_cleared`], on the writer that records connections.
     pub(super) fn forget_pending_net(&self, uid: u32) {
-        self.net.borrow_mut().retain(|key, _| key.uid != uid);
+        let mut released = 0;
+        self.net.borrow_mut().retain(|key, _| {
+            if key.uid != uid {
+                return true;
+            }
+            released += key.sample_bytes();
+            false
+        });
+        self.release_samples(released);
         if let Some(cleared) = &self.net_cleared {
+            // A recorder that has exited has no buffered rows to clear.
             let _ = cleared.send(uid);
         }
     }
@@ -185,7 +204,6 @@ impl Writer {
         net_rules(&self.conn, None)
     }
 
-    /// Commit the rule through to disk only if its effects could be applied.
     pub fn name_addresses(&self, now: i64) -> anyhow::Result<Vec<NameAddress>> {
         let mut stmt = self.conn.prepare(
             "SELECT a.uid, a.target, a.install_id, a.address, a.expires
@@ -205,12 +223,13 @@ impl Writer {
             .collect::<rusqlite::Result<_>>()?)
     }
 
+    /// Persist a successfully applied rule and its learned addresses together.
     pub fn change_net_rule(
         &self,
         uid: u32,
         target: &str,
         change: RuleChange,
-        apply: impl FnOnce() -> anyhow::Result<Vec<NameAddress>>,
+        addresses: &[NameAddress],
     ) -> anyhow::Result<()> {
         self.write_sandbox(|tx| {
             match change {
@@ -232,7 +251,6 @@ impl Writer {
                     )?;
                 }
             }
-            let addresses = apply()?;
             if !addresses.is_empty() {
                 let mut put = tx.prepare_cached(
                     "INSERT INTO net_name_address (uid, target, install_id, address, expires)
@@ -383,6 +401,41 @@ mod tests {
     }
 
     #[test]
+    fn all_buffered_network_counters_saturate() {
+        let dir = std::env::temp_dir().join(format!("bbd-net-saturate-{}", std::process::id()));
+        let mut writer = Writer::open(&dir.join("bb.db")).unwrap();
+        let key = NetKey {
+            uid: 10100,
+            hour: 0,
+            host: "example.com".into(),
+            addr: "203.0.113.1".into(),
+            port: 443,
+        };
+        let maximum = NetSeen {
+            conn: u32::MAX,
+            refused: u32::MAX,
+            sent: u64::MAX,
+            recv: u64::MAX,
+            counted: u32::MAX,
+        };
+        writer.net_record(key.clone(), maximum, 2);
+        writer.net_record(
+            key.clone(),
+            NetSeen {
+                conn: 1,
+                refused: 1,
+                sent: 1,
+                recv: 1,
+                counted: 1,
+            },
+            1,
+        );
+        assert_eq!(writer.net.get_mut()[&key], (maximum, 1, 2));
+        drop(writer);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn clearing_network_drops_only_the_chosen_uids_written_and_buffered_rows() {
         let dir = std::env::temp_dir().join(format!("bbd-net-clear-{}", std::process::id()));
         let db = dir.join("bb.db");
@@ -398,7 +451,7 @@ mod tests {
                     created: 3600,
                     manual: true,
                 },
-                || Ok(Vec::new()),
+                &[],
             )
             .unwrap();
         writer.set_net_recording(&[uid], 3600).unwrap();
