@@ -20,8 +20,6 @@ import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.Command
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.LinkedBlockingQueue
-import kotlin.concurrent.thread
 import kotlin.system.exitProcess
 
 /**
@@ -38,11 +36,8 @@ import kotlin.system.exitProcess
  * system binds such services with, and are taken and given back as a
  * permission is ([SpecialAccess]).
  *
- * The daemon runs it as root, outside any app process,
- * and keeps it running:
- *
- *     CLASSPATH=<this apk> app_process /system/bin \
- *         li.mercury.bigbrother.catalog.AppOpsGuard
+ * FrameworkHelper runs the guard as root. Offline restore commands use
+ * the same handler with a journal to make recovery retryable.
  *
  * It reads one command per line and answers each, one line per item. What a
  * uid is held to (`<targets>`) is `<op>=<mode>` for each op, with the mode
@@ -131,8 +126,6 @@ import kotlin.system.exitProcess
  * the packages of a uid, and ends the uid's processes when it revokes a
  * permission they had.
  *
- * It ends when its input is closed: the daemon holds the other end.
- *
  * Everything used here is internal to the framework and reached by
  * reflection, so that a device where it differs fails a command instead of
  * failing to load. The system's own error messages name packages, so only
@@ -148,6 +141,7 @@ class AppOpsGuard internal constructor(
         out.flush()
     },
     private val warn: (String) -> Unit = System.err::println,
+    private val guardingChanged: () -> Unit = {},
 ) {
     private val handler = AppOpsGuardHandler(system, supervised = true)
     private val appLocks = ConcurrentHashMap<Int, AppLock>()
@@ -176,30 +170,12 @@ class AppOpsGuard internal constructor(
         check(owners[uid]?.matches(uid) == true) { "installation changed" }
     }
 
-    @Volatile
-    internal var inputClosed = false
-        private set
-
-    private fun run() {
-        val lines = readInput()
-        try {
-            Framework.connect(this)
-            if (journal == null) emit("ready")
-            thread(isDaemon = true, name = "check") { Framework.checkLoop() }
-        } catch (e: Throwable) {
-            warn(describeFailure(e))
-            exitProcess(1)
-        }
-        while (true) {
-            val line = lines.take() as? Line.Text ?: break
-            handleLine(line.text)
-        }
-    }
+    internal fun hasGuarded() = handler.hasGuarded()
 
     internal fun checkAll() = handler.checkAll(::withAppLock)
 
     /**
-     * Commands stay ordered on the stdin thread. The check thread can work
+     * Commands stay ordered on the guard worker. The check thread can work
      * on another app, but all-files access can affect the same app in other users.
      */
     private fun withAppLock(uid: Int, action: () -> Unit) {
@@ -212,21 +188,21 @@ class AppOpsGuard internal constructor(
         }
     }
 
-    private fun readInput(): LinkedBlockingQueue<Line> {
-        val lines = LinkedBlockingQueue<Line>(128)
-        thread(isDaemon = true, name = "input") {
-            try {
-                System.`in`.bufferedReader().forEachLine { lines.put(Line.Text(it)) }
-            } catch (e: Throwable) {
-                System.err.println("reading input: ${describeFailure(e)}")
-            }
-            inputClosed = true
-            lines.put(Line.End)
+    internal fun handleLine(line: String) {
+        val hadGuarded = hasGuarded()
+        try {
+            dispatch(line)
+        } finally {
+            if (hasGuarded() != hadGuarded) guardingChanged()
         }
-        return lines
     }
 
-    internal fun handleLine(line: String) {
+    private fun dispatch(line: String) {
+        if (line.startsWith("forget ")) {
+            val (uid, token) = line.removePrefix("forget ").split(' ', limit = 2).takeIf { it.size == 2 } ?: return
+            forget(uid.toIntOrNull() ?: return, token)
+            return
+        }
         if (line.startsWith("kind ")) {
             val query = AppOpsGuardProtocol.parseCommand(line) as? Command.Kind ?: return
             answerKind(query)
@@ -251,6 +227,16 @@ class AppOpsGuard internal constructor(
             } finally {
                 binding.remove()
             }
+        }
+    }
+
+    private fun forget(uid: Int, token: String) {
+        withAppLock(uid) {
+            if (owners[uid]?.token == token) {
+                handler.forget(uid)
+                owners.remove(uid)
+            }
+            printLine("forgot $uid $token")
         }
     }
 
@@ -296,10 +282,10 @@ class AppOpsGuard internal constructor(
     internal fun emit(line: String) {
         val active = binding.get()
         val output = when (line.substringBefore(' ')) {
-            "captured", "capture-failed", "saved", "restored", "applied", "failed" ->
+            "captured", "capture-failed", "saved", "restored", "applied", "stale", "failed" ->
                 active?.request?.let { AppOpsGuardProtocol.replyLine(it, active.token, line) } ?: line
 
-            "checking", "unknown-readback", "unheld", "reverted" -> {
+            "checking", "unknown-readback", "unheld", "reverted", "verified" -> {
                 val uid = line.substringAfter(' ').substringBefore(' ').toIntOrNull()
                 val token = active?.token ?: uid?.let(owners::get)?.token
                 if (token != null && journal == null) "report $token $line" else line
@@ -313,15 +299,17 @@ class AppOpsGuard internal constructor(
     companion object {
         @JvmStatic
         fun main(args: Array<String>) {
-            val journal = if (args.size == 2 && args[0] == "--recover") File(args[1]) else null
-            AppOpsGuard(Framework, journal).run()
+            try {
+                check(args.size == 2 && args[0] == "--recover")
+                val guard = AppOpsGuard(Framework, File(args[1]))
+                val service = Framework.connectAppOps(waitMs = 1500) ?: error("no app ops service")
+                Framework.attach(guard, service)
+                System.`in`.bufferedReader(Charsets.UTF_8).forEachLine(guard::handleLine)
+            } catch (e: Throwable) {
+                System.err.println(describeFailure(e))
+                exitProcess(1)
+            }
             exitProcess(0)
         }
-    }
-
-    private sealed interface Line {
-        class Text(val text: String) : Line
-
-        data object End : Line
     }
 }

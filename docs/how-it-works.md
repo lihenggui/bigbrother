@@ -51,8 +51,11 @@ app      reads the daemon's JSON output as root
   hands to the kernel: the interface name and the method's number, both part
   of binder's userspace format. Which number is which method differs between
   Android versions and manufacturers, so the daemon asks the device at
-  startup, by running a small program from the app (`BinderCatalog`) that
-  prints them from the framework's own classes.
+  startup. The resident `FrameworkHelper` reads them from the framework's
+  classes without waiting for Android's system services. The same runtime
+  handles permission usage and Jail readbacks. The daemon passes
+  `-Xms4m -Xmx32m` to `app_process`. Android can apply device-specific
+  heap defaults after those options.
 - Sensors are turned on and off on a connection to the sensor service, a
   C++ interface whose method numbers are fixed. The calls name a sensor by a
   handle that differs between devices; the daemon reads which handle is
@@ -65,9 +68,12 @@ app      reads the daemon's JSON output as root
   ends at most 5 seconds early. Only the rate asked for is known;
   Android 12 and later deliver at most 200 Hz to apps without the
   `HIGH_SAMPLING_RATE_SENSORS` permission.
-- Permission use comes from the system's app-ops records, read by another
-  small program from the app (`AppOpsDump`). It is the one source that says
-  what an app was actually given; the app marks these as permission records.
+- Permission use comes from the system's app-ops records. `FrameworkHelper`
+  reads them when app ops comes up, before a query and at shutdown. On a
+  scheduled flush, it reads after an app-ops notification or when there
+  has been user-app activity and at least 30 seconds have passed since the
+  last read. The activity fallback works when callback registration fails.
+  Android reports the last use and the last refusal for each app and op.
 - For personal data, only the collection asked for is kept
   (`content://sms/inbox`), never which person or message.
 - PackageManager identifies preinstalled provider UIDs. The daemon opens

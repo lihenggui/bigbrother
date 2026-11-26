@@ -149,6 +149,7 @@ answer	applied 10100	applied	uid=10100
 answer	applied 10100 android.permission.ACCESS_FINE_LOCATION=denied+user_set	applied	uid=10100	permission=android.permission.ACCESS_FINE_LOCATION/denied/user_set
 
 answer	failed 10100	failed	uid=10100
+answer	stale 10100	stale	uid=10100
 
 # Reports of what the helper did by itself; they answer nothing.
 answer	verified 10100	verified	uid=10100
@@ -180,5 +181,6 @@ answer-bad	saved x
 answer-bad	saved -1
 answer-bad	restored -1
 answer-bad	failed 4294967296
+answer-bad	stale 10100 extra
 answer-bad	hello 10100
 answer-bad	Saved 10100

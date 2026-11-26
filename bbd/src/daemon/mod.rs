@@ -34,8 +34,10 @@ use crate::{
     binder::Catalog,
     clock::now,
     control,
+    helper::{Bridge, Supervisor},
     probes::{self, BinderWatch, Probes},
     proc::{process_alive, uid_of_pid},
+    sandbox::appops::AppOps,
     selftest, sensors,
     store::Writer,
     tracer::Tracer,
@@ -112,8 +114,10 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
         .filter(|(program, _)| *program != "file_open")
         .count();
 
-    let permissions = PermissionUses::start(&writer)?;
-    let mut binder = BinderCatalog::start(&mut probes.ebpf, &writer)?;
+    let appops = AppOps::new();
+    let (_helper, bridge, initial_usage) = Supervisor::start(opts.sandbox.then(|| appops.guard()));
+    let permissions = PermissionUses::start(&writer, bridge.clone(), initial_usage)?;
+    let mut binder = BinderCatalog::start(&mut probes.ebpf, &writer, bridge)?;
     let mut events = KernelEvents::open(&mut probes.ebpf)?;
 
     eprintln!(
@@ -132,7 +136,7 @@ pub async fn run(opts: Options<'_>) -> anyhow::Result<()> {
     );
     run_probe_selfcheck(&mut tracer, &mut events, &probes)?;
     watch_fixed_services(&mut tracer, binder.watch.as_mut());
-    let (sandbox, net_cleared) = sandbox_host::start(&opts, &mut probes, &mut tracer);
+    let (sandbox, net_cleared) = sandbox_host::start(&opts, &mut probes, &mut tracer, appops);
 
     // Queries ask for what is held to be written first (see `control`).
     let requests = match control::listen(opts.db) {
@@ -239,7 +243,7 @@ struct BinderCatalog {
 }
 
 impl BinderCatalog {
-    fn start(ebpf: &mut aya::Ebpf, writer: &Writer) -> anyhow::Result<Self> {
+    fn start(ebpf: &mut aya::Ebpf, writer: &Writer, bridge: Bridge) -> anyhow::Result<Self> {
         // Calls to system services. The tracepoint is attached now. Services
         // with fixed transaction codes (the sensor service) are watched at once;
         // the others once the device's codes are known, which takes a running
@@ -254,7 +258,7 @@ impl BinderCatalog {
                 None
             }
         };
-        let loader = watch.as_ref().map(|_| spawn_catalog_loader());
+        let loader = watch.as_ref().map(|_| spawn_catalog_loader(bridge));
         Ok(Self { watch, loader })
     }
 
@@ -316,7 +320,7 @@ async fn shutdown(
     if opts.profile {
         probes::print_profile(&probes.ebpf);
     }
-    recording.finish()
+    recording.finish().await
 }
 
 /// The timer of the check of sensor sessions' processes, which exists only

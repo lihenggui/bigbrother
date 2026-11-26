@@ -90,13 +90,8 @@ impl Sandbox {
         }
 
         let sharing = packages.for_uid(uid).to_vec();
-        self.stage_change(writer, &mut entry, Some(&before), Some(&after))?;
-        self.snapshot_write().insert(uid, entry.clone());
         let change = Change::Update(&before, &after);
-        if let Err(error) = self.run(&mut entry, &sharing, change) {
-            self.snapshot_write().insert(uid, previous);
-            return Err(error);
-        }
+        self.stage_and_apply(writer, &mut entry, &sharing, change, true)?;
         if let Err(error) = writer.commit_sandbox(&[&entry], None) {
             self.snapshot_write().insert(uid, previous);
             self.reverse_completed(&mut entry, &sharing, change);
@@ -220,10 +215,14 @@ impl Sandbox {
             anyhow::ensure!(std::time::Instant::now() <= until, "taking too long");
 
             let sharing = packages.for_uid(uid).to_vec();
-            self.stage_change(writer, &mut entry, Some(&before), Some(&after))
-                .with_context(|| format!("uid {uid}"))?;
-            self.run(&mut entry, &sharing, Change::Update(&before, &after))
-                .with_context(|| format!("uid {uid}"))?;
+            self.stage_and_apply(
+                writer,
+                &mut entry,
+                &sharing,
+                Change::Update(&before, &after),
+                false,
+            )
+            .with_context(|| format!("uid {uid}"))?;
             changed.push(AppliedUpdate {
                 entry,
                 sharing,

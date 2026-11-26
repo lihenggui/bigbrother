@@ -77,6 +77,7 @@ fn an_item_left_to_the_foreground_holds_its_ops_at_foreground() {
         .update(&mut entry, &[], &foreground, &coarse)
         .unwrap();
     appops.disable(&mut entry, &[], &coarse).unwrap();
+    assert!(appops.shared.state().input.take().is_some());
     assert_eq!(
         sent.join().unwrap(),
         [
@@ -122,7 +123,7 @@ fn keeps_the_first_saved_state_of_a_permission() {
 pub(super) fn stand_in(
     shared: &Arc<Shared>,
     mut meanwhile: impl FnMut(&mut State, u32) + Send + 'static,
-) -> (ChildStdin, std::thread::JoinHandle<Vec<String>>) {
+) -> (Pipe, std::thread::JoinHandle<Vec<String>>) {
     scripted_helper(shared, move |state, uid, command, answer| {
         if !command.starts_with("capture ") {
             meanwhile(state, uid);
@@ -134,7 +135,7 @@ pub(super) fn stand_in(
 fn scripted_helper(
     shared: &Arc<Shared>,
     mut answer_for: impl FnMut(&mut State, u32, &str, Option<Answer>) -> Option<Answer> + Send + 'static,
-) -> (ChildStdin, std::thread::JoinHandle<Vec<String>>) {
+) -> (Pipe, std::thread::JoinHandle<Vec<String>>) {
     let mut cat = std::process::Command::new("cat")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -147,10 +148,11 @@ fn scripted_helper(
         let mut sent = Vec::new();
         let mut captured = None;
         for line in BufReader::new(output).lines().map_while(Result::ok) {
+            let line = line.strip_prefix("guard ").unwrap();
             let command = line
                 .strip_prefix("bound ")
                 .and_then(|bound| bound.splitn(3, ' ').nth(2))
-                .unwrap_or(&line);
+                .unwrap_or(line);
             let command = command
                 .strip_prefix("request ")
                 .and_then(|request| request.split_once(' ').map(|(_, command)| command))
@@ -190,7 +192,7 @@ fn scripted_helper(
         let _ = cat.wait();
         sent
     });
-    (input, sent)
+    (Pipe::new(input).unwrap(), sent)
 }
 
 #[test]
@@ -239,8 +241,11 @@ fn original_app_ops_and_permission_flags_are_committed_before_set() {
             .is_err()
     );
     assert!(writer.sandbox_entry(10100).unwrap().is_none());
-    assert!(shared.state().input.is_none());
-    assert_eq!(sent.join().unwrap().len(), 1);
+    assert!(shared.state().input.take().is_some());
+    let sent = sent.join().unwrap();
+    assert!(sent[0].starts_with("capture 10100 "));
+    assert!(sent[1].starts_with("forget 10100 "));
+    assert_eq!(sent.len(), 2);
     fault.execute_batch("DROP TRIGGER fail_enable").unwrap();
     drop(fault);
 
@@ -306,12 +311,11 @@ fn an_app_starting_while_its_ops_change_is_not_held_to_what_they_were() {
     });
     appops.shared.state().input = Some(input);
 
-    // The camera turned off, then the app taken out: the last one, so
-    // the helper is told to leave.
+    // The camera turns off and the app leaves while the helper stays available.
     appops.update(&mut entry, &[], &both, &microphone).unwrap();
     appops.verifier()(10100);
     appops.disable(&mut entry, &[], &microphone).unwrap();
-    assert!(!appops.shared.state().wanted);
+    assert!(appops.shared.state().input.take().is_some());
     assert_eq!(
         sent.join().unwrap(),
         [
@@ -381,6 +385,7 @@ fn location_made_coarse_and_back_saves_and_gives_back_the_permission() {
     appops.update(&mut entry, &[], &on, &coarse).unwrap();
     assert_eq!(entry.saved_permissions, format!("{FINE}=granted"));
     appops.disable(&mut entry, &[], &coarse).unwrap();
+    assert!(appops.shared.state().input.take().is_some());
     assert_eq!(entry.saved_permissions, "");
     assert_eq!(
         sent.join().unwrap(),
@@ -433,6 +438,7 @@ fn a_permission_named_is_given_back_whatever_the_items_say() {
         items: on.clone(),
     }]);
     appops.update(&mut entry, &[], &on, &off).unwrap();
+    assert!(appops.shared.state().input.take().is_some());
     assert_eq!(entry.saved_permissions, "");
     assert_eq!(
         sent.join().unwrap(),
@@ -653,7 +659,58 @@ fn a_lost_set_reply_survives_helper_and_daemon_restart_until_undo_is_checked() {
     assert!(f.writer.appops_undo().unwrap().is_empty());
     assert!(f.writer.sandbox_entry(10100).unwrap().is_none());
     assert_eq!(*android.lock().unwrap(), original);
-    assert_eq!(recovered.join().unwrap().len(), 1);
+    assert!(shared.state().input.take().is_some());
+    let sent = recovered.join().unwrap();
+    assert_eq!(
+        sent.iter()
+            .filter(|line| !line.starts_with("forget "))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn stale_replies_are_typed_for_set_apply_and_restore() {
+    let mut appops = AppOps::new();
+    let (input, ran) = scripted_helper(&appops.shared, |_, _, _, _| Some(Answer::Stale));
+    appops.shared.state().input = Some(input);
+    let mut entry = sandboxed(10100);
+    let original = entry.clone();
+    let items = camera_and_microphone(true);
+    let after = camera_and_microphone(false);
+
+    for result in [
+        appops.enable(&mut entry, &[], &items),
+        appops.update(&mut entry, &[], &items, &after),
+        appops.disable(&mut entry, &[], &items),
+    ] {
+        assert!(result.unwrap_err().is::<StalePreimage>());
+    }
+    assert_eq!(entry, original);
+    assert!(!appops.shared.state().restart);
+    drop(appops);
+    let kinds: Vec<_> = ran
+        .join()
+        .unwrap()
+        .into_iter()
+        .map(|line| line.split_ascii_whitespace().next().unwrap().to_owned())
+        .collect();
+    assert_eq!(kinds, ["set", "apply", "restore"]);
+}
+
+pub(in crate::sandbox) fn helper_rejecting_stale_changes(
+    mut is_stale: impl FnMut(&str) -> bool + Send + 'static,
+) -> (Box<dyn Effect>, std::thread::JoinHandle<Vec<String>>) {
+    let shared = Arc::new(Shared::default());
+    let (input, thread) = scripted_helper(&shared, move |_, _, command, answer| {
+        if is_stale(command) {
+            Some(Answer::Stale)
+        } else {
+            answer
+        }
+    });
+    shared.state().input = Some(input);
+    (Box::new(AppOps { shared }), thread)
 }
 
 pub(in crate::sandbox) fn recording_helper(

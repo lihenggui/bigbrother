@@ -13,7 +13,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 use std::{
-    collections::{BTreeSet, HashMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
     time::{Duration, Instant},
@@ -40,6 +40,7 @@ use super::{
 };
 
 mod listing;
+mod transactions;
 
 /// Packages that are never sandboxed: the app, whose own reads of the
 /// device would be cut off from what it reports on. The canary test app
@@ -51,6 +52,13 @@ pub(super) const OWN_PACKAGES: &[&str] = &["li.mercury.bigbrother"];
 /// them in.
 pub(super) const LAST_USER: u32 = (i32::MAX as u32 - (PER_USER_RANGE - 1)) / PER_USER_RANGE;
 
+#[derive(PartialEq, Eq)]
+enum AppOpsUndoState {
+    Pending,
+    // A confirmed zero-write rejection whose durable journal could not yet be deleted.
+    Unused,
+}
+
 /// How long after it began taking every app out (or carrying out a change
 /// of the global settings) an app may still be started on. It is checked
 /// before each app, leaving time for two AppOps requests, the hook's
@@ -58,6 +66,7 @@ pub(super) const LAST_USER: u32 = (i32::MAX as u32 - (PER_USER_RANGE - 1)) / PER
 pub(super) const DISABLE_ALL_WAIT: std::time::Duration = control::BULK_COMMAND_WAIT
     .saturating_sub(appops::ANSWER_WAIT.saturating_mul(2))
     .saturating_sub(identity::ACK_WAIT)
+    .saturating_sub(transactions::STALE_RETRY_WINDOW)
     .saturating_sub(Duration::from_secs(1));
 
 /// The sandboxed uids and their entries, enabled ones only.
@@ -76,7 +85,7 @@ pub struct Sandbox {
     pub(super) awaiting_storage: BTreeSet<u32>,
     unsaved_permissions: BTreeSet<u32>,
     next_found_save: Option<Instant>,
-    appops_undo: BTreeSet<u32>,
+    appops_undo: BTreeMap<u32, AppOpsUndoState>,
     next_recovery: Option<Instant>,
     last_recovery: u32,
     snapshot: Snapshot,
@@ -140,7 +149,7 @@ impl Sandbox {
             appops_undo: writer
                 .appops_undo()?
                 .into_iter()
-                .map(|undo| undo.uid)
+                .map(|undo| (undo.uid, AppOpsUndoState::Pending))
                 .collect(),
             next_recovery: None,
             last_recovery: 0,
@@ -241,7 +250,7 @@ impl Sandbox {
                     }
                 }
                 Request::SandboxDisableAll => {
-                    for uid in self.appops_undo.iter().copied().collect::<Vec<_>>() {
+                    for uid in self.appops_undo.keys().copied().collect::<Vec<_>>() {
                         self.retry_appops(writer, uid);
                     }
                 }
@@ -351,14 +360,8 @@ impl Sandbox {
                 let _ = dirs::share_install(root, sibling, uid, &entry.install_id);
             }
         }
-        self.stage_change(writer, &mut entry, None, Some(&items))?;
-        self.snapshot_write().insert(uid, entry.clone());
         let change = Change::Enable(&items);
-        let applied = self.run(&mut entry, &sharing, change);
-        if applied.is_err() {
-            self.snapshot_write().remove(&uid);
-        }
-        applied?;
+        self.stage_and_apply(writer, &mut entry, &sharing, change, true)?;
         if let Err(error) = writer.commit_sandbox(&[&entry], None) {
             self.snapshot_write().remove(&uid);
             self.reverse_completed(&mut entry, &sharing, change);
@@ -403,66 +406,16 @@ impl Sandbox {
         Ok((owner, install_id))
     }
 
-    pub(super) fn stage_change(
-        &mut self,
-        writer: &Writer,
-        entry: &mut Entry,
-        before: Option<&Settings>,
-        after: Option<&Settings>,
-    ) -> anyhow::Result<()> {
-        let uid = entry.uid;
-        anyhow::ensure!(self.owns(entry), "the installation has changed");
-        self.require_recovered(uid)?;
-        let result = (|| {
-            for effect in &mut self.effects {
-                let preimage = effect
-                    .prepare_change(entry, before, after)
-                    .with_context(|| effect.name())?;
-                if let Some(preimage) = preimage {
-                    let undo = AppOpsUndo {
-                        uid,
-                        package: entry.package.clone(),
-                        install_id: entry.install_id.clone(),
-                        preimage,
-                        attempts: 0,
-                    };
-                    writer.stage_appops(&undo)?;
-                    self.appops_undo.insert(uid);
-                    self.next_recovery = Some(Instant::now());
-                }
-            }
-            Ok(())
-        })();
-        if result.is_err() && !self.appops_undo.contains(&uid) {
-            self.finish_effects(entry, before);
-        }
-        result
-    }
-
-    pub(super) fn complete_change(&mut self, entry: &Entry, items: Option<&Settings>) {
-        self.appops_undo.remove(&entry.uid);
-        if self.appops_undo.is_empty() {
-            self.next_recovery = None;
-        }
-        self.finish_effects(entry, items);
-    }
-
-    fn finish_effects(&mut self, entry: &Entry, items: Option<&Settings>) {
-        for effect in &mut self.effects {
-            effect.finish_change(entry, items);
-        }
-    }
-
     pub(super) fn require_recovered(&self, uid: u32) -> anyhow::Result<()> {
         anyhow::ensure!(
-            !self.appops_undo.contains(&uid),
+            !self.appops_undo.contains_key(&uid),
             "Android restrictions are recovering"
         );
         Ok(())
     }
 
     fn retry_appops(&mut self, writer: &Writer, uid: u32) {
-        if self.appops_undo.contains(&uid) {
+        if self.appops_undo.contains_key(&uid) {
             match writer.retry_appops_recovery(uid) {
                 Ok(()) => self.next_recovery = Some(Instant::now()),
                 Err(error) => self.log_reconcile_error(uid, &error),
@@ -475,7 +428,7 @@ impl Sandbox {
     }
 
     pub(super) fn suspend_pending_appops(&mut self) {
-        for uid in self.appops_undo.iter() {
+        for uid in self.appops_undo.keys() {
             for effect in &mut self.effects {
                 effect.suspend(*uid);
             }
@@ -558,9 +511,10 @@ impl Sandbox {
             });
         let current = packages.packages_of(app_id_of(uid));
         let candidates = current.iter().cloned().collect();
-        if let Some(package) = self
-            .existing_owner(&owner, current, &candidates)
-            .context("cannot verify the installation for Android restriction recovery")?
+        if self.appops_undo.get(&uid) != Some(&AppOpsUndoState::Unused)
+            && let Some(package) = self
+                .existing_owner(&owner, current, &candidates)
+                .context("cannot verify the installation for Android restriction recovery")?
         {
             owner.package = package;
             let undo = AppOpsUndo {
@@ -629,14 +583,9 @@ impl Sandbox {
         };
         let items = self.items(&entry);
         let enabled = entry.clone();
-        self.stage_change(writer, &mut entry, Some(&items), None)?;
-        self.snapshot_write().remove(&uid);
         entry.enabled = false;
         let change = Change::Disable(&items);
-        if let Err(error) = self.run(&mut entry, sharing, change) {
-            self.snapshot_write().insert(uid, enabled);
-            return Err(error);
-        }
+        self.stage_and_apply(writer, &mut entry, sharing, change, true)?;
         if let Err(error) = writer.commit_sandbox(&[&entry], None) {
             self.snapshot_write().insert(uid, enabled);
             self.reverse_completed(&mut entry, sharing, change);

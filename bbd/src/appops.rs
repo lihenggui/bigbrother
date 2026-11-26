@@ -21,8 +21,7 @@
 //! actually got something. It also covers the camera and the microphone,
 //! which nothing else here sees.
 //!
-//! The records are read through the app's `AppOpsDump` program, which is
-//! kept running and prints them twice a minute. The system keeps only the
+//! The records are read through `FrameworkHelper`. The system keeps only the
 //! latest use and the latest refusal per app and op, so several uses between
 //! two readings count as one, at the time of the last.
 //!
@@ -55,10 +54,6 @@ const OPS: &[(&str, &str)] = &[
     ("android:get_usage_stats", topic::USAGE_STATS),
 ];
 
-pub const HELPER_CLASS: &str = "AppOpsDump";
-/// The line `AppOpsDump` prints after each reading.
-pub const END_OF_READING: &str = ".";
-
 /// The op names to ask the system about.
 pub fn ops() -> impl Iterator<Item = &'static str> {
     OPS.iter().map(|(op, _)| *op)
@@ -80,7 +75,7 @@ pub struct Entry {
     refused: i64,
 }
 
-/// Parse the output of `AppOpsDump`, tab separated, one line per app and op:
+/// Parse the usage rows of `FrameworkHelper`, tab separated, one line per app and op:
 /// `<uid> <package> <op name> <last use, ms> <last refusal, ms>`.
 pub fn parse(output: &str) -> Vec<Entry> {
     output

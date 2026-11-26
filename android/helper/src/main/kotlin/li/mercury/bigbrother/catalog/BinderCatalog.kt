@@ -28,26 +28,19 @@ import java.lang.reflect.Modifier
  * framework, where every interface's `Stub` class has a `TRANSACTION_<method>`
  * constant per method.
  *
- * Not part of the app. The daemon runs it as root, outside any app process:
- *
- *     CLASSPATH=<this apk> app_process /system/bin \
- *         li.mercury.bigbrother.catalog.BinderCatalog <interface>...
- *
- * Output, one line per method, tab separated: `<interface> <code> <method>`.
+ * Each row is tab separated: `<interface> <code> <method>`.
  * An interface this device doesn't have is skipped.
  *
  * A few old interfaces are written by hand and have no `Stub`; their codes
  * are constants of the interface itself, named `<NAME>_TRANSACTION`, and are
  * printed under that name.
  */
-object BinderCatalog {
+internal object BinderCatalog {
     private const val PREFIX = "TRANSACTION_"
     private const val SUFFIX = "_TRANSACTION"
 
-    @JvmStatic
-    fun main(args: Array<String>) {
-        val out = StringBuilder()
-        for (name in args) {
+    fun read(interfaces: List<String>, emit: (String) -> Unit) {
+        for (name in interfaces) {
             try {
                 val loader = ClassLoader.getSystemClassLoader()
                 val holder = try {
@@ -63,15 +56,13 @@ object BinderCatalog {
                         else -> continue
                     }
                     field.isAccessible = true
-                    out.append(name).append('\t')
-                        .append(field.getInt(null)).append('\t')
-                        .append(method).append('\n')
+                    emit("$name\t${field.getInt(null)}\t$method")
                 }
-            } catch (_: Throwable) {
+            } catch (_: ReflectiveOperationException) {
                 // Missing here, or laid out differently: not covered.
+            } catch (_: LinkageError) {
+                // A stub can reference classes absent on this version.
             }
         }
-        print(out)
-        System.out.flush()
     }
 }

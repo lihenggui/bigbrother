@@ -14,7 +14,10 @@
 
 //! Drain the kernel ring and write records on the daemon's runtime.
 
-use std::{sync::mpsc::Receiver, time::Duration};
+use std::{
+    sync::mpsc::Receiver,
+    time::{Duration, Instant},
+};
 
 use anyhow::Context as _;
 use aya::maps::{MapData, PerCpuArray, RingBuf};
@@ -27,8 +30,15 @@ use tokio::{
 
 use super::{BinderCatalog, COVERAGE_PENDING, FLUSH_INTERVAL, SensorCheck, next_request};
 use crate::{
-    appops, clock::now, control, probes::dropped_events, proc::process_alive, spool::Spool,
-    store::Writer, tracer::Tracer,
+    appops,
+    clock::now,
+    control,
+    helper::{Bridge, InitialUsage},
+    probes::dropped_events,
+    proc::process_alive,
+    spool::Spool,
+    store::Writer,
+    tracer::Tracer,
 };
 
 const PRUNE_INTERVAL: Duration = Duration::from_secs(6 * 3600);
@@ -36,6 +46,9 @@ const PRUNE_INTERVAL: Duration = Duration::from_secs(6 * 3600);
 /// would write needs it: short, since the app's queries wait for the
 /// write. What still waits is written with the next one.
 const SENSOR_LIST_WAIT: Duration = Duration::from_millis(300);
+const USAGE_QUERY_WAIT: Duration = Duration::from_millis(300);
+const USAGE_SHUTDOWN_WAIT: Duration = Duration::from_millis(500);
+const APPOPS_POLL_MIN_INTERVAL: Duration = Duration::from_secs(30);
 /// How long an opened file waits for its syscall result before being
 /// recorded as successful anyway (the result event can be lost).
 const RESULT_TIMEOUT_SECS: i64 = 10;
@@ -108,6 +121,10 @@ impl Recording {
                     binder.catalog_loaded(&mut self.tracer, loaded);
                     continue;
                 }
+                Some(reading) = self.permissions.initial.recv() => {
+                    self.permissions.ingest_initial(&mut self.tracer, reading);
+                    continue;
+                }
                 request = next_request(requests) => match request {
                     Some(stream) => Some(stream),
                     None => continue,
@@ -126,12 +143,12 @@ impl Recording {
                 }
             };
 
-            self.on_flush(request);
+            self.on_flush(request).await;
         }
         Ok(())
     }
 
-    fn on_flush(&mut self, request: Option<UnixStream>) {
+    async fn on_flush(&mut self, request: Option<UnixStream>) {
         self.tracer.drain_pending(self.events.ring.get_mut());
         self.tracer.counters.dropped = self.events.dropped();
         flush_records(
@@ -140,13 +157,14 @@ impl Recording {
             &self.net_cleared,
             request.is_some(),
             now,
-        );
+        )
+        .await;
         if let Some(stream) = request {
             control::answer(&stream);
         }
     }
 
-    pub(super) fn finish(&mut self) -> anyhow::Result<()> {
+    pub(super) async fn finish(&mut self) -> anyhow::Result<()> {
         let tracer = &mut self.tracer;
         tracer.drain_pending(self.events.ring.get_mut());
         tracer.ingest_provider_events(Spool::collect);
@@ -154,6 +172,10 @@ impl Recording {
         tracer.settle_sensors(Duration::from_secs(2));
         tracer.counters.dropped = self.events.dropped();
         tracer.expire(i64::MAX);
+        while let Ok(reading) = self.permissions.initial.try_recv() {
+            self.permissions.ingest_initial(tracer, reading);
+        }
+        self.permissions.read(tracer, FlushKind::Shutdown).await;
         tracer.flush(false, now())?;
         // Sensors still on when it stopped were on at least until now; the next
         // run ends them here if their apps have ended by then.
@@ -167,7 +189,7 @@ impl Recording {
     }
 }
 
-fn flush_records(
+async fn flush_records(
     tracer: &mut Tracer,
     permissions: &mut PermissionUses,
     net_cleared: &Receiver<u32>,
@@ -178,7 +200,16 @@ fn flush_records(
     tracer.prune_isolated_owners();
     tracer.ingest_provider_events(Spool::collect);
     tracer.take_refused_lookups();
-    permissions.take_permission_uses(tracer);
+    permissions
+        .read(
+            tracer,
+            if query {
+                FlushKind::Query
+            } else {
+                FlushKind::Periodic
+            },
+        )
+        .await;
     tracer.settle_sensors(SENSOR_LIST_WAIT);
     drop_cleared_net(tracer, net_cleared);
 
@@ -202,37 +233,105 @@ fn drop_cleared_net(tracer: &mut Tracer, net_cleared: &Receiver<u32>) {
     }
 }
 
+#[derive(Clone, Copy)]
+enum FlushKind {
+    Periodic,
+    Query,
+    Shutdown,
+}
+
+#[derive(Default)]
+struct PollSchedule {
+    last: Option<Instant>,
+    activity: u64,
+}
+
+impl PollSchedule {
+    fn wait(
+        &mut self,
+        kind: FlushKind,
+        now: Instant,
+        dirty: bool,
+        activity: u64,
+    ) -> Option<Duration> {
+        let wait = match kind {
+            FlushKind::Query => USAGE_QUERY_WAIT,
+            FlushKind::Shutdown => USAGE_SHUTDOWN_WAIT,
+            FlushKind::Periodic => {
+                let active = activity != self.activity
+                    && self
+                        .last
+                        .is_none_or(|last| now.duration_since(last) >= APPOPS_POLL_MIN_INTERVAL);
+                if !dirty && !active {
+                    return None;
+                }
+                USAGE_QUERY_WAIT
+            }
+        };
+        self.last = Some(now);
+        self.activity = activity;
+        Some(wait)
+    }
+}
+
 pub(super) struct PermissionUses {
-    readings: Receiver<Option<Vec<appops::Entry>>>,
+    bridge: Bridge,
+    initial: InitialUsage,
     tracker: appops::Tracker,
     coverage: i64,
+    schedule: PollSchedule,
 }
 
 #[cfg(test)]
 mod tests;
 
 impl PermissionUses {
-    pub(super) fn start(writer: &Writer) -> anyhow::Result<Self> {
-        // The system's own permission usage records, read periodically.
+    pub(super) fn start(
+        writer: &Writer,
+        bridge: Bridge,
+        initial: InitialUsage,
+    ) -> anyhow::Result<Self> {
         writer.set_meta("coverage_appops", COVERAGE_PENDING)?;
         Ok(Self {
+            bridge,
+            initial,
             coverage: COVERAGE_PENDING,
-            readings: super::helpers::spawn_appops_reader(),
             tracker: appops::Tracker::new(now()),
+            schedule: PollSchedule::default(),
         })
     }
 
-    fn take_permission_uses(&mut self, tracer: &mut Tracer) {
-        while let Ok(reading) = self.readings.try_recv() {
-            // A reading at all shows the records can be read here. Written
-            // when that changes, not with every reading.
-            let covered = i64::from(reading.is_some());
-            if covered != self.coverage && tracer.write_coverage("coverage_appops", covered) {
-                self.coverage = covered;
-            }
-            if let Some(entries) = reading {
-                tracer.record_permission_uses(self.tracker.update(&entries));
-            }
+    async fn read(&mut self, tracer: &mut Tracer, kind: FlushKind) {
+        if let Some(reading) = self.bridge.take_late_usage() {
+            self.ingest(tracer, Some(reading));
+        }
+        let wait = self.schedule.wait(
+            kind,
+            Instant::now(),
+            self.bridge.dirty(),
+            tracer.user_activity,
+        );
+        if let Some(wait) = wait
+            && let Ok(reading) = self.bridge.poll(wait).await
+        {
+            self.ingest(tracer, Some(reading));
+        }
+    }
+
+    fn ingest_initial(&mut self, tracer: &mut Tracer, reading: Option<Vec<appops::Entry>>) {
+        if reading.is_some() {
+            self.schedule.last = Some(Instant::now());
+        }
+        self.ingest(tracer, reading);
+    }
+
+    fn ingest(&mut self, tracer: &mut Tracer, reading: Option<Vec<appops::Entry>>) {
+        let covered = i64::from(reading.is_some());
+        if covered != self.coverage && tracer.write_coverage("coverage_appops", covered) {
+            self.coverage = covered;
+        }
+        if let Some(entries) = reading {
+            tracer.record_permission_uses(self.tracker.update(&entries));
         }
     }
 }

@@ -296,7 +296,6 @@ impl Sandbox {
         let mut left = 0;
         let mut retries = BTreeMap::new();
         let mut recoveries = BTreeSet::new();
-        let mut asked = false;
         for (uid, names) in plan.isolate {
             let released = known.failed.contains_key(&uid);
             if released {
@@ -321,7 +320,7 @@ impl Sandbox {
                 left += 1;
                 continue;
             }
-            let apps = match self.ask_libraries(uid, &names, until, &mut known, &mut asked, retry) {
+            let apps = match self.ask_libraries(uid, &names, until, &mut known, retry) {
                 Ok(apps) => apps,
                 Err(later) => {
                     if released {
@@ -360,9 +359,6 @@ impl Sandbox {
                     self.log_isolation_failure(uid, known.failed.contains_key(&uid));
                 }
             }
-        }
-        if asked && let Some(libraries) = &self.auto.libraries {
-            libraries.done();
         }
         self.auto.pending = left;
         self.auto.retries = retries;
@@ -427,7 +423,6 @@ impl Sandbox {
         names: &BTreeSet<String>,
         until: Instant,
         known: &mut Known,
-        asked: &mut bool,
         retry: Option<Retry>,
     ) -> Result<BTreeSet<String>, Retry> {
         let app_id = app_id_of(uid);
@@ -438,7 +433,6 @@ impl Sandbox {
             if Instant::now() >= until {
                 return Err(Retry::soon(retry));
             }
-            *asked |= self.auto.libraries.is_some();
             match self.auto.kind_of(uid, name, until) {
                 Some(true) => {
                     known

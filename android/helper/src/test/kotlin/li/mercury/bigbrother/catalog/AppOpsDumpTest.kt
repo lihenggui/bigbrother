@@ -18,32 +18,18 @@ package li.mercury.bigbrother.catalog
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNull
 import kotlin.test.assertSame
 
 class AppOpsDumpTest {
-    @Test
-    fun givenMissingOrInvalidSeconds_whenValidatingRepeatInterval_thenItIsRejected() {
-        for (seconds in listOf(null, "0", "-1", "com.example.private", Long.MAX_VALUE.toString())) {
-            assertNull(AppOpsDump.intervalMillis(seconds))
-        }
-    }
-
-    @Test
-    fun givenPositiveSeconds_whenValidatingRepeatInterval_thenMillisecondsAreReturned() {
-        assertEquals(30_000L, AppOpsDump.intervalMillis("30"))
-        assertEquals(1_000L, AppOpsDump.intervalMillis("1"))
-    }
-
     @Test
     fun givenKnownAndUnknownOps_whenTakingRepeatedReadings_thenCodesAreReusedAndRowsHaveTheExpectedFormat() {
         OpNames.lookups = 0
         val service = TestService()
         val reader = AppOpsDumpReader(service, listOf("android:camera", "unknown"), OpNames::class.java, TestService::class.java)
 
-        val expected = "10100\tcom.example.camera\tandroid:camera\t12345\t-1\n"
-        assertEquals(expected, reader.dump())
-        assertEquals(expected, reader.dump())
+        val expected = listOf("10100\tcom.example.camera\tandroid:camera\t12345\t-1")
+        assertEquals(expected, buildList { reader.read(::add) })
+        assertEquals(expected, buildList { reader.read(::add) })
         assertEquals(2, OpNames.lookups)
         assertEquals(listOf(26), service.codes[0].toList())
         assertSame(service.codes[0], service.codes[1])

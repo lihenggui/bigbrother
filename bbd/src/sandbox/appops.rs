@@ -21,13 +21,11 @@
 //! granted.
 //!
 //! The ops can only be set from inside the Android runtime, so this is done
-//! by a helper program from the app's APK (`AppOpsGuard`), kept running and
+//! by the guard in `FrameworkHelper`, kept running and
 //! spoken to in lines. The helper also keeps the ops ignored: the system
 //! sets them back whenever the app's permissions change.
 //!
-//! The helper is a Java runtime, tens of megabytes of it. It runs only
-//! while an app is sandboxed: it is started for the first one and ended
-//! with the last.
+//! The guard checks app ops only while at least one app has restrictions.
 //!
 //! What the ops were before is kept in the app's entry (`saved_ops`), and
 //! put back when the app leaves the sandbox. For the op of a runtime
@@ -62,7 +60,6 @@
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
-    process::ChildStdin,
     sync::{
         Arc, Condvar, Mutex, OnceLock, TryLockError,
         atomic::{AtomicU64, Ordering},
@@ -75,6 +72,7 @@ use super::{
     items::{self, Settings},
 };
 use crate::{
+    helper::{Guard, Pipe},
     log::{Limited, Policy, SANDBOX_INTERVAL},
     store::{AppOpsUndo, Writer},
 };
@@ -91,17 +89,32 @@ use protocol::{
 /// at all.
 pub const ANSWER_WAIT: Duration = Duration::from_secs(4);
 
+/// The helper rejected a journaled change before making any write.
+#[derive(Debug)]
+pub(super) struct StalePreimage;
+
+impl std::fmt::Display for StalePreimage {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.write_str("the Android restrictions changed before they could be updated")
+    }
+}
+
+impl std::error::Error for StalePreimage {}
+
+fn check_preimage(answer: Answer) -> anyhow::Result<Answer> {
+    match answer {
+        Answer::Stale => Err(StalePreimage.into()),
+        answer => Ok(answer),
+    }
+}
+
 #[derive(Default)]
 struct State {
-    /// Whether the helper is to run: an app is sandboxed, or about to be.
-    wanted: bool,
-    /// The helper was told to leave, and has not been seen to yet.
-    dismissed: bool,
-    /// A command is waiting for the helper: it is started now, not when
-    /// the wait after its last failure is over.
+    /// Published when the shared helper has announced guard readiness.
+    input: Option<Pipe>,
+    supervisor: Option<std::thread::Thread>,
+    /// A command is waiting for the next helper to start.
     hurry: bool,
-    /// The running helper's input; `None` while there is none.
-    input: Option<ChildStdin>,
     /// The uids whose ops are held, each with the ops it is held to, as
     /// `set` takes them. A helper that starts is told of each, so that it
     /// carries on where the last one ended.
@@ -115,6 +128,8 @@ struct State {
     /// Recovery commands still to send, including when the pipe filled
     /// or a change was in progress for a UID.
     pending_verifications: BTreeSet<u32>,
+    verifying: BTreeSet<u32>,
+    forgets: BTreeMap<(u32, String), bool>,
     blocked: BTreeSet<u32>,
     /// Initial checks are in progress while replies arrive. After the
     /// regular command deadline without progress, an absent answer is
@@ -152,7 +167,7 @@ struct State {
 struct Shared {
     state: Mutex<State>,
     next_request: AtomicU64,
-    /// An answer arrived, the helper started or ended, or it is wanted.
+    /// An answer arrived or the helper changed state.
     changed: Condvar,
     /// Called when the helper reports a permission changed by the user.
     on_found: OnceLock<Box<dyn Fn() + Send + Sync>>,
@@ -171,12 +186,14 @@ impl Drop for AppOps {
 }
 
 impl AppOps {
-    /// Run the helper on a thread of its own, whenever an app is sandboxed.
-    pub fn start() -> Self {
-        let shared = Arc::new(Shared::default());
-        let supervised = shared.clone();
-        std::thread::spawn(move || transport::supervise(&supervised));
-        Self { shared }
+    pub(crate) fn new() -> Self {
+        Self {
+            shared: Arc::new(Shared::default()),
+        }
+    }
+
+    pub(crate) fn guard(&self) -> Arc<dyn Guard> {
+        self.shared.clone()
     }
 
     /// Have `wake` called whenever the helper reports a permission changed
@@ -264,12 +281,6 @@ impl super::auto::Libraries for Librarian {
             )
             .ok()
             .flatten()
-    }
-
-    fn done(&self) {
-        // Started for the questions, the helper is let go again unless an
-        // app is sandboxed.
-        self.shared.rest_if_unused();
     }
 }
 
@@ -519,8 +530,9 @@ impl Effect for AppOps {
         state.unheld.remove(&uid);
         if targets.is_empty() {
             state.guarded.remove(&uid);
-            state.owners.remove(&uid);
+            state.forget_owner(uid);
             state.check_until.remove(&uid);
+            state.verifying.remove(&uid);
             state.unsure.remove(&uid);
             state.pending_verifications.remove(&uid);
         } else {
@@ -528,13 +540,10 @@ impl Effect for AppOps {
                 .owners
                 .insert(uid, (entry.package.clone(), entry.install_id.clone()));
             state.guarded.insert(uid, targets);
-            state.wanted = true;
             state.pending_verifications.insert(uid);
             state.send_pending_verifications();
             self.shared.changed.notify_all();
         }
-        drop(state);
-        self.shared.rest_if_unused();
     }
 
     fn enable(&mut self, entry: &mut Entry, _: &[String], items: &Settings) -> anyhow::Result<()> {
@@ -544,11 +553,11 @@ impl Effect for AppOps {
         }
         let uid = entry.uid;
         self.shared.bind(uid, &entry.package, &entry.install_id);
-        let Answer::Saved(saved) = self
+        let answer = self
             .shared
             .ask(uid, |_| Command::Set(uid, &targets).to_string())
-            .map_err(super::auto::Transient)?
-        else {
+            .map_err(super::auto::Transient)?;
+        let Answer::Saved(saved) = check_preimage(answer)? else {
             anyhow::bail!("the system did not take the app ops");
         };
         // The journaled preimage is authoritative.
@@ -583,7 +592,7 @@ impl Effect for AppOps {
         // apply; a permission without a saved state is left revoked, but
         // the app may ask for it again.
         let line = Command::Restore(uid, &saved_values_of(entry, &names)).to_string();
-        let restored = self.shared.ask(uid, |_| line)?;
+        let restored = check_preimage(self.shared.ask(uid, |_| line)?)?;
         anyhow::ensure!(
             restored == Answer::Restored,
             "the system did not take the app ops back"
@@ -595,8 +604,6 @@ impl Effect for AppOps {
             state.pending_verifications.remove(&uid);
             state.unheld.remove(&uid);
             state.unsure.remove(&uid);
-            drop(state);
-            self.shared.rest_if_unused();
         }
         Ok(())
     }
@@ -637,7 +644,7 @@ impl Effect for AppOps {
         let uid = entry.uid;
         self.shared.bind(uid, &entry.package, &entry.install_id);
         let line = Command::Apply(uid, &holding, &resets(&let_go)).to_string();
-        let Answer::Applied(found) = self.shared.ask(uid, |_| line)? else {
+        let Answer::Applied(found) = check_preimage(self.shared.ask(uid, |_| line)?)? else {
             anyhow::bail!("the system did not take the app ops");
         };
         forget_given_back(entry, &let_go);
@@ -660,6 +667,8 @@ impl Effect for AppOps {
                 .is_some_and(|(package, id)| (package, id) != owner)
             {
                 state.invalidate(uid);
+                state.check_until.remove(&uid);
+                state.verifying.remove(&uid);
                 state.unsure.remove(&uid);
             }
         }
@@ -674,7 +683,6 @@ impl Effect for AppOps {
             let targets = targets_of(&app.items);
             (!targets.is_empty()).then_some((app.entry.uid, targets))
         }));
-        state.wanted = !state.guarded.is_empty() || !state.blocked.is_empty();
         if state.input.is_some() {
             state.tell_guarded();
         }
@@ -683,18 +691,17 @@ impl Effect for AppOps {
 
     fn forget(&mut self, uid: u32) {
         let mut state = self.shared.state();
-        state.owners.remove(&uid);
+        state.forget_owner(uid);
         state.check_until.remove(&uid);
         state.guarded.remove(&uid);
         state.pending_verifications.remove(&uid);
+        state.verifying.remove(&uid);
         state.unheld.remove(&uid);
         state.unknown.remove(&uid);
         state.awaiting_write.remove(&uid);
         state.receipts.remove(&uid);
         state.unsure.remove(&uid);
         state.found.retain(|(id, _)| *id != uid);
-        drop(state);
-        self.shared.rest_if_unused();
     }
 
     fn report(&self, status: &mut Status) {
@@ -703,7 +710,7 @@ impl Effect for AppOps {
         let now = Instant::now();
         let checking = state.checking_until.is_some_and(|deadline| now < deadline);
         for (uid, targets) in &state.guarded {
-            if state.blocked.contains(uid) {
+            if state.restart || state.blocked.contains(uid) {
                 status.unknown_appops.insert(*uid);
             } else if let Some((_, unheld)) =
                 state.unheld.get(uid).filter(|(until, _)| *until > now)

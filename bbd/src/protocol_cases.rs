@@ -104,6 +104,7 @@ pub fn appops() -> Vec<Case> {
             "restored",
             "applied",
             "failed",
+            "stale",
             "verified",
             "reverted",
             "unheld",

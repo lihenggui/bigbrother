@@ -652,5 +652,122 @@ fn a_failed_enable_commit_leaves_the_preimage_until_the_restart_can_clear_it() {
     restarted.recover_appops(&f.writer, &mut f.packages);
     assert!(f.writer.appops_undo().unwrap().is_empty());
     assert!(f.writer.sandbox_entries().unwrap().is_empty());
-    assert_eq!(undo.join().unwrap().len(), 2);
+    drop(restarted);
+    assert_eq!(
+        undo.join()
+            .unwrap()
+            .iter()
+            .filter(|line| line.starts_with("undo ") || line.starts_with("check-undo "))
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn a_stale_enable_clears_the_unused_undo_before_capturing_again() {
+    use crate::{sandbox::appops::tests::helper_rejecting_stale_changes, store::Reader};
+
+    let mut f = Fixture::new("sandbox-stale-enable");
+    let db = f.dir.join("bb.db");
+    let mut attempts = 0;
+    let (effect, sent) = helper_rejecting_stale_changes(move |command| {
+        let reader = Reader::open(&db).unwrap();
+        if command.starts_with("capture ") {
+            assert!(reader.appops_undo().unwrap().is_empty());
+        }
+        if command.starts_with("set ") {
+            assert_eq!(reader.appops_undo().unwrap().len(), 1);
+            attempts += 1;
+            return attempts == 1;
+        }
+        false
+    });
+    let mut sandbox = f.sandbox_with(vec![effect]);
+    sandbox
+        .enable(&f.writer, &mut f.packages, "com.app", 0, 0)
+        .unwrap();
+    assert_eq!(enabled(&sandbox), [10100]);
+    assert!(sandbox.appops_undo.is_empty());
+    assert!(f.writer.appops_undo().unwrap().is_empty());
+    assert!(f.writer.sandbox_entry(10100).unwrap().unwrap().enabled);
+    drop(sandbox);
+    let sent = sent.join().unwrap();
+    let kinds: Vec<_> = sent
+        .iter()
+        .map(|line| line.split_ascii_whitespace().next().unwrap())
+        .collect();
+    assert_eq!(kinds, ["capture", "set", "capture", "set", "verify"]);
+}
+
+#[test]
+fn exhausting_stale_disable_attempts_keeps_the_entry_and_clears_the_undo() {
+    use crate::sandbox::appops::tests::helper_rejecting_stale_changes;
+
+    let mut f = Fixture::new("sandbox-stale-disable");
+    let (effect, sent) = helper_rejecting_stale_changes(|command| command.starts_with("restore "));
+    let mut sandbox = f.sandbox_with(vec![effect]);
+    sandbox
+        .enable(&f.writer, &mut f.packages, "com.app", 0, 0)
+        .unwrap();
+    let original = f.writer.sandbox_entry(10100).unwrap();
+
+    let error = sandbox
+        .disable(&f.writer, &mut f.packages, "com.app", 0)
+        .unwrap_err();
+
+    assert!(error.is::<appops::StalePreimage>());
+    assert_eq!(f.writer.sandbox_entry(10100).unwrap(), original);
+    assert_eq!(sandbox.snapshot_read().get(&10100), original.as_ref());
+    assert!(sandbox.appops_undo.is_empty());
+    assert!(f.writer.appops_undo().unwrap().is_empty());
+    drop(sandbox);
+    let sent = sent.join().unwrap();
+    assert_eq!(
+        sent.iter()
+            .filter(|line| line.starts_with("restore "))
+            .count(),
+        3
+    );
+    assert_eq!(
+        sent.iter()
+            .filter(|line| line.starts_with("capture "))
+            .count(),
+        4
+    );
+    assert!(sent.iter().all(|line| !line.starts_with("undo ")));
+}
+
+#[test]
+fn a_stale_undo_whose_delete_failed_is_cleared_without_applying_it() {
+    use crate::sandbox::appops::tests::helper_rejecting_stale_changes;
+
+    let mut f = Fixture::new("sandbox-stale-delete");
+    let (effect, sent) = helper_rejecting_stale_changes(|command| command.starts_with("set "));
+    let db = rusqlite::Connection::open(f.dir.join("bb.db")).unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER fail_clear BEFORE DELETE ON sandbox_appops_undo
+         BEGIN SELECT RAISE(ABORT, 'injected clear failure'); END;",
+    )
+    .unwrap();
+    let mut sandbox = f.sandbox_with(vec![effect]);
+    assert!(
+        sandbox
+            .enable(&f.writer, &mut f.packages, "com.app", 0, 0)
+            .is_err()
+    );
+    assert_eq!(f.writer.appops_undo().unwrap().len(), 1);
+
+    db.execute_batch("DROP TRIGGER fail_clear").unwrap();
+    sandbox.recover_appops(&f.writer, &mut f.packages);
+
+    assert!(sandbox.appops_undo.is_empty());
+    assert!(f.writer.appops_undo().unwrap().is_empty());
+    assert!(f.writer.sandbox_entry(10100).unwrap().is_none());
+    drop(sandbox);
+    let sent = sent.join().unwrap();
+    assert_eq!(
+        sent.iter().filter(|line| line.starts_with("set ")).count(),
+        1
+    );
+    assert!(sent.iter().all(|line| !line.starts_with("undo ")));
 }

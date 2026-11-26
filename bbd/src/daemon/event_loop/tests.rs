@@ -68,36 +68,76 @@ impl Drop for Fixture {
     }
 }
 
-fn permission_uses() -> (mpsc::Sender<Option<Vec<appops::Entry>>>, PermissionUses) {
-    let (send, readings) = mpsc::channel();
-    (
-        send,
-        PermissionUses {
-            readings,
-            tracker: appops::Tracker::new(100),
-            coverage: COVERAGE_PENDING,
-        },
-    )
+fn permission_uses() -> PermissionUses {
+    let (_, initial) = tokio::sync::mpsc::channel(1);
+    PermissionUses {
+        bridge: Bridge::new(),
+        initial,
+        tracker: appops::Tracker::new(100),
+        coverage: COVERAGE_PENDING,
+        schedule: PollSchedule::default(),
+    }
+}
+
+#[test]
+fn usage_waits_for_activity_or_dirty_and_always_reads_on_query_and_shutdown() {
+    let start = Instant::now();
+    let later = start + APPOPS_POLL_MIN_INTERVAL;
+    let mut schedule = PollSchedule::default();
+    let mut count = 0;
+    let mut flush = |kind, now, dirty, activity| {
+        let wait = schedule.wait(kind, now, dirty, activity);
+        count += usize::from(wait.is_some());
+        wait
+    };
+    assert_eq!(flush(FlushKind::Periodic, start, false, 0), None);
+    assert_eq!(flush(FlushKind::Periodic, later, false, 0), None);
+    assert_eq!(
+        flush(FlushKind::Query, later, false, 0),
+        Some(USAGE_QUERY_WAIT)
+    );
+    assert_eq!(flush(FlushKind::Periodic, later, false, 1), None);
+    assert_eq!(
+        flush(FlushKind::Periodic, later, true, 1),
+        Some(USAGE_QUERY_WAIT)
+    );
+    assert_eq!(
+        flush(
+            FlushKind::Periodic,
+            later + APPOPS_POLL_MIN_INTERVAL,
+            false,
+            2
+        ),
+        Some(USAGE_QUERY_WAIT)
+    );
+    assert_eq!(
+        flush(
+            FlushKind::Shutdown,
+            later + APPOPS_POLL_MIN_INTERVAL,
+            false,
+            2
+        ),
+        Some(USAGE_SHUTDOWN_WAIT)
+    );
+    assert_eq!(count, 4);
 }
 
 #[test]
 fn permission_readings_update_coverage_and_record_each_new_use_once() {
     let mut f = Fixture::new("permissions");
-    let (send, mut permissions) = permission_uses();
+    let mut permissions = permission_uses();
     f.tracer
         .writer
         .set_meta("coverage_appops", COVERAGE_PENDING)
         .unwrap();
 
-    send.send(None).unwrap();
-    permissions.take_permission_uses(&mut f.tracer);
+    permissions.ingest(&mut f.tracer, None);
     assert_eq!(f.tracer.writer.meta("coverage_appops").unwrap(), Some(0));
 
     let reading = "10100\tcom.example.app\tandroid:camera\t101000\t102000";
     for _ in 0..2 {
-        send.send(Some(appops::parse(reading))).unwrap();
+        permissions.ingest(&mut f.tracer, Some(appops::parse(reading)));
     }
-    permissions.take_permission_uses(&mut f.tracer);
     f.tracer.writer.flush(&f.tracer.counters, 103).unwrap();
     assert_eq!(f.tracer.writer.meta("coverage_appops").unwrap(), Some(1));
     let rows = f.reader.history(APP, "appop:android:camera", 0).unwrap();
@@ -167,14 +207,14 @@ fn stage_open(tracer: &mut Tracer, at: i64) {
     tracer.on_test_event(&bytes, at);
 }
 
-#[test]
-fn flush_expires_missing_syscall_results_at_the_deadline_and_persists_them_once() {
+#[tokio::test]
+async fn flush_expires_missing_syscall_results_at_the_deadline_and_persists_them_once() {
     let mut f = Fixture::new("expire");
-    let (_send, mut permissions) = permission_uses();
+    let mut permissions = permission_uses();
     let (_clear, net) = mpsc::channel();
     stage_open(&mut f.tracer, 100);
 
-    flush_records(&mut f.tracer, &mut permissions, &net, false, || 109);
+    flush_records(&mut f.tracer, &mut permissions, &net, false, || 109).await;
     assert!(
         f.reader
             .history(APP, "/proc/cpuinfo", 0)
@@ -183,13 +223,13 @@ fn flush_expires_missing_syscall_results_at_the_deadline_and_persists_them_once(
     );
     assert_eq!(f.tracer.writer.meta("last_flush").unwrap(), None);
 
-    flush_records(&mut f.tracer, &mut permissions, &net, true, || 110);
+    flush_records(&mut f.tracer, &mut permissions, &net, true, || 110).await;
     let rows = f.reader.history(APP, "/proc/cpuinfo", 0).unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!((rows[0].ts, rows[0].ok, rows[0].fail), (100, 1, 0));
     assert_eq!(f.tracer.writer.meta("last_flush").unwrap(), Some(110));
 
-    flush_records(&mut f.tracer, &mut permissions, &net, true, || 120);
+    flush_records(&mut f.tracer, &mut permissions, &net, true, || 120).await;
     assert_eq!(f.tracer.writer.meta("last_flush").unwrap(), Some(110));
     assert_eq!(f.reader.history(APP, "/proc/cpuinfo", 0).unwrap()[0].ok, 1);
 }

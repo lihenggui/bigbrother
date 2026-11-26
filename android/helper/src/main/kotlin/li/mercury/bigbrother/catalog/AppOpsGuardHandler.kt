@@ -150,7 +150,12 @@ internal class AppOpsGuardHandler(
     fun handle(command: Command, transaction: Boolean = false) {
         if (transaction && (command is Command.Set || command is Command.Apply || command is Command.Restore)) {
             val before = checkNotNull(prepared[command.uid]) { "missing transaction preimage" }
-            check(before.values == captureValues(command.uid, before.targets)) { "transaction preimage changed" }
+            if (before.values != captureValues(command.uid, before.targets)) {
+                // Permission policy can land a UID mode change after capture.
+                prepared.remove(command.uid)
+                system.emit(AppOpsGuardProtocol.staleLine(command.uid))
+                return
+            }
         }
         when (command) {
             is Command.Capture -> handleCapture(command, transaction)
@@ -356,6 +361,8 @@ internal class AppOpsGuardHandler(
     /** Whether [uid] is guarded. */
     fun isGuarded(uid: Int): Boolean = guarded.containsKey(uid)
 
+    fun hasGuarded(): Boolean = guarded.values.any { it.targets.ops.isNotEmpty() || it.targets.permissions.isNotEmpty() }
+
     fun needsOwner(uid: Int): Boolean = guarded.containsKey(uid) || prepared.containsKey(uid)
 
     /** Stop guarding [uid], forgetting all about it: it is another installation's now, or given back. */
@@ -374,7 +381,8 @@ internal class AppOpsGuardHandler(
     }
 
     private fun check(uid: Int) {
-        if (!guarded.containsKey(uid) || prepared.containsKey(uid)) return
+        val guard = guarded[uid] ?: return
+        if (prepared.containsKey(uid) || (guard.targets.ops.isEmpty() && guard.targets.permissions.isEmpty())) return
         if (supervised) system.emit("checking $uid")
         try {
             reportUnheld(uid, verify(uid), always = supervised)

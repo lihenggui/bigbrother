@@ -197,6 +197,30 @@ class AppOpsGuardHandlerTest {
     }
 
     @Test
+    fun givenAPermissionSyncAfterCapture_whenChangingAppOps_thenTheStaleTransactionWritesNothingAndIsDiscarded() {
+        for (line in listOf("set $UID android:camera=1", "apply $UID android:camera=1 -", "restore $UID android:camera=1")) {
+            val android = FakeAndroid()
+            val handler = AppOpsGuardHandler(android)
+            android.pmGrant(FakeAndroid.CAMERA, deferPolicy = true)
+            val capture = AppOpsGuardProtocol.parseCommand("capture $UID 7 android:camera=1")!!
+            val change = AppOpsGuardProtocol.parseCommand(line)!!
+            handler.handle(capture, transaction = true)
+            val capturedMode = android.mode("android:camera")
+            android.settle()
+            assertTrue(android.mode("android:camera") != capturedMode)
+            android.printed.clear()
+
+            handler.handle(change, transaction = true)
+
+            assertEquals(listOf("stale $UID"), android.printed)
+            assertTrue(android.helperWrites.isEmpty())
+            assertFalse(handler.needsOwner(UID))
+            assertFailsWith<IllegalStateException> { handler.handle(change, transaction = true) }
+            assertTrue(android.helperWrites.isEmpty())
+        }
+    }
+
+    @Test
     fun givenAnUndoAtItsRetryLimit_whenReadBack_thenItPerformsNoWrites() {
         val android = FakeAndroid()
         android.requestsAllFiles = true

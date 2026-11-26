@@ -146,9 +146,6 @@ pub trait Libraries: Send {
     /// Whether `package`, one of `uid`'s, is a library; `None` if that
     /// cannot be told by `until`.
     fn is_library(&self, uid: u32, package: &str, until: Instant) -> Option<bool>;
-
-    /// Called after the questions of a look.
-    fn done(&self) {}
 }
 
 /// A known temporary dependency failure that can clear without an event.

@@ -257,11 +257,12 @@ System services ask the system's app ops whether a uid may have the data
 behind a permission. With an op "ignored" the caller gets an empty answer
 rather than an error, and the permission still shows as granted. (An op
 "errored" would give an error instead, but the system keeps the ops of
-runtime permissions at "ignored" whatever is set.) A helper program
-(`AppOpsGuard`, run by the daemon with `app_process`) sets the ops of the
-items that are on, remembers what they were, and sets them again when the
-system changes them, which it does whenever the app's permissions change.
-The helper runs only while a sandboxed app has such an item on.
+runtime permissions at "ignored" whatever is set.) The guard in the
+daemon's resident `FrameworkHelper` sets the ops of enabled items and
+checks them when Android reports a change. It also checks once a minute
+while it holds restrictions for any app. With no guarded UIDs, the guard
+waits for new work with no timer. After a helper restart, the daemon sends
+the committed restrictions back for verification.
 
 The helper skips modes that already match and keeps reapplying ordinary
 app ops whenever Android resets them. All-files mode changes, runtime
@@ -317,9 +318,9 @@ permission is written down as perhaps taken before the helper takes it, so
 that a daemon that stopped in between still gives it back. Removing the
 module takes every app out first. Where the
 daemon cannot (the root manager removes the module at the next boot, before
-the daemon starts) or does not get every app out, the helper is run by
-itself once the system is up, with what the database says each app still
-sandboxed had (`bbd sandbox-restore-lines`). A root-only recovery directory
+the daemon starts) or does not get every app out, the uninstall script runs
+`AppOpsGuard --recover` once the system is up. The recovery commands come
+from `bbd sandbox-restore-lines`. A root-only recovery directory
 under `/data/adb/big_brother_recovery` retains each pending request and the
 helper. Each restored item is checked and journaled. The helper rechecks the
 installation before changing an app op or permission. After stopping the

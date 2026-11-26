@@ -229,10 +229,10 @@ internal class FakeAndroid(wifiScanSharesCoarseLocation: Boolean = true) :
 
     override fun runtime(permission: String): RuntimePermissions.Runtime? = if (permission in RUNTIME) RuntimePermissions.Runtime(BACKGROUND_OF[permission]) else null
 
-    /** `pm grant`: the grant alone, its flags as they are. */
-    fun pmGrant(permission: String) {
+    /** Older Android versions can apply the permission policy after `pm grant` returns. */
+    fun pmGrant(permission: String, deferPolicy: Boolean = false) {
         changeGrant(permission, true)
-        syncOps()
+        if (deferPolicy) lateSync = synced() else syncOps()
     }
 
     /** `pm revoke`: as [pmGrant]. */

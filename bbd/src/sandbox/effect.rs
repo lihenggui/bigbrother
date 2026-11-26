@@ -188,6 +188,14 @@ pub(super) enum Change<'a> {
 }
 
 impl Change<'_> {
+    pub(super) fn settings(&self) -> (Option<&Settings>, Option<&Settings>) {
+        match self {
+            Change::Enable(after) => (None, Some(after)),
+            Change::Disable(before) => (Some(before), None),
+            Change::Update(before, after) => (Some(before), Some(after)),
+        }
+    }
+
     /// What undoes it.
     pub(super) fn reversed(self) -> Self {
         match self {

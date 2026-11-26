@@ -15,13 +15,8 @@
 //! Run the AppOps helper and exchange commands, answers and unsolicited reports.
 
 use std::{
-    io::{BufRead as _, BufReader, Write as _},
-    os::fd::AsRawFd as _,
-    process::ChildStdout,
-    sync::{
-        MutexGuard,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{MutexGuard, atomic::Ordering},
+    thread::Thread,
     time::{Duration, Instant},
 };
 
@@ -35,25 +30,15 @@ use super::{
     },
 };
 use crate::{
-    backoff::Backoff,
-    helper,
+    helper::{Guard, Pipe},
     sync::{lock, recover},
 };
 
-const HELPER_CLASS: &str = "AppOpsGuard";
-pub(super) const MAX_LINE: usize = 4095;
-const READY_WAIT: Duration = Duration::from_secs(4);
+pub(super) const MAX_LINE: usize = 4095 - "guard ".len();
 const CHECK_WAIT: Duration = Duration::from_secs(5);
+const REPLAY_WINDOW: usize = 16;
 // The helper's fallback check runs once a minute when there is no change event.
 const READBACK_AGE: Duration = Duration::from_secs(75);
-
-/// Each helper restart starts a Java runtime. A healthy run brings the
-/// delay back to its initial value.
-const RESTART_BACKOFF: Backoff = Backoff {
-    first: Duration::from_secs(10),
-    max: Duration::from_secs(60),
-    healthy: Some(Duration::from_secs(600)),
-};
 
 impl State {
     /// Send a line to the helper, without ever waiting for it: its input is
@@ -85,9 +70,7 @@ impl State {
             .input
             .as_mut()
             .context("the app ops helper is not running")?;
-        input
-            .write_all(format!("{line}\n").as_bytes())
-            .context("the app ops helper takes no commands")
+        input.send(&format!("guard {line}"))
     }
 
     pub(super) fn invalidate(&mut self, uid: u32) {
@@ -128,6 +111,7 @@ impl State {
         if !self.restart
             && self.asking != Some(uid)
             && !self.blocked.contains(&uid)
+            && !self.forgets.keys().any(|(queued, _)| *queued == uid)
             && let Some(targets) = self.guarded.get(&uid)
         {
             let targets = marking_unheld(targets, self.unsure.get(&uid));
@@ -141,17 +125,26 @@ impl State {
     /// fills, its answers make room for the remaining commands.
     pub(super) fn tell_guarded(&mut self) {
         self.pending_verifications.extend(self.guarded.keys());
-        self.checking_until = Some(Instant::now() + ANSWER_WAIT);
+        if !self.pending_verifications.is_empty() {
+            self.checking_until = Some(Instant::now() + ANSWER_WAIT);
+        }
         self.send_pending_verifications();
     }
 
     pub(super) fn send_pending_verifications(&mut self) {
-        while let Some(uid) = self
-            .pending_verifications
-            .iter()
-            .copied()
-            .find(|uid| Some(*uid) != self.asking && !self.blocked.contains(uid))
-        {
+        if self.input.is_none() || self.restart {
+            return;
+        }
+        self.send_pending_forgets();
+        while self.verifying.len() < REPLAY_WINDOW {
+            let Some(uid) = self.pending_verifications.iter().copied().find(|uid| {
+                Some(*uid) != self.asking
+                    && !self.blocked.contains(uid)
+                    && !self.verifying.contains(uid)
+                    && !self.forgets.keys().any(|(queued, _)| queued == uid)
+            }) else {
+                break;
+            };
             if let Some(values) = self.receipts.remove(&uid) {
                 for (name, value) in &values {
                     if self
@@ -166,7 +159,46 @@ impl State {
             if self.verify(uid).is_err() {
                 break;
             }
+            if self.guarded.contains_key(&uid) {
+                self.verifying.insert(uid);
+            }
             self.pending_verifications.remove(&uid);
+        }
+        self.wake_supervisor();
+    }
+
+    pub(super) fn forget_owner(&mut self, uid: u32) {
+        if let Some((_, token)) = self.owners.remove(&uid)
+            && self.input.is_some()
+            && !self.restart
+        {
+            self.forgets.insert((uid, token), false);
+            self.send_pending_forgets();
+            self.wake_supervisor();
+        }
+    }
+
+    fn send_pending_forgets(&mut self) {
+        let available =
+            REPLAY_WINDOW.saturating_sub(self.forgets.values().filter(|sent| **sent).count());
+        let pending: Vec<_> = self
+            .forgets
+            .iter()
+            .filter(|(_, sent)| !**sent)
+            .take(available)
+            .map(|(key, _)| key.clone())
+            .collect();
+        for (uid, token) in pending {
+            if self.write_line(&format!("forget {uid} {token}")).is_err() {
+                return;
+            }
+            self.forgets.insert((uid, token), true);
+        }
+    }
+
+    fn wake_supervisor(&self) {
+        if let Some(supervisor) = &self.supervisor {
+            supervisor.unpark();
         }
     }
 }
@@ -184,6 +216,7 @@ impl Shared {
         if state.owners.get(&uid) != Some(&owner) {
             state.invalidate(uid);
             state.check_until.remove(&uid);
+            state.verifying.remove(&uid);
             state.unsure.remove(&uid);
             state.found.retain(|(id, _)| *id != uid);
             state.awaiting_write.remove(&uid);
@@ -245,11 +278,10 @@ impl Shared {
         let mut state = self.state();
         let wait = |state, left| recover(self.changed.wait_timeout(state, left)).0;
         let late = || anyhow::anyhow!("the app ops helper did not answer in time");
-        // Started for this command if it was not running, which takes a
-        // second or two.
-        state.wanted = true;
-        state.hurry = state.input.is_none();
-        self.changed.notify_all();
+        if (state.input.is_none() || state.restart) && Instant::now() < deadline {
+            state.hurry = true;
+            state.wake_supervisor();
+        }
         while state.input.is_none() || state.restart {
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
@@ -263,11 +295,13 @@ impl Shared {
             Instant::now() < deadline,
             "the app ops helper did not answer in time"
         );
-        send(&mut state)?;
+        let sent = send(&mut state);
+        state.wake_supervisor();
+        sent?;
         state.asking = Some(uid);
         state.command_until = Some(deadline);
         let generation = state.generation;
-        self.changed.notify_all();
+        state.wake_supervisor();
         let settled = loop {
             if state.input.is_none() || state.restart || state.generation != generation {
                 break Err(anyhow::anyhow!("the app ops helper ended"));
@@ -290,12 +324,30 @@ impl Shared {
         } else {
             state.send_pending_verifications();
         }
+        state.wake_supervisor();
         self.changed.notify_all();
         settled
     }
 
     pub(super) fn receive(&self, line: &str) {
         let mut state = self.state();
+        if line == "overflow" {
+            if state.input.is_some() {
+                state.restart = true;
+                state.wake_supervisor();
+                self.changed.notify_all();
+            }
+            return;
+        }
+        if let Some((uid, token)) = line
+            .strip_prefix("forgot ")
+            .and_then(|body| body.split_once(' '))
+            && let Ok(uid) = uid.parse::<u32>()
+        {
+            state.forgets.remove(&(uid, token.to_owned()));
+            state.send_pending_verifications();
+            return;
+        }
         let Some(line) = state.accept_helper_line(line) else {
             return;
         };
@@ -312,6 +364,12 @@ impl Shared {
         {
             state.invalidate(uid);
             state.check_until.remove(&uid);
+            state.verifying.remove(&uid);
+        } else if let Some(uid) = line
+            .strip_prefix("verified ")
+            .and_then(|uid| uid.parse().ok())
+        {
+            state.verifying.remove(&uid);
         } else if let Some((uid, ops)) = parse_unheld(line) {
             state.check_until.remove(&uid);
             let permissions = ops
@@ -340,6 +398,7 @@ impl Shared {
             state.kind = Some((uid, request, kind));
         }
         state.send_pending_verifications();
+        state.wake_supervisor();
         drop(state);
         self.changed.notify_all();
         if wake_found && let Some(wake) = self.on_found.get() {
@@ -349,149 +408,48 @@ impl Shared {
             wake();
         }
     }
+}
 
-    /// End the helper if no app is sandboxed any more. Closing its input
-    /// is what tells it to leave.
-    pub(super) fn rest_if_unused(&self) {
+impl Guard for Shared {
+    fn attach(&self, supervisor: Thread) {
+        self.state().supervisor = Some(supervisor);
+    }
+
+    fn connected(&self, pipe: Pipe) {
         let mut state = self.state();
-        if state.guarded.is_empty() && state.blocked.is_empty() {
-            state.wanted = false;
-            // Kept if it was told already and has not been seen to leave.
-            state.dismissed |= state.input.take().is_some();
+        if state.input.is_none() {
+            state.input = Some(pipe);
+            state.hurry = false;
+            state.generation += 1;
+            state.tell_guarded();
+            state.wake_supervisor();
             self.changed.notify_all();
         }
     }
-}
 
-/// Run the helper while it is wanted, starting it again when it ends by
-/// itself.
-pub(super) fn supervise(shared: &Shared) {
-    let mut failures = 0;
-    let mut last_said = String::new();
-    loop {
-        {
-            let mut state = shared.state();
-            while !state.wanted {
-                state = recover(shared.changed.wait(state));
-            }
-            // An explicit request expedites one launch.
-            state.hurry = false;
+    fn receive(&self, line: &str) {
+        Self::receive(self, line);
+    }
+
+    fn watchdog(&self) -> Result<Option<Instant>, ()> {
+        let mut state = self.state();
+        let until = state
+            .command_until
+            .into_iter()
+            .chain(state.check_until.values().copied())
+            .min();
+        if state.restart || until.is_some_and(|until| until <= Instant::now()) {
+            state.restart = true;
+            return Err(());
         }
-        let started = Instant::now();
-        let ended = run_helper(shared);
-        // Ended on purpose: started at once when wanted again.
-        {
-            let mut state = shared.state();
-            if std::mem::take(&mut state.dismissed) {
-                failures = 0;
-                state.notify_restart = false;
-                continue;
-            }
-        }
-        failures = RESTART_BACKOFF.failures_after_run(failures, started.elapsed());
-        if failures == 1 {
-            // Another crash during the same recovery must not turn a
-            // retried auto-enable into an endless series of attempts.
-            let mut state = shared.state();
+        Ok(until)
+    }
+
+    fn disconnected(&self, first_failure: bool) {
+        let mut state = self.state();
+        if first_failure {
             state.notify_restart = !state.guarded.is_empty();
         }
-        // The same reason again says nothing new.
-        let said = format!("{ended:#}");
-        if said != last_said {
-            eprintln!("bbd: sandbox: app ops helper: {said}");
-            last_said = said;
-        }
-        // Until the delay is over, or a command wants the helper now.
-        let until = Instant::now() + RESTART_BACKOFF.delay(failures);
-        let mut state = shared.state();
-        while state.wanted && !state.hurry {
-            let left = until.saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                break;
-            }
-            state = recover(shared.changed.wait_timeout(state, left)).0;
-        }
-    }
-}
-
-/// Run the helper until it ends, passing its answers on. Returns why it
-/// ended, which it is not meant to.
-fn run_helper(shared: &Shared) -> anyhow::Error {
-    let mut helper = match helper::spawn_guard(HELPER_CLASS, std::iter::empty()) {
-        Ok(helper) => helper,
-        Err(e) => return e,
-    };
-    supervise_child(shared, &mut helper, READY_WAIT)
-}
-
-fn kill_helper(helper: &mut std::process::Child) {
-    // The helper has its own process group, including any blocked settings command.
-    unsafe { libc::kill(-(helper.id() as i32), libc::SIGKILL) };
-    let _ = helper.wait();
-}
-
-fn supervise_child(
-    shared: &Shared,
-    helper: &mut std::process::Child,
-    ready_wait: Duration,
-) -> anyhow::Error {
-    let output = helper.stdout.take().expect("spawned with a piped stdout");
-    let input = helper.stdin.take().expect("spawned with a piped stdin");
-    // Drain without logging framework output, which can include package names.
-    let errors = helper.stderr.take().map(|mut stderr| {
-        std::thread::spawn(move || std::io::copy(&mut stderr, &mut std::io::sink()))
-    });
-    if unsafe { libc::fcntl(input.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) } == -1 {
-        kill_helper(helper);
-        return anyhow::anyhow!("cannot make the helper pipe nonblocking");
-    }
-    let ready = AtomicBool::new(false);
-    let ended = AtomicBool::new(false);
-    std::thread::scope(|scope| {
-        scope.spawn(|| read_helper_output(shared, output, &ready, &ended));
-
-        let ready_until = Instant::now() + ready_wait;
-        let mut state = shared.state();
-        while !ready.load(Ordering::Relaxed) && !ended.load(Ordering::Relaxed) && state.wanted {
-            let left = ready_until.saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                break;
-            }
-            state = recover(shared.changed.wait_timeout(state, left)).0;
-        }
-        let reason =
-            if ready.load(Ordering::Relaxed) && state.wanted && !ended.load(Ordering::Relaxed) {
-                state.input = Some(input);
-                state.generation += 1;
-                state.hurry = false;
-                state.tell_guarded();
-                shared.changed.notify_all();
-                loop {
-                    if ended.load(Ordering::Relaxed) || state.dismissed || !state.wanted {
-                        break "the helper ended";
-                    }
-                    let until = state
-                        .command_until
-                        .into_iter()
-                        .chain(state.check_until.values().copied())
-                        .min();
-                    if state.restart || until.is_some_and(|until| until <= Instant::now()) {
-                        break "the helper stopped responding";
-                    }
-                    state =
-                        if let Some(until) = until {
-                            recover(shared.changed.wait_timeout(
-                                state,
-                                until.saturating_duration_since(Instant::now()),
-                            ))
-                            .0
-                        } else {
-                            recover(shared.changed.wait(state))
-                        };
-                }
-            } else {
-                "the helper did not become ready"
-            };
         state.input = None;
         state.restart = false;
         state.unheld.clear();
@@ -499,43 +457,26 @@ fn supervise_child(
         state.check_until.clear();
         state.receipts.clear();
         state.pending_verifications.clear();
+        state.verifying.clear();
+        state.forgets.clear();
         state.checking_until = None;
-        shared.changed.notify_all();
-        drop(state);
-        kill_helper(helper);
-        if let Some(errors) = errors {
-            let _ = errors.join();
-        }
-        anyhow::anyhow!(reason)
-    })
-}
-
-fn read_helper_output(
-    shared: &Shared,
-    output: ChildStdout,
-    ready: &AtomicBool,
-    ended: &AtomicBool,
-) {
-    // A read error ends the session just like EOF.
-    let mut lines = BufReader::new(output).lines().map_while(Result::ok);
-    if lines.next().as_deref() == Some("ready") {
-        {
-            let _state = shared.state();
-            ready.store(true, Ordering::Relaxed);
-            shared.changed.notify_all();
-        }
-        for line in lines {
-            shared.receive(&line);
-        }
+        self.changed.notify_all();
     }
-    let _state = shared.state();
-    ended.store(true, Ordering::Relaxed);
-    shared.changed.notify_all();
+
+    fn take_hurry(&self) -> bool {
+        std::mem::take(&mut self.state().hurry)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, os::fd::OwnedFd, process::ChildStdin, sync::Arc};
+    use std::{
+        collections::BTreeSet,
+        io::{BufRead as _, BufReader},
+        os::fd::{AsRawFd as _, OwnedFd},
+        process::ChildStdin,
+        sync::Arc,
+    };
 
     use super::super::{
         AppOps,
@@ -546,35 +487,29 @@ mod tests {
     use crate::sandbox::{Effect, Entry, Resumed, Status, items::Settings};
 
     #[test]
-    fn the_helper_is_wanted_only_while_an_app_is_sandboxed() {
-        let mut appops = AppOps {
-            shared: Arc::new(Shared::default()),
+    fn leaving_the_last_app_keeps_the_shared_helper_ready() {
+        let mut appops = AppOps::new();
+        let (input, sent) = stand_in(&appops.shared, |_, _| {});
+        appops.shared.state().input = Some(input);
+        let entry = Entry {
+            install_id: "1234567890abcdef1234567890abcdef".into(),
+            ..sandboxed(10100)
         };
-        let app = |uid, items| Resumed {
-            entry: sandboxed(uid),
+        appops.resume(&[Resumed {
+            entry,
             packages: vec![],
-            items,
-        };
-        appops.resume(&[]);
-        assert!(!appops.shared.state().wanted);
-        // An app with no item that holds an op does not need it.
-        let mut off = Settings::default();
-        for item in crate::sandbox_item::Item::ALL {
-            off.set(item, Some(crate::sandbox_item::Mode::Off)).unwrap();
-        }
-        appops.resume(&[app(10101, off.over(&Settings::default()))]);
-        assert!(!appops.shared.state().wanted);
-        appops.resume(&[app(10100, Settings::all_on())]);
-        assert!(appops.shared.state().wanted);
+            items: Settings::all_on(),
+        }]);
+        appops.forget(10100);
+
         let mut status = Status::default();
         appops.report(&mut status);
-        assert!(!status.appops);
-
-        appops.shared.rest_if_unused();
-        assert!(appops.shared.state().wanted);
-        appops.shared.state().guarded.clear();
-        appops.shared.rest_if_unused();
-        assert!(!appops.shared.state().wanted);
+        assert!(status.appops);
+        assert!(status.checking_appops.is_empty());
+        appops.shared.state().input = None;
+        let sent = sent.join().unwrap();
+        assert!(sent[0].starts_with("verify 10100 "));
+        assert_eq!(sent[1], "forget 10100 1234567890abcdef1234567890abcdef");
     }
 
     #[test]
@@ -598,7 +533,7 @@ mod tests {
         let mut appops = AppOps {
             shared: Arc::new(Shared::default()),
         };
-        appops.shared.state().input = Some(input);
+        appops.shared.state().input = Some(Pipe::new(input).unwrap());
         appops.resume(
             &apps
                 .clone()
@@ -631,7 +566,7 @@ mod tests {
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
                 Ok(bytes) if bytes > 0 => {
                     let mut fields = line.split_ascii_whitespace();
-                    assert_eq!(fields.nth(3), Some("verify"));
+                    assert_eq!(fields.nth(4), Some("verify"));
                     let uid = fields.next().unwrap().parse::<u32>().unwrap();
                     assert!(reached.insert(uid), "duplicate verification for {uid}");
                     let unheld = if uid == apps.start {
@@ -640,6 +575,7 @@ mod tests {
                         "-"
                     };
                     appops.shared.receive(&format!("unheld {uid} {unheld}"));
+                    appops.shared.receive(&format!("verified {uid}"));
                     line.clear();
                 }
                 result => panic!("reading the helper's commands: {result:?}"),
@@ -703,6 +639,21 @@ mod tests {
         assert!(shared.state().answer.is_none());
         shared.receive(&format!("reply 24 {token} restored 10100"));
         assert_eq!(shared.state().answer.take(), Some(Answer::Restored));
+    }
+
+    #[test]
+    fn stale_replies_require_the_pending_request_and_installation() {
+        let shared = Shared::default();
+        let token = "0123456789abcdef0123456789abcdef";
+        let other = "fedcba9876543210fedcba9876543210";
+        shared.state().request = Some((10100, 24, token.to_owned()));
+        shared.receive(&format!("reply 23 {token} stale 10100"));
+        shared.receive(&format!("reply 24 {other} stale 10100"));
+        shared.receive(&format!("reply 24 {token} stale 10101"));
+        shared.receive("stale 10100");
+        assert!(shared.state().answer.is_none());
+        shared.receive(&format!("reply 24 {token} stale 10100"));
+        assert_eq!(shared.state().answer.take(), Some(Answer::Stale));
     }
 
     #[test]
@@ -798,69 +749,5 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![10100]
         );
-    }
-
-    fn shell_helper(script: &str) -> std::process::Child {
-        use std::{
-            os::unix::process::CommandExt as _,
-            process::{Command, Stdio},
-        };
-        Command::new("sh")
-            .process_group(0)
-            .args(["-c", script])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap()
-    }
-
-    #[test]
-    fn a_child_that_never_reports_ready_is_killed_without_publishing_its_input() {
-        let shared = Shared::default();
-        shared.state().wanted = true;
-        let mut child = shell_helper("while IFS= read -r line; do :; done");
-        let outcome = supervise_child(&shared, &mut child, Duration::from_millis(30));
-        assert!(outcome.to_string().contains("did not become ready"));
-        assert!(shared.state().input.is_none());
-        assert_eq!(shared.state().generation, 0);
-        assert!(child.try_wait().unwrap().is_some());
-    }
-
-    #[test]
-    fn a_ready_child_that_ignores_a_request_is_recycled() {
-        let shared = Shared::default();
-        shared.state().wanted = true;
-        let mut child = shell_helper("printf 'ready\n'; while IFS= read -r line; do :; done");
-        let outcome = std::thread::scope(|scope| {
-            let supervised =
-                scope.spawn(|| supervise_child(&shared, &mut child, Duration::from_secs(2)));
-            let deadline = Instant::now() + Duration::from_secs(2);
-            let mut state = shared.state();
-            while state.input.is_none() {
-                let left = deadline.saturating_duration_since(Instant::now());
-                assert!(!left.is_zero(), "the child did not report ready");
-                state = recover(shared.changed.wait_timeout(state, left)).0;
-            }
-            drop(state);
-            let result = shared.ask_until(
-                10100,
-                Instant::now() + Duration::from_millis(30),
-                |state| state.write_line("kind 10100 1 com.example.app"),
-                |state| state.kind.take(),
-            );
-            assert!(result.is_err());
-            supervised.join().unwrap()
-        });
-        assert!(outcome.to_string().contains("stopped responding"));
-        assert!(child.try_wait().unwrap().is_some());
-        assert!(shared.state().input.is_none());
-    }
-
-    #[test]
-    fn restarts_are_spaced_further_and_further_apart() {
-        assert_eq!(RESTART_BACKOFF.delay(1), Duration::from_secs(10));
-        assert_eq!(RESTART_BACKOFF.delay(2), Duration::from_secs(20));
-        assert_eq!(RESTART_BACKOFF.delay(40), Duration::from_secs(60));
     }
 }
