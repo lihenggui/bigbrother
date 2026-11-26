@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="all_categories">全部資料</string>
+    <string name="sort_sensitivity">敏感度</string>
+    <string name="sort_recent">最近存取</string>
+    <string name="sort_name">名稱</string>
+    <string name="show_system_apps">顯示系統應用程式</string>
+    <string name="only_system_apps">僅預設隱藏的應用程式有記錄</string>
+    <plurals name="list_group_read_files">
+        <item quantity="other">讀取了檔案 · %d 個應用程式</item>
+    </plurals>
+    <plurals name="list_group_other">
+        <item quantity="other">其他 · %d 個應用程式</item>
+    </plurals>
+</resources>

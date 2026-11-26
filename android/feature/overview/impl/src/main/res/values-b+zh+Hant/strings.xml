@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <plurals name="readers_label">
+        <item quantity="other">個應用程式讀取了檔案</item>
+    </plurals>
+    <string name="no_reads">沒有應用程式讀取檔案</string>
+    <plurals name="looked_only">
+        <item quantity="other">另有 %d 個應用程式查找檔案，但未讀取</item>
+    </plurals>
+    <string name="more_count">+%d</string>
+    <string name="other_categories">其他敏感權限</string>
+    <plurals name="category_count">
+        <item quantity="other">%d 類</item>
+    </plurals>
+
+    <plurals name="category_group_read_files">
+        <item quantity="other">%d 個應用程式讀取了檔案</item>
+    </plurals>
+    <plurals name="category_group_looked_only">
+        <item quantity="other">%d 個應用程式僅查找了檔案</item>
+    </plurals>
+
+    <string name="status_stopped">已停止記錄</string>
+    <string name="daemon_stopped">此期間的存取不會被記錄。</string>
+    <string name="daemon_starting">正在啟動記錄…</string>
+    <string name="start_daemon">啟動記錄</string>
+    <string name="install_module">啟用記錄</string>
+    <string name="updating_module">正在完成更新…</string>
+    <string name="update_failed_title">未能完成更新</string>
+    <string name="module_pending_reboot">需要重新啟動</string>
+    <string name="module_pending_reboot_body">透過 root 管理工具安裝的模組會在下次重新啟動後生效。</string>
+    <string name="installing_module">正在啟用記錄…</string>
+    <string name="install_failed_title">無法啟用記錄</string>
+    <string name="setup_body">Big Brother 必須有 root 權限才能記錄。設定記錄時無須重新啟動。</string>
+    <string name="setup_pending_body">透過 root 管理工具安裝的模組會在下次重新啟動後生效。現在也可以設定記錄功能，無須重新啟動。</string>
+</resources>

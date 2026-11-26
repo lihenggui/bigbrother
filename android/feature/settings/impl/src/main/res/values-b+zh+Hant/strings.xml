@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="settings_title">設定</string>
+    <string name="section_recording">記錄</string>
+    <string name="section_display">螢幕</string>
+    <string name="section_about">關於</string>
+    <string name="recording_active">正在記錄</string>
+    <string name="recording_unknown">記錄狀態未知</string>
+    <string name="retention">記錄保留 30 天</string>
+    <string name="coverage_title">本裝置不支援</string>
+    <string name="feature_files">檔案開啟</string>
+    <string name="feature_exec">命令執行</string>
+    <string name="feature_network">本地網路連線</string>
+    <string name="feature_process">程序記憶體存取</string>
+    <string name="feature_netlink">Netlink 查詢</string>
+    <string name="feature_binder">系統服務呼叫</string>
+    <string name="feature_appops">權限使用記錄</string>
+    <string name="remove_module">移除記錄功能</string>
+    <string name="remove_module_summary">停止記錄並刪除所有記錄</string>
+    <string name="remove_module_removing">正在移除記錄功能…</string>
+    <string name="remove_module_title">移除記錄功能？</string>
+    <string name="remove_module_body">記錄會停止，存取記錄也會刪除。監獄中的應用程式會再次取得真實資料並重新啟動。可在「概覽」重新設定記錄。</string>
+    <string name="remove_module_confirm">移除</string>
+    <string name="cancel">取消</string>
+    <string name="module_in_manager">已透過 root 管理工具安裝為模組</string>
+    <string name="module_in_manager_summary">如需移除記錄功能，請在 root 管理工具中移除模組，再重新啟動裝置。這會刪除存取記錄。</string>
+    <string name="module_in_manager_pending">下次重新啟動後生效</string>
+    <string name="lsposed_title">LSPosed 模組</string>
+    <string name="lsposed_summary">請在 LSPosed 啟用 Big Brother，以記錄媒體庫、聯絡人、簡訊和日曆的存取。</string>
+    <string name="setting_system_apps">顯示系統應用程式</string>
+    <string name="setting_system_apps_summary">預設隱藏，包括無法歸屬到應用程式的隔離程序：讀取資料屬於系統元件的正常行為。</string>
+    <string name="theme">主題</string>
+    <string name="theme_system">跟隨系統</string>
+    <string name="theme_light">淺色</string>
+    <string name="theme_dark">深色</string>
+    <string name="dynamic_color">使用桌布色彩</string>
+    <string name="dynamic_color_summary">關閉時，應用程式會使用自己的色彩</string>
+    <string name="version">版本</string>
+    <string name="source_code">原始碼</string>
+    <string name="license">授權條款</string>
+    <string name="export_logs">匯出日誌</string>
+    <string name="export_logs_summary">應用程式和記錄功能的日誌，用於報告問題</string>
+    <string name="export_logs_collecting">正在收集日誌…</string>
+</resources>

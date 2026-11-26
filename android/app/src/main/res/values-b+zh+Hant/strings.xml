@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="module_description">記錄應用程式透過 Android 內容提供者存取檔案和查詢個人資料的行為。監獄（應用程式隔離）可管理 Android ID、廣告 ID、應用程式可見性及檔案存取授權。</string>
+    <string name="nav_overview">概覽</string>
+    <string name="nav_apps">應用程式</string>
+    <string name="nav_timeline">時間軸</string>
+    <string name="nav_jail">監獄</string>
+
+    <string name="guide_access_title">監測個人資料存取</string>
+    <string name="guide_access_body">Big Brother 會記錄各應用程式在何時讀取檔案、位置、剪貼簿和裝置識別碼。存取記錄只會儲存在這部裝置上。</string>
+    <string name="guide_timeline_title">查看存取時間軸</string>
+    <string name="guide_timeline_body">時間軸會依小時和應用程式整理存取記錄。開啟記錄即可查看詳細資料。</string>
+    <string name="guide_jail_title">隔離指定應用程式</string>
+    <string name="guide_jail_body">在監獄中隔離應用程式，可讓它使用獨立的儲存空間、空白的剪貼簿和虛擬裝置 ID。每個隔離項目都可個別設定。</string>
+    <string name="guide_skip">跳過</string>
+    <string name="guide_next">下一頁</string>
+    <string name="guide_back">上一頁</string>
+    <string name="guide_start">開始使用</string>
+    <string name="guide_progress">第 %1$d 頁，共 %2$d 頁</string>
+    <string name="guide_guard_description">範例：保鑣檢查四個應用程式，記錄每個應用程式讀取的資料。</string>
+    <string name="guide_timeline_description">時間軸範例：顯示天氣、購物、聊天和手電筒各自讀取的資料。</string>
+    <string name="guide_jail_description">範例：天氣已在監獄中隔離，使用空白剪貼簿、虛擬裝置 ID 和隔離儲存空間。</string>
+    <string name="guide_weather">天氣</string>
+    <string name="guide_shop">購物</string>
+    <string name="guide_chat">聊天</string>
+    <string name="guide_flashlight">手電筒</string>
+    <string name="guide_location">位置</string>
+    <string name="guide_clipboard">剪貼簿</string>
+    <string name="guide_files">檔案</string>
+    <string name="guide_device_id">裝置 ID</string>
+    <string name="guide_isolated_value">%1$s：%2$s</string>
+</resources>

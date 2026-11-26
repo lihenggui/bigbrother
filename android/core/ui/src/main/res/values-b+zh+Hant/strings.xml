@@ -1,0 +1,206 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="isolated_process_uid">隔離程序（UID %d）</string>
+    <string name="back">返回</string>
+    <string name="retry">重試</string>
+    <string name="settings_write_failed">無法儲存設定</string>
+    <string name="search">搜尋</string>
+    <string name="recording_stopped">已停止記錄</string>
+    <string name="close_search">關閉搜尋</string>
+    <string name="clear_search">清除搜尋內容</string>
+    <string name="no_matches">無符合結果</string>
+
+    <string name="empty_title">所選時間範圍內無記錄</string>
+    <string name="no_root_title">需要 root 權限</string>
+    <string name="no_root_body">請在 root 管理工具（KernelSU、Magisk 或 APatch）中授予 root 權限，然後重試。</string>
+    <string name="no_module_title">尚未啟用記錄</string>
+    <string name="no_module_body">請在「概覽」中設定記錄功能。</string>
+    <string name="old_module_title">更新尚未完成</string>
+    <string name="old_module_body">更新完成前無法使用此功能。開啟「概覽」即可完成更新。</string>
+    <string name="error_title">無法載入記錄</string>
+
+    <string name="topic_mac_address_title">MAC 位址</string>
+    <string name="topic_network_interfaces_title">網路介面</string>
+    <string name="topic_arp_table_title">ARP 表</string>
+    <string name="topic_network_state_title">網路狀態</string>
+    <string name="topic_device_serial_title">硬體序號</string>
+    <string name="topic_soc_info_title">SoC 資訊</string>
+    <string name="topic_cpu_model_title">處理器型號</string>
+    <string name="topic_kernel_version_title">核心版本</string>
+    <string name="topic_other_processes_title">其他程序</string>
+    <string name="topic_mounts_title">已掛載的檔案系統</string>
+    <string name="topic_kernel_modules_title">核心模組</string>
+    <string name="topic_selinux_state_title">SELinux 狀態</string>
+    <string name="topic_block_devices_title">區塊裝置</string>
+    <string name="topic_emulator_probe_title">模擬器偵測</string>
+    <string name="topic_input_devices_title">輸入裝置</string>
+    <string name="topic_battery_title">電池狀態</string>
+    <string name="topic_root_check_title">偵測 root</string>
+    <string name="topic_app_probe_title">檢查應用程式是否安裝</string>
+    <string name="topic_system_properties_title">系統屬性</string>
+    <string name="topic_installed_apps_title">已安裝的應用程式</string>
+    <string name="topic_system_settings_title">系統設定</string>
+    <string name="topic_shell_command_title">Shell 指令</string>
+    <string name="topic_local_ports_title">本機連接埠</string>
+    <string name="topic_local_network_title">區域網路連線</string>
+    <string name="topic_device_discovery_title">區域網路裝置探索</string>
+    <string name="topic_process_memory_title">其他程序的記憶體</string>
+    <string name="topic_contacts_title">聯絡人</string>
+    <string name="topic_call_log_title">通話記錄</string>
+    <string name="topic_messages_title">簡訊</string>
+    <string name="topic_calendar_title">日曆</string>
+    <string name="topic_sim_info_title">SIM 卡與電信商資訊</string>
+    <string name="topic_clipboard_title">剪貼簿</string>
+    <string name="topic_location_title">位置</string>
+    <string name="topic_wifi_info_title">Wi-Fi 掃描與連線資訊</string>
+    <string name="topic_phone_identity_title">電話與 SIM 卡識別碼</string>
+    <string name="topic_accounts_title">帳戶</string>
+    <string name="topic_running_apps_title">執行中的應用程式</string>
+    <string name="topic_usage_stats_title">應用程式使用統計資料</string>
+    <string name="topic_enabled_services_title">已啟用的輸入法與無障礙服務</string>
+    <string name="topic_sensors_title">感測器</string>
+    <string name="topic_android_id_title">Android ID</string>
+    <string name="topic_device_name_title">裝置名稱</string>
+    <string name="topic_camera_title">相機</string>
+    <string name="topic_microphone_title">麥克風</string>
+
+    <string name="category_messages">簡訊和通話記錄</string>
+    <string name="category_contacts">聯絡人</string>
+    <string name="category_location">位置</string>
+    <string name="category_sensors">相機、麥克風及感測器</string>
+    <string name="category_files">檔案和媒體</string>
+    <string name="category_calendar">日曆</string>
+    <string name="category_personal_info">個人資訊</string>
+    <string name="category_app_activity">應用程式活動</string>
+    <string name="category_device_ids">裝置識別碼</string>
+    <string name="category_network">網路與附近裝置</string>
+    <string name="category_device_profile">裝置指紋</string>
+    <string name="category_environment">執行環境偵測</string>
+
+    <string name="range_hour">最近 1 小時</string>
+    <string name="range_day">最近 24 小時</string>
+    <string name="range_week">最近 7 天</string>
+    <string name="range_all">全部時間</string>
+
+    <string name="range_hour_short">1 小時</string>
+    <string name="range_day_short">24 小時</string>
+    <string name="range_week_short">7 天</string>
+    <string name="range_all_short">全部</string>
+
+    <string name="select_app">選取應用程式以查看其存取的資料</string>
+
+    <plurals name="summary_storage">
+        <item quantity="other">%d 個檔案</item>
+    </plurals>
+    <string name="summary_separator">"、"</string>
+    <plurals name="summary_more">
+        <item quantity="other">%1$s及其他 %2$d 項</item>
+    </plurals>
+    <string name="summary_media_library">媒體庫</string>
+    <string name="summary_not_read">%s（未讀取）</string>
+    <string name="app_name_with_user">%1$s（使用者 %2$d）</string>
+    <plurals name="app_count">
+        <item quantity="other">%d 個應用程式</item>
+    </plurals>
+
+    <plurals name="clipboard_read">
+        <item quantity="other">讀取 %d 次</item>
+    </plurals>
+    <string name="clipboard_listens">監聽變更</string>
+    <plurals name="clipboard_written">
+        <item quantity="other">寫入 %d 次</item>
+    </plurals>
+    <plurals name="clipboard_read_denied">
+        <item quantity="other">讀取被拒絕 %d 次</item>
+    </plurals>
+    <plurals name="clipboard_write_denied">
+        <item quantity="other">寫入被拒絕 %d 次</item>
+    </plurals>
+    <string name="clipboard_read_short">讀取 %d 次</string>
+    <string name="clipboard_listens_short">監聽變更</string>
+    <string name="clipboard_written_short">寫入 %d 次</string>
+    <string name="clipboard_read_denied_short">讀取被拒絕 %d 次</string>
+    <string name="clipboard_write_denied_short">寫入被拒絕 %d 次</string>
+    <string name="clipboard_partly_denied">%1$s（%2$d 次遭拒）</string>
+
+    <string name="sensor_high_rate">%s（高取樣率）</string>
+    <plurals name="sensor_times">
+        <item quantity="other">%d 次</item>
+    </plurals>
+    <string name="sensor_times_short">%d 次</string>
+    <string name="sensor_unknown">未知感測器</string>
+    <string name="sensor_type_number">感測器類型 %s</string>
+    <string name="sensor_accelerometer">加速度計</string>
+    <string name="sensor_accelerometer_uncalibrated">加速度計（未校正）</string>
+    <string name="sensor_accelerometer_limited_axes">加速度計（部分軸）</string>
+    <string name="sensor_accelerometer_limited_axes_uncalibrated">加速度計（部分軸，未校正）</string>
+    <string name="sensor_gyroscope">陀螺儀</string>
+    <string name="sensor_gyroscope_uncalibrated">陀螺儀（未校準）</string>
+    <string name="sensor_gyroscope_limited_axes">陀螺儀（部分軸）</string>
+    <string name="sensor_gyroscope_limited_axes_uncalibrated">陀螺儀（部分軸，未校準）</string>
+    <string name="sensor_magnetic_field">磁力計</string>
+    <string name="sensor_magnetic_field_uncalibrated">磁力計（未校正）</string>
+    <string name="sensor_orientation">方向感測器</string>
+    <string name="sensor_light">光線感測器</string>
+    <string name="sensor_proximity">距離感測器</string>
+    <string name="sensor_pressure">氣壓計</string>
+    <string name="sensor_relative_humidity">濕度感測器</string>
+    <string name="sensor_ambient_temperature">環境溫度感測器</string>
+    <string name="sensor_gravity">重力感測器</string>
+    <string name="sensor_linear_acceleration">線性加速度</string>
+    <string name="sensor_rotation_vector">旋轉向量</string>
+    <string name="sensor_game_rotation_vector">遊戲旋轉向量</string>
+    <string name="sensor_geomagnetic_rotation_vector">地磁旋轉向量</string>
+    <string name="sensor_significant_motion">顯著運動偵測</string>
+    <string name="sensor_step_detector">步伐偵測器</string>
+    <string name="sensor_step_counter">計步器</string>
+    <string name="sensor_heart_rate">心率</string>
+    <string name="sensor_heart_beat">心跳</string>
+    <string name="sensor_device_orientation">裝置方向</string>
+    <string name="sensor_pick_up_gesture">拿起裝置</string>
+    <string name="sensor_tilt_detector">傾斜偵測</string>
+    <string name="sensor_hinge_angle">鉸鏈角度</string>
+    <string name="sensor_low_latency_offbody_detect">離身偵測</string>
+    <string name="sensor_stationary_detect">靜止偵測</string>
+    <string name="sensor_motion_detect">運動偵測</string>
+    <string name="sensor_pose_6dof">六自由度姿態</string>
+    <string name="sensor_head_tracker">頭部追蹤</string>
+    <string name="sensor_heading">航向</string>
+    <string name="command_failed">無法完成操作。</string>
+    <string name="daemon_bad_response">無法讀取傳回的資料。</string>
+    <string name="database_busy">記錄資料庫正忙。</string>
+    <string name="daemon_unavailable">記錄未執行。</string>
+    <string name="destination_missing">此目標已不可用。</string>
+    <string name="app_missing">此應用程式已不再為這位 Android 使用者安裝。</string>
+    <string name="timed_out">操作逾時。</string>
+    <string name="invalid_period">請選擇較短且非空的時間範圍。</string>
+    <string name="module_version_unreadable">無法讀取已安裝的版本。</string>
+    <string name="unsupported_architecture">記錄功能不支援此裝置的處理器。</string>
+    <string name="kernel_btf_missing">核心不支援 BTF。需要 GKI 5.10 或更新版本。</string>
+    <string name="kernel_too_old">需要 5.10 或更新版本的核心。</string>
+    <string name="module_archive_invalid">無法從應用程式套件讀取記錄所需的檔案。請重新安裝應用程式。</string>
+    <string name="database_incompatible">此版本無法讀取現有記錄。</string>
+    <string name="module_install_failed">設定未完成。請從「設定」匯出日誌，以便回報問題。</string>
+    <string name="module_update_failed">請重試。若仍然失敗，請從「設定」匯出日誌，以便回報問題。</string>
+    <string name="daemon_start_failed">無法啟動記錄。</string>
+    <string name="installed_apps_unavailable">無法讀取已安裝的應用程式。</string>
+    <string name="module_disabled">Big Brother 模組已在 root 管理工具中停用，或已設為移除。請在該工具中變更設定。</string>
+    <string name="module_remove_failed">未能移除，請重試。</string>
+    <string name="daemon_not_reporting">記錄功能已啟動，但尚未寫入任何記錄。若情況持續，請從「設定」匯出日誌，以便回報問題。</string>
+    <string name="file_access_denied">無法存取共用儲存空間。請確認已授予 root 權限。</string>
+    <string name="export_logs_failed">無法收集日誌。</string>
+</resources>
