@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- The count is displayed in a separate label. -->
+    <plurals name="readers_label" tools:ignore="ImpliedQuantity">
+        <item quantity="one">app leu arquivos</item>
+        <item quantity="many">apps leram arquivos</item>
+        <item quantity="other">apps leram arquivos</item>
+    </plurals>
+    <string name="no_reads">Nenhum app lê arquivos</string>
+    <plurals name="looked_only">
+        <item quantity="one">Mais %d app procurou arquivos sem lê-los</item>
+        <item quantity="many">Mais %d apps procuraram arquivos sem lê-los</item>
+        <item quantity="other">Mais %d apps procuraram arquivos sem lê-los</item>
+    </plurals>
+    <string name="more_count">+%d</string>
+    <string name="other_categories">Outras permissões confidenciais</string>
+    <plurals name="category_count">
+        <item quantity="one">%d tipo</item>
+        <item quantity="many">%d tipos</item>
+        <item quantity="other">%d tipos</item>
+    </plurals>
+
+    <plurals name="category_group_read_files">
+        <item quantity="one">%d app leu arquivos</item>
+        <item quantity="many">%d apps leram arquivos</item>
+        <item quantity="other">%d apps leram arquivos</item>
+    </plurals>
+    <plurals name="category_group_looked_only">
+        <item quantity="one">%d app procurou apenas arquivos</item>
+        <item quantity="many">%d apps procuraram apenas arquivos</item>
+        <item quantity="other">%d apps procuraram apenas arquivos</item>
+    </plurals>
+
+    <string name="status_stopped">Registro interrompido</string>
+    <string name="daemon_stopped">O acesso entretanto não é registado.</string>
+    <string name="daemon_starting">Iniciando o registro…</string>
+    <string name="start_daemon">Iniciar registro</string>
+    <string name="install_module">Configurar registro</string>
+    <string name="updating_module">Concluindo a atualização…</string>
+    <string name="update_failed_title">Não foi possível concluir a atualização</string>
+    <string name="module_pending_reboot">É necessário reiniciar</string>
+    <string name="module_pending_reboot_body">O módulo instalado pelo gerenciador root entra em vigor após a próxima reinicialização.</string>
+    <string name="installing_module">Configurando o registro…</string>
+    <string name="install_failed_title">Não foi possível configurar o registro</string>
+    <string name="setup_body">O Big Brother usa acesso root para registrar os acessos. A configuração não requer reinicialização.</string>
+    <string name="setup_pending_body">O módulo instalado pelo gerenciador root entra em vigor após a próxima reinicialização. Também é possível configurar o registro agora, sem reiniciar.</string>
+</resources>

@@ -1,0 +1,340 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <string name="jail_section_isolated">Apps isolados</string>
+    <string name="jail_section_settings">Configurações da prisão</string>
+    <string name="jail_add_apps">Adicionar apps</string>
+    <string name="jail_global_settings">Configurações globais</string>
+    <string name="jail_all_items_on">Todos os itens isolados</string>
+    <string name="jail_items_off">Não isolado: %1$s</string>
+    <string name="jail_no_items_on">Nenhum item isolado</string>
+    <string name="jail_empty_title">Sem apps isolados</string>
+    <string name="jail_empty_files_title">Arquivos</string>
+    <string name="jail_empty_files">Só tem acesso a um armazenamento próprio e vazio</string>
+    <string name="jail_empty_permissions_title">Contatos, localização, câmera e muito mais</string>
+    <string name="jail_empty_permissions">As permissões ainda aparecem como concedidas, mas as consultas não retornam dados</string>
+    <string name="jail_empty_device_title">Dispositivo e apps</string>
+    <string name="jail_empty_device">Um Android ID virtual. Apenas os apps do sistema ficam visíveis</string>
+    <string name="jail_hook_missing_title">Os identificadores de dispositivos e a lista de apps não ficam ocultos</string>
+    <string name="jail_hook_missing">No LSPosed, ative o escopo «Framework do Sistema» para o Big Brother e reinicie o dispositivo.</string>
+    <string name="jail_gate_missing_title">As informações de armazenamento e processador não podem ser isoladas</string>
+    <string name="jail_gate_missing">O isolamento não está disponível quando os apps são iniciados.</string>
+    <string name="jail_appops_missing_title">Contatos, localização, câmera e muito mais não estão isolados</string>
+    <string name="jail_appops_missing">O componente do Big Brother que restringe esses dados não está em execução. Ele será reiniciado automaticamente.</string>
+
+    <string name="jail_isolated">%1$s isolado</string>
+    <string name="jail_undo">Desfazer</string>
+    <string name="jail_failed">Inalterado: %1$s</string>
+    <string name="jail_isolated_partly">%1$s isolado. Não foi possível isolar o %2$s</string>
+    <plurals name="jail_isolated_partly_count">
+        <item quantity="one">%1$s isolado. Não foi possível isolar %2$d app</item>
+        <item quantity="many">%1$s isolado. Não foi possível isolar %2$d apps</item>
+        <item quantity="other">%1$s isolado. Não foi possível isolar %2$d apps</item>
+    </plurals>
+    <string name="jail_not_isolated">Não foi possível isolar %1$s: %2$s</string>
+    <plurals name="jail_not_isolated_count">
+        <item quantity="one">Não foi possível isolar %1$d app: %2$s</item>
+        <item quantity="many">Não foi possível isolar %1$d apps: %2$s</item>
+        <item quantity="other">Não foi possível isolar %1$d apps: %2$s</item>
+    </plurals>
+    <string name="jail_not_released">%1$s continua na prisão: %2$s</string>
+    <plurals name="jail_not_released_count">
+        <item quantity="one">%1$d app continua na prisão: %2$s</item>
+        <item quantity="many">%1$d apps continuam na prisão: %2$s</item>
+        <item quantity="other">%1$d apps continuam na prisão: %2$s</item>
+    </plurals>
+
+    <string name="jail_add_search">Pesquisar apps</string>
+    <plurals name="jail_add_confirm">
+        <item quantity="one">Isolar %d app</item>
+        <item quantity="many">Isolar %d apps</item>
+        <item quantity="other">Isolar %d apps</item>
+    </plurals>
+    <string name="jail_add_confirm_none">Isolar</string>
+    <string name="jail_add_restart">Os apps em execução são fechados e reiniciados.</string>
+    <string name="jail_add_empty">Nenhum app para adicionar</string>
+    <string name="jail_close">Fechar</string>
+
+    <string name="jail_release">Encerrar isolamento</string>
+    <string name="jail_records">Registros de acesso</string>
+    <string name="jail_section_items">Isolamento</string>
+    <string name="jail_items_summary">Os itens ativados fornecem dados vazios ou virtuais, ou armazenamento isolado. Os itens desativados seguem as regras do sistema.</string>
+    <string name="jail_reset">Usar configurações globais</string>
+    <plurals name="jail_more_items">
+        <item quantity="one">Mais %d item que o app não pede</item>
+        <item quantity="many">Mais %d itens que o app não pede</item>
+        <item quantity="other">Mais %d itens que o app não pede</item>
+    </plurals>
+    <string name="jail_fewer_items">Mostrar menos</string>
+    <string name="jail_restart_note">Ativar um item ou alterar informações de armazenamento ou processador reinicia o app.</string>
+    <string name="jail_custom">Personalizado</string>
+    <string name="jail_choices_shown">Expandido</string>
+    <string name="jail_choices_hidden">Recolhido</string>
+    <string name="jail_show_choices">Mostrar opções</string>
+    <string name="jail_hide_choices">Ocultar opções</string>
+    <string name="jail_not_in_effect_hook">Sem efeito: ative «Framework do Sistema» no LSPosed e reinicie o dispositivo</string>
+    <string name="jail_hook_unavailable">Restrições do escopo «Framework do Sistema» indisponíveis</string>
+    <string name="jail_hook_incompatible">Não compatível com esta versão do Android</string>
+    <string name="jail_hook_degraded">As restrições pararam de funcionar. Reinicie o dispositivo.</string>
+    <string name="jail_hook_status_unknown">Não se sabe o estado das restrições do escopo «Framework do Sistema».</string>
+    <string name="jail_not_in_effect_mounts">Sem efeito: o isolamento do armazenamento não está em execução</string>
+    <string name="jail_mount_start_failed">Não foi possível suspender a inicialização do app.</string>
+    <string name="jail_mount_setup_failed">Não foi possível aplicar o isolamento na inicialização.</string>
+    <string name="jail_mount_timed_out">O isolamento expirou na inicialização.</string>
+    <string name="jail_mount_launch_refused">%1$s O app não pode ser iniciado enquanto esta opção de isolamento estiver ativada. Desative os itens afetados ou retire o app da prisão para que ele possa ser iniciado.</string>
+    <string name="jail_checking_app_ops">Verificando restrição do Android…</string>
+    <string name="jail_app_ops_unknown">Não foi possível verificar o estado da restrição do Android.</string>
+    <string name="jail_not_in_effect_app_ops">A restrição está indisponível. O app ainda pode ter acesso aos dados.</string>
+
+    <string name="jail_settings_subtitle">Para apps isolados sem configuração própria</string>
+    <string name="jail_auto_isolate">Isolar apps recém-instalados</string>
+    <string name="jail_auto_isolate_summary">Use as configurações abaixo para instalações futuras</string>
+    <string name="jail_group_files">Arquivos</string>
+    <string name="jail_group_personal">Dados pessoais</string>
+    <string name="jail_group_sensors">Localização e sensores</string>
+    <string name="jail_group_device">Dispositivo e apps</string>
+    <string name="jail_section_status">Estado</string>
+    <string name="jail_status_title">Componentes</string>
+    <string name="jail_status_ok">O isolamento do armazenamento, o hook de «Framework do Sistema» e o filtro de rede estão em vigor</string>
+    <string name="jail_status_network_missing">Filtragem de rede não disponível neste kernel</string>
+    <string name="jail_status_checking">Verificando…</string>
+    <string name="jail_status_hook_missing">Hook de «Framework do Sistema» não carregado</string>
+    <string name="jail_status_gate_missing">Isolamento de armazenamento indisponível</string>
+    <string name="jail_status_appops_missing">As restrições de contatos, localização e outros dados estão sem efeito</string>
+    <string name="jail_status_new_apps_not_held">Novos apps podem ser iniciados antes do isolamento</string>
+    <plurals name="jail_status_new_apps_held">
+        <item quantity="one">%d app recém-instalado ainda não foi isolado. A inicialização foi bloqueada</item>
+        <item quantity="many">%d apps recém-instalados ainda não foram isolados. A inicialização foi bloqueada</item>
+        <item quantity="other">%d apps recém-instalados ainda não foram isolados. A inicialização foi bloqueada</item>
+    </plurals>
+    <plurals name="jail_status_new_apps_failed">
+        <item quantity="one">Não foi possível isolar %d novo app. Ele pode ser iniciado sem isolamento.</item>
+        <item quantity="many">Não foi possível isolar %d novos apps. Eles podem ser iniciados sem isolamento.</item>
+        <item quantity="other">Não foi possível isolar %d novos apps. Eles podem ser iniciados sem isolamento.</item>
+    </plurals>
+    <plurals name="jail_status_new_apps_pending">
+        <item quantity="one">%d app recém-instalado ainda não isolado</item>
+        <item quantity="many">%d apps recém-instalados ainda não foram isolados</item>
+        <item quantity="other">%d apps recém-instalados ainda não foram isolados</item>
+    </plurals>
+    <string name="jail_release_all">Encerrar todo o isolamento</string>
+    <string name="jail_release_all_summary">Arquivos em armazenamento isolado são mantidos</string>
+    <string name="jail_release_all_title">Encerrar todo o isolamento?</string>
+    <plurals name="jail_release_all_body">
+        <item quantity="one">%d app obtém dados reais novamente e é reiniciado. Os arquivos em armazenamento isolado são mantidos.</item>
+        <item quantity="many">%d apps obtêm dados reais novamente e são reiniciados. Os arquivos em armazenamento isolado são mantidos.</item>
+        <item quantity="other">%d apps obtêm dados reais novamente e são reiniciados. Os arquivos em armazenamento isolado são mantidos.</item>
+    </plurals>
+    <plurals name="jail_release_all_left">
+        <item quantity="one">%d app continua na prisão. Tente novamente.</item>
+        <item quantity="many">%d apps continuam na prisão. Tente novamente.</item>
+        <item quantity="other">%d apps continuam na prisão. Tente novamente.</item>
+    </plurals>
+    <string name="jail_cancel">Cancelar</string>
+
+    <string name="jail_item_storage">Arquivos e mídia</string>
+    <string name="jail_item_storage_on">Armazenamento isolado</string>
+    <string name="jail_item_storage_on_detail">O app tem um armazenamento próprio, inicialmente vazio, onde os arquivos que salvar permanecem. Fotos, downloads e documentos reais não ficam visíveis. Um arquivo escolhido no seletor do sistema só fica disponível para aquele uso.</string>
+    <string name="jail_item_cpu_info">Informações do processador</string>
+    <string name="jail_item_cpu_info_on">Modelo de chip oculto</string>
+    <string name="jail_item_cpu_info_on_detail">A contagem de núcleos e o conjunto de instruções permanecem; o modelo do chip e outros identificadores são removidos.</string>
+    <string name="jail_item_contacts">Contatos</string>
+    <string name="jail_item_contacts_on">Lista vazia</string>
+    <string name="jail_item_contacts_on_detail">A permissão aparece como concedida. Consultas de contatos não retornam dados.</string>
+    <string name="jail_item_messages">Mensagens e registro de chamadas</string>
+    <string name="jail_item_messages_on">Lista vazia</string>
+    <string name="jail_item_messages_on_detail">A permissão aparece como concedida. Consultas de mensagens e do registro de chamadas não retornam dados.</string>
+    <string name="jail_item_calendar">Agenda</string>
+    <string name="jail_item_calendar_on">Calendário vazio</string>
+    <string name="jail_item_calendar_on_detail">A permissão aparece como concedida. Consultas da agenda não retornam dados.</string>
+    <string name="jail_item_clipboard_accounts">Área de transferência e contas</string>
+    <string name="jail_item_clipboard_accounts_on">Vazio</string>
+    <string name="jail_item_clipboard_accounts_on_detail">A área de transferência e a lista de contas estão vazias.</string>
+    <string name="jail_item_location">Localização</string>
+    <string name="jail_item_location_on">Sem localização</string>
+    <string name="jail_item_location_on_detail">A permissão aparece como concedida. A localização não está disponível.</string>
+    <string name="jail_item_camera">Câmera</string>
+    <string name="jail_item_camera_on">Indisponível</string>
+    <string name="jail_item_camera_on_detail">A permissão aparece como concedida. A imagem da câmera não está disponível.</string>
+    <string name="jail_item_microphone">Microfone</string>
+    <string name="jail_item_microphone_on">Sem som</string>
+    <string name="jail_item_microphone_on_detail">A permissão aparece como concedida. As gravações ficam sem som.</string>
+    <string name="jail_item_body_sensors">Sensores corporais e atividade física</string>
+    <string name="jail_item_body_sensors_on">Sem dados</string>
+    <string name="jail_item_body_sensors_on_detail">Frequência cardíaca, passos e atividade física não estão disponíveis.</string>
+    <string name="jail_item_device_ids">Identificadores do dispositivo</string>
+    <string name="jail_item_device_ids_on">ID virtual</string>
+    <string name="jail_item_device_ids_on_detail">O app recebe um Android ID virtual próprio e fixo. O ID de publicidade, o número de telefone e o estado do telefone não podem ser lidos.</string>
+    <string name="jail_item_installed_apps">Apps instalados</string>
+    <string name="jail_item_installed_apps_on">Apenas apps do sistema</string>
+    <string name="jail_item_installed_apps_on_detail">A lista de apps instalados mostra apenas os apps do sistema e o próprio app. As estatísticas de uso não podem ser lidas.</string>
+    <string name="jail_item_nearby_devices">Dispositivos por perto</string>
+    <string name="jail_item_nearby_devices_on">Nenhum encontrado</string>
+    <string name="jail_item_nearby_devices_on_detail">As verificações de Bluetooth e Wi-Fi não retornam nada.</string>
+    <string name="jail_item_notification_content">Conteúdo de notificação</string>
+    <string name="jail_item_notification_content_on">Sem acesso</string>
+    <string name="jail_item_notification_content_on_detail">O app não pode ler notificações de outros apps. As próprias notificações continuam aparecendo. O acesso volta ao encerrar o isolamento.</string>
+    <string name="jail_item_screen_content">Conteúdo da tela</string>
+    <string name="jail_item_screen_content_on">Sem acesso</string>
+    <string name="jail_item_screen_content_on_detail">Os serviços de acessibilidade do app foram desativados. O app não pode ler nem interagir com o conteúdo da tela. O acesso volta ao encerrar o isolamento.</string>
+
+    <string name="jail_mode_coarse">Local aproximado</string>
+    <string name="jail_mode_coarse_detail">Localização precisa desativada; apenas uma localização aproximada está disponível.</string>
+    <string name="jail_mode_foreground">Apenas ao usar o app</string>
+    <string name="jail_mode_foreground_detail">Disponível enquanto o app está em uso, não em segundo plano.</string>
+    <string name="jail_mode_off">Dados reais</string>
+    <string name="jail_mode_off_detail">O app obtém o que o sistema fornece.</string>
+    <string name="jail_mode_global">Usar configuração global</string>
+    <string name="jail_mode_global_detail">Agora: %1$s</string>
+    <string name="jail_list_separator">", "</string>
+    <string name="jail_select">Selecione um app isolado ou as configurações globais</string>
+
+    <string name="jail_summary_no_network">Sem rede</string>
+    <string name="jail_summary_recording">Registrando conexões</string>
+    <string name="jail_summary_separator">" · "</string>
+
+    <string name="jail_section_network">Rede</string>
+    <string name="jail_network_access">Acesso à rede</string>
+    <string name="jail_network_allowed">Permitido</string>
+    <string name="jail_network_allowed_detail">Conecta-se conforme o sistema permite.</string>
+    <string name="jail_network_blocked">Sem rede</string>
+    <string name="jail_network_blocked_detail">As conexões e consultas de nomes falham imediatamente. As conexões dentro do dispositivo continuam funcionando. O app não é reiniciado.</string>
+    <string name="jail_network_record">Registrar conexões</string>
+    <string name="jail_network_record_summary">Domínios, endereços e portas aos quais se conecta; guardado por 30 dias</string>
+    <string name="jail_network_recording_since">Registro desde %1$s</string>
+    <string name="jail_network_activity">Atividade de rede</string>
+    <plurals name="jail_network_activity_summary">
+        <item quantity="one">%1$d destino em 24 horas</item>
+        <item quantity="many">%1$d destinos em 24 horas</item>
+        <item quantity="other">%1$d destinos em 24 horas</item>
+    </plurals>
+    <plurals name="jail_network_blocked_count">
+        <item quantity="one">%1$d bloqueado</item>
+        <item quantity="many">%1$d bloqueados</item>
+        <item quantity="other">%1$d bloqueado</item>
+    </plurals>
+    <string name="jail_network_name_rules_not_in_effect">As regras de domínio salvas podem não ser aplicadas por completo</string>
+    <string name="jail_network_recording_unavailable">Registro de conexão indisponível</string>
+    <string name="jail_network_no_permission">O app não solicita acesso à rede</string>
+    <string name="jail_not_in_effect_packet_filter">Filtragem de rede indisponível</string>
+    <string name="jail_not_in_effect_resolver">Em vigor parcialmente: as consultas de nomes não são bloqueadas</string>
+    <string name="jail_network_global_note">Para apps isolados sem configuração própria. Sem rede, as conexões falham imediatamente; os apps não são reiniciados.</string>
+
+    <string name="jail_net_subtitle_recording">%1$s · Registrando</string>
+    <string name="jail_net_subtitle_stopped">%1$s · Sem registro</string>
+    <!-- The count is displayed in a separate label. -->
+    <plurals name="jail_net_destinations" tools:ignore="ImpliedQuantity">
+        <item quantity="one">destino</item>
+        <item quantity="many">destinos</item>
+        <item quantity="other">destinos</item>
+    </plurals>
+    <plurals name="jail_net_facts">
+        <item quantity="one">%1$s conexão · %2$s recebidos · %3$s enviados</item>
+        <item quantity="many">%1$s conexões · %2$s recebidos · %3$s enviados</item>
+        <item quantity="other">%1$s conexões · %2$s recebidos · %3$s enviados</item>
+    </plurals>
+    <plurals name="jail_net_facts_counts">
+        <item quantity="one">%1$s conexão · %2$s recusadas</item>
+        <item quantity="many">%1$s conexões · %2$s recusadas</item>
+        <item quantity="other">%1$s conexões · %2$s recusadas</item>
+    </plurals>
+    <string name="jail_net_choose_period">Escolha um período</string>
+    <string name="jail_net_all_periods">Todos os períodos</string>
+    <string name="jail_net_legend_connected">Conectado</string>
+    <string name="jail_net_legend_refused">Recusadas</string>
+    <string name="jail_net_now">Agora</string>
+    <string name="jail_net_filter_blocked_count">Bloqueados: %1$d</string>
+    <string name="jail_net_sort_data">Mais dados</string>
+    <string name="jail_net_sort_connections">Mais conexões</string>
+    <string name="jail_net_sort_recent">Mais recentes</string>
+    <string name="jail_net_sort_name">Nome</string>
+    <string name="jail_net_section_domains">Domínios</string>
+    <string name="jail_net_section_addresses">Endereços IP</string>
+    <string name="jail_net_addresses_note">Conexões diretas, sem resolução de nomes pelo sistema.</string>
+    <string name="jail_net_port">Porta %1$d</string>
+    <plurals name="jail_net_connections">
+        <item quantity="one">%1$d conexão</item>
+        <item quantity="many">%1$d conexões</item>
+        <item quantity="other">%1$d conexões</item>
+    </plurals>
+    <plurals name="jail_net_refused">
+        <item quantity="one">%1$d tentativa recusada</item>
+        <item quantity="many">%1$d tentativas recusadas</item>
+        <item quantity="other">%1$d tentativas recusadas</item>
+    </plurals>
+    <string name="jail_net_blocked">Bloqueado</string>
+    <string name="jail_net_show_all">Ver todos (%1$d)</string>
+    <string name="jail_net_footer">Os registros são mantidos por 30 dias. O bloqueio entra em vigor imediatamente.</string>
+    <string name="jail_net_search">Pesquise domínios e endereços</string>
+    <string name="jail_net_no_results">Nenhum destino correspondente</string>
+    <string name="jail_net_empty_title">Ainda não há conexões</string>
+    <string name="jail_net_empty_body">Registro em andamento desde %1$s. As conexões aparecerão aqui quando o app usar a rede.</string>
+    <string name="jail_net_stopped">O registro está interrompido. São exibidos os registros até %1$s.</string>
+    <string name="jail_net_start">Registrar</string>
+    <string name="jail_net_no_network_title">Sem rede</string>
+    <string name="jail_net_no_network_body">Todas as conexões são recusadas. Como as consultas de nomes falham, a maioria dos destinos aparece como endereço.</string>
+    <string name="jail_net_names_missing_title">Nomes de domínio indisponíveis</string>
+    <string name="jail_net_names_missing_body">As consultas de nomes não podem ser lidas neste dispositivo. Os destinos aparecem como endereços.</string>
+    <string name="jail_net_traffic_missing">O volume de dados não está disponível neste dispositivo. A tela mostra o número de conexões.</string>
+    <string name="jail_net_more_options">Mais opções</string>
+    <string name="jail_net_menu_block">Bloquear um domínio ou endereço…</string>
+    <string name="jail_net_menu_stop">Parar registro</string>
+    <string name="jail_net_menu_clear">Limpar registros</string>
+    <string name="jail_net_clear_title">Limpar registros de rede?</string>
+    <string name="jail_net_clear_body">Os registros de rede do %1$s são excluídos. Os destinos bloqueados permanecem bloqueados.</string>
+    <string name="jail_net_clear">Limpar</string>
+
+    <string name="jail_net_block">Bloquear</string>
+    <string name="jail_net_unblock">Desbloquear</string>
+    <string name="jail_net_block_cd">Bloquear %1$s</string>
+    <string name="jail_net_blocked_message">%1$s bloqueado</string>
+    <string name="jail_net_unblocked_message">%1$s desbloqueado</string>
+    <string name="jail_net_manual">Adicionado manualmente</string>
+    <string name="jail_net_no_attempts">Nenhuma tentativa neste período</string>
+
+    <plurals name="jail_net_subdomains">
+        <item quantity="one">%1$d subdomínio</item>
+        <item quantity="many">%1$d subdomínios</item>
+        <item quantity="other">%1$d subdomínios</item>
+    </plurals>
+    <string name="jail_net_first_last">Primeira: %1$s · Última: %2$s</string>
+    <string name="jail_net_block_site">Bloquear %1$s e seus subdomínios</string>
+    <string name="jail_net_block_address">Bloquear %1$s em todas as portas</string>
+    <string name="jail_net_hour_range">%1$s–%2$s</string>
+    <string name="jail_net_dated_hour_range">%1$s %2$s</string>
+    <string name="jail_net_size_bytes">%1$d B</string>
+    <string name="jail_net_size_kilobytes">%1$d KB</string>
+    <string name="jail_net_size_megabytes">%1$.1f MB</string>
+    <string name="jail_net_size_gigabytes">%1$.1f GB</string>
+    <string name="jail_net_sent">Enviados</string>
+    <string name="jail_net_received">Recebidos</string>
+    <string name="jail_net_connections_label">Conexões</string>
+    <string name="jail_net_hosts_header">Subdomínios</string>
+    <string name="jail_net_ports_header">Portas</string>
+    <string name="jail_net_addresses_header">Endereços</string>
+    <plurals name="jail_net_more">
+        <item quantity="one">mais %1$d</item>
+        <item quantity="many">mais %1$d</item>
+        <item quantity="other">mais %1$d</item>
+    </plurals>
+    <string name="jail_net_shared">Este domínio compartilha endereços com %1$s. Esses domínios também serão bloqueados.</string>
+    <string name="jail_net_own_resolver">A regra não afeta conexões para as quais o app resolve nomes por conta própria. Elas aparecem em «Endereços IP» e podem ser bloqueadas ali.</string>
+
+    <string name="jail_net_add_title">Bloquear um domínio ou endereço</string>
+    <string name="jail_net_add_label">Domínio, endereço IP ou endereço:porta</string>
+    <string name="jail_net_add_supporting">Um domínio inclui seus subdomínios.</string>
+    <string name="jail_net_add_invalid">Não é um domínio ou endereço IP</string>
+</resources>
