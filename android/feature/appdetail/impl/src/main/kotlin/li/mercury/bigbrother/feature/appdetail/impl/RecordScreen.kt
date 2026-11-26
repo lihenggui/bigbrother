@@ -117,20 +117,20 @@ internal fun RecordScreen(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp + bottom),
         verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
     ) {
-        item(key = "header") {
+        item(key = "header", contentType = "record-header") {
             Header(state, uid, packageName, onClose, Modifier.animatedRow(this, MaterialTheme.motionScheme))
         }
         when {
-            state.failure != null -> item(key = "failure") {
+            state.failure != null -> item(key = "failure", contentType = "failure") {
                 LoadFailureMessage(state.failure, onRetry, Modifier.animatedRow(this, MaterialTheme.motionScheme).fillParentMaxHeight(0.5f))
             }
 
-            !state.loaded -> item(key = "loading") {
+            !state.loaded -> item(key = "loading", contentType = "loading") {
                 BigBrotherLoadingIndicator(Modifier.animatedRow(this, MaterialTheme.motionScheme).fillMaxWidth().padding(vertical = 48.dp))
             }
 
             // Records age out of the range, so a link can outlive them.
-            group == null -> item(key = "gone") {
+            group == null -> item(key = "gone", contentType = "empty") {
                 Message(stringResource(UiR.string.empty_title), "", Modifier.animatedRow(this, MaterialTheme.motionScheme).fillParentMaxHeight(0.5f))
             }
 
@@ -147,15 +147,15 @@ private fun LazyListScope.recordDetailsSection(group: TopicGroup) {
     val details = recordDetails(group.accesses.map { it.path }, titled = topicTitle(group.topic) != null)
         .filterIsInstance<RecordDetail.Plain>()
     if (details.isNotEmpty()) {
-        item(key = "details-header") { SectionHeader(stringResource(R.string.record_details), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
-        item(key = "details") { Details(details, Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+        item(key = "details-header", contentType = "section") { SectionHeader(stringResource(R.string.record_details), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+        item(key = "details", contentType = "details") { Details(details, Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
     }
 }
 
 private fun LazyListScope.sensorSessionsSection(state: RecordUiState, now: Long, onRetry: () -> Unit) {
     val sessions = state.sensorSessions
     if (state.sensorSessionsFailure != null) {
-        item(key = "sensors-failure") {
+        item(key = "sensors-failure", contentType = "failure") {
             InlineMessage(
                 title = stringResource(R.string.sensor_sessions),
                 body = failureReason(state.sensorSessionsFailure),
@@ -168,32 +168,32 @@ private fun LazyListScope.sensorSessionsSection(state: RecordUiState, now: Long,
         val groups = groupSessions(sessions)
         // A few are shown open; many, each sensor folded.
         val open = sessions.size <= SESSIONS_SHOWN_OPEN
-        item(key = "sensors-header") { SectionHeader(stringResource(R.string.sensor_sessions), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+        item(key = "sensors-header", contentType = "section") { SectionHeader(stringResource(R.string.sensor_sessions), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
         for (sensorGroup in groups) {
-            item(key = "sensor:${sensorGroup.sensor}") {
+            item(key = "sensor:${sensorGroup.sensor}", contentType = "sensor") {
                 SensorGroup(sensorGroup, now, initiallyExpanded = open, modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme).padding(bottom = 8.dp))
             }
         }
-        item(key = "sensors-note") { SensorSessionsNote(Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+        item(key = "sensors-note", contentType = "note") { SensorSessionsNote(Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
     }
 }
 
 private fun LazyListScope.recordHistorySection(state: RecordUiState, fromPermissions: Boolean, onRetry: () -> Unit) {
     val periods = state.periods
-    item(key = "history-header") { SectionHeader(stringResource(R.string.record_history), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+    item(key = "history-header", contentType = "section") { SectionHeader(stringResource(R.string.record_history), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
     if (state.historyFailure != null) {
-        item(key = "history-failure") { HistoryFailure(onRetry, Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+        item(key = "history-failure", contentType = "history-failure") { HistoryFailure(onRetry, Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
     } else if (periods == null) {
-        item(key = "history-loading") {
+        item(key = "history-loading", contentType = "loading") {
             BigBrotherLoadingIndicator(Modifier.animatedRow(this, MaterialTheme.motionScheme).fillMaxWidth().padding(vertical = 24.dp))
         }
     } else {
         val keys = periodKeys(periods)
-        itemsIndexed(periods, key = { index, _ -> keys[index] }) { index, period ->
+        itemsIndexed(periods, key = { index, _ -> keys[index] }, contentType = { _, _ -> "period" }) { index, period ->
             PeriodItem(period, fromPermissions, index, periods.size, Modifier.animatedRow(this, MaterialTheme.motionScheme))
         }
         if (state.partialHistory) {
-            item(key = "partial") {
+            item(key = "partial", contentType = "note") {
                 Text(
                     text = stringResource(R.string.record_history_partial),
                     style = MaterialTheme.typography.bodySmall,
@@ -210,7 +210,7 @@ private fun LazyListScope.recordHistorySection(state: RecordUiState, fromPermiss
  * the rows move rather than change. Periods alike in every field are told
  * apart by their order among themselves.
  */
-private fun periodKeys(periods: List<AccessPeriod>): List<String> {
+internal fun periodKeys(periods: List<AccessPeriod>): List<String> {
     val seen = HashMap<String, Int>()
     return periods.map { period ->
         val key = with(period) { "period:$time:$action:$viaProvider:$subject" }

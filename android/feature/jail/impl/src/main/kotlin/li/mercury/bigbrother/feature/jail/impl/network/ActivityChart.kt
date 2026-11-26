@@ -56,6 +56,7 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import li.mercury.bigbrother.core.model.ActivityBucket
@@ -86,7 +87,7 @@ internal fun ActivityChart(
     val band = colors.secondaryContainer
     val axis = colors.outlineVariant
     // Others fade while a bar is chosen, as an effect: no overshoot.
-    val faded by animateFloatAsState(if (selected != null) 0.3f else 1f, MaterialTheme.motionScheme.defaultEffectsSpec(), label = "faded")
+    val faded = animateFloatAsState(if (selected != null) 0.3f else 1f, MaterialTheme.motionScheme.defaultEffectsSpec(), label = "faded")
     val max = buckets.maxOfOrNull { it.connections + it.refused }?.coerceAtLeast(1) ?: 1
     var choosing by remember { mutableStateOf(false) }
     val choosePeriod = stringResource(R.string.jail_net_choose_period)
@@ -99,7 +100,7 @@ internal fun ActivityChart(
                 .height(height)
                 .chartBarSelection(buckets, selected, onSelect, choosePeriod, currentPeriod) { choosing = true },
         ) {
-            drawBars(buckets, selected, faded, max, connected, refused, band, axis)
+            drawBars(buckets, selected, faded.value, max, connected, refused, band, axis)
         }
         if (choosing && onSelect != null && buckets.isNotEmpty()) {
             PeriodMenu(buckets, selected, bucketSeconds, zone, allPeriods, onSelect, onDismiss = { choosing = false })
@@ -213,14 +214,30 @@ private fun AxisLabels(buckets: List<ActivityBucket>, bucketSeconds: Int, zone: 
     if (buckets.size < 2) return
     val style = MaterialTheme.typography.labelSmall
     val color = MaterialTheme.colorScheme.onSurfaceVariant
-    val marks = listOf(0, buckets.size / 4, buckets.size / 2, buckets.size * 3 / 4).distinct()
+    val marks = remember(buckets.size) { listOf(0, buckets.size / 4, buckets.size / 2, buckets.size * 3 / 4).distinct() }
     Row(Modifier.fillMaxWidth()) {
         marks.forEach { index ->
             val start = buckets[index].start
             val label = if (bucketSeconds == BucketSize.DAY.seconds) shortDate(start, zone) else clockTime(start, zone)
-            Text(label, style = style, color = color, modifier = Modifier.weight(1f), maxLines = 1)
+            Text(
+                label,
+                style = style,
+                color = color,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
-        Text(stringResource(R.string.jail_net_now), style = style, color = color, textAlign = TextAlign.End, maxLines = 1)
+        Text(
+            stringResource(R.string.jail_net_now),
+            style = style,
+            color = color,
+            textAlign = TextAlign.End,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

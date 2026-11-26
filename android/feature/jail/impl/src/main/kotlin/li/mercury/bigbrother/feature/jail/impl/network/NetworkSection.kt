@@ -89,9 +89,9 @@ internal fun LazyListScope.networkSection(
     expanded: Boolean,
     actions: NetworkSectionActions,
 ) {
-    item(key = "network_header") { SectionHeader(stringResource(R.string.jail_section_network), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+    item(key = "network_header", contentType = "section") { SectionHeader(stringResource(R.string.jail_section_network), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
     if (requested != null && !SandboxItem.NETWORK.concerns(requested)) {
-        item(key = "network_none") { NoPermissionRow(Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+        item(key = "network_none", contentType = "network-unavailable") { NoPermissionRow(Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
         return
     }
     val recording = app.modeOf(SandboxItem.NETWORK_RECORD).isOn
@@ -99,7 +99,7 @@ internal fun LazyListScope.networkSection(
     val count = if (activityShown) 3 else 2
     val recordingUnmet = app.unmet[SandboxItem.NETWORK_RECORD].orEmpty()
     val blocked = app.networkRules - app.nameRulesNotInEffect
-    item(key = SandboxItem.NETWORK.id) {
+    item(key = SandboxItem.NETWORK.id, contentType = "network-control") {
         val mode = app.modeOf(SandboxItem.NETWORK)
         ItemRow(
             item = SandboxItem.NETWORK,
@@ -117,7 +117,7 @@ internal fun LazyListScope.networkSection(
             checked = mode.allowsNetwork,
         )
     }
-    item(key = SandboxItem.NETWORK_RECORD.id) {
+    item(key = SandboxItem.NETWORK_RECORD.id, contentType = "network-control") {
         RecordRow(
             recording,
             app.recordingSince,
@@ -129,7 +129,7 @@ internal fun LazyListScope.networkSection(
         )
     }
     // Always an item, so the row can grow in and out as recording is switched.
-    item(key = "network_activity") {
+    item(key = "network_activity", contentType = "network-link") {
         Reveal(activityShown, Modifier.animatedRow(this, MaterialTheme.motionScheme)) {
             val found = destinations ?: 0
             val separator = stringResource(R.string.jail_summary_separator)
@@ -163,8 +163,8 @@ internal fun LazyListScope.globalNetworkSection(
     onSetAllowed: (Boolean) -> Unit,
     onChoose: (SandboxMode) -> Unit,
 ) {
-    item(key = "network_header") { SectionHeader(stringResource(R.string.jail_section_network), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
-    item(key = SandboxItem.NETWORK.id) {
+    item(key = "network_header", contentType = "section") { SectionHeader(stringResource(R.string.jail_section_network), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+    item(key = SandboxItem.NETWORK.id, contentType = "network-control") {
         ItemRow(
             item = SandboxItem.NETWORK,
             mode = mode,
@@ -181,7 +181,7 @@ internal fun LazyListScope.globalNetworkSection(
             checked = mode.allowsNetwork,
         )
     }
-    item(key = "network_note") { Note(stringResource(R.string.jail_network_global_note), Modifier.animatedRow(this, MaterialTheme.motionScheme).padding(top = 8.dp)) }
+    item(key = "network_note", contentType = "note") { Note(stringResource(R.string.jail_network_global_note), Modifier.animatedRow(this, MaterialTheme.motionScheme).padding(top = 8.dp)) }
 }
 
 /**

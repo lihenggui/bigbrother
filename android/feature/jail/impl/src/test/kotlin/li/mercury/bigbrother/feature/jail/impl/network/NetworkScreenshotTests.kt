@@ -260,6 +260,13 @@ class NetworkScreenshotTests {
     }
 
     @Test
+    fun givenDayOfActivity_whenFontScaleIsDoubled_thenChartMatchesGolden() {
+        composeTestRule.captureForDevice("phone_large_text", DefaultTestDevices.PHONE.spec, "NetworkActivity", fontScale = 2f) {
+            Activity(shopState())
+        }
+    }
+
+    @Test
     fun givenDayOfActivity_whenShownInDarkTheme_thenMatchesGolden() {
         capture("NetworkActivity", "phone_dark", dark = true) { Activity(shopState()) }
     }

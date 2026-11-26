@@ -45,6 +45,9 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.captureToImage
@@ -282,6 +285,16 @@ class ListDetailScreenshotTests {
         assertTrue("The detail pane begins after the hinge", detail.left >= 520f)
     }
 
+    @Test
+    @Config(qualifiers = "en-rUS-w412dp-h915dp-mdpi")
+    fun givenRecordingStopped_whenAnotherTabIsSelected_thenOverviewAnnouncesIt() {
+        showNavigation(recordingStopped = true)
+        composeTestRule.onNodeWithText("Apps").performClick()
+        composeTestRule.onNodeWithText("Overview").assert(
+            SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Recording stopped"),
+        )
+    }
+
     private fun openApp() {
         composeTestRule.onNodeWithText("Apps").performClick()
         composeTestRule.onNodeWithText("Open app").performClick()
@@ -289,11 +302,11 @@ class ListDetailScreenshotTests {
     }
 
     @OptIn(ExperimentalMaterial3AdaptiveApi::class)
-    private fun showNavigation() {
+    private fun showNavigation(recordingStopped: Boolean = false) {
         composeTestRule.setContent {
             BigBrotherTheme {
                 BigBrotherNavigation(
-                    recordingStopped = false,
+                    recordingStopped = recordingStopped,
                     registerEntries = { navigator ->
                         entry<OverviewNavKey> { Text("Overview content") }
                         entry<AppListNavKey>(metadata = ListDetailSceneStrategy.listPane()) {

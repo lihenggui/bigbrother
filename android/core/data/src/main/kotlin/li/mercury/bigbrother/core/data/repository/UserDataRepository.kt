@@ -18,6 +18,7 @@ package li.mercury.bigbrother.core.data.repository
 
 import kotlinx.coroutines.flow.Flow
 import li.mercury.bigbrother.core.datastore.UserPreferencesDataSource
+import li.mercury.bigbrother.core.model.ThemeMode
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.model.UserData
 import java.io.IOException
@@ -32,6 +33,8 @@ interface UserDataRepository {
     suspend fun setShowSystemApps(show: Boolean)
 
     suspend fun setUseDynamicColor(use: Boolean)
+
+    suspend fun setThemeMode(mode: ThemeMode)
 }
 
 internal class DataStoreUserDataRepository @Inject constructor(
@@ -44,4 +47,6 @@ internal class DataStoreUserDataRepository @Inject constructor(
     override suspend fun setShowSystemApps(show: Boolean) = preferences.setShowSystemApps(show)
 
     override suspend fun setUseDynamicColor(use: Boolean) = preferences.setUseDynamicColor(use)
+
+    override suspend fun setThemeMode(mode: ThemeMode) = preferences.setThemeMode(mode)
 }

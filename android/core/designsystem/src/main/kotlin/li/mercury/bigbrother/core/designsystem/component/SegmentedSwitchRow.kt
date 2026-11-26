@@ -41,11 +41,27 @@ import androidx.compose.ui.unit.dp
 fun segmentCornerSize(outer: Boolean): Dp = if (outer) 16.dp else 4.dp
 
 /** The shape of a row in a segmented group, for clipping its touch feedback. */
-fun segmentShape(index: Int, count: Int): RoundedCornerShape {
-    val top = segmentCornerSize(outer = index == 0)
-    val bottom = segmentCornerSize(outer = index == count - 1)
-    return RoundedCornerShape(topStart = top, topEnd = top, bottomStart = bottom, bottomEnd = bottom)
+fun segmentShape(index: Int, count: Int): RoundedCornerShape = when {
+    index == 0 && count == 1 -> SingleSegmentShape
+    index == 0 -> FirstSegmentShape
+    index == count - 1 -> LastSegmentShape
+    else -> MiddleSegmentShape
 }
+
+private val SingleSegmentShape = RoundedCornerShape(segmentCornerSize(outer = true))
+private val FirstSegmentShape = RoundedCornerShape(
+    topStart = segmentCornerSize(outer = true),
+    topEnd = segmentCornerSize(outer = true),
+    bottomStart = segmentCornerSize(outer = false),
+    bottomEnd = segmentCornerSize(outer = false),
+)
+private val MiddleSegmentShape = RoundedCornerShape(segmentCornerSize(outer = false))
+private val LastSegmentShape = RoundedCornerShape(
+    topStart = segmentCornerSize(outer = false),
+    topEnd = segmentCornerSize(outer = false),
+    bottomStart = segmentCornerSize(outer = true),
+    bottomEnd = segmentCornerSize(outer = true),
+)
 
 /**
  * The whole row toggles a setting that takes effect at once. The switch alone

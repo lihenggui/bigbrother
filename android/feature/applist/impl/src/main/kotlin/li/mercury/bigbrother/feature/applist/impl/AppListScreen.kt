@@ -21,11 +21,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -68,7 +65,6 @@ import li.mercury.bigbrother.core.ui.DataCategory
 import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.MenuFilterChip
-import li.mercury.bigbrother.core.ui.MenuOption
 import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.Reveal
 import li.mercury.bigbrother.core.ui.SectionHeader
@@ -78,6 +74,7 @@ import li.mercury.bigbrother.core.ui.appDisplayName
 import li.mercury.bigbrother.core.ui.categoriesSummary
 import li.mercury.bigbrother.core.ui.categoryDetail
 import li.mercury.bigbrother.core.ui.label
+import li.mercury.bigbrother.core.ui.rememberMenuOptions
 import li.mercury.bigbrother.core.ui.rememberSettingsWriteSnackbar
 import li.mercury.bigbrother.core.ui.shortTime
 import li.mercury.bigbrother.core.ui.R as UiR
@@ -170,6 +167,7 @@ internal fun AppListScreen(
 
                         else -> AppList(
                             groups = shownGroups,
+                            padding = padding,
                             appInfo = shownState.appInfo,
                             sort = shown.filter.sort,
                             category = shown.filter.category,
@@ -202,6 +200,7 @@ private fun Filters(
     showSystemApps: Boolean,
     onShowSystemApps: (Boolean) -> Unit,
 ) {
+    val categories = remember(present) { listOf(null) + present }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -211,21 +210,20 @@ private fun Filters(
     ) {
         MenuFilterChip(
             label = stringResource(range.label),
-            options = TimeRange.entries.map { MenuOption(it, stringResource(it.label)) },
+            options = rememberMenuOptions(TimeRange.entries) { it.label },
             selected = range,
             onSelect = onRange,
         )
         MenuFilterChip(
             label = category?.let { stringResource(it.title) } ?: stringResource(R.string.all_categories),
-            options = listOf(MenuOption<DataCategory?>(null, stringResource(R.string.all_categories))) +
-                present.map { MenuOption(it, stringResource(it.title)) },
+            options = rememberMenuOptions(categories) { it?.title ?: R.string.all_categories },
             selected = category,
             onSelect = onCategory,
             highlighted = category != null,
         )
         MenuFilterChip(
             label = stringResource(sort.label),
-            options = SortOrder.entries.map { MenuOption(it, stringResource(it.label)) },
+            options = rememberMenuOptions(SortOrder.entries) { it.label },
             selected = sort,
             onSelect = onSort,
             extra = { close ->
@@ -249,6 +247,7 @@ private fun Filters(
 @Composable
 private fun AppList(
     groups: List<Pair<Int?, List<AppListEntry>>>,
+    padding: PaddingValues,
     appInfo: Map<String, AppInfo>,
     sort: SortOrder,
     category: DataCategory?,
@@ -271,23 +270,22 @@ private fun AppList(
             listState.requestScrollToItem(0)
         }
     }
-    val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         state = listState,
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp + bottomInset),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp + padding.calculateBottomPadding()),
         verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
     ) {
         if (groups.all { (_, members) -> members.isEmpty() }) {
-            item(key = "empty") {
+            item(key = "empty", contentType = "empty") {
                 EmptyAppList(hiddenApps, category, onShowSystemApps, Modifier.animatedRow(this, MaterialTheme.motionScheme).fillParentMaxHeight(0.7f))
             }
         }
         for ((title, members) in groups) {
             if (title != null) {
-                item(key = "header:$title") { SectionHeader(pluralStringResource(title, members.size, members.size), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+                item(key = "header:$title", contentType = "section") { SectionHeader(pluralStringResource(title, members.size, members.size), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
             }
-            itemsIndexed(members, key = { _, entry -> entry.app.uid }) { index, entry ->
+            itemsIndexed(members, key = { _, entry -> entry.app.uid }, contentType = { _, _ -> "app" }) { index, entry ->
                 AppListItem(
                     app = entry.app,
                     info = appInfo[entry.app.packageName],

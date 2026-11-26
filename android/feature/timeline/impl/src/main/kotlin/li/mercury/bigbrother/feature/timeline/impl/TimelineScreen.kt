@@ -21,11 +21,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyItemScope
@@ -72,13 +69,13 @@ import li.mercury.bigbrother.core.ui.DataCategory
 import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.MenuFilterChip
-import li.mercury.bigbrother.core.ui.MenuOption
 import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.Reveal
 import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.core.ui.dateWithWeekday
 import li.mercury.bigbrother.core.ui.failureTitle
 import li.mercury.bigbrother.core.ui.namedList
+import li.mercury.bigbrother.core.ui.rememberMenuOptions
 import li.mercury.bigbrother.core.ui.timeOfDay
 import li.mercury.bigbrother.core.ui.topicRecordsSummary
 import li.mercury.bigbrother.core.ui.topicTitle
@@ -154,6 +151,7 @@ internal fun TimelineScreen(
                         else -> Timeline(
                             state = shownState,
                             items = shownItems,
+                            padding = padding,
                             selectedUid = selectedUid,
                             onLoadMore = onLoadMore,
                             onOpenEntry = onOpenEntry,
@@ -164,6 +162,9 @@ internal fun TimelineScreen(
         }
     }
 }
+
+private val categoryOptions = listOf(null) + DataCategory.entries
+private val lookupOptions = listOf(false, true)
 
 @Composable
 private fun Filters(
@@ -181,18 +182,14 @@ private fun Filters(
     ) {
         MenuFilterChip(
             label = category?.let { stringResource(it.title) } ?: stringResource(R.string.all_data),
-            options = listOf(MenuOption<DataCategory?>(null, stringResource(R.string.all_data))) +
-                DataCategory.entries.map { MenuOption(it, stringResource(it.title)) },
+            options = rememberMenuOptions(categoryOptions) { it?.title ?: R.string.all_data },
             selected = category,
             onSelect = onCategory,
             highlighted = category != null,
         )
         MenuFilterChip(
             label = stringResource(if (includeLookups) R.string.records_all else R.string.records_access),
-            options = listOf(
-                MenuOption(false, stringResource(R.string.records_access)),
-                MenuOption(true, stringResource(R.string.records_all)),
-            ),
+            options = rememberMenuOptions(lookupOptions) { if (it) R.string.records_all else R.string.records_access },
             selected = includeLookups,
             onSelect = onIncludeLookups,
             highlighted = includeLookups,
@@ -205,6 +202,7 @@ private fun Filters(
 private fun Timeline(
     state: TimelineUiState,
     items: List<TimelineItem>,
+    padding: PaddingValues,
     selectedUid: Int?,
     onLoadMore: () -> Unit,
     onOpenEntry: (TimelineEntry, TimeRange) -> Unit,
@@ -221,19 +219,18 @@ private fun Timeline(
     LaunchedEffect(nearEnd, state.nextBefore, items.size, state.loadMoreFailure) {
         if (nearEnd && state.nextBefore != null && state.loadMoreFailure == null) onLoadMore()
     }
-    val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         state = listState,
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp + bottomInset),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp + padding.calculateBottomPadding()),
         verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
     ) {
         if (items.isEmpty() && state.nextBefore == null) {
-            item(key = "empty") {
+            item(key = "empty", contentType = "empty") {
                 Message(stringResource(R.string.timeline_empty), "", Modifier.animatedRow(this, MaterialTheme.motionScheme).fillParentMaxHeight(0.7f))
             }
         }
-        items(items, key = { it.key }) { item ->
+        items(items, key = { it.key }, contentType = { it.javaClass }) { item ->
             TimelineRow(item, state.appInfo, selectedUid, onOpenEntry)
         }
         pagingFooter(state, onLoadMore)
@@ -289,14 +286,14 @@ private fun LazyItemScope.TimelineRow(
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 private fun LazyListScope.pagingFooter(state: TimelineUiState, onLoadMore: () -> Unit) {
     if (state.loadingMore) {
-        item(key = "loading-more") {
+        item(key = "loading-more", contentType = "loading") {
             Row(Modifier.animatedRow(this, MaterialTheme.motionScheme).fillMaxWidth().padding(vertical = 16.dp), horizontalArrangement = Arrangement.Center) {
                 LoadingIndicator()
             }
         }
     }
     if (state.loadMoreFailure != null) {
-        item(key = "load-more-failed") {
+        item(key = "load-more-failed", contentType = "paging-failure") {
             Row(
                 modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme).fillMaxWidth().padding(start = 16.dp, top = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,

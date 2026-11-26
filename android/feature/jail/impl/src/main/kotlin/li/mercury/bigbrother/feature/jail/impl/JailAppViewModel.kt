@@ -16,6 +16,7 @@
 
 package li.mercury.bigbrother.feature.jail.impl
 
+import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.assisted.Assisted
@@ -52,6 +53,7 @@ import li.mercury.bigbrother.core.model.labelOrPackageName
 import li.mercury.bigbrother.core.model.userIdOf
 import li.mercury.bigbrother.feature.jail.impl.network.networkMode
 
+@Immutable
 data class JailAppUiState(
     val packageName: String = "",
     /**

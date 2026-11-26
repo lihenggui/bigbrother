@@ -97,7 +97,7 @@ private fun ResultList(results: SearchUiState, onResultClick: (SearchDestination
         // focused search; it also announces when nothing matched. While a
         // new text is looked up, the previous results stay, but the label
         // does not speak for them.
-        item(key = "label") {
+        item(key = "label", contentType = "search-label") {
             val label = when {
                 !results.complete -> R.string.searching
                 nothing -> UiR.string.no_matches
@@ -123,8 +123,8 @@ private fun ResultList(results: SearchUiState, onResultClick: (SearchDestination
             }
         }
         if (results.apps.isNotEmpty()) {
-            item(key = "apps") { SectionHeader(stringResource(R.string.section_apps), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
-            itemsIndexed(results.apps, key = { _, app -> "app:${app.uid}" }) { index, app ->
+            item(key = "apps", contentType = "section") { SectionHeader(stringResource(R.string.section_apps), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+            itemsIndexed(results.apps, key = { _, app -> "app:${app.uid}" }, contentType = { _, _ -> "app" }) { index, app ->
                 AppListItem(
                     app = app,
                     info = results.appInfo[app.packageName],
@@ -138,8 +138,8 @@ private fun ResultList(results: SearchUiState, onResultClick: (SearchDestination
             }
         }
         if (results.files.isNotEmpty()) {
-            item(key = "files") { SectionHeader(stringResource(R.string.section_files), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
-            itemsIndexed(results.files, key = { _, match -> "path:${match.uid}:${match.access.path}" }) { index, match ->
+            item(key = "files", contentType = "section") { SectionHeader(stringResource(R.string.section_files), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+            itemsIndexed(results.files, key = { _, match -> "path:${match.uid}:${match.access.path}" }, contentType = { _, _ -> "file" }) { index, match ->
                 FileResult(
                     match = match,
                     results = results,
@@ -151,8 +151,8 @@ private fun ResultList(results: SearchUiState, onResultClick: (SearchDestination
             }
         }
         if (results.data.isNotEmpty()) {
-            item(key = "data") { SectionHeader(stringResource(R.string.section_data), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
-            itemsIndexed(results.data, key = { _, match -> "data:${match.category}:${match.topic}" }) { index, match ->
+            item(key = "data", contentType = "section") { SectionHeader(stringResource(R.string.section_data), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+            itemsIndexed(results.data, key = { _, match -> "data:${match.category}:${match.topic}" }, contentType = { _, _ -> "data" }) { index, match ->
                 DataResult(match, index, results.data.size, onClick = { onResultClick(SearchDestination.Category(match.category)) }, modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme))
             }
         }

@@ -33,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.Dp
 import coil3.compose.AsyncImage
 import li.mercury.bigbrother.core.model.AppInfo
@@ -86,6 +87,7 @@ private fun LetterTile(name: String, size: Dp, modifier: Modifier = Modifier) {
         modifier = modifier
             .size(size)
             .clip(MaterialTheme.shapes.medium)
+            .clearAndSetSemantics {}
             .background(MaterialTheme.colorScheme.secondaryContainer),
         contentAlignment = Alignment.Center,
     ) {

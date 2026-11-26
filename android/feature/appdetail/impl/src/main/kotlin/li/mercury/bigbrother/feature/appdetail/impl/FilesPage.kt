@@ -25,6 +25,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -62,6 +63,7 @@ import li.mercury.bigbrother.feature.appdetail.impl.tree.FileNode
 @Composable
 internal fun FilesPage(
     browser: FileBrowser,
+    padding: PaddingValues,
     truncated: Boolean,
     location: String,
     handleBack: Boolean,
@@ -97,6 +99,7 @@ internal fun FilesPage(
                 if (shown != Location.ROOT) Breadcrumb(tree, shown, onNavigate)
                 Listing(
                     content = tree,
+                    padding = padding,
                     location = shown,
                     readOnly = browser.readOnly,
                     filtering = browser.filtering,

@@ -16,6 +16,7 @@
 
 package li.mercury.bigbrother.feature.appdetail.impl
 
+import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.assisted.Assisted
@@ -53,6 +54,7 @@ import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.model.isNonCoreUid
 import li.mercury.bigbrother.core.model.userIdOf
 
+@Immutable
 internal data class AppDetailUiState(
     /** The app's totals. Until loaded, a placeholder that only carries the uid. */
     val app: AppSummary,

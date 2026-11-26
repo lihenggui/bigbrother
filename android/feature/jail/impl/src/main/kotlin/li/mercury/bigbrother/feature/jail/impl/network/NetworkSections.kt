@@ -42,6 +42,7 @@ import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -53,10 +54,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -65,8 +68,8 @@ import li.mercury.bigbrother.core.designsystem.component.ShapedIcon
 import li.mercury.bigbrother.core.model.NetworkActivity
 import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.MenuFilterChip
-import li.mercury.bigbrother.core.ui.MenuOption
 import li.mercury.bigbrother.core.ui.animatedRow
+import li.mercury.bigbrother.core.ui.rememberMenuOptions
 import li.mercury.bigbrother.core.ui.timeWithDateIfNotToday
 import li.mercury.bigbrother.feature.jail.impl.R
 import li.mercury.bigbrother.feature.jail.impl.SandboxWarningCard
@@ -75,7 +78,7 @@ import java.text.NumberFormat
 /** What is not as usual for the app or the device, before anything else. */
 internal fun LazyListScope.notices(activity: NetworkActivity, actions: NetworkActivityActions) {
     if (!activity.recording.on) {
-        item(key = "stopped") {
+        item(key = "stopped", contentType = "warning") {
             val last = (activity.domains + activity.addresses).maxOfOrNull { it.last } ?: activity.until
             NoticeCard(
                 icon = Icons.Outlined.History,
@@ -89,7 +92,7 @@ internal fun LazyListScope.notices(activity: NetworkActivity, actions: NetworkAc
         }
     }
     if (!activity.networkAllowed) {
-        item(key = "no_network") {
+        item(key = "no_network", contentType = "warning") {
             NoticeCard(
                 icon = Icons.Outlined.Block,
                 title = stringResource(R.string.jail_net_no_network_title),
@@ -101,7 +104,7 @@ internal fun LazyListScope.notices(activity: NetworkActivity, actions: NetworkAc
         }
     }
     if (!activity.names) {
-        item(key = "names") {
+        item(key = "names", contentType = "warning") {
             SandboxWarningCard(
                 title = stringResource(R.string.jail_net_names_missing_title),
                 body = stringResource(R.string.jail_net_names_missing_body),
@@ -202,15 +205,17 @@ internal fun Summary(state: NetworkActivityUiState, activity: NetworkActivity, o
 }
 
 /** How many destinations, and how many connections and how much data went to them. */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun Totals(totals: ActivityTotals, traffic: Boolean) {
-    val numbers = NumberFormat.getIntegerInstance()
+    val locale = LocalLocale.current.platformLocale
+    val numbers = remember(locale) { NumberFormat.getIntegerInstance(locale) }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(numbers.format(totals.destinations), style = MaterialTheme.typography.displayMedium, modifier = Modifier.alignByBaseline())
+            Text(numbers.format(totals.destinations), style = MaterialTheme.typography.displayMediumEmphasized, modifier = Modifier.alignByBaseline())
             Text(
                 pluralStringResource(R.plurals.jail_net_destinations, totals.destinations),
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleMediumEmphasized,
                 modifier = Modifier.alignByBaseline(),
             )
         }
@@ -261,7 +266,7 @@ internal fun Filters(state: NetworkActivityUiState, actions: NetworkActivityActi
         }
         MenuFilterChip(
             label = stringResource(state.sort.label),
-            options = DestinationSort.entries.map { MenuOption(it, stringResource(it.label)) },
+            options = rememberMenuOptions(DestinationSort.entries) { it.label },
             selected = state.sort,
             onSelect = actions.onSort,
         )

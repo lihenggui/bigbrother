@@ -20,6 +20,7 @@
     <string name="retry">重试</string>
     <string name="settings_write_failed">无法保存设置</string>
     <string name="search">搜索</string>
+    <string name="recording_stopped">记录已停止</string>
     <string name="close_search">关闭搜索</string>
     <string name="clear_search">清除搜索内容</string>
     <string name="no_matches">无匹配结果</string>

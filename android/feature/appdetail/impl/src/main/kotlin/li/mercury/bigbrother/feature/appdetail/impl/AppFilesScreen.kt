@@ -18,6 +18,8 @@ package li.mercury.bigbrother.feature.appdetail.impl
 
 import android.widget.Toast
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -42,6 +44,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -134,16 +137,30 @@ internal fun AppFilesScreen(
             AppFilesTopBar(state, uid, background, beside, onBack, onOpenSearch, onCloseSearch, onQueryChange)
         },
     ) { padding ->
-        Box(Modifier.padding(padding)) {
+        val direction = LocalLayoutDirection.current
+        Box(
+            Modifier.padding(
+                start = padding.calculateStartPadding(direction),
+                top = padding.calculateTopPadding(),
+                end = padding.calculateEndPadding(direction),
+            ),
+        ) {
             FadeThrough(state, kind = { ContentKind.of(it.failure, it.browser) }) { shown ->
                 val browser = shown.browser
                 when {
-                    shown.failure != null -> LoadFailureMessage(shown.failure, onRetry)
+                    shown.failure != null -> LoadFailureMessage(
+                        shown.failure,
+                        onRetry,
+                        Modifier.padding(bottom = padding.calculateBottomPadding()),
+                    )
 
-                    browser == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
+                    browser == null -> BigBrotherLoadingIndicator(
+                        Modifier.fillMaxSize().padding(bottom = padding.calculateBottomPadding()),
+                    )
 
                     else -> FilesPage(
                         browser = browser,
+                        padding = padding,
                         truncated = shown.truncated,
                         location = location,
                         // Back goes up a folder, once search is closed.

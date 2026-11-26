@@ -50,6 +50,8 @@ import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -311,7 +313,8 @@ private fun AppContent(
     // and keeps its back arrow.
     val listOnStack = navigator.state.currentSubStack.any { it in LIST_PANE_KEYS || it is CategoryNavKey }
     CompositionLocalProvider(LocalShowsDetailBesideList provides (directive.maxHorizontalPartitions > 1 && listOnStack)) {
-        val motion = MotionScheme.standard()
+        // Full-screen slides should settle without overshooting the window.
+        val motion = remember { MotionScheme.standard() }
         val slide = motion.defaultSpatialSpec<IntOffset>()
         val fade = motion.defaultEffectsSpec<Float>()
         val direction = if (LocalLayoutDirection.current == LayoutDirection.Ltr) 1 else -1
@@ -321,9 +324,10 @@ private fun AppContent(
             slideOutHorizontally(slide) { it * direction } + fadeOut(fade)
         val switch: ContentTransform = fadeIn(fade) togetherWith fadeOut(motion.fastEffectsSpec())
 
+        val searchRevealed by remember(search.visibility) { derivedStateOf { search.visibility.value > 0f } }
         SearchPaneLayout(
             directive = directive,
-            showSearch = search.showSearch || search.previousShowsSearch == true || search.visibility.value > 0f,
+            showSearch = search.showSearch || search.previousShowsSearch == true || searchRevealed,
             topBar = {
                 // Reserve system space outside the clipped reveal.
                 Box(

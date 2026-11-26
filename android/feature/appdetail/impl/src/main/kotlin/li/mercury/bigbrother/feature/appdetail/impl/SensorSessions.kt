@@ -34,6 +34,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -54,7 +55,6 @@ import li.mercury.bigbrother.core.ui.timeWithDateIfNotToday
 import java.text.NumberFormat
 import java.time.Instant
 import java.time.ZoneId
-import java.util.Locale
 import li.mercury.bigbrother.core.ui.R as UiR
 
 /** The sessions of one sensor, most recent first. */
@@ -103,9 +103,8 @@ internal fun durationParts(totalSeconds: Long): DurationParts {
     return DurationParts(days = hours / HOURS_PER_DAY, hours = hours % HOURS_PER_DAY)
 }
 
-/** A rate as a number: whole above 10 Hz, to a tenth below ("50", "0.5"), in [locale]'s digits. */
-internal fun formatRate(hz: Double, locale: Locale): String {
-    val format = NumberFormat.getNumberInstance(locale)
+/** A rate as a number: whole from 10 Hz, to a tenth below ("50", "0.5"). */
+internal fun formatRate(hz: Double, format: NumberFormat): String {
     format.maximumFractionDigits = if (hz >= WHOLE_RATE_FROM_HZ) 0 else 1
     return format.format(hz)
 }
@@ -140,7 +139,13 @@ private fun rateText(session: SensorSession): String? {
     val hz = session.rateHz
     return when {
         period == 0L -> stringResource(R.string.rate_fastest)
-        hz != null -> stringResource(R.string.rate_hz, formatRate(hz, LocalLocale.current.platformLocale))
+
+        hz != null -> {
+            val locale = LocalLocale.current.platformLocale
+            val format = remember(locale) { NumberFormat.getNumberInstance(locale) }
+            stringResource(R.string.rate_hz, formatRate(hz, format))
+        }
+
         else -> null
     }
 }

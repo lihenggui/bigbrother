@@ -18,6 +18,7 @@ package li.mercury.bigbrother.core.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
@@ -35,12 +36,16 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.ToggleButton
+import androidx.compose.material3.ToggleButtonDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
@@ -71,6 +76,16 @@ fun TimeRangeButtonGroup(
     modifier: Modifier = Modifier,
     options: List<TimeRange> = TimeRange.entries,
 ) {
+    val largeText = LocalDensity.current.fontScale > 1f
+    val padding = remember(largeText) {
+        val defaultPadding = ToggleButtonDefaults.contentPaddingFor(ToggleButtonDefaults.size)
+        if (largeText) {
+            // Leave scaled labels more room within each segment.
+            PaddingValues(horizontal = 8.dp, vertical = defaultPadding.calculateTopPadding())
+        } else {
+            defaultPadding
+        }
+    }
     Row(
         // Material caps a connected group's width on large windows.
         modifier = modifier
@@ -85,6 +100,7 @@ fun TimeRangeButtonGroup(
                 modifier = Modifier
                     .weight(1f)
                     .semantics { role = Role.RadioButton },
+                contentPadding = padding,
                 shapes = when (index) {
                     0 -> ButtonGroupDefaults.connectedLeadingButtonShapes()
                     options.lastIndex -> ButtonGroupDefaults.connectedTrailingButtonShapes()
@@ -98,7 +114,16 @@ fun TimeRangeButtonGroup(
 }
 
 /** One option of a [MenuFilterChip]. */
-class MenuOption<T>(val value: T, val label: String)
+data class MenuOption<T>(val value: T, val label: String)
+
+@Composable
+fun <T> rememberMenuOptions(values: List<T>, label: (T) -> Int): List<MenuOption<T>> {
+    val resources = LocalResources.current
+    val configuration = LocalConfiguration.current
+    return remember(values, resources, configuration, label) {
+        values.map { value -> MenuOption(value, resources.getString(label(value))) }
+    }
+}
 
 /**
  * A filter chip showing the current choice; the whole chip opens a menu of

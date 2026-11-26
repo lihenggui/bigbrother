@@ -101,6 +101,7 @@ private fun AnimatedVisibilityScope.RevealedContent(exit: GuideExit.Start?, sche
         val colors = MaterialTheme.colorScheme
         Modifier.revealFrom(
             exit.button,
+            // Keep the expanding container from overshooting the full window.
             grow = transition.animateFloat({ MotionScheme.standard().slowSpatialSpec() }, label = "grow") { it.shown() },
             tint = transition.animateFloat({ scheme.defaultEffectsSpec() }, label = "tint") { it.shown() },
             fade = transition.animateFloat({ DelayedSpec(START_DELAY_MS, scheme.defaultEffectsSpec()) }, label = "fade") { it.shown() },

@@ -91,6 +91,8 @@ fun <A : ComponentActivity> AndroidComposeTestRule<ActivityScenarioRule<A>, A>.c
     roborazziOptions: RoborazziOptions = DefaultRoborazziOptions,
     accessibilitySuppressions: Matcher<in AccessibilityViewCheckResult> = Matchers.not(Matchers.anything()),
     darkMode: Boolean = false,
+    fontScale: Float = 1f,
+    beforeCapture: () -> Unit = {},
     body: @Composable () -> Unit,
 ) {
     capture(
@@ -99,6 +101,8 @@ fun <A : ComponentActivity> AndroidComposeTestRule<ActivityScenarioRule<A>, A>.c
         roborazziOptions = roborazziOptions,
         accessibilitySuppressions = accessibilitySuppressions,
         darkMode = darkMode,
+        fontScale = fontScale,
+        beforeCapture = beforeCapture,
         body = body,
     )
 }
@@ -114,12 +118,16 @@ internal fun <A : ComponentActivity> AndroidComposeTestRule<ActivityScenarioRule
     roborazziOptions: RoborazziOptions,
     accessibilitySuppressions: Matcher<in AccessibilityViewCheckResult>,
     darkMode: Boolean,
+    fontScale: Float = 1f,
+    beforeCapture: () -> Unit = {},
     body: @Composable () -> Unit,
 ) {
     val (width, height, dpi) = extractSpecs(deviceSpec)
 
     // Set qualifiers from specs
     RuntimeEnvironment.setQualifiers("+w${width}dp-h${height}dp-${dpi}dpi")
+    // Dialogs and sheets can open their own windows and read the Android configuration.
+    RuntimeEnvironment.setFontScale(fontScale)
 
     this.activity.setContent {
         CompositionLocalProvider(
@@ -139,6 +147,7 @@ internal fun <A : ComponentActivity> AndroidComposeTestRule<ActivityScenarioRule
             }
         }
     }
+    beforeCapture()
     // A bottom sheet or a dialog is a window of its own, with a root of its
     // own: each is checked, and the screen is captured with all of them.
     val roots = onAllNodes(isRoot())
@@ -172,20 +181,22 @@ internal fun <A : ComponentActivity> AndroidComposeTestRule<ActivityScenarioRule
             )
     }
 
-    // Rethrow the Accessibility exception once screenshots have passed
     if (accessibilityException != null) {
-        accessibilityException.results.forEachIndexed { index, check ->
-            val viewImage = check.viewImage
-            if (viewImage is BitmapImage) {
-                val failure = File("build/outputs/roborazzi/${file.nameWithoutExtension}_$index.png")
-                println("Writing check.viewImage to $failure")
-                FileOutputStream(failure).use {
-                    viewImage.bitmap.compress(PNG, 100, it)
-                }
+        saveAccessibilityFailureImages(file, accessibilityException)
+        throw accessibilityException
+    }
+}
+
+private fun saveAccessibilityFailureImages(file: File, failure: AccessibilityViewCheckException) {
+    failure.results.forEachIndexed { index, check ->
+        val viewImage = check.viewImage
+        if (viewImage is BitmapImage) {
+            val output = File("build/outputs/roborazzi/${file.nameWithoutExtension}_$index.png")
+            println("Writing check.viewImage to $output")
+            FileOutputStream(output).use {
+                viewImage.bitmap.compress(PNG, 100, it)
             }
         }
-
-        throw accessibilityException
     }
 }
 

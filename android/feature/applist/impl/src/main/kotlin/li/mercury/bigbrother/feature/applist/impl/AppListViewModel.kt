@@ -17,6 +17,7 @@
 package li.mercury.bigbrother.feature.applist.impl
 
 import android.os.SystemClock
+import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -53,6 +54,7 @@ import li.mercury.bigbrother.core.ui.UserSettingsWriter
 import timber.log.Timber
 import javax.inject.Inject
 
+@Immutable
 data class AppListUiState(
     val range: TimeRange = TimeRange.DAY,
     /** Null until the first load finishes. */

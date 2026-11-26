@@ -17,6 +17,7 @@
 package li.mercury.bigbrother.feature.appdetail.impl
 
 import li.mercury.bigbrother.core.model.SensorSession
+import java.text.NumberFormat
 import java.util.Locale
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -75,11 +76,13 @@ class SensorSessionsTest {
 
     @Test
     fun givenRates_whenFormatted_thenWholeFromTenHertz() {
-        assertEquals("50", formatRate(50.0, Locale.US))
-        assertEquals("15", formatRate(1e9 / 66_667_000, Locale.US))
-        assertEquals("5", formatRate(5.0, Locale.US))
-        assertEquals("0.5", formatRate(0.5, Locale.US))
-        assertEquals("0,5", formatRate(0.5, Locale.GERMANY))
+        val us = NumberFormat.getNumberInstance(Locale.US)
+        val german = NumberFormat.getNumberInstance(Locale.GERMANY)
+        assertEquals("50", formatRate(50.0, us))
+        assertEquals("15", formatRate(1e9 / 66_667_000, us))
+        assertEquals("5", formatRate(5.0, us))
+        assertEquals("0.5", formatRate(0.5, us))
+        assertEquals("0,5", formatRate(0.5, german))
     }
 
     private fun at(hour: Int, minute: Int, second: Int): Long = hour * 3600L + minute * 60L + second

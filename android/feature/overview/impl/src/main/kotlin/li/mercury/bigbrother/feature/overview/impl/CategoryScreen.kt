@@ -18,10 +18,7 @@ package li.mercury.bigbrother.feature.overview.impl
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -39,6 +36,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.pluralStringResource
@@ -129,35 +127,36 @@ private fun AppsByCategory(
     onOpenApp: (AppSummary, TimeRange) -> Unit,
 ) {
     // For files, the apps that read some are told apart from those that only looked.
-    val groups = if (state.category == DataCategory.FILES) {
-        val (read, looked) = apps.partition { it.readFiles }
-        listOf(R.plurals.category_group_read_files to read, R.plurals.category_group_looked_only to looked)
-    } else {
-        listOf(null to apps)
-    }.filter { (_, members) -> members.isNotEmpty() }
-    val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val groups = remember(apps, state.category) {
+        if (state.category == DataCategory.FILES) {
+            val (read, looked) = apps.partition { it.readFiles }
+            listOf(R.plurals.category_group_read_files to read, R.plurals.category_group_looked_only to looked)
+        } else {
+            listOf(null to apps)
+        }.filter { (_, members) -> members.isNotEmpty() }
+    }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(
             start = 16.dp,
             end = 16.dp,
             top = padding.calculateTopPadding(),
-            bottom = 24.dp + bottom,
+            bottom = 24.dp + padding.calculateBottomPadding(),
         ),
         verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
     ) {
         if (apps.isEmpty()) {
-            item(key = "empty") {
+            item(key = "empty", contentType = "empty") {
                 Message(stringResource(UiR.string.empty_title), "", Modifier.animatedRow(this, MaterialTheme.motionScheme).fillParentMaxHeight(0.7f))
             }
         }
         for ((title, members) in groups) {
             if (title != null) {
-                item(key = "header:$title") {
+                item(key = "header:$title", contentType = "section") {
                     SectionHeader(pluralStringResource(title, members.size, members.size), Modifier.animatedRow(this, MaterialTheme.motionScheme))
                 }
             }
-            itemsIndexed(members, key = { _, app -> app.uid }) { index, app ->
+            itemsIndexed(members, key = { _, app -> app.uid }, contentType = { _, _ -> "app" }) { index, app ->
                 AppListItem(
                     app = app,
                     info = state.appInfo[app.packageName],

@@ -16,6 +16,7 @@
 
 package li.mercury.bigbrother.feature.settings.impl
 
+import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -35,6 +36,7 @@ import li.mercury.bigbrother.core.data.repository.UserDataRepository
 import li.mercury.bigbrother.core.data.toLoadFailure
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.RecorderStatus
+import li.mercury.bigbrother.core.model.ThemeMode
 import li.mercury.bigbrother.core.model.UserData
 import li.mercury.bigbrother.core.ui.UserSettingsWriter
 import timber.log.Timber
@@ -60,6 +62,7 @@ sealed interface ModuleRemoval {
     data class Failed(val failure: LoadFailure) : ModuleRemoval
 }
 
+@Immutable
 data class SettingsUiState(
     val userData: UserData = UserData(),
     /** Null until known, or when it can't be read. */
@@ -182,6 +185,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setUseDynamicColor(use: Boolean) = settingsWriter.save(UserSettingsWriter.Setting.USE_DYNAMIC_COLOR) {
         userDataRepository.setUseDynamicColor(use)
+    }
+
+    fun setThemeMode(mode: ThemeMode) = settingsWriter.save(UserSettingsWriter.Setting.THEME_MODE) {
+        userDataRepository.setThemeMode(mode)
     }
 
     fun onMessageShown(failure: UserSettingsWriter.Failure, retry: Boolean) = settingsWriter.resolve(failure, retry)

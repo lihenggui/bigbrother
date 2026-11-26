@@ -18,16 +18,26 @@ package li.mercury.bigbrother.feature.settings.impl
 
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import li.mercury.bigbrother.core.data.repository.ModuleInstallation
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.RecorderStatus
+import li.mercury.bigbrother.core.model.ThemeMode
 import li.mercury.bigbrother.core.model.UserData
 import li.mercury.bigbrother.core.screenshottesting.DefaultTestDevices
 import li.mercury.bigbrother.core.screenshottesting.assertSamplesCover
 import li.mercury.bigbrother.core.screenshottesting.captureForDevice
 import li.mercury.bigbrother.core.screenshottesting.captureMultiDevice
 import li.mercury.bigbrother.core.screenshottesting.screenshotName
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -46,6 +56,33 @@ class SettingsScreenScreenshotTests {
     @Test
     fun givenRecording_whenShownOnEachDevice_thenMatchesGolden() {
         composeTestRule.captureMultiDevice("Settings") { Settings(SettingsUiState(status = RECORDING)) }
+    }
+
+    @Test
+    fun givenDisplaySettings_whenFontScaleIsDoubled_thenMatchesGolden() {
+        composeTestRule.captureForDevice("phone_large_text", DefaultTestDevices.PHONE.spec, "SettingsDisplay", fontScale = 2f, beforeCapture = {
+            val theme = composeTestRule.activity.getString(R.string.theme)
+            composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasText(theme))
+        }) {
+            Settings(SettingsUiState(status = RECORDING))
+        }
+    }
+
+    @Test
+    fun givenSystemTheme_whenPickerOpensWithLargeText_thenDarkCanBeSelected() {
+        var selected: ThemeMode? = null
+        val inDialog = hasAnyAncestor(isDialog())
+        composeTestRule.captureForDevice("phone_large_text", DefaultTestDevices.PHONE.spec, "SettingsTheme", fontScale = 2f, beforeCapture = {
+            val activity = composeTestRule.activity
+            val theme = activity.getString(R.string.theme)
+            composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasText(theme))
+            composeTestRule.onNodeWithText(theme).performClick()
+            composeTestRule.onNode(hasText(activity.getString(R.string.theme_system)) and inDialog).assertIsSelected()
+        }) {
+            Settings(SettingsUiState(status = RECORDING), onThemeMode = { selected = it })
+        }
+        composeTestRule.onNode(hasText(composeTestRule.activity.getString(R.string.theme_dark)) and inDialog).performClick()
+        composeTestRule.runOnIdle { assertEquals(ThemeMode.DARK, selected) }
     }
 
     @Test
@@ -166,13 +203,14 @@ class SettingsScreenScreenshotTests {
     }
 
     @Composable
-    private fun Settings(state: SettingsUiState, confirmingRemoval: Boolean = false) {
+    private fun Settings(state: SettingsUiState, confirmingRemoval: Boolean = false, onThemeMode: (ThemeMode) -> Unit = {}) {
         SettingsScreen(
             state = state,
             appVersion = APP_VERSION,
             onBack = {},
             onShowSystemApps = {},
             onUseDynamicColor = {},
+            onThemeMode = onThemeMode,
             onExportLogs = {},
             onDismissLogExport = {},
             onRemoveModule = {},

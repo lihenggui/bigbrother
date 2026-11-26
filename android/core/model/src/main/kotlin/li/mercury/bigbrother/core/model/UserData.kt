@@ -28,4 +28,5 @@ data class UserData(
     val showSystemApps: Boolean = false,
     /** Whether colors follow the wallpaper rather than the app's own scheme. */
     val useDynamicColor: Boolean = true,
+    val themeMode: ThemeMode = ThemeMode.SYSTEM,
 )

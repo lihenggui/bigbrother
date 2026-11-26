@@ -41,6 +41,7 @@ class UserSettingsWriter(
         TIME_RANGE,
         SHOW_SYSTEM_APPS,
         USE_DYNAMIC_COLOR,
+        THEME_MODE,
     }
 
     private val mutex = Mutex()
