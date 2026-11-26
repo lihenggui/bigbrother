@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="open_jail">App isolieren oder verwalten</string>
+    <string name="isolate_app_title">%1$s isolieren?</string>
+    <string name="isolate_app_summary">Die App wird geschlossen und übernimmt die Gefängniseinstellungen. Die Beschränkungen lassen sich anschließend anpassen.</string>
+    <string name="isolate_app">Isolieren</string>
+    <string name="isolating_app">App wird isoliert…</string>
+    <string name="jail_action_failed">Gefängniseinstellungen konnten nicht geöffnet werden</string>
+
+    <string name="action_read">Gelesen</string>
+    <string name="action_write">Geändert</string>
+    <string name="action_read_write">Gelesen und geändert</string>
+    <string name="action_list">Ordner aufgelistet</string>
+    <string name="action_probe">Geprüft</string>
+    <string name="action_watch">Überwacht</string>
+    <string name="action_read_provider">Über Anbieter gelesen</string>
+    <string name="action_write_provider">Über Anbieter geändert</string>
+    <string name="action_query">Abgefragt</string>
+    <string name="action_connect">Verbunden</string>
+    <string name="action_exec">Ausgeführt</string>
+    <string name="action_used">Verwendet</string>
+    <string name="action_call">Aufgerufen</string>
+    <string name="action_clipboard_write">Geschrieben</string>
+    <string name="search_paths">Pfade suchen</string>
+    <plurals name="access_query">
+        <item quantity="one">Einmal abgefragt, %2$d Einträge</item>
+        <item quantity="other">%1$d Mal abgefragt, bis zu %2$d Einträge</item>
+    </plurals>
+
+    <string name="internal_storage">Interner Speicher</string>
+    <string name="internal_storage_user">Interner Speicher (Benutzer %d)</string>
+
+    <string name="collection_images">Fotos</string>
+    <string name="collection_videos">Videos</string>
+    <string name="collection_audio">Musik und Audio</string>
+    <string name="collection_downloads">Downloads</string>
+    <string name="collection_files">Alle Medien und Dateien</string>
+    <string name="collection_documents">Über die Dokumentenauswahl zugewiesene Ordner</string>
+
+    <string name="results_truncated">Es werden nur die aktuellsten Einträge angezeigt.</string>
+
+    <string name="access_allowed">%1$s %2$d×</string>
+    <string name="access_blocked">%1$s %2$d×, abgelehnt</string>
+    <string name="access_partly_blocked">%1$s %2$d× (%3$d× abgelehnt)</string>
+    <string name="access_separator">"; "</string>
+    <plurals name="total_allowed">
+        <item quantity="one">%d-mal gelesen</item>
+        <item quantity="other">%d-mal gelesen</item>
+    </plurals>
+    <plurals name="total_requested">
+        <item quantity="one">%d-mal aufgerufen</item>
+        <item quantity="other">%d-mal aufgerufen</item>
+    </plurals>
+    <plurals name="total_contacted">
+        <item quantity="one">%d Mal verbunden</item>
+        <item quantity="other">%d Mal verbunden</item>
+    </plurals>
+    <plurals name="total_ran">
+        <item quantity="one">%d-mal ausgeführt</item>
+        <item quantity="other">%d-mal ausgeführt</item>
+    </plurals>
+    <plurals name="total_not_run">
+        <item quantity="one">Die Ausführung ist %d Mal fehlgeschlagen</item>
+        <item quantity="other">Die Ausführung schlug %d Mal fehl</item>
+    </plurals>
+    <plurals name="total_blocked">
+        <item quantity="one">%d Mal abgelehnt</item>
+        <item quantity="other">%d Mal abgelehnt</item>
+    </plurals>
+    <string name="removable_storage">Speicher %s</string>
+
+    <string name="filter_read">Gelesen</string>
+    <string name="filter_all">Alle Zugriffe</string>
+    <string name="no_files_read">Keine Dateien gelesen</string>
+
+    <string name="storage_root">Speicher</string>
+    <string name="group_media">Medienbibliothek</string>
+
+    <string name="read_count">%d×</string>
+
+    <string name="open_file_missing">Datei nicht gefunden.</string>
+    <string name="open_file_no_viewer">Keine App kann diese Datei öffnen.</string>
+
+    <string name="open_file">Öffnen</string>
+    <string name="show_all_details">Alle anzeigen (%d)</string>
+    <plurals name="apps_asked">
+        <item quantity="one">%d App nachgeschlagen</item>
+        <item quantity="other">Habe %d Apps nachgeschlagen</item>
+    </plurals>
+    <plurals name="root_apps_asked">
+        <item quantity="one">Nach %d root-App gesucht</item>
+        <item quantity="other">Nach %d root-Apps gesucht</item>
+    </plurals>
+    <plurals name="absent_apps_asked">
+        <item quantity="one">Nach %d nicht installierten App gesucht</item>
+        <item quantity="other">Nach %d nicht installierten Apps gesucht</item>
+    </plurals>
+    <string name="tab_info">App-Info</string>
+    <string name="header_subtitle">%1$s · %2$s</string>
+    <string name="source_permissions">Berechtigungsnutzung</string>
+    <plurals name="total_used">
+        <item quantity="one">%d-mal verwendet</item>
+        <item quantity="other">%d-mal verwendet</item>
+    </plurals>
+    <string name="info_package">Paketname</string>
+    <string name="info_version">Version</string>
+    <string name="info_version_value">%1$s (%2$d)</string>
+    <string name="info_target_sdk">Ziel-SDK</string>
+    <string name="info_first_install">Installiert</string>
+    <string name="info_last_update">Zuletzt aktualisiert</string>
+    <string name="info_open_settings">App-Einstellungen</string>
+    <string name="info_launch">App öffnen</string>
+    <string name="info_copied">Kopiert</string>
+    <string name="source_isolated">Isolierter Prozess</string>
+
+    <string name="last_access">Letzter Zugriff: %s</string>
+    <plurals name="files_read">
+        <item quantity="one">%d Datei gelesen</item>
+        <item quantity="other">%d Dateien gelesen</item>
+    </plurals>
+    <plurals name="paths_looked_for">
+        <item quantity="one">%d weiterer Pfad geprüft</item>
+        <item quantity="other">%d weitere Pfade geprüft</item>
+    </plurals>
+    <string name="browse_files">Alle Dateizugriffe</string>
+    <string name="media_collection">Medienbibliothek · %s</string>
+    <plurals name="opened_via_media">
+        <item quantity="one">%d Mal geöffnet</item>
+        <item quantity="other">%d Mal geöffnet</item>
+    </plurals>
+    <string name="files_title">Dateien</string>
+    <string name="close">Schließen</string>
+    <string name="record_details">Details</string>
+    <string name="record_history">Jeder Zugriff</string>
+    <string name="record_history_partial">Angezeigte Zeiten für die aktuellsten Aufzeichnungen dieser Art.</string>
+
+    <string name="sensor_sessions">Verwendung von Sensoren</string>
+    <string name="sensor_total">%s total</string>
+    <string name="session_span">%1$s – %2$s</string>
+    <string name="sensor_since">Seit %s</string>
+    <string name="sensor_still_on">Immer noch aktiv</string>
+    <string name="high_rate">Hohe Abtastrate</string>
+    <string name="rate_fastest">Am schnellsten</string>
+    <string name="sensor_sessions_note">Angezeigt werden die angeforderten Abtastraten. Das System liefert möglicherweise weniger Ereignisse.</string>
+    <string name="duration_seconds">%d s</string>
+    <string name="duration_minutes">%d min</string>
+    <string name="duration_hours">%d h</string>
+    <string name="duration_hours_minutes">%1$d h %2$d min</string>
+    <string name="duration_days">%d d</string>
+    <string name="duration_days_hours">%1$d d %2$d h</string>
+    <string name="expanded">Ausgeklappt</string>
+    <string name="collapsed">Eingeklappt</string>
+</resources>

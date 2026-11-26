@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="module_description">Zeichnet Dateizugriffe von Apps und Abfragen personenbezogener Daten über Android-Contentanbieter auf. Das Gefängnis bietet Einstellungen für Android ID, Werbe-IDs, App-Sichtbarkeit und erteilte Dateizugriffe.</string>
+    <string name="nav_overview">Übersicht</string>
+    <string name="nav_apps">Apps</string>
+    <string name="nav_timeline">Zeitleiste</string>
+    <string name="nav_jail">Gefängnis</string>
+
+    <string name="guide_access_title">Zugriff auf persönliche Daten</string>
+    <string name="guide_access_body">Big Brother zeichnet auf, welche Daten Apps wann lesen: Dateien, Standort, Zwischenablage und Gerätekennungen. Die Aufzeichnungen bleiben ausschließlich auf diesem Gerät.</string>
+    <string name="guide_timeline_title">Zeitleiste ansehen</string>
+    <string name="guide_timeline_body">Die Zeitleiste gruppiert Zugriffe nach Stunde und App. Öffnen Sie einen Eintrag, um Details zu sehen.</string>
+    <string name="guide_jail_title">Ausgewählte Apps isolieren</string>
+    <string name="guide_jail_body">Eine im Gefängnis isolierte App erhält eigenen Speicher, eine leere Zwischenablage und eine virtuelle Geräte-ID. Jedes Element lässt sich einzeln ändern.</string>
+    <string name="guide_skip">Überspringen</string>
+    <string name="guide_next">Weiter</string>
+    <string name="guide_back">Vorherige Seite</string>
+    <string name="guide_start">Jetzt starten</string>
+    <string name="guide_progress">Seite %1$d von %2$d</string>
+    <string name="guide_guard_description">Beispiel: Der Leibwächter überprüft vier Apps und zeichnet auf, was jede einzelne liest.</string>
+    <string name="guide_timeline_description">Beispiel für die Zeitleiste: die von Wetter, Shop, Chat und Taschenlampe gelesenen Daten.</string>
+    <string name="guide_jail_description">Beispiel: Die Wetter-App ist im Gefängnis isoliert. Sie erhält eine leere Zwischenablage, eine virtuelle Geräte-ID und isolierten Speicher.</string>
+    <string name="guide_weather">Wetter</string>
+    <string name="guide_shop">Shop</string>
+    <string name="guide_chat">Chat</string>
+    <string name="guide_flashlight">Taschenlampe</string>
+    <string name="guide_location">Standort</string>
+    <string name="guide_clipboard">Zwischenablage</string>
+    <string name="guide_files">Dateien</string>
+    <string name="guide_device_id">Geräte-ID</string>
+    <string name="guide_isolated_value">%1$s: %2$s</string>
+</resources>
