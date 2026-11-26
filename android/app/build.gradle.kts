@@ -54,6 +54,9 @@ android {
     }
 
     buildTypes {
+        debug {
+            isPseudoLocalesEnabled = true
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -95,6 +98,13 @@ android {
     }
 
     testOptions.unitTests.isIncludeAndroidResources = true
+}
+
+androidComponents {
+    // The locale filter would otherwise drop the pseudo-locales from debug builds.
+    onVariants(selector().withBuildType("debug")) { variant ->
+        variant.androidResources.localeFilters.addAll("en-rXA", "ar-rXB")
+    }
 }
 
 dependencies {
