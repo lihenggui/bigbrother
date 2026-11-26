@@ -16,6 +16,7 @@
 
 package li.mercury.bigbrother
 
+import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -29,6 +30,7 @@ import kotlinx.coroutines.launch
 import li.mercury.bigbrother.core.data.repository.AccessRepository
 import li.mercury.bigbrother.core.data.repository.FirstLaunchRepository
 import li.mercury.bigbrother.core.data.repository.UserDataRepository
+import li.mercury.bigbrother.core.model.ThemeMode
 import javax.inject.Inject
 
 @HiltViewModel
@@ -49,6 +51,7 @@ internal class MainActivityViewModel @Inject constructor(
     ) { settings, guideVisible, recorder ->
         MainActivityUiState.Ready(
             useDynamicColor = settings.useDynamicColor,
+            themeMode = settings.themeMode,
             showGuide = guideVisible,
             recordingStopped = recorder?.recording == false,
         )
@@ -66,8 +69,14 @@ internal class MainActivityViewModel @Inject constructor(
     }
 }
 
+@Immutable
 internal sealed interface MainActivityUiState {
     data object Loading : MainActivityUiState
 
-    data class Ready(val useDynamicColor: Boolean, val showGuide: Boolean, val recordingStopped: Boolean) : MainActivityUiState
+    data class Ready(
+        val useDynamicColor: Boolean,
+        val themeMode: ThemeMode,
+        val showGuide: Boolean,
+        val recordingStopped: Boolean,
+    ) : MainActivityUiState
 }

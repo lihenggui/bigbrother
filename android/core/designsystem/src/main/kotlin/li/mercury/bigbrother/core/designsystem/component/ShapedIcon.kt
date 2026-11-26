@@ -48,6 +48,7 @@ fun ShapedIcon(
     containerColor: Color = MaterialTheme.colorScheme.secondaryContainer,
     contentColor: Color = MaterialTheme.colorScheme.onSecondaryContainer,
 ) {
+    // Material3 remembers this shape for the polygon and starting angle.
     val shape = MaterialShapes.Cookie9Sided.toShape()
     Box(
         modifier = modifier

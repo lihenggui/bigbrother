@@ -23,6 +23,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.datastore.UserPreferencesDataSource
+import li.mercury.bigbrother.core.model.ThemeMode
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.model.UserData
 import org.junit.Rule
@@ -39,7 +40,7 @@ class DataStoreUserDataRepositoryTest {
     fun givenEmptyStore_whenRead_thenReturnsDefaults() = runTest {
         val repository = repository(File(directory.root, "settings.preferences_pb"), backgroundScope)
 
-        assertEquals(UserData(), repository.userData.first())
+        assertEquals(UserData(themeMode = ThemeMode.SYSTEM), repository.userData.first())
     }
 
     @Test
@@ -50,7 +51,8 @@ class DataStoreUserDataRepositoryTest {
         repository.setTimeRange(TimeRange.ALL)
         repository.setShowSystemApps(true)
         repository.setUseDynamicColor(false)
-        val saved = UserData(timeRange = TimeRange.ALL, showSystemApps = true, useDynamicColor = false)
+        repository.setThemeMode(ThemeMode.DARK)
+        val saved = UserData(timeRange = TimeRange.ALL, showSystemApps = true, useDynamicColor = false, themeMode = ThemeMode.DARK)
         assertEquals(saved, repository.userData.first())
         firstStore.cancelAndJoin()
 
@@ -65,6 +67,18 @@ class DataStoreUserDataRepositoryTest {
         val repository = repository(file, backgroundScope)
 
         assertEquals(UserData(), repository.userData.first())
+    }
+
+    @Test
+    fun givenLightTheme_whenReset_thenFollowsSystemAndKeepsOtherSettings() = runTest {
+        val repository = repository(File(directory.root, "settings.preferences_pb"), backgroundScope)
+        repository.setUseDynamicColor(false)
+        repository.setThemeMode(ThemeMode.LIGHT)
+        assertEquals(ThemeMode.LIGHT, repository.userData.first().themeMode)
+
+        repository.setThemeMode(ThemeMode.SYSTEM)
+
+        assertEquals(UserData(useDynamicColor = false, themeMode = ThemeMode.SYSTEM), repository.userData.first())
     }
 
     private fun repository(file: File, scope: CoroutineScope): UserDataRepository = DataStoreUserDataRepository(

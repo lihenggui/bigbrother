@@ -17,6 +17,7 @@
 package li.mercury.bigbrother.feature.timeline.impl
 
 import android.os.SystemClock
+import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -48,6 +49,7 @@ import li.mercury.bigbrother.core.model.TimelineEntry
 import java.time.ZoneId
 import javax.inject.Inject
 
+@Immutable
 data class TimelineUiState(
     /** Visible entries loaded so far, most recent first; null until the first page is in. */
     val entries: List<TimelineEntry>? = null,

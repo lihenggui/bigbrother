@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -152,7 +153,7 @@ internal fun GuideFooter(position: () -> Float, onBack: () -> Unit, onNext: () -
     val showBack by remember(position) { derivedStateOf { position() > 0.01f } }
     val fill = animateFloatAsState(if (atEnd) 1f else 0f, MaterialTheme.motionScheme.fastSpatialSpec(), label = "fill")
     val bounds = remember { Bounds() }
-    Box(modifier.fillMaxWidth().height(ButtonHeight)) {
+    Box(modifier.fillMaxWidth().heightIn(min = ButtonHeight), contentAlignment = Alignment.CenterStart) {
         if (showBack) BackButton(position, onBack)
         Button(
             onClick = { if (position() > last - 0.5f) onStart(bounds.rect) else onNext() },
@@ -210,8 +211,10 @@ private fun NextLabel(atEnd: Boolean) {
 private fun Modifier.fillRow(fill: State<Float>, reserved: Dp) = layout { measurable, constraints ->
     val height = ButtonHeight.roundToPx()
     val natural = measurable.maxIntrinsicWidth(height)
-    val full = (constraints.maxWidth - reserved.roundToPx()).coerceAtLeast(natural)
-    val width = lerpFloat(natural.toFloat(), full.toFloat(), fill.value).roundToInt().coerceIn(0, constraints.maxWidth)
-    val placeable = measurable.measure(Constraints.fixed(width, height))
+    val available = (constraints.maxWidth - reserved.roundToPx()).coerceAtLeast(0)
+    val width = lerpFloat(natural.coerceAtMost(available).toFloat(), available.toFloat(), fill.value).roundToInt()
+    val placeable = measurable.measure(
+        Constraints(minWidth = width, maxWidth = width, minHeight = height.coerceAtMost(constraints.maxHeight), maxHeight = constraints.maxHeight),
+    )
     layout(placeable.width, placeable.height) { placeable.place(0, 0) }
 }

@@ -29,6 +29,7 @@ import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.ModuleInstallation
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.RecorderStatus
+import li.mercury.bigbrother.core.model.ThemeMode
 import li.mercury.bigbrother.core.model.UserData
 import li.mercury.bigbrother.core.testing.MainDispatcherRule
 import li.mercury.bigbrother.core.testing.repository.TestAccessRepository
@@ -108,6 +109,26 @@ class SettingsViewModelTest {
         viewModel.dismissLogExport()
         runCurrent()
         assertEquals(LogExport.Idle, viewModel.uiState.value.logExport)
+    }
+
+    @Test
+    fun givenThemeWriteFails_whenRetried_thenThemeUpdates() = runTest {
+        val settings = TestUserDataRepository()
+        val viewModel = SettingsViewModel(TestAccessRepository(), TestModuleRepository(), settings, TestDiagnosticsRepository())
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
+        settings.writeFailure = IOException("Storage unavailable")
+
+        viewModel.setThemeMode(ThemeMode.LIGHT)
+        advanceUntilIdle()
+        assertEquals(ThemeMode.SYSTEM, viewModel.uiState.value.userData.themeMode)
+
+        val failure = assertNotNull(viewModel.uiState.value.message)
+        settings.writeFailure = null
+        viewModel.onMessageShown(failure, retry = true)
+        advanceUntilIdle()
+
+        assertEquals(ThemeMode.LIGHT, viewModel.uiState.value.userData.themeMode)
+        assertNull(viewModel.uiState.value.message)
     }
 
     @Test

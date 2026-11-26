@@ -16,6 +16,7 @@
 
 package li.mercury.bigbrother.feature.search.impl
 
+import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -49,6 +50,7 @@ import javax.inject.Inject
 /** A kind of data whose name matched, and how many apps accessed it. */
 internal data class DataMatch(val category: DataCategory, val topic: String?, val apps: Int)
 
+@Immutable
 internal data class SearchUiState(
     val query: String = "",
     val apps: List<AppSummary> = emptyList(),

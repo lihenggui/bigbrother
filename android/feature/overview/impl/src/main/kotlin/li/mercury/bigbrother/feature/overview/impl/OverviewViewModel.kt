@@ -17,6 +17,7 @@
 package li.mercury.bigbrother.feature.overview.impl
 
 import android.os.SystemClock
+import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -62,6 +63,7 @@ sealed interface ModuleSetup {
     data class Failed(val failure: LoadFailure) : ModuleSetup
 }
 
+@Immutable
 data class OverviewUiState(
     val range: TimeRange = TimeRange.DAY,
     /** The overview of the apps shown; null until the first load finishes. */

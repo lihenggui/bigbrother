@@ -21,11 +21,8 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -97,7 +94,7 @@ fun JailAppScreen(
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    LifecycleResumeEffect(Unit) {
+    LifecycleResumeEffect(viewModel) {
         viewModel.refresh()
         val watch = viewModel.watchAppOps()
         onPauseOrDispose { watch.cancel() }
@@ -265,11 +262,11 @@ private fun JailAppItems(
             start = 16.dp,
             end = 16.dp,
             top = padding.calculateTopPadding(),
-            bottom = 24.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(),
+            bottom = 24.dp + padding.calculateBottomPadding(),
         ),
         verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
     ) {
-        item(key = "header") {
+        item(key = "header", contentType = "actions") {
             Actions(onRelease = onRelease, onOpenRecords = { onOpenRecords(app.uid, app.packageName) }, modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme))
         }
         jailAppItemSection(state, app, expanded, showAll, onExpand, onToggleShowAll, onSetOn, onChoose, onReset)
@@ -288,7 +285,7 @@ private fun JailAppItems(
                 onOpenActivity = { onOpenNetwork(app.uid, app.packageName) },
             ),
         )
-        item(key = "restart") { Note(stringResource(R.string.jail_restart_note), Modifier.animatedRow(this, MaterialTheme.motionScheme).padding(top = 8.dp)) }
+        item(key = "restart", contentType = "note") { Note(stringResource(R.string.jail_restart_note), Modifier.animatedRow(this, MaterialTheme.motionScheme).padding(top = 8.dp)) }
     }
 }
 
@@ -306,7 +303,7 @@ private fun LazyListScope.jailAppItemSection(
     // Not knowing what the app asks for, every item is listed as concerning it.
     val concerned = state.requested?.let { requested -> ITEM_ORDER.filter { it.concerns(requested) } } ?: ITEM_ORDER
     val others = ITEM_ORDER - concerned.toSet()
-    item(key = "items") {
+    item(key = "items", contentType = "section") {
         Row(Modifier.animatedRow(this, MaterialTheme.motionScheme)) {
             SectionHeader(
                 stringResource(R.string.jail_section_items),
@@ -321,10 +318,10 @@ private fun LazyListScope.jailAppItemSection(
             }
         }
     }
-    item(key = "summary") { Note(stringResource(R.string.jail_items_summary), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+    item(key = "summary", contentType = "note") { Note(stringResource(R.string.jail_items_summary), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
     jailItemRows(concerned, state, app, expanded, onExpand, onSetOn, onChoose)
     if (others.isNotEmpty()) {
-        item(key = "more") {
+        item(key = "more", contentType = "show-all") {
             ShowAllToggle(showAll, others.size, onToggleShowAll, Modifier.animatedRow(this, MaterialTheme.motionScheme))
         }
         if (showAll) jailItemRows(others, state, app, expanded, onExpand, onSetOn, onChoose)
@@ -341,7 +338,7 @@ private fun LazyListScope.jailItemRows(
     onChoose: (SandboxItem, SandboxMode?) -> Unit,
 ) {
     items.forEachIndexed { index, item ->
-        item(key = item.id) {
+        item(key = item.id, contentType = "jail-item") {
             ItemRow(
                 item = item,
                 mode = app.modeOf(item),

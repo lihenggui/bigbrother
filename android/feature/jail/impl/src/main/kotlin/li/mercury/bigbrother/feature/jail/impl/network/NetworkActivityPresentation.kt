@@ -16,6 +16,7 @@
 
 package li.mercury.bigbrother.feature.jail.impl.network
 
+import androidx.compose.runtime.Immutable
 import kotlinx.coroutines.flow.map
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.ConnectionCounts
@@ -82,6 +83,7 @@ data class ActivityTotals(
     val received: Long = 0,
 )
 
+@Immutable
 data class NetworkActivityUiState(
     val packageName: String = "",
     val info: AppInfo? = null,

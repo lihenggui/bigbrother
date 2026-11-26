@@ -55,6 +55,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
@@ -127,13 +128,13 @@ internal fun DestinationScreen(
             verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
         ) {
             val destination = state.destination
-            item(key = "header") { Header(state.target, destination, onClose, Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+            item(key = "header", contentType = "destination-header") { Header(state.target, destination, onClose, Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
             when {
-                state.failure != null -> item(key = "failure") {
+                state.failure != null -> item(key = "failure", contentType = "failure") {
                     LoadFailureMessage(state.failure, onRetry, Modifier.animatedRow(this, MaterialTheme.motionScheme).fillParentMaxHeight(0.5f))
                 }
 
-                destination == null -> item(key = "loading") {
+                destination == null -> item(key = "loading", contentType = "loading") {
                     BigBrotherLoadingIndicator(Modifier.animatedRow(this, MaterialTheme.motionScheme).fillMaxWidth().padding(vertical = 48.dp))
                 }
 
@@ -150,13 +151,13 @@ private fun LazyListScope.details(
     toggle: (NetworkTarget, Boolean) -> Unit,
 ) {
     val target = destination.target
-    item(key = "action") { MainAction(destination, toggle, Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+    item(key = "action", contentType = "block-action") { MainAction(destination, toggle, Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
     val limits = buildList {
         if (target is NetworkTarget.Domain && state.sharedWith.isNotEmpty()) add(state.sharedWith)
         if (target is NetworkTarget.Domain && state.ownResolver) add(null)
     }
     if (limits.isNotEmpty()) {
-        item(key = "limits") {
+        item(key = "limits", contentType = "limits") {
             Column(Modifier.animatedRow(this, MaterialTheme.motionScheme).padding(horizontal = 8.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (limit in limits) {
                     Limit(
@@ -170,7 +171,7 @@ private fun LazyListScope.details(
             }
         }
     }
-    item(key = "stats") {
+    item(key = "stats", contentType = "totals") {
         // The hourly detail loads after the destination: it fades in and the rows below make room.
         FadeThrough(state.detail, kind = { it != null }, modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme)) { detail -> detail?.let { Stats(destination, it) } }
     }
@@ -182,8 +183,8 @@ private fun LazyListScope.details(
         hosts.size > 1 || only?.name != site || (only?.rule != null && destination.rule == null)
     }.orEmpty()
     if (target is NetworkTarget.Domain && hosts.isNotEmpty()) {
-        item(key = "hosts") { SectionHeader(stringResource(R.string.jail_net_hosts_header), Modifier.animatedRow(this, MaterialTheme.motionScheme), trailing = hosts.size.toString()) }
-        itemsIndexed(hosts, key = { _, host -> "host:${host.name}" }) { index, host ->
+        item(key = "hosts", contentType = "section") { SectionHeader(stringResource(R.string.jail_net_hosts_header), Modifier.animatedRow(this, MaterialTheme.motionScheme), trailing = hosts.size.toString()) }
+        itemsIndexed(hosts, key = { _, host -> "host:${host.name}" }, contentType = { _, _ -> "host" }) { index, host ->
             DestinationRow(
                 row = DestinationRow(
                     key = host.name,
@@ -206,16 +207,16 @@ private fun LazyListScope.details(
         }
     }
     if (destination.ports.isNotEmpty()) {
-        item(key = "ports") { SectionHeader(stringResource(R.string.jail_net_ports_header), Modifier.animatedRow(this, MaterialTheme.motionScheme), trailing = destination.ports.size.toString()) }
-        itemsIndexed(destination.ports, key = { _, port -> "port:${port.port}" }) { index, port ->
+        item(key = "ports", contentType = "section") { SectionHeader(stringResource(R.string.jail_net_ports_header), Modifier.animatedRow(this, MaterialTheme.motionScheme), trailing = destination.ports.size.toString()) }
+        itemsIndexed(destination.ports, key = { _, port -> "port:${port.port}" }, contentType = { _, _ -> "port" }) { index, port ->
             // Ports are blocked one by one only on an address: a domain's go with its addresses.
             val portTarget = (target as? NetworkTarget.Address)?.let { port.rule ?: NetworkTarget.Address(it.ip, port.port) }
             PortRow(port, portTarget?.let { { block: Boolean -> toggle(it, block) } }, index, destination.ports.size, Modifier.animatedRow(this, MaterialTheme.motionScheme))
         }
     }
     if (destination.addresses.isNotEmpty()) {
-        item(key = "addresses") { SectionHeader(stringResource(R.string.jail_net_addresses_header), Modifier.animatedRow(this, MaterialTheme.motionScheme), trailing = destination.addressCount.toString()) }
-        item(key = "address_list") { Addresses(destination.addresses, destination.addressCount, Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+        item(key = "addresses", contentType = "section") { SectionHeader(stringResource(R.string.jail_net_addresses_header), Modifier.animatedRow(this, MaterialTheme.motionScheme), trailing = destination.addressCount.toString()) }
+        item(key = "address_list", contentType = "address-list") { Addresses(destination.addresses, destination.addressCount, Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
     }
 }
 
@@ -293,7 +294,8 @@ private fun Limit(text: String) {
 /** Data both ways and connections, then the hours it was reached in. */
 @Composable
 private fun Stats(destination: DestinationActivity, detail: DestinationDetail) {
-    val numbers = NumberFormat.getIntegerInstance()
+    val locale = LocalLocale.current.platformLocale
+    val numbers = remember(locale) { NumberFormat.getIntegerInstance(locale) }
     Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
             destination.sent?.let { Stat(formatBytes(it), stringResource(R.string.jail_net_sent), Modifier.weight(1f)) }

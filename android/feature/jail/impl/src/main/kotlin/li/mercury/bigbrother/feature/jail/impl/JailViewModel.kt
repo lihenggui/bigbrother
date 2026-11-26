@@ -16,6 +16,7 @@
 
 package li.mercury.bigbrother.feature.jail.impl
 
+import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -53,6 +54,7 @@ data class IsolatedApp(val app: SandboxedApp, val info: AppInfo?, val otherUser:
     val name: String get() = info.labelOrPackageName(app.packageName)
 }
 
+@Immutable
 data class JailUiState(
     /** The apps in the sandbox, by name; null until read. */
     val apps: List<IsolatedApp>? = null,

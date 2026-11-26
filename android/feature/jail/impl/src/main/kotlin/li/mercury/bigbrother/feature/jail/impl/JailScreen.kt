@@ -22,12 +22,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -188,7 +186,7 @@ internal fun JailScreen(
                 when {
                     shown.failure != null -> LoadFailureMessage(shown.failure, onRetry = onRefresh)
                     apps == null -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
-                    else -> JailList(shown, apps, listState, selectedUid, settingsSelected, onOpenApp, onOpenSettings, onAdd)
+                    else -> JailList(shown, apps, padding, listState, selectedUid, settingsSelected, onOpenApp, onOpenSettings, onAdd)
                 }
             }
         }
@@ -199,6 +197,7 @@ internal fun JailScreen(
 private fun JailList(
     state: JailUiState,
     apps: List<IsolatedApp>,
+    padding: PaddingValues,
     listState: androidx.compose.foundation.lazy.LazyListState,
     selectedUid: Int?,
     settingsSelected: Boolean,
@@ -207,6 +206,9 @@ private fun JailList(
     onAdd: () -> Unit,
 ) {
     val beside = LocalShowsDetailBesideList.current
+    val effectiveGlobal = remember(state.global) {
+        SandboxItem.entries.associateWith { state.global[it] ?: it.default }
+    }
     LazyColumn(
         state = listState,
         contentPadding = PaddingValues(
@@ -214,18 +216,18 @@ private fun JailList(
             end = 16.dp,
             top = 4.dp,
             // Room for the button over the end of the list.
-            bottom = 96.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(),
+            bottom = 96.dp + padding.calculateBottomPadding(),
         ),
         verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
     ) {
         sandboxWarnings(state.status)
         if (apps.isEmpty()) {
-            item(key = "empty") { EmptyJail(onAdd, Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+            item(key = "empty", contentType = "empty") { EmptyJail(onAdd, Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
         } else {
-            item(key = "isolated") {
+            item(key = "isolated", contentType = "section") {
                 SectionHeader(stringResource(R.string.jail_section_isolated), Modifier.animatedRow(this, MaterialTheme.motionScheme), trailing = apps.size.toString())
             }
-            itemsIndexed(apps, key = { _, app -> app.app.uid }) { index, app ->
+            itemsIndexed(apps, key = { _, app -> app.app.uid }, contentType = { _, _ -> "isolated-app" }) { index, app ->
                 LinkRow(
                     title = appNameWithUser(app.name, app.otherUser),
                     supporting = itemsSummary(app.app.items),
@@ -238,11 +240,11 @@ private fun JailList(
                 )
             }
         }
-        item(key = "settings") { SectionHeader(stringResource(R.string.jail_section_settings), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
-        item(key = "global") {
+        item(key = "settings", contentType = "section") { SectionHeader(stringResource(R.string.jail_section_settings), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+        item(key = "global", contentType = "link") {
             LinkRow(
                 title = stringResource(R.string.jail_global_settings),
-                supporting = itemsSummary(SandboxItem.entries.associateWith { state.global[it] ?: it.default }),
+                supporting = itemsSummary(effectiveGlobal),
                 onClick = onOpenSettings,
                 index = 0,
                 count = 1,
@@ -266,7 +268,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.sandboxWarnings(statu
             SandboxHookState.DEGRADED -> R.string.jail_hook_unavailable to R.string.jail_hook_degraded
             else -> R.string.jail_hook_unavailable to R.string.jail_hook_status_unknown
         }
-        item(key = "hook") {
+        item(key = "hook", contentType = "warning") {
             SandboxWarningCard(
                 title = stringResource(title),
                 body = stringResource(body),
@@ -275,7 +277,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.sandboxWarnings(statu
         }
     }
     if (!status.gate) {
-        item(key = "gate") {
+        item(key = "gate", contentType = "warning") {
             SandboxWarningCard(
                 title = stringResource(R.string.jail_gate_missing_title),
                 body = stringResource(R.string.jail_gate_missing),
@@ -284,7 +286,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.sandboxWarnings(statu
         }
     }
     if (!status.appOps) {
-        item(key = "appops") {
+        item(key = "appops", contentType = "warning") {
             SandboxWarningCard(
                 title = stringResource(R.string.jail_appops_missing_title),
                 body = stringResource(R.string.jail_appops_missing),
@@ -334,7 +336,7 @@ private fun EmptyJail(onAdd: () -> Unit, modifier: Modifier = Modifier) {
             ) { Text(stringResource(title)) }
         }
         Spacer(Modifier.height(24.dp))
-        Button(onClick = onAdd, modifier = Modifier.height(56.dp)) {
+        Button(onClick = onAdd, modifier = Modifier.heightIn(min = 56.dp)) {
             Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(24.dp))
             Spacer(Modifier.size(8.dp))
             Text(stringResource(R.string.jail_add_apps), style = MaterialTheme.typography.titleMedium)

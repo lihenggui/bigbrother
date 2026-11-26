@@ -19,7 +19,6 @@
     <string name="section_display">显示</string>
     <string name="section_about">关于</string>
     <string name="recording_active">正在记录</string>
-    <string name="recording_stopped">记录已停止</string>
     <string name="recording_unknown">记录状态未知</string>
     <string name="retention">记录保留 30 天</string>
     <string name="coverage_title">本设备不支持</string>
@@ -36,7 +35,7 @@
     <string name="remove_module_title">移除记录功能？</string>
     <string name="remove_module_body">记录将停止，所有记录将被删除。监狱中的应用将恢复读取真实数据并重新启动。之后可在“概览”中重新启用记录。</string>
     <string name="remove_module_confirm">移除</string>
-    <string name="remove_module_cancel">取消</string>
+    <string name="cancel">取消</string>
     <string name="module_in_manager">已作为模块安装在 root 管理器中</string>
     <string name="module_in_manager_summary">如需移除记录功能，请在 root 管理器中移除模块并重启，所有记录将被删除。</string>
     <string name="module_in_manager_pending">下次重启后生效</string>
@@ -44,6 +43,10 @@
     <string name="lsposed_summary">在 LSPosed 中启用 Big Brother 后，才能记录对媒体库、通讯录、短信和日历的访问。</string>
     <string name="setting_system_apps">显示系统应用</string>
     <string name="setting_system_apps_summary">默认隐藏，包括无法归属到应用的隔离进程：读取数据属于系统组件的正常行为。</string>
+    <string name="theme">主题</string>
+    <string name="theme_system">跟随系统</string>
+    <string name="theme_light">浅色</string>
+    <string name="theme_dark">深色</string>
     <string name="dynamic_color">使用壁纸颜色</string>
     <string name="dynamic_color_summary">关闭后使用应用自带的配色</string>
     <string name="version">版本</string>

@@ -67,6 +67,13 @@ class JailScreenScreenshotTests {
     val composeTestRule = createAndroidComposeRule<ComponentActivity>()
 
     @Test
+    fun givenEmptyJail_whenFontScaleIsDoubled_thenMatchesGolden() {
+        composeTestRule.captureForDevice("phone_large_text", DefaultTestDevices.PHONE.spec, "JailEmpty", fontScale = 2f) {
+            Jail(emptyList())
+        }
+    }
+
+    @Test
     fun givenIsolatedApps_whenShownOnEachDevice_thenMatchesGolden() {
         composeTestRule.captureMultiDevice("Jail") { Jail(isolatedApps()) }
     }

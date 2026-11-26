@@ -18,11 +18,8 @@ package li.mercury.bigbrother.feature.appdetail.impl
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -67,12 +64,15 @@ import li.mercury.bigbrother.core.ui.R as UiR
 @Composable
 private fun buildInfoItems(state: AppDetailUiState): List<Item> {
     val info = infoRows(state.app, state.packageDetails)
-    return buildList {
-        if (info.isNotEmpty()) {
-            add(Item.Header(R.string.tab_info, null))
-            info.forEachIndexed { i, (label, value) -> add(Item.Info(label, value, i, info.size)) }
+    val installed = state.packageDetails != null
+    return remember(info, installed) {
+        buildList {
+            if (info.isNotEmpty()) {
+                add(Item.Header(R.string.tab_info, null))
+                info.forEachIndexed { i, (label, value) -> add(Item.Info(label, value, i, info.size)) }
+            }
+            if (installed) add(Item.Launch)
         }
-        if (state.packageDetails != null) add(Item.Launch)
     }
 }
 
@@ -96,7 +96,6 @@ internal fun AppDetailList(
         records.indexOf(focusCategory)?.let { listState.scrollToItem(it) }
         focused = true
     }
-    val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val motion = MaterialTheme.motionScheme
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -105,23 +104,27 @@ internal fun AppDetailList(
             start = 16.dp,
             end = 16.dp,
             top = padding.calculateTopPadding(),
-            bottom = 24.dp + bottomInset,
+            bottom = 24.dp + padding.calculateBottomPadding(),
         ),
         verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
     ) {
         if (records.empty) {
-            item(key = "empty") {
+            item(key = "empty", contentType = "empty") {
                 Message(stringResource(UiR.string.empty_title), "", Modifier.animatedRow(this, motion).fillParentMaxHeight(0.7f))
             }
         }
         fun itemAt(index: Int) = records.items.getOrNull(index) ?: info[index - records.items.size]
-        items(records.items.size + info.size, key = { itemAt(it).key }) { index ->
+        items(
+            count = records.items.size + info.size,
+            key = { itemAt(it).key },
+            contentType = { itemAt(it).javaClass },
+        ) { index ->
             val item = itemAt(index)
             val modifier = Modifier.animatedRow(this, motion)
             AppDetailRow(item, openRecord, state.app.packageName, onOpenFiles, onOpenRecord, modifier)
         }
         if (state.truncated) {
-            item(key = "truncated") {
+            item(key = "truncated", contentType = "note") {
                 Text(
                     text = stringResource(R.string.results_truncated),
                     style = MaterialTheme.typography.bodySmall,

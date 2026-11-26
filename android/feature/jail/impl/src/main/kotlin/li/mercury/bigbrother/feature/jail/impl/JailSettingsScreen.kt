@@ -18,10 +18,7 @@ package li.mercury.bigbrother.feature.jail.impl
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentWidth
@@ -202,7 +199,7 @@ private fun JailSettingsList(
             start = 16.dp,
             end = 16.dp,
             top = padding.calculateTopPadding(),
-            bottom = 24.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(),
+            bottom = 24.dp + padding.calculateBottomPadding(),
         ),
         verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
     ) {
@@ -222,7 +219,7 @@ private fun LazyListScope.globalItemsSection(
     onSetAutoIsolate: (Boolean) -> Unit,
     onAllowNetwork: (Boolean) -> Unit,
 ) {
-    item(key = "auto_isolate") {
+    item(key = "auto_isolate", contentType = "switch") {
         SegmentedSwitchRow(
             title = stringResource(R.string.jail_auto_isolate),
             summary = stringResource(R.string.jail_auto_isolate_summary),
@@ -233,11 +230,11 @@ private fun LazyListScope.globalItemsSection(
             showThumbIcon = true,
         )
     }
-    item(key = "summary") { Note(stringResource(R.string.jail_items_summary), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+    item(key = "summary", contentType = "note") { Note(stringResource(R.string.jail_items_summary), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
     for (group in ItemGroup.entries) {
-        item(key = group.name) { SectionHeader(stringResource(group.title), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+        item(key = group.name, contentType = "section") { SectionHeader(stringResource(group.title), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
         group.items.forEachIndexed { index, item ->
-            item(key = item.id) {
+            item(key = item.id, contentType = "jail-item") {
                 val mode = global[item] ?: SandboxMode.ON
                 ItemRow(
                     item = item,
@@ -257,7 +254,7 @@ private fun LazyListScope.globalItemsSection(
             }
         }
     }
-    item(key = "restart") { Note(stringResource(R.string.jail_restart_note), Modifier.animatedRow(this, MaterialTheme.motionScheme).padding(top = 8.dp)) }
+    item(key = "restart", contentType = "note") { Note(stringResource(R.string.jail_restart_note), Modifier.animatedRow(this, MaterialTheme.motionScheme).padding(top = 8.dp)) }
     globalNetworkSection(
         mode = global[SandboxItem.NETWORK] ?: SandboxItem.NETWORK.default,
         unmet = state.status?.unmet(SandboxItem.NETWORK).orEmpty(),
@@ -269,9 +266,9 @@ private fun LazyListScope.globalItemsSection(
 }
 
 private fun LazyListScope.statusSection(state: JailSettingsUiState, holdNeeded: Boolean, onConfirmRelease: () -> Unit) {
-    item(key = "status_header") { SectionHeader(stringResource(R.string.jail_section_status), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
-    item(key = "status") { StatusRow(state.status, state.autoIsolate && holdNeeded, Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
-    item(key = "release_all") {
+    item(key = "status_header", contentType = "section") { SectionHeader(stringResource(R.string.jail_section_status), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+    item(key = "status", contentType = "status") { StatusRow(state.status, state.autoIsolate && holdNeeded, Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+    item(key = "release_all", contentType = "release") {
         LinkRow(
             title = stringResource(R.string.jail_release_all),
             supporting = stringResource(R.string.jail_release_all_summary),

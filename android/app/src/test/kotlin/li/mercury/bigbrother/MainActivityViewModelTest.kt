@@ -23,6 +23,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import li.mercury.bigbrother.core.model.ThemeMode
 import li.mercury.bigbrother.core.testing.MainDispatcherRule
 import li.mercury.bigbrother.core.testing.repository.TestAccessRepository
 import li.mercury.bigbrother.core.testing.repository.TestFirstLaunchRepository
@@ -61,8 +62,12 @@ class MainActivityViewModelTest {
             assertEquals(true, (viewModel.uiState.value as MainActivityUiState.Ready).showGuide)
             viewModel.dismissGuide()
             settings.setUseDynamicColor(false)
+            settings.setThemeMode(ThemeMode.DARK)
             runCurrent()
-            assertEquals(MainActivityUiState.Ready(useDynamicColor = false, showGuide = false, recordingStopped = false), viewModel.uiState.value)
+            assertEquals(
+                MainActivityUiState.Ready(useDynamicColor = false, themeMode = ThemeMode.DARK, showGuide = false, recordingStopped = false),
+                viewModel.uiState.value,
+            )
         } finally {
             viewModel.viewModelScope.cancel()
         }

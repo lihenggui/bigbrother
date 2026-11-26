@@ -21,6 +21,7 @@
     <string name="retry">Try again</string>
     <string name="settings_write_failed">Couldn’t save the setting</string>
     <string name="search">Search</string>
+    <string name="recording_stopped">Recording stopped</string>
     <string name="close_search">Close search</string>
     <string name="clear_search">Clear search</string>
     <string name="no_matches">No matches</string>

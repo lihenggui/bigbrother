@@ -18,6 +18,7 @@ package li.mercury.bigbrother.feature.appdetail.impl
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -41,7 +42,6 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
@@ -61,6 +61,7 @@ import li.mercury.bigbrother.core.ui.R as UiR
 @Composable
 internal fun Listing(
     content: FileTree,
+    padding: PaddingValues,
     location: String,
     readOnly: Boolean,
     filtering: Boolean,
@@ -76,7 +77,7 @@ internal fun Listing(
     }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = listContentPadding(),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp + padding.calculateBottomPadding()),
         verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
     ) {
         when (location) {
@@ -85,12 +86,17 @@ internal fun Listing(
                 // Records of one collection can share an action (opened
                 // directly and through the provider), so the position is part of the key.
                 key = { index, access -> "collection:$index:${access.path}" },
+                contentType = { _, _ -> "collection" },
             ) { index, access ->
                 CollectionRow(access, index, content.collections.size)
             }
 
             else -> {
-                itemsIndexed(entries, key = { _, node -> node.path }) { index, node ->
+                itemsIndexed(
+                    entries,
+                    key = { _, node -> node.path },
+                    contentType = { _, node -> if (node.isFolder) "folder" else "file" },
+                ) { index, node ->
                     EntryRow(
                         node = node,
                         isVolume = node in content.volumes,
@@ -106,24 +112,22 @@ internal fun Listing(
                 if (location == Location.ROOT) {
                     // What the app reached through the media library sits
                     // below the files, as a folder of its own.
-                    val groups = buildList {
-                        if (content.collections.isNotEmpty()) {
-                            add(Group(Location.MEDIA, R.string.group_media, Icons.Outlined.PhotoLibrary, content.collections.size))
-                        }
-                    }
+                    val collections = content.collections.size
                     if (entries.isEmpty()) {
-                        item(key = "no-files") {
-                            NoFiles(readOnly, filtering, onShowAll, Modifier.animatedRow(this, MaterialTheme.motionScheme).fillParentMaxHeight(if (groups.isEmpty()) 0.7f else 0.35f))
+                        item(key = "no-files", contentType = "empty") {
+                            NoFiles(readOnly, filtering, onShowAll, Modifier.animatedRow(this, MaterialTheme.motionScheme).fillParentMaxHeight(if (collections == 0) 0.7f else 0.35f))
                         }
                     }
-                    itemsIndexed(groups, key = { _, group -> group.location }) { index, group ->
-                        GroupRow(group, index, groups.size, onOpen = { onNavigate(group.location) })
+                    if (collections > 0) {
+                        item(key = Location.MEDIA, contentType = "media-library") {
+                            MediaLibraryRow(collections, onOpen = { onNavigate(Location.MEDIA) })
+                        }
                     }
                 }
             }
         }
         if (truncated) {
-            item(key = "truncated") {
+            item(key = "truncated", contentType = "note") {
                 Text(
                     text = stringResource(R.string.results_truncated),
                     style = MaterialTheme.typography.bodySmall,
@@ -154,20 +158,17 @@ private fun NoFiles(readOnly: Boolean, filtering: Boolean, onShowAll: () -> Unit
     }
 }
 
-/** A non-file group of records listed at the top level, opened like a folder. */
-private class Group(val location: String, val title: Int, val icon: ImageVector, val size: Int)
-
 @Composable
-private fun LazyItemScope.GroupRow(group: Group, index: Int, count: Int, onOpen: () -> Unit) {
+private fun LazyItemScope.MediaLibraryRow(collections: Int, onOpen: () -> Unit) {
     ListItem(
         onClick = onOpen,
         modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
-        shapes = ListItemDefaults.segmentedShapes(index, count),
+        shapes = ListItemDefaults.segmentedShapes(index = 0, count = 1),
         colors = ListItemDefaults.segmentedColors(),
-        leadingContent = { Icon(group.icon, contentDescription = null) },
-        trailingContent = { CountWithChevron(group.size) },
+        leadingContent = { Icon(Icons.Outlined.PhotoLibrary, contentDescription = null) },
+        trailingContent = { CountWithChevron(collections) },
     ) {
-        Text(stringResource(group.title))
+        Text(stringResource(R.string.group_media))
     }
 }
 

@@ -41,15 +41,20 @@ import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.util.lerp
 import androidx.navigation3.runtime.NavKey
 import li.mercury.bigbrother.feature.overview.api.navigation.OverviewNavKey
 import kotlin.math.roundToInt
+import li.mercury.bigbrother.core.ui.R as UiR
 
 @Composable
 internal fun NavigationItems(
@@ -60,26 +65,40 @@ internal fun NavigationItems(
 ) {
     for (destination in TOP_LEVEL_DESTINATIONS) {
         val selected = selectedRoot == destination.key
-        NavigationSuiteItem(
-            selected = selected,
-            onClick = { onSelect(destination.key) },
-            icon = {
-                Icon(
-                    if (selected) destination.selectedIcon else destination.icon,
-                    contentDescription = null,
-                )
-            },
-            label = { Text(stringResource(destination.label)) },
-            navigationSuiteType = suiteType,
-            // While recording is stopped, the overview, which says
-            // so, is marked from the other destinations.
-            badge = if (recordingStopped && destination.key == OverviewNavKey && !selected) {
-                { Badge() }
-            } else {
-                null
-            },
-        )
+        // Mark the overview from other destinations while recording is stopped.
+        val stopped = recordingStopped && destination.key == OverviewNavKey && !selected
+        NavigationDestinationItem(destination, suiteType, selected, stopped) { onSelect(destination.key) }
     }
+}
+
+@Composable
+private fun NavigationDestinationItem(
+    destination: TopLevelDestination,
+    suiteType: NavigationSuiteType,
+    selected: Boolean,
+    stopped: Boolean,
+    onClick: () -> Unit,
+) {
+    val status = stringResource(UiR.string.recording_stopped)
+    val modifier = if (stopped) Modifier.semantics { stateDescription = status } else Modifier
+    NavigationSuiteItem(
+        modifier = modifier,
+        selected = selected,
+        onClick = onClick,
+        icon = {
+            Icon(
+                if (selected) destination.selectedIcon else destination.icon,
+                contentDescription = null,
+            )
+        },
+        label = { Text(stringResource(destination.label)) },
+        navigationSuiteType = suiteType,
+        badge = if (stopped) {
+            { Badge() }
+        } else {
+            null
+        },
+    )
 }
 
 @Composable
@@ -95,12 +114,13 @@ internal fun BarLayout(
     val navigationColors = NavigationSuiteDefaults.colors()
     val bottomInsets = ShortNavigationBarDefaults.windowInsets.only(WindowInsetsSides.Bottom)
     val barVisibility = rememberBarVisibility(showBar, previousShowsBar, progress)
+    val barRevealed by remember(barVisibility) { derivedStateOf { barVisibility.value > 0f } }
     Scaffold(
         modifier = modifier,
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
-            if (showBar || previousShowsBar == true || barVisibility.value > 0f) {
+            if (showBar || previousShowsBar == true || barRevealed) {
                 NavigationSuite(
                     navigationSuiteType = suiteType,
                     colors = navigationColors,
@@ -113,6 +133,7 @@ internal fun BarLayout(
             }
         },
     ) { padding ->
+        // The bar includes the bottom system inset, so child scaffolds get only any unconsumed space.
         Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) { content() }
     }
 }
@@ -138,7 +159,7 @@ internal fun RailLayout(
 internal fun rememberBarVisibility(current: Boolean, previous: Boolean?, progress: Float?): State<Float> {
     val resting = if (current) 1f else 0f
     val visibility = remember { Animatable(resting) }
-    val motion = MotionScheme.standard()
+    val motion = remember { MotionScheme.standard() }
     LaunchedEffect(current, previous, progress) {
         if (previous != null && progress != null) {
             visibility.snapTo(lerp(resting, if (previous) 1f else 0f, progress))

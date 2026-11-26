@@ -19,7 +19,6 @@
     <string name="section_display">Display</string>
     <string name="section_about">About</string>
     <string name="recording_active">Recording</string>
-    <string name="recording_stopped">Recording stopped</string>
     <string name="recording_unknown">Recording status unknown</string>
     <string name="retention">Records kept for 30 days</string>
     <!-- Kinds of activity the kernel of this device does not let the daemon observe. -->
@@ -37,7 +36,7 @@
     <string name="remove_module_title">Remove recording?</string>
     <string name="remove_module_body">Recording stops and the records are deleted. Apps in Jail get real data again and are restarted. Recording can be set up again on the Overview.</string>
     <string name="remove_module_confirm">Remove</string>
-    <string name="remove_module_cancel">Cancel</string>
+    <string name="cancel">Cancel</string>
     <string name="module_in_manager">Installed as a module in the root manager</string>
     <string name="module_in_manager_summary">To remove recording, remove the module there and restart. This deletes the records.</string>
     <string name="module_in_manager_pending">Takes effect after the next restart</string>
@@ -45,6 +44,10 @@
     <string name="lsposed_summary">Enable Big Brother in LSPosed to record access to the media library, contacts, messages and the calendar.</string>
     <string name="setting_system_apps">Show system apps</string>
     <string name="setting_system_apps_summary">Hidden by default, along with isolated processes not traced to an app: reading data is part of how system components work.</string>
+    <string name="theme">Theme</string>
+    <string name="theme_system">Follow system</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
     <string name="dynamic_color">Use wallpaper colors</string>
     <string name="dynamic_color_summary">When off, the app uses its own colors</string>
     <string name="version">Version</string>

@@ -74,6 +74,13 @@ class OverviewScreenScreenshotTests {
     }
 
     @Test
+    fun givenDemoRecords_whenFontScaleIsDoubled_thenMatchesGolden() {
+        composeTestRule.captureForDevice("phone_large_text", DefaultTestDevices.PHONE.spec, "Overview", fontScale = 2f) {
+            Overview()
+        }
+    }
+
+    @Test
     fun givenDemoRecords_whenShownInDarkTheme_thenMatchesGolden() {
         composeTestRule.captureForDevice(
             deviceName = "phone_dark",

@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import li.mercury.bigbrother.core.data.repository.UserDataRepository
+import li.mercury.bigbrother.core.model.ThemeMode
 import li.mercury.bigbrother.core.model.TimeRange
 import li.mercury.bigbrother.core.model.UserData
 
@@ -35,6 +36,8 @@ class TestUserDataRepository(initial: UserData = UserData()) : UserDataRepositor
     override suspend fun setShowSystemApps(show: Boolean) = edit { it.copy(showSystemApps = show) }
 
     override suspend fun setUseDynamicColor(use: Boolean) = edit { it.copy(useDynamicColor = use) }
+
+    override suspend fun setThemeMode(mode: ThemeMode) = edit { it.copy(themeMode = mode) }
 
     private fun edit(transform: (UserData) -> UserData) {
         writeFailure?.let { throw it }

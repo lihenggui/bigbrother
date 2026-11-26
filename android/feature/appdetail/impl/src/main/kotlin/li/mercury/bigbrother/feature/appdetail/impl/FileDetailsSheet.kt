@@ -21,7 +21,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
@@ -29,6 +29,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
@@ -66,12 +67,13 @@ internal fun FileDetailsSheet(details: FileDetails, onOpen: () -> Unit, onDismis
             if (details.failure != null) {
                 Text(text = failureReason(details.failure), color = MaterialTheme.colorScheme.error)
             } else {
+                val keys = remember(periods) { periodKeys(periods) }
                 LazyColumn(
                     // Leaves room for the button below on a long history.
                     modifier = Modifier.weight(1f, fill = false),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    items(periods) { period -> PeriodRow(period) }
+                    itemsIndexed(periods, key = { index, _ -> keys[index] }) { _, period -> PeriodRow(period) }
                 }
             }
             // A folder that was only listed has nothing to show in a viewer.

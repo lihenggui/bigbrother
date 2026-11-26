@@ -20,12 +20,10 @@ import androidx.activity.compose.ReportDrawnWhen
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -40,6 +38,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -124,7 +123,7 @@ internal fun OverviewScreen(
                     OverviewKind.ModuleUpdate -> ModuleUpdateCard(shown.moduleUpdate, onUpdateModule, onStartDaemon)
                     OverviewKind.Failure -> LoadFailureMessage(checkNotNull(shown.failure), onRetry = onRefresh)
                     OverviewKind.Loading -> BigBrotherLoadingIndicator(Modifier.fillMaxSize())
-                    OverviewKind.Content -> Content(shown, checkNotNull(shownFiles), onRange, onOpenCategory, onUpdateModule, onStartDaemon)
+                    OverviewKind.Content -> Content(shown, checkNotNull(shownFiles), padding, onRange, onOpenCategory, onUpdateModule, onStartDaemon)
                 }
             }
         }
@@ -135,12 +134,12 @@ internal fun OverviewScreen(
 private fun Content(
     state: OverviewUiState,
     files: FilesOverview,
+    padding: PaddingValues,
     onRange: (TimeRange) -> Unit,
     onOpenCategory: (DataCategory) -> Unit,
     onUpdateModule: () -> Unit,
     onStartDaemon: () -> Unit,
 ) {
-    val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     BoxWithConstraints(Modifier.fillMaxSize()) {
         // Wider windows use the room for columns rather than longer lines.
         val columns = when {
@@ -153,7 +152,7 @@ private fun Content(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(start = margin, end = margin, bottom = 24.dp + bottomInset),
+                .padding(start = margin, end = margin, bottom = 24.dp + padding.calculateBottomPadding()),
         ) {
             RecorderStatusCards(state, onUpdateModule, onStartDaemon)
             TimeRangeButtonGroup(
@@ -213,9 +212,11 @@ private fun OtherCategories(categories: List<CategoryOverview>, empty: Boolean, 
 /** The categories in [columns] segmented groups side by side, filled column by column. */
 @Composable
 private fun CategoryColumns(categories: List<CategoryOverview>, columns: Int, onOpen: (DataCategory) -> Unit) {
-    val perColumn = (categories.size + columns - 1) / columns
+    val chunks = remember(categories, columns) {
+        categories.chunked((categories.size + columns - 1) / columns)
+    }
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        categories.chunked(perColumn).forEach { chunk ->
+        chunks.forEach { chunk ->
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
@@ -226,7 +227,7 @@ private fun CategoryColumns(categories: List<CategoryOverview>, columns: Int, on
             }
         }
         // Keeps the last column as wide as the others when there are fewer chunks.
-        repeat(columns - (categories.size + perColumn - 1) / perColumn) { Spacer(Modifier.weight(1f)) }
+        repeat(columns - chunks.size) { Spacer(Modifier.weight(1f)) }
     }
 }
 

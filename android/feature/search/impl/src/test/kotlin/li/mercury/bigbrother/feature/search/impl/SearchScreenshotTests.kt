@@ -34,6 +34,7 @@ import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import li.mercury.bigbrother.core.designsystem.theme.BigBrotherTheme
 import li.mercury.bigbrother.core.model.LoadFailure
@@ -68,6 +69,9 @@ class SearchScreenshotTests {
     @Test
     fun givenRecordingStopped_whenBarShown_thenSettingsIsMarked() {
         capturePhone("SearchBarSettingsBadge") { Bar(settingsBadge = true) }
+        composeTestRule.onNodeWithContentDescription("Settings").assert(
+            SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Recording stopped"),
+        )
     }
 
     @Test

@@ -130,6 +130,16 @@ class FirstLaunchGuideTest {
     }
 
     @Test
+    fun givenJailPage_whenFontScaleIsDoubled_thenMatchesGolden() {
+        compose.captureForDevice("phone_large_text", DefaultTestDevices.PHONE.spec, "FirstLaunchJail", fontScale = 2f) {
+            FirstLaunchGuide(
+                onDismiss = {},
+                pager = rememberPagerState(initialPage = GuidePage.Jail.ordinal) { GuidePage.entries.size },
+            )
+        }
+    }
+
+    @Test
     fun givenFirstPage_whenShownInDarkTheme_thenTheSearchlightMatchesItsDesign() {
         val device = DefaultTestDevices.PHONE
         compose.captureForDevice(device.description, device.spec, "FirstLaunchAccessDark", darkMode = true) {

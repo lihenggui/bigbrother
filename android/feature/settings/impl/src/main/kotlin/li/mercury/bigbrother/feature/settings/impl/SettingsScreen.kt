@@ -21,16 +21,14 @@ import android.content.Intent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.outlined.Brightness6
 import androidx.compose.material.icons.outlined.BugReport
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Delete
@@ -69,7 +67,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
@@ -78,6 +78,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import li.mercury.bigbrother.core.data.repository.ModuleInstallation
 import li.mercury.bigbrother.core.designsystem.component.SegmentedSwitchRow
+import li.mercury.bigbrother.core.model.ThemeMode
 import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.UserSettingsWriter
@@ -106,6 +107,7 @@ fun SettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel) {
         onBack = onBack,
         onShowSystemApps = viewModel::setShowSystemApps,
         onUseDynamicColor = viewModel::setUseDynamicColor,
+        onThemeMode = viewModel::setThemeMode,
         onExportLogs = viewModel::exportLogs,
         onDismissLogExport = viewModel::dismissLogExport,
         onRemoveModule = viewModel::removeModule,
@@ -125,6 +127,15 @@ private fun featureLabel(id: String): Int? = when (id) {
     else -> null
 }
 
+@Composable
+private fun unavailableFeatures(ids: List<String>): List<String> {
+    val resources = LocalResources.current
+    val configuration = LocalConfiguration.current
+    return remember(ids, resources, configuration) {
+        ids.map { id -> featureLabel(id)?.let { resources.getString(it) } ?: id }
+    }
+}
+
 private const val SOURCE_URL = "https://github.com/lihenggui/bigbrother"
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
@@ -135,6 +146,7 @@ internal fun SettingsScreen(
     onBack: () -> Unit,
     onShowSystemApps: (Boolean) -> Unit,
     onUseDynamicColor: (Boolean) -> Unit,
+    onThemeMode: (ThemeMode) -> Unit,
     onExportLogs: () -> Unit,
     onDismissLogExport: () -> Unit,
     onRemoveModule: () -> Unit,
@@ -143,6 +155,7 @@ internal fun SettingsScreen(
 ) {
     val context = LocalContext.current
     ShareLogs(state.logExport as? LogExport.Ready, onDismissLogExport)
+    var choosingTheme by rememberSaveable { mutableStateOf(false) }
     var confirmingRemoval by rememberSaveable { mutableStateOf(initiallyConfirmingRemoval) }
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val background = MaterialTheme.colorScheme.surfaceContainer
@@ -155,23 +168,32 @@ internal fun SettingsScreen(
             SettingsTopBar(background, scrollBehavior, onBack)
         },
     ) { padding ->
-        val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-        val unavailable = state.status?.unavailable.orEmpty().map { id -> featureLabel(id)?.let { stringResource(it) } ?: id }
+        val unavailable = unavailableFeatures(state.status?.unavailable.orEmpty())
         LazyColumn(
             // Settings read best in a column of moderate width.
             modifier = Modifier
                 .fillMaxSize()
                 .wrapContentWidth(Alignment.CenterHorizontally)
                 .widthIn(max = 840.dp),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding(), bottom = 24.dp + bottom),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding(), bottom = 24.dp + padding.calculateBottomPadding()),
             verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
         ) {
             recorderSection(state, unavailable, onRemoveModule = { confirmingRemoval = true })
-            displaySection(state, onShowSystemApps, onUseDynamicColor)
+            displaySection(state, onShowSystemApps, onUseDynamicColor) { choosingTheme = true }
             aboutSection(state.logExport, appVersion, onExportLogs) {
                 context.startActivity(Intent(Intent.ACTION_VIEW, SOURCE_URL.toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             }
         }
+    }
+    if (choosingTheme) {
+        ThemeModeDialog(
+            mode = state.userData.themeMode,
+            onDismiss = { choosingTheme = false },
+            onSelect = {
+                choosingTheme = false
+                onThemeMode(it)
+            },
+        )
     }
     if (confirmingRemoval) {
         RemoveModuleDialog(
@@ -194,7 +216,7 @@ private fun RemoveModuleDialog(onDismiss: () -> Unit, onConfirm: () -> Unit) {
             TextButton(onClick = onConfirm) { Text(stringResource(R.string.remove_module_confirm)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.remove_module_cancel)) }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
         },
     )
 }
@@ -234,17 +256,17 @@ private fun SettingsTopBar(background: Color, scrollBehavior: TopAppBarScrollBeh
 
 private fun LazyListScope.recorderSection(state: SettingsUiState, unavailable: List<String>, onRemoveModule: () -> Unit) {
     val status = state.status
-    item(key = "recording") { SectionHeader(stringResource(R.string.section_recording), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+    item(key = "recording", contentType = "section") { SectionHeader(stringResource(R.string.section_recording), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
     val lsposedIndex = 1 + if (unavailable.isNotEmpty()) 1 else 0
     val recordingRows = lsposedIndex + 1 + if (state.installation != ModuleInstallation.NONE) 1 else 0
-    item(key = "status") {
+    item(key = "status", contentType = "settings-row") {
         Row(
             icon = if (status?.recording == false) Icons.Outlined.ErrorOutline else Icons.Outlined.RadioButtonChecked,
             iconTint = if (status?.recording == false) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
             title = stringResource(
                 when (status?.recording) {
                     true -> R.string.recording_active
-                    false -> R.string.recording_stopped
+                    false -> UiR.string.recording_stopped
                     null -> R.string.recording_unknown
                 },
             ),
@@ -259,7 +281,7 @@ private fun LazyListScope.recorderSection(state: SettingsUiState, unavailable: L
         )
     }
     if (unavailable.isNotEmpty()) {
-        item(key = "coverage") {
+        item(key = "coverage", contentType = "settings-row") {
             Row(
                 icon = Icons.Outlined.RuleFolder,
                 title = stringResource(R.string.coverage_title),
@@ -270,7 +292,7 @@ private fun LazyListScope.recorderSection(state: SettingsUiState, unavailable: L
             )
         }
     }
-    item(key = "lsposed") {
+    item(key = "lsposed", contentType = "settings-row") {
         Row(
             icon = Icons.Outlined.Extension,
             title = stringResource(R.string.lsposed_title),
@@ -288,7 +310,7 @@ private fun LazyListScope.installationRow(state: SettingsUiState, index: Int, co
     when (state.installation) {
         ModuleInstallation.NONE -> Unit
 
-        ModuleInstallation.APP -> item(key = "remove-module") {
+        ModuleInstallation.APP -> item(key = "remove-module", contentType = "settings-row") {
             val removal = state.moduleRemoval
             Row(
                 icon = Icons.Outlined.Delete,
@@ -305,7 +327,7 @@ private fun LazyListScope.installationRow(state: SettingsUiState, index: Int, co
             )
         }
 
-        ModuleInstallation.MANAGER, ModuleInstallation.MANAGER_PENDING -> item(key = "module-in-manager") {
+        ModuleInstallation.MANAGER, ModuleInstallation.MANAGER_PENDING -> item(key = "module-in-manager", contentType = "settings-row") {
             val pending = state.installation == ModuleInstallation.MANAGER_PENDING
             Row(
                 icon = Icons.Outlined.Info,
@@ -323,9 +345,21 @@ private fun LazyListScope.displaySection(
     state: SettingsUiState,
     onShowSystemApps: (Boolean) -> Unit,
     onUseDynamicColor: (Boolean) -> Unit,
+    onChooseTheme: () -> Unit,
 ) {
-    item(key = "display") { SectionHeader(stringResource(R.string.section_display), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
-    item(key = "system-apps") {
+    item(key = "display", contentType = "section") { SectionHeader(stringResource(R.string.section_display), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+    item(key = "theme", contentType = "settings-row") {
+        Row(
+            icon = Icons.Outlined.Brightness6,
+            title = stringResource(R.string.theme),
+            summary = stringResource(state.userData.themeMode.label),
+            index = 0,
+            count = 3,
+            modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
+            onClick = onChooseTheme,
+        )
+    }
+    item(key = "system-apps", contentType = "switch") {
         SegmentedSwitchRow(
             leadingContent = { Icon(Icons.Outlined.VisibilityOff, contentDescription = null) },
             title = stringResource(R.string.setting_system_apps),
@@ -333,11 +367,11 @@ private fun LazyListScope.displaySection(
             checked = state.userData.showSystemApps,
             onCheckedChange = onShowSystemApps,
             modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
-            index = 0,
-            count = 2,
+            index = 1,
+            count = 3,
         )
     }
-    item(key = "dynamic-color") {
+    item(key = "dynamic-color", contentType = "switch") {
         SegmentedSwitchRow(
             leadingContent = { Icon(Icons.Outlined.Palette, contentDescription = null) },
             title = stringResource(R.string.dynamic_color),
@@ -345,8 +379,8 @@ private fun LazyListScope.displaySection(
             checked = state.userData.useDynamicColor,
             onCheckedChange = onUseDynamicColor,
             modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme),
-            index = 1,
-            count = 2,
+            index = 2,
+            count = 3,
         )
     }
 }
@@ -357,11 +391,11 @@ private fun LazyListScope.aboutSection(
     onExportLogs: () -> Unit,
     onOpenSource: () -> Unit,
 ) {
-    item(key = "about") { SectionHeader(stringResource(R.string.section_about), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
-    item(key = "version") {
+    item(key = "about", contentType = "section") { SectionHeader(stringResource(R.string.section_about), Modifier.animatedRow(this, MaterialTheme.motionScheme)) }
+    item(key = "version", contentType = "settings-row") {
         Row(icon = Icons.Outlined.Info, title = stringResource(R.string.version), summary = appVersion, index = 0, count = 4, modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme))
     }
-    item(key = "export-logs") {
+    item(key = "export-logs", contentType = "settings-row") {
         Row(
             icon = Icons.Outlined.BugReport,
             title = stringResource(R.string.export_logs),
@@ -376,7 +410,7 @@ private fun LazyListScope.aboutSection(
             onClick = onExportLogs,
         )
     }
-    item(key = "source") {
+    item(key = "source", contentType = "settings-row") {
         Row(
             icon = Icons.Outlined.Code,
             title = stringResource(R.string.source_code),
@@ -387,7 +421,7 @@ private fun LazyListScope.aboutSection(
             onClick = onOpenSource,
         )
     }
-    item(key = "license") {
+    item(key = "license", contentType = "settings-row") {
         Row(icon = Icons.Outlined.Gavel, title = stringResource(R.string.license), summary = "GPL-3.0", index = 3, count = 4, modifier = Modifier.animatedRow(this, MaterialTheme.motionScheme))
     }
 }

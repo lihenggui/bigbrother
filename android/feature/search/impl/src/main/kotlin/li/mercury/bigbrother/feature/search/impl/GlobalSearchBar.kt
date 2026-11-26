@@ -58,6 +58,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -150,7 +151,11 @@ internal fun GlobalSearchBar(
             scrolledAppBarContainerColor = page,
         ),
         actions = {
-            IconButton(onClick = onOpenSettings) {
+            val status = if (settingsBadge) stringResource(UiR.string.recording_stopped) else null
+            IconButton(
+                onClick = onOpenSettings,
+                modifier = if (status != null) Modifier.semantics { stateDescription = status } else Modifier,
+            ) {
                 BadgedBox(badge = { if (settingsBadge) Badge() }) {
                     Icon(Icons.Outlined.Settings, contentDescription = stringResource(R.string.settings))
                 }
