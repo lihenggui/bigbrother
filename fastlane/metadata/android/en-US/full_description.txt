@@ -1,0 +1,9 @@
+Big Brother records when apps on a rooted Android device open files on shared storage, read device identifiers or ask the system for private data. It also records sensor sessions and the use of sensitive permissions such as camera, microphone and location.
+
+Browse records by app or hour. Search by app, file name or data type. The app has no network access. Records stay on the device for up to 30 days.
+
+Jail controls what isolated apps can access. Set rules for all isolated apps or override them for a specific app. Jail can automatically isolate newly installed apps, block an app's network access, record where it connects and block selected destinations.
+
+Big Brother requires root, Android 12 or later, and a GKI 2.0 kernel (5.10 or newer) with BTF. It runs on arm64 and x86_64 devices. On x86_64, it records only 64-bit apps.
+
+The optional LSPosed hook (Xposed API 101 or newer) records access through content providers. For queries such as contacts or text messages, it records the collection queried. Jail uses the System Framework scope to manage Android ID, advertising IDs, installed app visibility and file grants from the system file picker.

@@ -12,7 +12,7 @@ Prerequisites:
   and `x86_64-linux-android`
 - [bpf-linker](https://github.com/aya-rs/bpf-linker)
 - Android SDK (platform 37) and NDK
-- JDK 17 or newer
+- JDK 21
 
 ```sh
 ./scripts/build.sh

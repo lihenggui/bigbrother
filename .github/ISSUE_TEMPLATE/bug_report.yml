@@ -14,7 +14,7 @@ body:
     attributes:
       label: Big Brother version
       description: Settings → About, and the module version in the root manager if it differs.
-      placeholder: 0.2.0
+      placeholder: 0.4.2
     validations:
       required: true
   - type: dropdown
@@ -47,9 +47,7 @@ body:
     id: logs
     attributes:
       label: Logs
-      description: >
-        The daemon's log, /data/adb/big_brother/bbd.log (the module's Action
-        button shows its end), and the app's log in
-        /data/data/li.mercury.bigbrother/files/logs. Check that they don't
-        contain anything you'd rather not share.
-      render: text
+      description: >-
+        Use **Settings → Export logs** in the app. If the app will not open,
+        copy the output from the module's Action button in the root manager.
+        Check the archive or copied output for personal data before attaching it.
