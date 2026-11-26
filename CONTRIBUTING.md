@@ -149,7 +149,9 @@ plugin supplies a debug-signed benchmark variant of the release build.
 ## Conventions
 
 - Code, comments, commit messages and documentation are in English. User
-  interface text is in English with a Simplified Chinese translation.
+  interface text is in English with a Simplified Chinese translation. See the
+  [Android translation guide](docs/translations.md) for resource conventions
+  and how to add a language.
 - The app follows the module structure of
   [Now in Android](https://github.com/android/nowinandroid), as used by
   [Blocker](https://github.com/lihenggui/blocker).

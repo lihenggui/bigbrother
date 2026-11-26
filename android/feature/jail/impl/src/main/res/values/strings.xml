@@ -15,49 +15,67 @@
 -->
 <resources>
     <!-- The jail's list of apps. -->
+    <!-- Heading for apps assigned to Jail. -->
     <string name="jail_section_isolated">Isolated apps</string>
+    <!-- Heading for Jail settings. -->
     <string name="jail_section_settings">Settings</string>
+    <!-- Opens the chooser for apps to isolate. -->
     <string name="jail_add_apps">Add apps</string>
+    <!-- Defaults for apps that have no override. -->
     <string name="jail_global_settings">Global settings</string>
+    <!-- Security: Summary of an app’s isolation selections. -->
     <string name="jail_all_items_on">Every item isolated</string>
-    <!-- %1$s: the items that are off, separated by commas. -->
+    <!-- Security: %1$s lists the isolation items that are off. -->
     <string name="jail_items_off">Not isolated: %1$s</string>
+    <!-- Security: No isolation item is enabled for this app. -->
     <string name="jail_no_items_on">No item isolated</string>
-    <!-- %1$s: a relative time, such as "3 days ago". -->
+    <!-- Security: No apps are assigned to Jail. -->
     <string name="jail_empty_title">No isolated apps</string>
     <string name="jail_empty_files_title">Files</string>
+    <!-- Security: Example of what isolated storage provides. -->
     <string name="jail_empty_files">Only a separate, empty storage of its own</string>
     <string name="jail_empty_permissions_title">Contacts, location, camera and more</string>
+    <!-- Security: Permissions may appear granted even when the queries return no data. -->
     <string name="jail_empty_permissions">Permissions stay granted; queries return nothing</string>
     <string name="jail_empty_device_title">Device and apps</string>
+    <!-- Security: Example of virtual identity and limited app visibility. -->
     <string name="jail_empty_device">A virtual Android ID; only system apps are visible</string>
+    <!-- Security: Device identity and app visibility protections are unavailable. -->
     <string name="jail_hook_missing_title">Device identifiers and the app list are not hidden</string>
+    <!-- Security: Recovery steps for the missing LSPosed System Framework scope. -->
     <string name="jail_hook_missing">Enable the System Framework scope for Big Brother in LSPosed, then restart the device.</string>
+    <!-- Security: Storage and processor restrictions are unavailable. -->
     <string name="jail_gate_missing_title">Storage and processor information cannot be isolated</string>
+    <!-- Security: Startup isolation cannot be applied. -->
     <string name="jail_gate_missing">Isolation is unavailable when apps start.</string>
+    <!-- Security: The Android restrictions for these data sources are unavailable. -->
     <string name="jail_appops_missing_title">Contacts, location, camera and more are not isolated</string>
+    <!-- Security: The component applying these Android restrictions is down. -->
     <string name="jail_appops_missing">The part of Big Brother that holds them back is not running. It starts again automatically.</string>
 
-    <!-- Messages after a change. %1$s: app names. -->
+    <!-- Security: %1$s lists the apps successfully added to Jail. -->
     <string name="jail_isolated">%1$s isolated</string>
+    <!-- Reverses the app isolation change described by the message. -->
     <string name="jail_undo">Undo</string>
-    <!-- %1$s: the reason the daemon gave. -->
+    <!-- Security: The change failed. %1$s is a localized failure reason. -->
     <string name="jail_failed">Not changed: %1$s</string>
-    <!-- %1$s: the apps isolated; %2$s: the one that could not be. -->
+    <!-- Security: %1$s lists apps added to Jail. %2$s names the app the change failed for. -->
     <string name="jail_isolated_partly">%1$s isolated. Could not isolate %2$s</string>
-    <!-- %1$s: the apps isolated; %2$d: how many could not be. -->
+    <!-- Security: %1$s lists apps added to Jail. %2$d counts the apps the change failed for. -->
     <plurals name="jail_isolated_partly_count">
         <item quantity="one">%1$s isolated. Could not isolate %2$d app</item>
         <item quantity="other">%1$s isolated. Could not isolate %2$d apps</item>
     </plurals>
-    <!-- %1$s: an app; %2$s: why. -->
+    <!-- Security: %1$s names an app that could not be added to Jail. %2$s is the reason. -->
     <string name="jail_not_isolated">Could not isolate %1$s: %2$s</string>
+    <!-- Security: %1$d counts apps that could not be added to Jail. %2$s is the reason. -->
     <plurals name="jail_not_isolated_count">
         <item quantity="one">Could not isolate %1$d app: %2$s</item>
         <item quantity="other">Could not isolate %1$d apps: %2$s</item>
     </plurals>
-    <!-- After Undo. %1$s: an app; %2$s: why. -->
+    <!-- Security: %1$s remains in Jail. %2$s is why ending isolation failed. -->
     <string name="jail_not_released">%1$s still isolated: %2$s</string>
+    <!-- Security: %1$d apps remain in Jail. %2$s is why ending isolation failed. -->
     <plurals name="jail_not_released_count">
         <item quantity="one">%1$d app still isolated: %2$s</item>
         <item quantity="other">%1$d apps still isolated: %2$s</item>
@@ -69,80 +87,120 @@
         <item quantity="one">Isolate %d app</item>
         <item quantity="other">Isolate %d apps</item>
     </plurals>
+    <!-- Action to place the selection in Jail. Shown when no apps are selected yet. -->
     <string name="jail_add_confirm_none">Isolate</string>
+    <!-- Security: Applying isolation may end and restart running apps. -->
     <string name="jail_add_restart">Running apps are closed and restarted.</string>
     <string name="jail_add_empty">No apps to add</string>
     <string name="jail_close">Close</string>
 
     <!-- An app in the jail. -->
+    <!-- Action to remove the app from Jail and restore its access. -->
     <string name="jail_release">End isolation</string>
+    <!-- Opens the selected app’s recorded data access. -->
     <string name="jail_records">Records</string>
+    <!-- Heading for individual kinds of data that Jail can isolate. -->
     <string name="jail_section_items">Isolation</string>
+    <!-- Security: Enabled and disabled items give the app different data. -->
     <string name="jail_items_summary">Items that are on return empty or virtual data, or isolated storage. Items that are off keep the system\'s behaviour.</string>
+    <!-- Remove the app’s overrides so it follows the global choices. -->
     <string name="jail_reset">Use global settings</string>
+    <!-- Expands items for data the app has not requested. -->
     <plurals name="jail_more_items">
         <item quantity="one">%d more item the app does not ask for</item>
         <item quantity="other">%d more items the app does not ask for</item>
     </plurals>
     <string name="jail_fewer_items">Show less</string>
+    <!-- Security: Describes the changes that restart the app. -->
     <string name="jail_restart_note">Turning an item on, or changing storage or processor information, restarts the app.</string>
+    <!-- This app overrides at least one global isolation setting. -->
     <string name="jail_custom">Custom</string>
     <!-- For screen readers: whether an item's choices are shown, and what tapping the item does. -->
     <string name="jail_choices_shown">Expanded</string>
     <string name="jail_choices_hidden">Collapsed</string>
     <string name="jail_show_choices">Show choices</string>
     <string name="jail_hide_choices">Hide choices</string>
+    <!-- Security: A setting is enabled, but the required framework hook is unavailable. -->
     <string name="jail_not_in_effect_hook">Not in effect: enable System Framework in LSPosed and restart</string>
+    <!-- Security: Isolation that depends on the System Framework hook cannot run. -->
     <string name="jail_hook_unavailable">System Framework restrictions unavailable</string>
+    <!-- Security: The framework restrictions cannot run on this Android version. -->
     <string name="jail_hook_incompatible">Not supported on this Android version</string>
+    <!-- Security: Isolation provided by the framework hook became unavailable. -->
     <string name="jail_hook_degraded">Stopped working. Restart the device.</string>
+    <!-- Security: The state of the framework restrictions cannot be verified. -->
     <string name="jail_hook_status_unknown">The status of the System Framework restrictions is unknown.</string>
+    <!-- Security: An enabled storage restriction is not running. -->
     <string name="jail_not_in_effect_mounts">Not in effect: storage isolation is not running</string>
+    <!-- Security: The startup gate failed to hold the app for isolation. -->
     <string name="jail_mount_start_failed">Could not hold the app at startup.</string>
+    <!-- Security: Isolation could not be set up before the app started. -->
     <string name="jail_mount_setup_failed">Could not apply isolation at startup.</string>
+    <!-- Security: The startup isolation attempt exceeded its time limit. -->
     <string name="jail_mount_timed_out">Isolation timed out at startup.</string>
+    <!-- Security: Startup was prevented. %1$s is the specific failure reason. -->
     <string name="jail_mount_launch_refused">%1$s The app can’t start while this isolation is on. Turn off the affected items or remove the app from Jail to let it start.</string>
+    <!-- Security: Android restriction readback is pending. -->
     <string name="jail_checking_app_ops">Checking Android restriction…</string>
+    <!-- Security: Android restriction readback failed. The actual state is unknown. -->
     <string name="jail_app_ops_unknown">Android restriction could not be verified.</string>
+    <!-- Security: The restriction is unavailable and the app may still get the data. -->
     <string name="jail_not_in_effect_app_ops">Restriction unavailable. The app may still have access.</string>
 
     <!-- The global settings. -->
+    <!-- The global choices apply to isolated apps that have no override. -->
     <string name="jail_settings_subtitle">For isolated apps without their own setting</string>
     <string name="jail_auto_isolate">Isolate newly installed apps</string>
+    <!-- Security: The global choices will apply to future app installs. -->
     <string name="jail_auto_isolate_summary">Use the settings below for future installs</string>
     <string name="jail_group_files">Files</string>
     <string name="jail_group_personal">Personal data</string>
     <string name="jail_group_sensors">Location and sensors</string>
     <string name="jail_group_device">Device and apps</string>
+    <!-- Heading for the current state of the Jail components. -->
     <string name="jail_section_status">Status</string>
+    <!-- The row opens details for the components that enforce Jail settings. -->
     <string name="jail_status_title">Components</string>
+    <!-- Security: These components are available. Each app still has its own choices. -->
     <string name="jail_status_ok">Storage isolation, the system framework hook and network filtering in effect</string>
+    <!-- Security: The current kernel cannot enforce the network restriction. -->
     <string name="jail_status_network_missing">Network filtering not available on this kernel</string>
+    <!-- Security: The enforcing components’ states have not been determined yet. -->
     <string name="jail_status_checking">Checking…</string>
+    <!-- Security: The framework hook is not active. -->
     <string name="jail_status_hook_missing">System framework hook not loaded</string>
+    <!-- Security: Storage isolation cannot be applied. -->
     <string name="jail_status_gate_missing">Storage isolation unavailable</string>
+    <!-- Security: Android restrictions for these items are unavailable. -->
     <string name="jail_status_appops_missing">Contacts, location and more not in effect</string>
+    <!-- Security: A newly installed app may launch before isolation is applied. -->
     <string name="jail_status_new_apps_not_held">New apps may start before isolation</string>
     <!-- Newly installed apps the daemon could not isolate yet. -->
+    <!-- Security: These apps are waiting for isolation, and are prevented from launching. -->
     <plurals name="jail_status_new_apps_held">
         <item quantity="one">%d newly installed app not isolated yet; kept from starting</item>
         <item quantity="other">%d newly installed apps not isolated yet; kept from starting</item>
     </plurals>
+    <!-- Security: Isolation failed and these apps can launch without restrictions. -->
     <plurals name="jail_status_new_apps_failed">
         <item quantity="one">Could not isolate %d new app. It can start without isolation.</item>
         <item quantity="other">Could not isolate %d new apps. They can start without isolation.</item>
     </plurals>
+    <!-- Security: These apps are waiting for isolation. The text makes no claim about whether they can launch. -->
     <plurals name="jail_status_new_apps_pending">
         <item quantity="one">%d newly installed app not isolated yet</item>
         <item quantity="other">%d newly installed apps not isolated yet</item>
     </plurals>
     <string name="jail_release_all">End all isolation</string>
+    <!-- Security: Ending isolation preserves existing files in isolated storage. -->
     <string name="jail_release_all_summary">Files in isolated storage are kept</string>
     <string name="jail_release_all_title">End all isolation?</string>
+    <!-- Security: Confirms that app access is restored and isolated files are retained. -->
     <plurals name="jail_release_all_body">
         <item quantity="one">%d app gets real data again and is restarted. Files in isolated storage are kept.</item>
         <item quantity="other">%d apps get real data again and are restarted. Files in isolated storage are kept.</item>
     </plurals>
+    <!-- Security: These apps remain isolated after the bulk action. -->
     <plurals name="jail_release_all_left">
         <item quantity="one">%d app is still isolated. Try again.</item>
         <item quantity="other">%d apps are still isolated. Try again.</item>
@@ -151,167 +209,250 @@
 
     <!-- The items: a title, what the app gets with the item on, and what that means. -->
     <string name="jail_item_storage">Files and media</string>
+    <!-- Security: Separate storage is available while the item is on. -->
     <string name="jail_item_storage_on">Isolated storage</string>
+    <!-- Security: Distinguish isolated storage from a one-time file picker grant. -->
     <string name="jail_item_storage_on_detail">A separate, empty storage of its own, where what it saves stays. Real photos, downloads and documents are not visible; a file chosen for it in the system\'s file picker is open to it for that use only.</string>
     <string name="jail_item_cpu_info">Processor information</string>
+    <!-- Security: Processor identification is limited while the item is on. -->
     <string name="jail_item_cpu_info_on">Chip model hidden</string>
+    <!-- Security: The app still sees the core count and instruction set. -->
     <string name="jail_item_cpu_info_on_detail">The core count and instruction set stay; the chip model and other identifiers are removed.</string>
     <string name="jail_item_contacts">Contacts</string>
+    <!-- Security: The app receives an empty contact list. -->
     <string name="jail_item_contacts_on">Empty list</string>
+    <!-- Security: An apparently granted permission still returns no contacts. -->
     <string name="jail_item_contacts_on_detail">Shown as granted; contact queries return nothing.</string>
     <string name="jail_item_messages">Messages and call log</string>
+    <!-- Security: The app receives an empty list of messages and call entries. -->
     <string name="jail_item_messages_on">Empty list</string>
+    <!-- Security: An apparently granted permission still returns no messages or call entries. -->
     <string name="jail_item_messages_on_detail">Shown as granted; message and call log queries return nothing.</string>
     <string name="jail_item_calendar">Calendar</string>
+    <!-- Security: The app receives an empty calendar. -->
     <string name="jail_item_calendar_on">Empty calendar</string>
+    <!-- Security: An apparently granted permission still returns no calendar data. -->
     <string name="jail_item_calendar_on_detail">Shown as granted; calendar queries return nothing.</string>
     <string name="jail_item_clipboard_accounts">Clipboard and accounts</string>
+    <!-- Security: Clipboard and account data are withheld. -->
     <string name="jail_item_clipboard_accounts_on">Empty</string>
+    <!-- Security: The app sees no clipboard content or accounts. -->
     <string name="jail_item_clipboard_accounts_on_detail">The clipboard and the account list are empty.</string>
     <string name="jail_item_location">Location</string>
+    <!-- Security: The app receives no location in this mode. -->
     <string name="jail_item_location_on">No location</string>
+    <!-- Security: An apparently granted permission still returns no location. -->
     <string name="jail_item_location_on_detail">Shown as granted; no location is available.</string>
     <string name="jail_item_camera">Camera</string>
+    <!-- Security: The app receives no camera image in this mode. -->
     <string name="jail_item_camera_on">Unavailable</string>
+    <!-- Security: An apparently granted permission still returns no camera image. -->
     <string name="jail_item_camera_on_detail">Shown as granted; no camera image is available.</string>
     <string name="jail_item_microphone">Microphone</string>
+    <!-- Security: The app receives silent audio in this mode. -->
     <string name="jail_item_microphone_on">Silence</string>
+    <!-- Security: An apparently granted permission still results in silence. -->
     <string name="jail_item_microphone_on_detail">Shown as granted; recordings are silent.</string>
     <string name="jail_item_body_sensors">Body sensors and activity</string>
+    <!-- Security: Body sensor and activity data are withheld. -->
     <string name="jail_item_body_sensors_on">No data</string>
+    <!-- Security: Covers body measurements and physical activity data. -->
     <string name="jail_item_body_sensors_on_detail">Heart rate, steps and physical activity are not available.</string>
     <string name="jail_item_device_ids">Device identifiers</string>
+    <!-- Security: The app receives a substitute Android ID. -->
     <string name="jail_item_device_ids_on">Virtual ID</string>
+    <!-- Security: The app receives its own stable substitute for Android ID and loses access to the other listed identifiers. -->
     <string name="jail_item_device_ids_on_detail">A fixed virtual Android ID of its own; the advertising ID, phone number and phone state cannot be read.</string>
     <string name="jail_item_installed_apps">Installed apps</string>
+    <!-- Security: Visibility of other installed apps is restricted. -->
     <string name="jail_item_installed_apps_on">System apps only</string>
+    <!-- Security: The list still includes the isolated app itself and system apps. -->
     <string name="jail_item_installed_apps_on_detail">The installed app list holds only system apps and itself; usage statistics cannot be read.</string>
     <string name="jail_item_nearby_devices">Nearby devices</string>
+    <!-- Security: The app finds no nearby devices while this is on. -->
     <string name="jail_item_nearby_devices_on">None found</string>
+    <!-- Security: Both Wi-Fi and Bluetooth discovery are affected. -->
     <string name="jail_item_nearby_devices_on_detail">Bluetooth and Wi-Fi scans return nothing.</string>
     <string name="jail_item_notification_content">Notification content</string>
+    <!-- Security: The app cannot read other apps’ notifications. -->
     <string name="jail_item_notification_content_on">No access</string>
+    <!-- Security: Its own notifications still work and access is restored when isolation ends. -->
     <string name="jail_item_notification_content_on_detail">Cannot read the notifications of other apps; its own notifications still show. Restored when isolation ends.</string>
     <string name="jail_item_screen_content">Screen content</string>
+    <!-- Security: The app’s accessibility services are switched off. -->
     <string name="jail_item_screen_content_on">No access</string>
+    <!-- Security: Covers reading and acting on the screen. Access is restored when isolation ends. -->
     <string name="jail_item_screen_content_on_detail">Its accessibility services are off: it cannot read or act on what is on screen. Restored when isolation ends.</string>
 
     <!-- The other modes of an item. -->
+    <!-- Security: Android allows approximate location. Use the system Settings term. -->
     <string name="jail_mode_coarse">Approximate location</string>
+    <!-- Security: Only precise location is withheld. -->
     <string name="jail_mode_coarse_detail">Precise location turned off; only an approximate location is available.</string>
+    <!-- Security: Android allows access only while the app is in use. Use the system Settings term. -->
     <string name="jail_mode_foreground">Only while in use</string>
+    <!-- Security: The restriction applies in the background. -->
     <string name="jail_mode_foreground_detail">Available while the app is in use, not in the background.</string>
+    <!-- Security: Jail leaves this item to Android’s normal access rules. -->
     <string name="jail_mode_off">Real data</string>
+    <!-- Security: Android’s existing permission rules still apply. -->
     <string name="jail_mode_off_detail">The app gets what the system gives it.</string>
+    <!-- Follow this item’s global choice for the selected app. -->
     <string name="jail_mode_global">Use global setting</string>
-    <!-- %1$s: what the global setting is now, such as "Empty list". -->
+    <!-- Security: %1$s is the global mode currently inherited for this item. -->
     <string name="jail_mode_global_detail">Now: %1$s</string>
     <string name="jail_list_separator">", "</string>
     <string name="jail_select">Select an isolated app or the global settings</string>
 
     <!-- The network: in the jail's list, after what applies to an app. -->
+    <!-- Security: Compact app summary for the network access setting being off. -->
     <string name="jail_summary_no_network">No network</string>
+    <!-- Security: Compact app summary for connection recording being on. -->
     <string name="jail_summary_recording">Recording connections</string>
     <string name="jail_summary_separator">" · "</string>
 
     <!-- The network section of an app and of the global settings. -->
     <string name="jail_section_network">Network</string>
+    <!-- Switch controlling whether the app can connect to the network. -->
     <string name="jail_network_access">Network access</string>
+    <!-- Security: Jail is not blocking the app’s network access. -->
     <string name="jail_network_allowed">Allowed</string>
+    <!-- Security: The app remains subject to Android’s own network rules. -->
     <string name="jail_network_allowed_detail">Connects as the system allows.</string>
+    <!-- Security: Jail is set to prevent this app from accessing the network. -->
     <string name="jail_network_blocked">No network</string>
+    <!-- Security: Blocking covers external connections and lookups. On-device connections still work. -->
     <string name="jail_network_blocked_detail">Connections and name lookups fail at once; connections within the device still work. The app is not restarted.</string>
+    <!-- Switch for recording connections. Separate from allowing or blocking them. -->
     <string name="jail_network_record">Record connections</string>
+    <!-- Security: The connection data collected and how long it is retained. -->
     <string name="jail_network_record_summary">Domains, addresses and ports it connects to; kept for 30 days</string>
-    <!-- %1$s: a date and time. -->
+    <!-- Security: %1$s is when connection recording last started. -->
     <string name="jail_network_recording_since">Recording since %1$s</string>
     <string name="jail_network_activity">Network activity</string>
+    <!-- Summary of recorded destinations and connections in the current period. -->
     <plurals name="jail_network_activity_summary">
         <item quantity="one">%1$d destination in 24 hours</item>
         <item quantity="other">%1$d destinations in 24 hours</item>
     </plurals>
+    <!-- Security: The number of configured blocked destinations. -->
     <plurals name="jail_network_blocked_count">
         <item quantity="one">%1$d blocked</item>
         <item quantity="other">%1$d blocked</item>
     </plurals>
+    <!-- Security: Saved domain rules may not fully take effect. -->
     <string name="jail_network_name_rules_not_in_effect">Saved domain rules have limited enforcement</string>
+    <!-- Security: This device cannot record connections in the current state. -->
     <string name="jail_network_recording_unavailable">Connection recording unavailable</string>
+    <!-- Security: The app does not request Android’s network permission. -->
     <string name="jail_network_no_permission">The app does not request network access</string>
+    <!-- Security: The component that blocks network packets is unavailable. -->
     <string name="jail_not_in_effect_packet_filter">Network filtering unavailable</string>
+    <!-- Security: The packet restriction does not also block name lookups. -->
     <string name="jail_not_in_effect_resolver">Partly in effect: name lookups are not blocked</string>
+    <!-- Security: Network defaults for apps with no override. -->
     <string name="jail_network_global_note">For isolated apps without their own setting. With no network, connections fail at once; apps are not restarted.</string>
 
     <!-- An app's network activity. %1$s: the app. -->
+    <!-- Security: Recording is on. %1$s is the app label or package name, with user when needed. -->
     <string name="jail_net_subtitle_recording">%1$s · Recording</string>
+    <!-- Security: Recording is off. %1$s is the app label or package name, with user when needed. -->
     <string name="jail_net_subtitle_stopped">%1$s · Not recording</string>
     <!-- After the number of destinations, in large type. -->
     <plurals name="jail_net_destinations">
         <item quantity="one">destination</item>
         <item quantity="other">destinations</item>
     </plurals>
-    <!-- %1$s: connections; %2$s and %3$s: amounts of data, such as "3.2 MB". -->
+    <!-- %1$s: localized connection count. %2$s and %3$s: formatted sizes received and sent. -->
     <plurals name="jail_net_facts">
         <item quantity="one">%1$s connection · %2$s received · %3$s sent</item>
         <item quantity="other">%1$s connections · %2$s received · %3$s sent</item>
     </plurals>
+    <!-- %1$s: localized connection count. %2$s: localized refused count. -->
     <plurals name="jail_net_facts_counts">
         <item quantity="one">%1$s connection · %2$s refused</item>
         <item quantity="other">%1$s connections · %2$s refused</item>
     </plurals>
     <string name="jail_net_choose_period">Choose a period</string>
     <string name="jail_net_all_periods">All periods</string>
+    <!-- Chart legend for connections that were made. -->
     <string name="jail_net_legend_connected">Connected</string>
+    <!-- Chart legend for connection attempts that were refused. -->
     <string name="jail_net_legend_refused">Refused</string>
+    <!-- Label at the latest end of the network activity chart. -->
     <string name="jail_net_now">Now</string>
     <!-- The blocked filter, followed by how many are blocked. -->
+    <!-- Filter for blocked destinations. %1$d is their count. -->
     <string name="jail_net_filter_blocked_count">Blocked %1$d</string>
+    <!-- Sort destinations by amount of data transferred. -->
     <string name="jail_net_sort_data">Most data</string>
     <string name="jail_net_sort_connections">Most connections</string>
     <string name="jail_net_sort_recent">Most recent</string>
+    <!-- Sort by domain or IP address as displayed. -->
     <string name="jail_net_sort_name">Name</string>
     <string name="jail_net_section_domains">Domains</string>
     <string name="jail_net_section_addresses">IP addresses</string>
     <string name="jail_net_addresses_note">Connected to directly, without a system name lookup.</string>
+    <!-- %1$d: network port number. -->
     <string name="jail_net_port">Port %1$d</string>
     <plurals name="jail_net_connections">
         <item quantity="one">%1$d connection</item>
         <item quantity="other">%1$d connections</item>
     </plurals>
+    <!-- Security: Counts observed refusals during the displayed period. -->
     <plurals name="jail_net_refused">
         <item quantity="one">refused %1$d time</item>
         <item quantity="other">refused %1$d times</item>
     </plurals>
+    <!-- Security: Status for a destination that has a block rule. -->
     <string name="jail_net_blocked">Blocked</string>
+    <!-- %1$d: total destinations in the section. -->
     <string name="jail_net_show_all">Show all %1$d</string>
+    <!-- Security: Retention of connection records and when blocking takes effect. -->
     <string name="jail_net_footer">Records are kept for 30 days. Blocking takes effect at once.</string>
     <string name="jail_net_search">Search domains and addresses</string>
     <string name="jail_net_no_results">No matching destinations</string>
     <string name="jail_net_empty_title">No connections yet</string>
-    <!-- %1$s: a date and time. -->
+    <!-- Security: Recording is on, but no connections have appeared. %1$s is the start time. -->
     <string name="jail_net_empty_body">Recording since %1$s. Connections appear here once the app uses the network.</string>
+    <!-- Security: Recording is off. %1$s is the end of the recorded period. -->
     <string name="jail_net_stopped">Not recording. Records up to %1$s are shown.</string>
+    <!-- Start recording connections for this app. -->
     <string name="jail_net_start">Record</string>
+    <!-- Security: This app’s network access is blocked. -->
     <string name="jail_net_no_network_title">No network</string>
+    <!-- Security: Names may be absent because lookups are blocked along with connections. -->
     <string name="jail_net_no_network_body">Every connection is refused. Name lookups fail, so most destinations show as addresses.</string>
+    <!-- Security: This device cannot record domain names. -->
     <string name="jail_net_names_missing_title">Domain names unavailable</string>
+    <!-- Security: IP addresses may still be recorded when domain names are unavailable. -->
     <string name="jail_net_names_missing_body">Name lookups cannot be read on this device; destinations show as addresses.</string>
+    <!-- Security: Connection counts are available, but byte counts are not recorded. -->
     <string name="jail_net_traffic_missing">Data amounts are not available on this device; connection counts are shown.</string>
     <string name="jail_net_more_options">More options</string>
     <string name="jail_net_menu_block">Block a domain or address…</string>
     <string name="jail_net_menu_stop">Stop recording</string>
     <string name="jail_net_menu_clear">Clear records</string>
     <string name="jail_net_clear_title">Clear network records?</string>
-    <!-- %1$s: the app. -->
+    <!-- Security: %1$s names the app. Deleting records leaves block rules in effect. -->
     <string name="jail_net_clear_body">Network records of %1$s are deleted. Blocked destinations stay blocked.</string>
+    <!-- Confirm deletion of the app’s network records. -->
     <string name="jail_net_clear">Clear</string>
 
     <!-- Blocking. %1$s: a domain or address. -->
+    <!-- Add a block rule for the destination. -->
     <string name="jail_net_block">Block</string>
+    <!-- Remove the block rule for the destination. -->
     <string name="jail_net_unblock">Unblock</string>
+    <!-- Screen reader label. %1$s is a domain, IP address or port with its service. -->
     <string name="jail_net_block_cd">Block %1$s</string>
+    <!-- Security: Confirmation after adding a rule. %1$s is the destination. -->
     <string name="jail_net_blocked_message">%1$s blocked</string>
+    <!-- Security: Confirmation after removing a rule. %1$s is the destination. -->
     <string name="jail_net_unblocked_message">%1$s unblocked</string>
+    <!-- This blocking rule was entered by hand rather than from a record. -->
     <string name="jail_net_manual">Added manually</string>
+    <!-- No connections were attempted to this destination in the selected period. -->
     <string name="jail_net_no_attempts">No attempts in this period</string>
 
     <!-- A destination. -->
@@ -319,34 +460,48 @@
         <item quantity="one">%1$d subdomain</item>
         <item quantity="other">%1$d subdomains</item>
     </plurals>
-    <!-- %1$s and %2$s: when it was first and last connected to. -->
+    <!-- %1$s and %2$s: first and most recent connection times. -->
     <string name="jail_net_first_last">First %1$s · Last %2$s</string>
+    <!-- Security: Adding a rule for %1$s also covers its subdomains. -->
     <string name="jail_net_block_site">Block %1$s and its subdomains</string>
+    <!-- Security: Adding a rule for IP address %1$s covers every port. -->
     <string name="jail_net_block_address">Block %1$s on all ports</string>
+    <!-- %1$s and %2$s: localized start and end clock times for one chart bucket. -->
     <string name="jail_net_hour_range">%1$s–%2$s</string>
     <!-- %1$s: abbreviated date. %2$s: localized start and end times of the chart bucket. -->
     <string name="jail_net_dated_hour_range">%1$s %2$s</string>
+    <!-- %1$d: whole bytes. -->
     <string name="jail_net_size_bytes">%1$d B</string>
+    <!-- %1$d: whole kilobytes. This uses 1024 bytes per kilobyte. -->
     <string name="jail_net_size_kilobytes">%1$d KB</string>
+    <!-- %1$.1f: megabytes to one decimal, calculated by powers of 1024. -->
     <string name="jail_net_size_megabytes">%1$.1f MB</string>
+    <!-- %1$.1f: gigabytes to one decimal, calculated by powers of 1024. -->
     <string name="jail_net_size_gigabytes">%1$.1f GB</string>
+    <!-- Stat label for data sent by the app to the destination. -->
     <string name="jail_net_sent">Sent</string>
+    <!-- Stat label for data received by the app from the destination. -->
     <string name="jail_net_received">Received</string>
     <string name="jail_net_connections_label">Connections</string>
     <string name="jail_net_hosts_header">Subdomains</string>
     <string name="jail_net_ports_header">Ports</string>
     <string name="jail_net_addresses_header">Addresses</string>
+    <!-- %1$d: additional IP addresses omitted from the short list. -->
     <plurals name="jail_net_more">
         <item quantity="one">%1$d more</item>
         <item quantity="other">%1$d more</item>
     </plurals>
-    <!-- %1$s: other domains of the app, separated by commas. -->
+    <!-- Security: %1$s lists other domains affected because they share IP addresses. -->
     <string name="jail_net_shared">Addresses of this domain also serve %1$s, which will be blocked too.</string>
+    <!-- Security: A domain rule does not cover connections using the app’s own resolver. -->
     <string name="jail_net_own_resolver">Connections the app resolves on its own are not affected; they are listed under IP addresses and can be blocked there.</string>
 
     <!-- Blocking a domain or address by hand. -->
     <string name="jail_net_add_title">Block a domain or address</string>
+    <!-- The field accepts a domain, an IP address, or an IP address with a port. -->
     <string name="jail_net_add_label">Domain, IP address or address:port</string>
+    <!-- Security: A manually entered domain rule also covers its subdomains. -->
     <string name="jail_net_add_supporting">A domain includes its subdomains.</string>
+    <!-- The typed input could not be parsed as a supported destination. -->
     <string name="jail_net_add_invalid">Not a domain or IP address</string>
 </resources>

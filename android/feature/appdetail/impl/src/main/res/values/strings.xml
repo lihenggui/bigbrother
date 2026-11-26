@@ -14,19 +14,27 @@
      along with this program. If not, see <https://www.gnu.org/licenses/>.
 -->
 <resources>
+    <!-- Opens isolation controls for the app whose records are shown. -->
     <string name="open_jail">Isolate or manage app</string>
+    <!-- %1$s: app label or package name. -->
     <string name="isolate_app_title">Isolate %1$s?</string>
+    <!-- Security: Describes the change that will happen on confirmation. -->
     <string name="isolate_app_summary">The app will close and use the Jail settings. You can adjust its restrictions next.</string>
     <string name="isolate_app">Isolate</string>
+    <!-- Security: Isolation is still being applied. -->
     <string name="isolating_app">Isolating app…</string>
+    <!-- Security: The isolation action did not complete. -->
     <string name="jail_action_failed">Could not open Jail settings</string>
 
     <!-- What an app did with a path. -->
     <string name="action_read">Read</string>
     <string name="action_write">Modified</string>
     <string name="action_read_write">Read and modified</string>
+    <!-- The app read a directory listing. -->
     <string name="action_list">Listed</string>
+    <!-- The app checked whether a path exists or requested its metadata. -->
     <string name="action_probe">Probed</string>
+    <!-- The app registered for file change notifications. -->
     <string name="action_watch">Watched</string>
     <string name="action_read_provider">Read via provider</string>
     <string name="action_write_provider">Modified via provider</string>
@@ -34,6 +42,7 @@
     <string name="action_connect">Connected</string>
     <string name="action_exec">Executed</string>
     <string name="action_used">Used</string>
+    <!-- The app called a system service. -->
     <string name="action_call">Called</string>
     <!-- Put something on the clipboard, or cleared it. -->
     <string name="action_clipboard_write">Written</string>
@@ -46,6 +55,7 @@
     </plurals>
 
     <string name="internal_storage">Internal storage</string>
+    <!-- %d: Android user number for this storage volume. -->
     <string name="internal_storage_user">Internal storage (user %d)</string>
 
     <!-- Well-known media library collections. -->
@@ -93,6 +103,7 @@
         <item quantity="one">Denied %d time</item>
         <item quantity="other">Denied %d times</item>
     </plurals>
+    <!-- %s: storage volume identifier, such as "1234-ABCD". -->
     <string name="removable_storage">Storage %s</string>
 
     <!-- Filter: files the system let the app open, or everything it did. -->
@@ -133,6 +144,7 @@
     </plurals>
     <string name="tab_info">App info</string>
     <!-- Under the app's name: its package, then the time range the records cover. -->
+    <!-- %1$s: app label or package name. %2$s: selected time range or category. -->
     <string name="header_subtitle">%1$s · %2$s</string>
     <!-- Marks a row that comes from the system's permission records. -->
     <string name="source_permissions">Permission record</string>
@@ -143,7 +155,7 @@
     <!-- App info tab. -->
     <string name="info_package">Package name</string>
     <string name="info_version">Version</string>
-    <!-- %1$s is the version name, %2$d the version code. -->
+    <!-- %1$s: app version name. %2$d: numeric version code. -->
     <string name="info_version_value">%1$s (%2$d)</string>
     <string name="info_target_sdk">Target SDK</string>
     <string name="info_first_install">Installed</string>
@@ -156,6 +168,7 @@
 
     <!-- App page. -->
     <!-- After a section's name: when the latest access in it happened. %s is a time or date. -->
+    <!-- %s: the time or date of the last recorded access. -->
     <string name="last_access">Last %s</string>
     <plurals name="files_read">
         <item quantity="one">Read %d file</item>
@@ -167,7 +180,7 @@
         <item quantity="other">%d more paths looked for</item>
     </plurals>
     <string name="browse_files">All file records</string>
-    <!-- %s is a media library collection, such as "Photos". -->
+    <!-- %s: a media collection label or its content URI. -->
     <string name="media_collection">Media library · %s</string>
     <plurals name="opened_via_media">
         <item quantity="one">Opened %d time</item>
@@ -183,10 +196,13 @@
     <!-- Record of sensors: when each sensor was on. -->
     <string name="sensor_sessions">Sensor use</string>
     <!-- After how many times a sensor was turned on: how long it was on in all. %s is a duration. -->
+    <!-- %s: total time the sensor was active. -->
     <string name="sensor_total">%s total</string>
     <!-- A period a sensor was on: start and end time. -->
+    <!-- %1$s and %2$s: start and end time of a sensor session. -->
     <string name="session_span">%1$s – %2$s</string>
     <!-- A period a sensor is still on: %s is when it was turned on. -->
+    <!-- %s: when the ongoing sensor session started. -->
     <string name="sensor_since">Since %s</string>
     <string name="sensor_still_on">Still on</string>
     <!-- The app asked for 200 events a second or more. -->
