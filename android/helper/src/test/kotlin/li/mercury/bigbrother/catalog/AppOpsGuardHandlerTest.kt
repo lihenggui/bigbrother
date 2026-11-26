@@ -106,7 +106,7 @@ class AppOpsGuardHandlerTest {
 
         updateAccessibilityServices(
             setOf(jailed),
-            given = false,
+            enabled = emptySet(),
             read = {
                 enabled.also {
                     if (changePending) {
@@ -130,7 +130,7 @@ class AppOpsGuardHandlerTest {
 
         updateAccessibilityServices(
             setOf(jailed),
-            given = true,
+            enabled = setOf(jailed),
             read = { enabled },
             write = {
                 enabled = if (changePending) listOf(reader) else it
@@ -139,6 +139,31 @@ class AppOpsGuardHandlerTest {
         )
 
         assertEquals(listOf(reader, jailed), enabled)
+    }
+
+    @Test
+    fun givenAnInitialAccessibilityReading_whenUpdating_thenOnlyConfirmAndReadbackAreNeeded() {
+        val jailed = "$PACKAGE/$PACKAGE.Service"
+        val reader = "com.example.reader/com.example.reader.Service"
+        val initial = listOf(jailed, reader)
+        var enabled = initial
+        var reads = 0
+        var writes = 0
+
+        val readback = updateAccessibilityServices(
+            setOf(jailed),
+            enabled = emptySet(),
+            read = { enabled.also { reads++ } },
+            write = {
+                writes++
+                enabled = it
+            },
+            initial = initial,
+        )
+
+        assertEquals(listOf(reader), readback)
+        assertEquals(1, writes)
+        assertEquals(2, reads)
     }
 
     @Test

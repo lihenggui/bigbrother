@@ -17,6 +17,7 @@
 package li.mercury.bigbrother.hook
 
 import java.io.File
+import java.io.RandomAccessFile
 
 /**
  * Keeps the hook from being part of a crash loop.
@@ -28,7 +29,10 @@ import java.io.File
  *
  * Each start is recorded in a small file in the process's data directory.
  */
-internal class StartGuard(private val directory: File) {
+internal class StartGuard(
+    private val directory: File,
+    private val nowMillis: () -> Long = System::currentTimeMillis,
+) {
 
     /**
      * Returns whether hooks may be installed in this process, and if so
@@ -36,24 +40,59 @@ internal class StartGuard(private val directory: File) {
      * the refusals themselves would keep the window full, and hooking would
      * never resume.
      */
-    fun allowStart(): Boolean = try {
+    fun allowStart(): Boolean = synchronized(processLock) {
+        allowStartLocked()
+    }
+
+    private fun allowStartLocked(): Boolean = try {
         directory.mkdirs()
-        val file = File(directory, FILE_NAME)
-        val now = System.currentTimeMillis()
-        val recent = (if (file.exists()) file.readLines() else emptyList())
-            .mapNotNull { it.toLongOrNull() }
-            // Timestamps from the future mean the clock changed; ignore them.
-            .filter { it in (now - WINDOW_MS)..now }
-        val allowed = recent.size < MAX_STARTS
-        if (allowed) file.writeText((recent + now).joinToString("\n"))
-        allowed
+        // Lock a separate file so the lock survives replacing the record.
+        RandomAccessFile(File(directory, LOCK_FILE), "rw").use { file ->
+            repeat(LOCK_ATTEMPTS) { attempt ->
+                file.channel.tryExclusiveLock()?.use { return recordStart() }
+                if (attempt < LOCK_ATTEMPTS - 1) Thread.sleep(LOCK_RETRY_MS)
+            }
+            false
+        }
+    } catch (_: InterruptedException) {
+        Thread.currentThread().interrupt()
+        false
     } catch (_: Exception) {
         // If the guard itself can't work, err on the side of not hooking.
         false
     }
 
+    private fun recordStart(): Boolean {
+        val file = File(directory, FILE_NAME)
+        val now = nowMillis()
+        val recent = if (file.exists()) {
+            file.useLines { lines ->
+                lines.mapNotNull { it.toLongOrNull() }
+                    // A backward clock correction must not leave the guard stuck.
+                    .filter { it in 0..now && now - it <= WINDOW_MS }
+                    .take(MAX_STARTS)
+                    .toList()
+            }
+        } else {
+            emptyList()
+        }
+        if (recent.size == MAX_STARTS) return false
+        val temporary = File.createTempFile(FILE_NAME, ".tmp", directory)
+        return try {
+            temporary.writeText((recent + now).joinToString("\n"))
+            temporary.renameTo(file)
+        } finally {
+            // After a failed rename the previous record still stands.
+            temporary.delete()
+        }
+    }
+
     private companion object {
+        val processLock = Any()
         const val FILE_NAME = "starts"
+        const val LOCK_FILE = "starts.lock"
+        const val LOCK_ATTEMPTS = 3
+        const val LOCK_RETRY_MS = 25L
         const val WINDOW_MS = 5 * 60 * 1000L
 
         /** Earlier starts allowed within the window before hooking is suspended. */

@@ -34,6 +34,9 @@ internal val INT = Int::class.javaPrimitiveType!!
 internal val LONG = Long::class.javaPrimitiveType!!
 internal val BOOLEAN = Boolean::class.javaPrimitiveType!!
 
+// The service's implementing class may be a framework-private Binder proxy.
+internal val appOpsServiceType by lazy { Class.forName("com.android.internal.app.IAppOpsService") }
+
 /**
  * A method of the permission service called for the default device:
  * with the parameters [before], the device in whichever form this
@@ -63,28 +66,19 @@ internal class DeviceCall(type: Class<*>, name: String, before: List<Class<*>>, 
     fun call(target: Any, before: List<Any?>, after: List<Any?>): Any? = method.call(target, *(before + device + after).toTypedArray())
 }
 
-/**
- * Call the method, reporting what the system throws by its type only:
- * its messages name packages.
- */
+/** Call the method and let its original exception reach the caller. */
 internal fun Method.call(target: Any, vararg args: Any?): Any? = try {
     invoke(target, *args)
 } catch (e: InvocationTargetException) {
-    throw IllegalStateException("$name: ${e.cause?.javaClass?.simpleName}")
+    throw e.targetException ?: e
 }
 
-/**
- * What [e] says without what the system put in it, which may name
- * packages: its kind, and the message only of this program's own. A
- * call made by reflection is told by the exception the system threw
- * (say, DeadObjectException when system_server has gone), not the
- * wrapper around it.
- */
-internal fun describeFailure(e: Throwable): String = when {
-    e is InvocationTargetException -> (e.targetException ?: e).javaClass.simpleName
-    e is IllegalStateException || e is NoSuchMethodException -> e.toString()
-    else -> e.javaClass.simpleName
-}
+/** Exception types only. Messages can contain package names and paths. */
+internal fun describeFailure(e: Throwable): String = generateSequence(e) { it.cause }
+    .take(8)
+    .filterNot { it is InvocationTargetException && it.cause != null }
+    .joinToString(" caused by ") { it.javaClass.simpleName.ifEmpty { "Throwable" } }
+    .ifEmpty { e.javaClass.simpleName }
 
 internal fun Class<*>.optionalMethod(name: String, vararg types: Class<*>) = try {
     getMethod(name, *types)
@@ -97,5 +91,3 @@ internal fun Method.invokeOrNull(vararg args: Any?): Any? = try {
 } catch (_: Throwable) {
     null
 }
-
-internal fun Any.call(method: String): Any? = javaClass.getMethod(method).invoke(this)

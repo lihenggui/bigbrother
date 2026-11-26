@@ -124,7 +124,8 @@ struct State {
     answer: Option<Answer>,
     request: Option<(u32, u64, String)>,
     command_until: Option<Instant>,
-    check_until: Option<(u32, Instant)>,
+    /// Periodic readback can overlap an explicit verify for another UID.
+    check_until: BTreeMap<u32, Instant>,
     restart: bool,
     notify_restart: bool,
     generation: u64,
@@ -519,6 +520,7 @@ impl Effect for AppOps {
         if targets.is_empty() {
             state.guarded.remove(&uid);
             state.owners.remove(&uid);
+            state.check_until.remove(&uid);
             state.unsure.remove(&uid);
             state.pending_verifications.remove(&uid);
         } else {
@@ -682,6 +684,7 @@ impl Effect for AppOps {
     fn forget(&mut self, uid: u32) {
         let mut state = self.shared.state();
         state.owners.remove(&uid);
+        state.check_until.remove(&uid);
         state.guarded.remove(&uid);
         state.pending_verifications.remove(&uid);
         state.unheld.remove(&uid);

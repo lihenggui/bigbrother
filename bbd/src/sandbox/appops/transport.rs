@@ -183,6 +183,7 @@ impl Shared {
         let owner = (package.to_owned(), token.to_owned());
         if state.owners.get(&uid) != Some(&owner) {
             state.invalidate(uid);
+            state.check_until.remove(&uid);
             state.unsure.remove(&uid);
             state.found.retain(|(id, _)| *id != uid);
             state.awaiting_write.remove(&uid);
@@ -304,20 +305,15 @@ impl Shared {
             .strip_prefix("checking ")
             .and_then(|uid| uid.parse::<u32>().ok())
         {
-            state.check_until = Some((uid, Instant::now() + CHECK_WAIT));
+            state.check_until.insert(uid, Instant::now() + CHECK_WAIT);
         } else if let Some(uid) = line
             .strip_prefix("unknown-readback ")
             .and_then(|uid| uid.parse::<u32>().ok())
         {
             state.invalidate(uid);
-            state.check_until = None;
+            state.check_until.remove(&uid);
         } else if let Some((uid, ops)) = parse_unheld(line) {
-            if state
-                .check_until
-                .is_some_and(|(checking, _)| checking == uid)
-            {
-                state.check_until = None;
-            }
+            state.check_until.remove(&uid);
             let permissions = ops
                 .iter()
                 .filter(|name| is_permission(name))
@@ -477,7 +473,7 @@ fn supervise_child(
                     let until = state
                         .command_until
                         .into_iter()
-                        .chain(state.check_until.map(|(_, until)| until))
+                        .chain(state.check_until.values().copied())
                         .min();
                     if state.restart || until.is_some_and(|until| until <= Instant::now()) {
                         break "the helper stopped responding";
@@ -500,7 +496,7 @@ fn supervise_child(
         state.restart = false;
         state.unheld.clear();
         state.unknown.clear();
-        state.check_until = None;
+        state.check_until.clear();
         state.receipts.clear();
         state.pending_verifications.clear();
         state.checking_until = None;
@@ -779,6 +775,29 @@ mod tests {
         appops.report(&mut status);
         assert_eq!(status.unknown_appops, [10100, 10101].into());
         assert!(status.held_ops.is_empty());
+    }
+
+    #[test]
+    fn completing_an_overlapping_check_keeps_other_deadlines() {
+        let shared = Shared::default();
+        let token = "0123456789abcdef0123456789abcdef";
+        for uid in [10100, 10101, 10102] {
+            shared.bind(uid, "com.example.app", token);
+            shared.receive(&format!("report {token} checking {uid}"));
+        }
+
+        shared.receive(&format!("report {token} unheld 10101 -"));
+        shared.receive(&format!("report {token} unknown-readback 10102"));
+
+        assert_eq!(
+            shared
+                .state()
+                .check_until
+                .keys()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![10100]
+        );
     }
 
     fn shell_helper(script: &str) -> std::process::Child {

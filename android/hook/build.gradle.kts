@@ -32,6 +32,8 @@ dependencies {
     implementation(libs.hiddenapibypass)
 
     testImplementation(libs.kotlin.test.junit)
+    testImplementation(libs.libxposed.api)
+    testImplementation(libs.robolectric)
 }
 
 // The tests read the protocol cases shared with the daemon's tests.
