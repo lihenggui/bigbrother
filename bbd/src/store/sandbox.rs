@@ -14,7 +14,7 @@
 
 use std::collections::BTreeSet;
 
-use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
+use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehavior, params};
 
 use super::{Reader, Writer};
 
@@ -70,7 +70,7 @@ impl Writer {
     ) -> anyhow::Result<()> {
         self.conn.pragma_update(None, "synchronous", "FULL")?;
         let result = (|| {
-            let tx = self.conn.unchecked_transaction()?;
+            let tx = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
             write(&tx)?;
             tx.commit()?;
             Ok(())

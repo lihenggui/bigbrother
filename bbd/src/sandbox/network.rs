@@ -548,7 +548,16 @@ impl Effect for Network {
         }
     }
 
-    fn retry_network(&mut self, _: &super::Snapshot) {
+    fn network_retry_pending(&self) -> bool {
+        let wanted = if self.wanted() {
+            Rules::Present
+        } else {
+            Rules::Absent
+        };
+        self.resumed && (self.repair.get() || !self.pending_map.is_empty() || self.rules != wanted)
+    }
+
+    fn retry_network(&mut self) {
         if let Err(e) = self.retry() {
             self.rollback_errors.log(format_args!(
                 "bbd: sandbox: cannot reconcile the packet filter: {e:#}"
@@ -652,7 +661,11 @@ impl Effect for Unavailable {
             );
         }
     }
-    fn retry_network(&mut self, _: &super::Snapshot) {
+    fn network_retry_pending(&self) -> bool {
+        self.cleanup_pending
+    }
+
+    fn retry_network(&mut self) {
         self.retry_cleanup();
     }
 }

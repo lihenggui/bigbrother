@@ -35,6 +35,15 @@ log() {
     echo "--- $(date '+%F %T') $*" >>"$LOG"
 }
 
+# Move the log only between runs, so the next append opens the new file.
+rotate_log() {
+    [ -f "$LOG" ] || return 0
+    size=$(stat -c %s "$LOG" 2>/dev/null) || return 0
+    if [ "$size" -gt 1048576 ]; then
+        mv -f "$LOG" "$LOG.old" || log "could not rotate daemon log"
+    fi
+}
+
 # Seconds since boot. Unlike the wall clock, this does not jump when the
 # time is set during boot.
 uptime_seconds() {
@@ -43,9 +52,9 @@ uptime_seconds() {
 
 # The daemon, and the programs it starts, yield the CPU and the disk to the
 # apps, where the system has the commands for it.
-priority=
-nice -n 10 true 2>/dev/null && priority="nice -n 10"
-ionice -c 2 -n 7 true 2>/dev/null && priority="$priority ionice -c 2 -n 7"
+set --
+nice -n 10 true 2>/dev/null && set -- nice -n 10
+ionice -c 2 -n 7 true 2>/dev/null && set -- "$@" ionice -c 2 -n 7
 
 pid=
 sleeping=
@@ -68,11 +77,15 @@ stop() {
         pid=
     fi
     detach_covers
+    rotate_log
     [ -n "$sleeping" ] && kill "$sleeping" 2>/dev/null
     rm -f "$DATA/bbd.pid"
     exit 0
 }
 trap stop TERM INT
+
+rotate_log
+log "starting"
 
 # Re-enabling serializes with the offline helper before Jail can hold
 # grants again. Keep any wait out of the root manager's boot script.
@@ -89,8 +102,7 @@ while :; do
     # Left by a daemon that crashed: the new one creates its own once its
     # probes are attached, which is what tells the app it is running.
     rm -f "$DATA/bbd.sock" "$DATA/bbd.ctl"
-    # Unquoted: a command with its arguments, or nothing.
-    $priority "$MODDIR/bin/bbd" run >>"$LOG" 2>&1 &
+    "$@" "$MODDIR/bin/bbd" run >>"$LOG" 2>&1 &
     pid=$! cleanup_pending=1
     echo "$pid" >"$DATA/bbd.pid"
     wait "$pid"
@@ -98,6 +110,7 @@ while :; do
     code=$? pid=
     ran=$(($(uptime_seconds) - started))
     detach_covers
+    rotate_log
 
     # The daemon exits with status 0 only when it is asked to stop.
     if [ "$code" -eq 0 ]; then

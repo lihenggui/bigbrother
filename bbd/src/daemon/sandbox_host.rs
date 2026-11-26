@@ -18,18 +18,18 @@ use std::{
     collections::BTreeSet,
     path::Path,
     sync::{Arc, mpsc},
+    time::Instant,
 };
 
 use anyhow::Context as _;
 use tokio::{
     net::{UnixListener, UnixStream},
     sync::Notify,
-    time::{MissedTickBehavior, interval},
 };
 
-use super::{FLUSH_INTERVAL, Options, next_request, sleep_until};
+use super::{Options, next_request, sleep_until};
 use crate::{
-    control,
+    clock, control,
     log::{Limited, Policy, RECURRING_INTERVAL},
     packages::{PackageVersions, Packages},
     probes::{Probes, attach_feature, attach_traffic},
@@ -469,8 +469,6 @@ async fn run_sandbox(
     let mut package_watch = auto::watch::Watch::default();
     let mut package_versions = PackageVersions::default();
     packages.updated_app_ids(&mut package_versions);
-    let mut tick = interval(FLUSH_INTERVAL);
-    tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
     loop {
         watch_package_updates(
             &mut package_watch,
@@ -479,19 +477,15 @@ async fn run_sandbox(
             &mut packages,
             &mut package_versions,
         );
-        // A new app left out of the sandbox is tried again then; no timer
-        // while none is.
-        let next_look = live.sandbox.auto_next_look();
-        let next_recovery = live.sandbox.next_appops_recovery();
+        let due = maintenance_deadline(&mut live.sandbox, Instant::now(), clock::now());
         tokio::select! {
             _ = &mut stopped => break,
-            _ = tick.tick() => live.sandbox.retry_net_refresh(),
-            _ = found.notified() => {}
+            _ = found.notified() => live.sandbox.keep_found(&writer),
             _ = helper_restarted.notified() => live.sandbox.auto_helper_restarted(&writer, &mut packages),
             _ = names_stopped.notified() => stop_relay(&mut live, &writer),
-            _ = storage_ready.notified() => live.sandbox.storage_ready(),
-            _ = sleep_until(next_recovery), if next_recovery.is_some() => {
-                live.sandbox.recover_appops(&writer, &mut packages);
+            _ = storage_ready.notified() => live.sandbox.storage_ready(&writer, &mut packages),
+            _ = sleep_until(due), if due.is_some() => {
+                maintain(&mut live.sandbox, &writer, &mut packages);
             }
             // A command is read without holding up the others, and carried
             // out once it has arrived.
@@ -513,20 +507,42 @@ async fn run_sandbox(
                     &writer, &mut packages, &mut package_versions,
                 );
             }
-            _ = sleep_until(next_look), if next_look.is_some() => {
-                live.sandbox.isolate_new(&writer, &mut packages);
-            }
             // The gate ended a start for a new app or a stale entry.
             Some(uid) = new_starts.recv() => {
                 handle_new_starts(uid, &mut new_starts, &mut live.sandbox, &writer, &mut packages);
             }
         }
-        live.sandbox.release_reassigned(&writer, &mut packages);
-        live.sandbox.keep_found(&writer);
     }
     stop_relay(&mut live, &writer);
     control::unlisten_commands(&db);
     live.sandbox.keep_found(&writer);
+}
+
+fn maintenance_deadline(sandbox: &mut Sandbox, at: Instant, wall: i64) -> Option<Instant> {
+    [
+        sandbox.auto_next_look(),
+        sandbox.next_appops_recovery(),
+        sandbox.next_found_save(),
+        sandbox.next_network_work(at, wall),
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+}
+
+fn maintain(sandbox: &mut Sandbox, writer: &Writer, packages: &mut Packages) {
+    let at = Instant::now();
+    let due = |time: Option<Instant>| time.is_some_and(|time| time <= at);
+    if due(sandbox.next_appops_recovery()) {
+        sandbox.recover_appops(writer, packages);
+    }
+    if due(sandbox.next_found_save()) {
+        sandbox.keep_found(writer);
+    }
+    if due(sandbox.auto_next_look()) {
+        sandbox.isolate_new(writer, packages);
+    }
+    sandbox.run_network_work(Instant::now(), clock::now());
 }
 
 fn watch_package_updates(
@@ -543,7 +559,7 @@ fn watch_package_updates(
         auto.then_some(Path::new(USER_DATA)),
     ) {
         // Read changes that happened before inotify could report them.
-        sandbox.note_package_update(packages, versions);
+        sandbox.package_list_changed(writer, packages, versions);
         sandbox.isolate_new(writer, packages);
     }
 }
@@ -559,7 +575,7 @@ fn handle_package_change(
     match changed {
         Ok(change) => {
             if change.packages {
-                sandbox.note_package_update(packages, versions);
+                sandbox.package_list_changed(writer, packages, versions);
             }
             sandbox.auto_packages_changed(writer, packages);
         }
@@ -578,6 +594,8 @@ fn handle_new_starts(
     while let Ok(uid) = new_starts.try_recv() {
         starts.insert(uid);
     }
+    // A stale installed UID can be reported before the package-list event.
+    sandbox.release_reassigned(writer, packages);
     sandbox.auto_started(writer, packages, starts);
 }
 
@@ -640,6 +658,7 @@ fn respond_to_command(
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
 
     use super::*;
     use crate::sandbox::{Effect, Entry, items::Settings};
@@ -672,6 +691,85 @@ mod tests {
         fn relay_stopped(&mut self) {
             self.0.fetch_add(1, Ordering::Relaxed);
         }
+    }
+
+    #[test]
+    fn an_idle_sandbox_has_no_timer_to_arm() {
+        let writer = Writer::open(Path::new(":memory:")).unwrap();
+        let mut sandbox = Sandbox::load(&writer, Vec::new(), None).unwrap();
+        assert_eq!(
+            maintenance_deadline(&mut sandbox, Instant::now(), 100),
+            None
+        );
+    }
+
+    #[test]
+    fn a_pending_appops_recovery_arms_the_timer_at_startup() {
+        let writer = Writer::open(Path::new(":memory:")).unwrap();
+        writer
+            .stage_appops(&crate::store::AppOpsUndo {
+                uid: 10100,
+                package: "com.example.app".into(),
+                install_id: "installation".into(),
+                preimage: "android:camera=default".into(),
+                attempts: 0,
+            })
+            .unwrap();
+        let mut sandbox = Sandbox::load(&writer, Vec::new(), None).unwrap();
+        sandbox.resume(&writer, &mut Packages::new("/dev/null"));
+        let now = Instant::now();
+        let scheduled = maintenance_deadline(&mut sandbox, now, 100);
+        assert_eq!(scheduled, sandbox.next_appops_recovery());
+        assert!(scheduled.is_some_and(|due| due <= now));
+    }
+
+    struct ExpiringGate(Option<i64>);
+
+    impl Effect for ExpiringGate {
+        fn name(&self) -> &'static str {
+            "expiring gate"
+        }
+
+        fn enable(&mut self, _: &mut Entry, _: &[String], _: &Settings) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn disable(&mut self, _: &mut Entry, _: &[String], _: &Settings) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn update(
+            &mut self,
+            _: &mut Entry,
+            _: &[String],
+            _: &Settings,
+            _: &Settings,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn next_network_expiry(&self, at: Instant, wall: i64) -> Option<Instant> {
+            self.0
+                .map(|expiry| at + Duration::from_secs((expiry - wall).max(0) as u64))
+        }
+
+        fn expire_network(&mut self, _: &sandbox::Snapshot, _: Instant, _: i64) {
+            self.0 = None;
+        }
+    }
+
+    #[test]
+    fn a_network_expiry_arms_only_until_the_address_expires() {
+        let writer = Writer::open(Path::new(":memory:")).unwrap();
+        let mut sandbox =
+            Sandbox::load(&writer, vec![Box::new(ExpiringGate(Some(102)))], None).unwrap();
+        let now = Instant::now();
+        let deadline = now + Duration::from_secs(2);
+        assert_eq!(maintenance_deadline(&mut sandbox, now, 100), Some(deadline));
+        sandbox.run_network_work(now, 100);
+        assert_eq!(maintenance_deadline(&mut sandbox, now, 100), Some(deadline));
+        sandbox.run_network_work(deadline, 102);
+        assert_eq!(maintenance_deadline(&mut sandbox, deadline, 102), None);
     }
 
     #[test]

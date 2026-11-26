@@ -134,7 +134,22 @@ pub trait Effect: Send {
         Vec::new()
     }
 
-    fn retry_network(&mut self, _snapshot: &super::Snapshot) {}
+    fn next_network_expiry(
+        &self,
+        _at: std::time::Instant,
+        _wall: i64,
+    ) -> Option<std::time::Instant> {
+        None
+    }
+
+    fn expire_network(&mut self, _snapshot: &super::Snapshot, _at: std::time::Instant, _wall: i64) {
+    }
+
+    fn network_retry_pending(&self) -> bool {
+        false
+    }
+
+    fn retry_network(&mut self) {}
 
     /// Release state kept for undoing a refresh once its rule is committed
     /// or the previous rules are back in the book.

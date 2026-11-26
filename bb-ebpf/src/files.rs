@@ -58,8 +58,6 @@ pub fn file_open(ctx: ProbeContext) -> u32 {
     0
 }
 
-// Splitting this further risks changing what the BPF verifier sees.
-#[allow(clippy::too_many_lines)]
 fn try_file_open(ctx: &ProbeContext) -> Result<(), i32> {
     let uid = bpf_get_current_uid_gid() as u32;
     if !should_trace(uid) {
@@ -233,7 +231,7 @@ fn leading_number<const N: usize>(bytes: &[u8; N]) -> Option<u32> {
 /// Bytes of the path inspected in-kernel to decide whether to emit an event.
 /// The string copy always NUL-terminates, so prefixes compared against it
 /// can be at most `HEAD_LEN - 1` characters long.
-pub(super) const HEAD_LEN: usize = 16;
+pub(super) const HEAD_LEN: usize = 24;
 
 #[inline(always)]
 fn starts_with(head: &[u8; HEAD_LEN], prefix: &[u8]) -> bool {
@@ -247,26 +245,40 @@ fn starts_with(head: &[u8; HEAD_LEN], prefix: &[u8]) -> bool {
     true
 }
 
-/// True for `/proc/self`, `/proc/thread-self` and `/proc/<pid>` where pid is
-/// the caller's own process or thread.
+/// True for the caller's own proc entries that only describe its process.
 #[inline(always)]
 fn is_own_proc(head: &[u8; HEAD_LEN], tgid: u32, tid: u32) -> bool {
+    let below = if starts_with(head, b"/proc/self/") {
+        11
+    } else if starts_with(head, b"/proc/thread-self/") {
+        18
+    } else {
+        let mut pid = 0u32;
+        let mut end = 6;
+        // Linux pids fit in seven decimal digits.
+        while end < 13 && head[end].is_ascii_digit() {
+            pid = pid * 10 + u32::from(head[end] - b'0');
+            end += 1;
+        }
+        if end == 6 || (pid != tgid && pid != tid) {
+            return false;
+        }
+        match head[end] {
+            0 => return true,
+            b'/' => end + 1,
+            _ => return false,
+        }
+    };
     // The mount table and network state are reached through the process's
-    // own directory but are not about the process (see
-    // `own_proc_entry_matters`).
-    if starts_with(head, b"/proc/self/net") || starts_with(head, b"/proc/self/moun") {
-        return false;
-    }
-    if starts_with(head, b"/proc/self") || starts_with(head, b"/proc/thread-se") {
-        return true;
-    }
-    let mut digits = [0u8; 8];
-    let mut i = 0;
-    while i < 8 {
-        digits[i] = head[6 + i]; // after "/proc/"
-        i += 1;
-    }
-    leading_number(&digits).is_some_and(|pid| pid == tgid || pid == tid)
+    // own directory. The daemon can distinguish mounts from mountinfo.
+    !(head[below] == b'n'
+        && head[below + 1] == b'e'
+        && head[below + 2] == b't'
+        && matches!(head[below + 3], b'/' | 0)
+        || head[below] == b'm'
+            && head[below + 1] == b'o'
+            && head[below + 2] == b'u'
+            && head[below + 3] == b'n')
 }
 
 /// Coarse filter for path *strings*: keep only paths userspace might record.
@@ -291,6 +303,8 @@ pub(super) fn is_interesting(head: &[u8; HEAD_LEN], tgid: u32, tid: u32) -> bool
         // say something about the device (the same list as
         // `proc_entry_matters`, spelled as path prefixes).
         return head[6].is_ascii_digit()
+            || starts_with(head, b"/proc/self/")
+            || starts_with(head, b"/proc/thread-self/")
             || starts_with(head, b"/proc/net")
             || starts_with(head, b"/proc/cpuinfo")
             || starts_with(head, b"/proc/version")

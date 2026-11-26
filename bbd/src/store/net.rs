@@ -18,7 +18,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use rusqlite::{Transaction, params};
+use rusqlite::{Transaction, TransactionBehavior, params};
 
 use super::{Reader, Writer};
 
@@ -144,16 +144,15 @@ impl Writer {
     }
 
     /// Delete the rows of hours before `cutoff` (unix time).
-    pub(super) fn prune_net(&self, cutoff: i64) -> rusqlite::Result<usize> {
-        self.conn.execute(
+    pub(super) fn prune_net(tx: &Transaction<'_>, cutoff: i64) -> rusqlite::Result<usize> {
+        tx.execute(
             "DELETE FROM net_dest WHERE hour < ?1",
             params![cutoff / 3600],
         )
     }
 
-    pub(super) fn prune_name_addresses(&self, now: i64) -> rusqlite::Result<()> {
-        self.conn
-            .execute("DELETE FROM net_name_address WHERE expires <= ?1", [now])?;
+    pub(super) fn prune_name_addresses(tx: &Transaction<'_>, now: i64) -> rusqlite::Result<()> {
+        tx.execute("DELETE FROM net_name_address WHERE expires <= ?1", [now])?;
         Ok(())
     }
 
@@ -193,7 +192,6 @@ impl Writer {
     /// Delete network state for a UID as part of retiring its old owner.
     pub(super) fn delete_net_for_uid(tx: &Transaction<'_>, uid: u32) -> rusqlite::Result<()> {
         tx.execute("DELETE FROM net_dest WHERE uid = ?1", params![uid])?;
-        tx.execute("DELETE FROM net_name_address WHERE uid = ?1", params![uid])?;
         tx.execute("DELETE FROM net_rule WHERE uid = ?1", params![uid])?;
         tx.execute("DELETE FROM net_recording WHERE uid = ?1", params![uid])?;
         Ok(())
@@ -242,10 +240,6 @@ impl Writer {
                 }
                 RuleChange::Unblock => {
                     tx.execute(
-                        "DELETE FROM net_name_address WHERE uid = ?1 AND target = ?2",
-                        params![uid, target],
-                    )?;
-                    tx.execute(
                         "DELETE FROM net_rule WHERE uid = ?1 AND target = ?2",
                         params![uid, target],
                     )?;
@@ -279,17 +273,19 @@ impl Writer {
     /// Note that the connections of `uids`, and of no other, are recorded
     /// now: one recorded already keeps the time it has been since.
     pub fn set_net_recording(&self, uids: &[u32], now: i64) -> anyhow::Result<()> {
-        let had = net_recording(&self.conn)?;
+        let tx = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
+        let had = net_recording(&tx)?;
+        let uids: HashSet<_> = uids.iter().copied().collect();
         for uid in uids.iter().filter(|uid| !had.contains_key(uid)) {
-            self.conn.execute(
+            tx.execute(
                 "INSERT INTO net_recording (uid, since) VALUES (?1, ?2)",
                 params![uid, now],
             )?;
         }
         for uid in had.keys().filter(|uid| !uids.contains(uid)) {
-            self.conn
-                .execute("DELETE FROM net_recording WHERE uid = ?1", params![uid])?;
+            tx.execute("DELETE FROM net_recording WHERE uid = ?1", params![uid])?;
         }
+        tx.commit()?;
         Ok(())
     }
 }
@@ -382,6 +378,55 @@ mod tests {
 
     use super::*;
     use crate::store::Counters;
+
+    #[test]
+    fn deleting_a_rule_cascades_to_its_learned_addresses() {
+        let writer = Writer::open(std::path::Path::new(":memory:")).unwrap();
+        writer
+            .conn
+            .execute_batch(
+                "INSERT INTO net_rule VALUES
+                (10100, 'domain:example.com', 100, 0),
+                (10200, 'domain:example.com', 100, 0);
+             INSERT INTO net_name_address VALUES
+                (10100, 'domain:example.com', 'app1', '203.0.113.1', 200),
+                (10200, 'domain:example.com', 'app2', '203.0.113.2', 200);",
+            )
+            .unwrap();
+        writer
+            .conn
+            .execute("DELETE FROM net_rule WHERE uid = 10100", [])
+            .unwrap();
+        let remaining: i64 = writer
+            .conn
+            .query_row("SELECT uid FROM net_name_address", [], |row| row.get(0))
+            .unwrap();
+        let count: i64 = writer
+            .conn
+            .query_row("SELECT count(*) FROM net_name_address", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!((count, remaining), (1, 10200));
+    }
+
+    #[test]
+    fn a_failed_recording_status_update_rolls_back_the_whole_set() {
+        let writer = Writer::open(std::path::Path::new(":memory:")).unwrap();
+        writer.set_net_recording(&[10100, 10200], 100).unwrap();
+        writer
+            .conn
+            .execute_batch(
+                "CREATE TRIGGER fail_recording_update BEFORE DELETE ON net_recording
+             BEGIN SELECT RAISE(ABORT, 'cannot delete recording status'); END;",
+            )
+            .unwrap();
+        assert!(writer.set_net_recording(&[10200, 10300], 200).is_err());
+        assert_eq!(
+            writer.net_recording().unwrap(),
+            HashMap::from([(10100, 100), (10200, 100)])
+        );
+    }
 
     fn record_connection(writer: &mut Writer, uid: u32, hour: i64) {
         writer.net_record(

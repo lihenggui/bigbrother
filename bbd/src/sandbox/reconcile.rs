@@ -23,7 +23,7 @@ use crate::{
 use super::{Entry, Resumed, Sandbox, dirs};
 
 /// Least time between two log lines about entries that cannot be taken out:
-/// each is tried again at every command and every look for new apps.
+/// each may be tried again on the next package update or command.
 const RELEASE_LOG_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
 
 impl Sandbox {
@@ -63,23 +63,35 @@ impl Sandbox {
     }
 
     pub fn watches_package_updates(&self) -> bool {
-        self.effects
-            .iter()
-            .any(|effect| effect.watches_package_updates())
+        !self.snapshot_read().is_empty()
+            || self
+                .effects
+                .iter()
+                .any(|effect| effect.watches_package_updates())
     }
 
-    pub fn note_package_update(&mut self, packages: &mut Packages, previous: &mut PackageVersions) {
-        if packages.refresh() && !packages.is_empty() {
-            let changed = packages.updated_app_ids(previous);
-            if !changed.is_empty() {
-                for effect in &mut self.effects {
-                    effect.packages_updated(&changed);
-                }
+    pub fn package_list_changed(
+        &mut self,
+        writer: &Writer,
+        packages: &mut Packages,
+        previous: &mut PackageVersions,
+    ) {
+        if !packages.refresh() || packages.is_empty() {
+            return;
+        }
+        let changed = packages.updated_app_ids(previous);
+        if !changed.is_empty() {
+            for effect in &mut self.effects {
+                effect.packages_updated(&changed);
             }
         }
+        self.reconcile(writer, packages, None);
     }
 
-    pub fn storage_ready(&mut self) {
+    pub fn storage_ready(&mut self, writer: &Writer, packages: &mut Packages) {
+        if !self.awaiting_storage.is_empty() {
+            self.release_reassigned(writer, packages);
+        }
         let apps: Vec<_> = self
             .snapshot_read()
             .values()

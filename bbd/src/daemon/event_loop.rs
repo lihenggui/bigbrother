@@ -134,42 +134,15 @@ impl Recording {
     fn on_flush(&mut self, request: Option<UnixStream>) {
         self.tracer.drain_pending(self.events.ring.get_mut());
         self.tracer.counters.dropped = self.events.dropped();
-        self.tracer.expire(now() - RESULT_TIMEOUT_SECS);
-        self.tracer.prune_isolated_owners();
-        self.tracer.ingest_provider_events(Spool::collect);
-        self.tracer.take_refused_lookups();
-        self.permissions.take_permission_uses(&mut self.tracer);
-        self.tracer.settle_sensors(SENSOR_LIST_WAIT);
-        self.drop_cleared_net();
-
-        // A failed write (disk full, database busy) keeps the batch for the
-        // next attempt; it is not a reason to stop recording.
-        let written = match request {
-            Some(_) => self
-                .tracer
-                .writer
-                .flush_for_query(&self.tracer.counters, now()),
-            None => self.tracer.writer.flush(&self.tracer.counters, now()),
-        };
-        if let Err(e) = written {
-            self.tracer
-                .write_errors
-                .log(format_args!("bbd: could not write records: {e:#}"));
-        }
+        flush_records(
+            &mut self.tracer,
+            &mut self.permissions,
+            &self.net_cleared,
+            request.is_some(),
+            now,
+        );
         if let Some(stream) = request {
             control::answer(&stream);
-        }
-    }
-
-    fn drop_cleared_net(&mut self) {
-        // What the sandbox cleared of an app's network is not written from
-        // what was held of it.
-        while let Ok(uid) = self.net_cleared.try_recv() {
-            if let Err(e) = self.tracer.writer.net_clear(uid) {
-                self.tracer
-                    .write_errors
-                    .log(format_args!("bbd: could not clear network records: {e:#}"));
-            }
         }
     }
 
@@ -181,7 +154,7 @@ impl Recording {
         tracer.settle_sensors(Duration::from_secs(2));
         tracer.counters.dropped = self.events.dropped();
         tracer.expire(i64::MAX);
-        tracer.writer.flush(&tracer.counters, now())?;
+        tracer.flush(false, now())?;
         // Sensors still on when it stopped were on at least until now; the next
         // run ends them here if their apps have ended by then.
         tracer.writer.set_meta("stopped_at", now())?;
@@ -194,11 +167,49 @@ impl Recording {
     }
 }
 
+fn flush_records(
+    tracer: &mut Tracer,
+    permissions: &mut PermissionUses,
+    net_cleared: &Receiver<u32>,
+    query: bool,
+    now: impl Fn() -> i64,
+) {
+    tracer.expire(now() - RESULT_TIMEOUT_SECS);
+    tracer.prune_isolated_owners();
+    tracer.ingest_provider_events(Spool::collect);
+    tracer.take_refused_lookups();
+    permissions.take_permission_uses(tracer);
+    tracer.settle_sensors(SENSOR_LIST_WAIT);
+    drop_cleared_net(tracer, net_cleared);
+
+    // A failed write keeps the batch for the next attempt.
+    if let Err(e) = tracer.flush(query, now()) {
+        tracer
+            .write_errors
+            .log(format_args!("bbd: could not write records: {e:#}"));
+    }
+}
+
+fn drop_cleared_net(tracer: &mut Tracer, net_cleared: &Receiver<u32>) {
+    // What the sandbox cleared of an app's network is not written from
+    // what was held of it.
+    while let Ok(uid) = net_cleared.try_recv() {
+        if let Err(e) = tracer.writer.net_clear(uid) {
+            tracer
+                .write_errors
+                .log(format_args!("bbd: could not clear network records: {e:#}"));
+        }
+    }
+}
+
 pub(super) struct PermissionUses {
     readings: Receiver<Option<Vec<appops::Entry>>>,
     tracker: appops::Tracker,
     coverage: i64,
 }
+
+#[cfg(test)]
+mod tests;
 
 impl PermissionUses {
     pub(super) fn start(writer: &Writer) -> anyhow::Result<Self> {

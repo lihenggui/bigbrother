@@ -16,7 +16,9 @@
 
 use std::collections::HashMap;
 
-use rusqlite::{Rows, Statement, params};
+use rusqlite::{
+    Connection, Rows, Statement, ToSql, limits::Limit, params, params_from_iter, types::Value,
+};
 use serde::Serialize;
 
 use crate::{
@@ -324,23 +326,17 @@ pub fn files(
     limit: u32,
     offset: u32,
 ) -> anyhow::Result<Vec<FileRow>> {
-    let mut stmt = reader.connection().prepare(
-        "SELECT uid, max(pkg), cat, path, mode, sum(ok), sum(fail), min(first_ts), max(last_ts),
-                    max(items)
-             FROM access
-             WHERE last_ts >= ?1
-               AND (?2 IS NULL OR instr(?2, ',' || uid || ',') > 0)
-               AND (?3 IS NULL OR substr(path, 1, length(?3)) = ?3)
-               AND (?6 IS NULL OR instr(?6, ',' || cat || ',') > 0)
-               AND (?7 IS NULL OR instr(lower(path), lower(?7)) > 0)
-             GROUP BY uid, path, mode
-             ORDER BY max(last_ts) DESC, path, uid, mode
-             LIMIT ?4 OFFSET ?5",
-    )?;
-    let uids = any_of(uids.iter().map(u32::to_string));
+    let conn = reader.connection();
+    let (sql, uid_params) = files_query(conn, uids)?;
+    let mut stmt = conn.prepare(&sql)?;
     let cats = any_of(cats.iter().map(|c| c.as_str().to_string()));
+    let filters: [&dyn ToSql; 6] = [&since, &prefix, &cats, &contains, &limit, &offset];
     let rows = stmt.query_map(
-        params![since, uids, prefix, limit, offset, cats, contains],
+        params_from_iter(
+            filters
+                .into_iter()
+                .chain(uid_params.iter().map(|uid| uid as &dyn ToSql)),
+        ),
         |r| {
             let path: String = r.get(3)?;
             Ok(FileRow {
@@ -359,6 +355,45 @@ pub fn files(
         },
     )?;
     Ok(rows.collect::<Result<_, _>>()?)
+}
+
+fn files_query(conn: &Connection, uids: &[u32]) -> anyhow::Result<(String, Vec<Value>)> {
+    let uid_slots = conn
+        .limit(Limit::SQLITE_LIMIT_VARIABLE_NUMBER)?
+        .saturating_sub(6) as usize;
+    let (filter, params) = match uids {
+        [] => (String::new(), Vec::new()),
+        [uid] => ("AND uid = ?7".into(), vec![Value::from(*uid)]),
+        uids if uids.len() <= uid_slots => {
+            let placeholders = (7..7 + uids.len())
+                .map(|index| format!("?{index}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            (
+                format!("AND uid IN ({placeholders})"),
+                uids.iter().copied().map(Value::from).collect(),
+            )
+        }
+        // Keep a single global sort and pagination even for larger UID lists.
+        uids => (
+            "AND uid IN (SELECT value FROM json_each(?7))".into(),
+            vec![Value::from(serde_json::to_string(uids)?)],
+        ),
+    };
+    let sql = format!(
+        "SELECT uid, max(pkg), cat, path, mode, sum(ok), sum(fail), min(first_ts), max(last_ts),
+                    max(items)
+             FROM access
+             WHERE last_ts >= ?1
+               AND (?2 IS NULL OR substr(path, 1, length(?2)) = ?2)
+               AND (?3 IS NULL OR instr(?3, ',' || cat || ',') > 0)
+               AND (?4 IS NULL OR instr(lower(path), lower(?4)) > 0)
+               {filter}
+             GROUP BY uid, path, mode
+             ORDER BY max(last_ts) DESC, path, uid, mode
+             LIMIT ?5 OFFSET ?6",
+    );
+    Ok((sql, params))
 }
 
 /// Each app's activity per hour and kind (category and topic), most
@@ -525,6 +560,63 @@ mod tests {
         record::{MODE_CALL, MODE_CONNECT, MODE_EXEC, MODE_QUERY},
         store::{Counters, Writer},
     };
+
+    #[test]
+    fn files_queries_search_the_uid_and_timestamp_index() {
+        let dir = std::env::temp_dir().join(format!("bbd-test-files-plan-{}", std::process::id()));
+        let db = dir.join("bb.db");
+        let mut writer = Writer::open(&db).unwrap();
+        writer.record(
+            10100,
+            "com.a",
+            Category::System,
+            "/proc/cpuinfo".into(),
+            MODE_READ,
+            true,
+            100,
+            0,
+        );
+        writer.flush(&Counters::default(), 100).unwrap();
+        let reader = Reader::open(&db).unwrap();
+        let conn = reader.connection();
+        for uids in [&[10100][..], &[10100, 10200]] {
+            let (sql, uids) = files_query(conn, uids).unwrap();
+            let mut plan = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+            let params = [
+                Value::from(0),
+                Value::Null,
+                Value::Null,
+                Value::Null,
+                Value::from(10),
+                Value::from(0),
+            ];
+            let steps: Vec<String> = plan
+                .query_map(params_from_iter(params.iter().chain(&uids)), |row| {
+                    row.get(3)
+                })
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap();
+            assert!(
+                steps
+                    .iter()
+                    .any(|step| step.contains("SEARCH access USING INDEX access_uid_last")),
+                "{steps:?}"
+            );
+        }
+        conn.set_limit(Limit::SQLITE_LIMIT_VARIABLE_NUMBER, 7)
+            .unwrap();
+        let fallback = files(&reader, &[10100, 10200], &[], None, None, 0, 10, 0).unwrap();
+        assert_eq!(fallback.len(), 1);
+        assert_eq!(fallback[0].uid, 10100);
+        assert!(
+            files(&reader, &[10200, 10300], &[], None, None, 0, 10, 0)
+                .unwrap()
+                .is_empty()
+        );
+        drop((reader, writer));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn commands_and_destinations_are_counted_and_explained() {

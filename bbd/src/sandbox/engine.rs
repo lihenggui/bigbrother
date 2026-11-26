@@ -75,6 +75,7 @@ pub fn items_of(entry: &Entry, global: &Settings) -> Settings {
 pub struct Sandbox {
     pub(super) awaiting_storage: BTreeSet<u32>,
     unsaved_permissions: BTreeSet<u32>,
+    next_found_save: Option<Instant>,
     appops_undo: BTreeSet<u32>,
     next_recovery: Option<Instant>,
     last_recovery: u32,
@@ -93,6 +94,7 @@ pub struct Sandbox {
     pub(super) book: destinations::Book,
     /// Apps whose previous network rules could not be restored completely.
     pub(super) pending_net_refresh: VecDeque<u32>,
+    pub(super) net_retry_at: Option<Instant>,
 }
 
 impl Sandbox {
@@ -125,6 +127,7 @@ impl Sandbox {
         Ok(Self {
             book,
             pending_net_refresh: VecDeque::new(),
+            net_retry_at: None,
             snapshot: Arc::new(RwLock::new(enabled)),
             global: Arc::new(RwLock::new(global)),
             effects,
@@ -133,6 +136,7 @@ impl Sandbox {
             release_logged: None,
             awaiting_storage: BTreeSet::new(),
             unsaved_permissions: BTreeSet::new(),
+            next_found_save: None,
             appops_undo: writer
                 .appops_undo()?
                 .into_iter()
@@ -183,9 +187,8 @@ impl Sandbox {
     }
 
     /// Keep in the entries, and write, what the effects found changed by
-    /// the user while the apps were sandboxed (`Effect::found`): called
-    /// with every write of the records, and before every command, which
-    /// may give back what the entries hold.
+    /// the user while the apps were sandboxed (`Effect::found`). Commands
+    /// also give the effects a chance to save these before restoring grants.
     pub fn keep_found(&mut self, writer: &Writer) {
         let pending = std::mem::take(&mut self.unsaved_permissions);
         let to_write: Vec<_> = {
@@ -213,6 +216,12 @@ impl Sandbox {
                 }
             }
         }
+        self.next_found_save = (!self.unsaved_permissions.is_empty())
+            .then(|| Instant::now() + Duration::from_secs(30));
+    }
+
+    pub fn next_found_save(&self) -> Option<Instant> {
+        self.next_found_save
     }
 
     /// Answer a request line from `bbd.ctl`.

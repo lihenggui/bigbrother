@@ -13,12 +13,14 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, hash_map::Entry},
     path::{Path, PathBuf},
 };
 
 use anyhow::Context as _;
-use rusqlite::{Connection, OptionalExtension as _, Statement, params};
+use rusqlite::{
+    Connection, OptionalExtension as _, Statement, Transaction, TransactionBehavior, params,
+};
 
 use crate::record::{Category, Mode, SensorSession};
 
@@ -28,7 +30,7 @@ use super::{net, schema::create_schema};
 struct Key {
     hour: i64,
     uid: u32,
-    path: String,
+    path: usize,
     mode: Mode,
 }
 
@@ -61,7 +63,7 @@ pub struct Counters {
 #[derive(Hash, PartialEq, Eq)]
 struct EventKey {
     uid: u32,
-    path: String,
+    path: usize,
     mode: Mode,
     ts: i64,
 }
@@ -79,6 +81,8 @@ pub struct Writer {
     pub(super) conn: Connection,
     /// Where the database is, to find the one set aside next to it.
     path: PathBuf,
+    /// One owned copy of each buffered path, shared by both kinds of record.
+    paths: HashMap<String, usize>,
     pending: HashMap<Key, Agg>,
     /// Individual accesses not yet written: (allowed, refused) per key.
     events: HashMap<EventKey, (u32, u32)>,
@@ -102,6 +106,7 @@ impl Writer {
         }
         let mut conn =
             Connection::open(path).with_context(|| format!("opening {}", path.display()))?;
+        conn.pragma_update(None, "foreign_keys", true)?;
         create_schema(&mut conn)?;
         // WAL lets `bbd` query commands read while the daemon writes.
         conn.pragma_update(None, "journal_mode", "WAL")?;
@@ -121,6 +126,7 @@ impl Writer {
             recovery_pages: limit.min(u64::from(u32::MAX)) as u32,
             buffered_bytes: std::cell::Cell::new(0),
             dropped: 0,
+            paths: HashMap::new(),
             pending: HashMap::new(),
             events: HashMap::new(),
             sessions: Vec::new(),
@@ -202,35 +208,49 @@ impl Writer {
             self.dropped = self.dropped.saturating_add(1);
             return;
         }
-        let event = EventKey {
+        let next_id = self.paths.len();
+        let path = self.paths.entry(path);
+        let (path_id, path_bytes) = match &path {
+            Entry::Occupied(found) => (*found.get(), 0),
+            Entry::Vacant(new) => (next_id, 64 + new.key().capacity()),
+        };
+        let event = self.events.entry(EventKey {
             uid,
-            path: path.clone(),
+            path: path_id,
             mode,
             ts,
-        };
-        let key = Key {
+        });
+        let aggregate = self.pending.entry(Key {
             hour: ts / 3600,
             uid,
-            path,
+            path: path_id,
             mode,
-        };
-        let mut bytes = 0;
-        if !self.events.contains_key(&event) {
-            bytes += 128 + event.path.capacity();
-        }
-        if !self.pending.contains_key(&key) {
-            bytes += 128 + key.path.capacity() + pkg.len();
-        }
-        if !self.reserve_sample(bytes) {
+        });
+        let bytes = path_bytes
+            + if matches!(event, Entry::Vacant(_)) {
+                128
+            } else {
+                0
+            }
+            + if matches!(aggregate, Entry::Vacant(_)) {
+                128 + pkg.len()
+            } else {
+                0
+            };
+        let buffered = self.buffered_bytes.get();
+        if bytes > BUFFER_BYTES - buffered {
+            self.dropped = self.dropped.saturating_add(1);
             return;
         }
-        let counts = self.events.entry(event).or_default();
+        self.buffered_bytes.set(buffered + bytes);
+        path.or_insert(path_id);
+        let counts = event.or_default();
         if ok {
             counts.0 = counts.0.saturating_add(1);
         } else {
             counts.1 = counts.1.saturating_add(1);
         }
-        let agg = self.pending.entry(key).or_insert_with(|| Agg {
+        let agg = aggregate.or_insert_with(|| Agg {
             pkg: pkg.to_string(),
             cat,
             ok: 0,
@@ -259,25 +279,26 @@ impl Writer {
 
     /// Write buffered rows, with the counters, in one transaction. Without
     /// rows nothing is written: a device on which nothing is recorded is
-    /// not written to.
-    pub fn flush(&mut self, counters: &Counters, now: i64) -> anyhow::Result<()> {
+    /// not written to. Returns whether rows were dropped to reserve disk space.
+    pub fn flush(&mut self, counters: &Counters, now: i64) -> anyhow::Result<bool> {
         if !self.has_rows() {
-            return Ok(());
+            return Ok(false);
         }
         self.write(counters, now)
     }
 
     /// Flush for a query that is about to read: the counters are written
-    /// too if they changed.
-    pub fn flush_for_query(&mut self, counters: &Counters, now: i64) -> anyhow::Result<()> {
+    /// too if they changed. Returns whether rows were dropped as in `flush`.
+    pub fn flush_for_query(&mut self, counters: &Counters, now: i64) -> anyhow::Result<bool> {
         if self.written.as_ref() == Some(counters) && !self.has_rows() {
-            return Ok(());
+            return Ok(false);
         }
         self.write(counters, now)
     }
 
-    fn write(&mut self, counters: &Counters, now: i64) -> anyhow::Result<()> {
+    fn write(&mut self, counters: &Counters, now: i64) -> anyhow::Result<bool> {
         if !self.room_for_records()? {
+            let dropped = self.has_rows();
             self.dropped = self.dropped.saturating_add(
                 self.events
                     .values()
@@ -285,23 +306,25 @@ impl Writer {
                     .sum::<u64>()
                     + self.sessions.len() as u64,
             );
-            self.pending.clear();
-            self.events.clear();
-            self.sessions.clear();
-            self.net.get_mut().clear();
-            self.buffered_bytes.set(0);
-            return Ok(());
+            self.clear_batch();
+            return Ok(dropped);
         }
         self.conn
             .pragma_update(None, "max_page_count", self.recording_pages)?;
         let result = self.write_batch(counters, now);
         self.conn
             .pragma_update(None, "max_page_count", self.recovery_pages)?;
-        result
+        result.map(|()| false)
     }
 
     fn write_batch(&mut self, counters: &Counters, now: i64) -> anyhow::Result<()> {
-        let tx = self.conn.transaction()?;
+        let mut paths = vec![""; self.paths.len()];
+        for (path, &id) in &self.paths {
+            paths[id] = path;
+        }
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         {
             let mut upsert = tx.prepare_cached(
                 "INSERT INTO access
@@ -314,7 +337,7 @@ impl Writer {
                      last_ts = max(last_ts, excluded.last_ts),
                      items = max(items, excluded.items)",
             )?;
-            upsert_aggregates(&mut upsert, &self.pending)?;
+            upsert_aggregates(&mut upsert, &self.pending, &paths)?;
             let mut intern = tx.prepare_cached("INSERT OR IGNORE INTO path (path) VALUES (?1)")?;
             let mut path_id = tx.prepare_cached("SELECT id FROM path WHERE path = ?1")?;
             let mut insert_event = tx.prepare_cached(
@@ -324,7 +347,13 @@ impl Writer {
                      ok = ok + excluded.ok,
                      fail = fail + excluded.fail",
             )?;
-            insert_events(&mut intern, &mut path_id, &mut insert_event, &self.events)?;
+            insert_events(
+                &mut intern,
+                &mut path_id,
+                &mut insert_event,
+                &self.events,
+                &paths,
+            )?;
             let mut session = tx.prepare_cached(
                 "INSERT INTO sensor_session
                      (uid, pid, proc_start, connection, handle, sensor, continuous, period_ns,
@@ -348,13 +377,18 @@ impl Writer {
         tx.commit()?;
         // Only now: if anything above failed, the rows stay buffered and
         // are written by the next flush.
+        self.clear_batch();
+        self.written = Some(counters.clone());
+        Ok(())
+    }
+
+    fn clear_batch(&mut self) {
         self.pending.clear();
         self.events.clear();
+        self.paths.clear();
         self.sessions.clear();
         self.net.get_mut().clear();
         self.buffered_bytes.set(0);
-        self.written = Some(counters.clone());
-        Ok(())
     }
 
     fn room_for_records(&self) -> anyhow::Result<bool> {
@@ -394,18 +428,18 @@ impl Writer {
     /// Delete rows older than `days`. Returns the number removed.
     pub fn prune(&self, days: u32, now: i64) -> anyhow::Result<usize> {
         let cutoff = now - i64::from(days) * 86_400;
-        self.conn
-            .execute("DELETE FROM event WHERE ts < ?1", params![cutoff])?;
-        self.conn.execute(
+        let tx = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
+        tx.execute("DELETE FROM event WHERE ts < ?1", params![cutoff])?;
+        tx.execute(
             "DELETE FROM sensor_session WHERE end_ts < ?1",
             params![cutoff],
         )?;
-        self.delete_unused_paths()?;
-        self.prune_net(cutoff)?;
-        self.prune_name_addresses(now)?;
-        Ok(self
-            .conn
-            .execute("DELETE FROM access WHERE last_ts < ?1", params![cutoff])?)
+        Self::delete_unused_paths(&tx)?;
+        Self::prune_net(&tx, cutoff)?;
+        Self::prune_name_addresses(&tx, now)?;
+        let removed = tx.execute("DELETE FROM access WHERE last_ts < ?1", params![cutoff])?;
+        tx.commit()?;
+        Ok(removed)
     }
 
     /// Delete what was recorded of system paths that `recorded` no longer
@@ -413,30 +447,30 @@ impl Writer {
     /// would otherwise stay on every app's page until they age out. Returns
     /// the number of paths forgotten.
     pub fn forget_system_paths(&self, recorded: impl Fn(&str) -> bool) -> anyhow::Result<usize> {
-        let dropped: Vec<String> = self
-            .conn
+        let tx = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
+        let dropped: Vec<String> = tx
             .prepare("SELECT DISTINCT path FROM access WHERE cat IN ('device', 'system', 'process') AND path LIKE '/%'")?
             .query_map([], |row| row.get::<_, String>(0))?
             .filter(|path| !path.as_ref().is_ok_and(|path| recorded(path)))
             .collect::<Result<_, _>>()?;
         for path in &dropped {
-            self.conn
-                .execute("DELETE FROM access WHERE path = ?1", params![path])?;
-            self.conn.execute(
+            tx.execute("DELETE FROM access WHERE path = ?1", params![path])?;
+            tx.execute(
                 "DELETE FROM event WHERE path_id IN (SELECT id FROM path WHERE path = ?1)",
                 params![path],
             )?;
         }
         if !dropped.is_empty() {
-            self.delete_unused_paths()?;
+            Self::delete_unused_paths(&tx)?;
         }
+        tx.commit()?;
         Ok(dropped.len())
     }
 
     /// Drop paths that no event refers to any more.
-    fn delete_unused_paths(&self) -> anyhow::Result<()> {
-        self.conn.execute(
-            "DELETE FROM path WHERE id NOT IN (SELECT DISTINCT path_id FROM event)",
+    fn delete_unused_paths(tx: &Transaction<'_>) -> anyhow::Result<()> {
+        tx.execute(
+            "DELETE FROM path WHERE NOT EXISTS (SELECT 1 FROM event WHERE path_id = path.id)",
             [],
         )?;
         Ok(())
@@ -446,6 +480,7 @@ impl Writer {
 fn upsert_aggregates(
     upsert: &mut Statement<'_>,
     pending: &HashMap<Key, Agg>,
+    paths: &[&str],
 ) -> rusqlite::Result<()> {
     for (k, a) in pending {
         upsert.execute(params![
@@ -453,7 +488,7 @@ fn upsert_aggregates(
             k.uid,
             a.pkg,
             a.cat.as_str(),
-            k.path,
+            paths[k.path],
             k.mode,
             a.ok,
             a.fail,
@@ -470,20 +505,17 @@ fn insert_events(
     path_id: &mut Statement<'_>,
     insert_event: &mut Statement<'_>,
     events: &HashMap<EventKey, (u32, u32)>,
+    paths: &[&str],
 ) -> rusqlite::Result<()> {
-    // Most events of a batch share a handful of paths.
-    let mut ids: HashMap<&str, i64> = HashMap::new();
+    let ids: Vec<i64> = paths
+        .iter()
+        .map(|path| {
+            intern.execute([path])?;
+            path_id.query_row([path], |r| r.get(0))
+        })
+        .collect::<Result<_, _>>()?;
     for (k, (ok, fail)) in events {
-        let id = match ids.get(k.path.as_str()) {
-            Some(id) => *id,
-            None => {
-                intern.execute(params![k.path])?;
-                let id: i64 = path_id.query_row(params![k.path], |r| r.get(0))?;
-                ids.insert(&k.path, id);
-                id
-            }
-        };
-        insert_event.execute(params![k.uid, id, k.mode, k.ts, ok, fail])?;
+        insert_event.execute(params![k.uid, ids[k.path], k.mode, k.ts, ok, fail])?;
     }
     Ok(())
 }
@@ -648,6 +680,44 @@ mod tests {
 
         assert_eq!(w.prune(1, t + 3 * 86_400).unwrap(), 4);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_prune_leaves_event_paths_and_network_rows_intact() {
+        let writer = Writer::open(Path::new(":memory:")).unwrap();
+        writer
+            .conn
+            .execute_batch(
+                "INSERT INTO path VALUES (1, '/expired'), (2, '/kept');
+             INSERT INTO event VALUES (10100, 1, 1, 100, 1, 0), (10100, 2, 1, 7300, 1, 0);
+             INSERT INTO access VALUES
+                 (0, 10100, 'com.a', 'files', '/expired', 1, 1, 0, 100, 100, 0);
+             INSERT INTO net_dest VALUES
+                 (10100, 0, '', '203.0.113.1', 443, 1, 0, 0, 0, 0, 100, 100);
+             CREATE TRIGGER fail_prune BEFORE DELETE ON access
+             BEGIN SELECT RAISE(ABORT, 'cannot delete access'); END;",
+            )
+            .unwrap();
+        let remaining = |table| -> i64 {
+            writer
+                .conn
+                .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap()
+        };
+
+        assert!(writer.prune(0, 7200).is_err());
+        assert_eq!(
+            (remaining("event"), remaining("path"), remaining("net_dest")),
+            (2, 2, 1)
+        );
+        writer.conn.execute("DROP TRIGGER fail_prune", []).unwrap();
+        assert_eq!(writer.prune(0, 7200).unwrap(), 1);
+        assert_eq!(
+            (remaining("event"), remaining("path"), remaining("net_dest")),
+            (1, 1, 0)
+        );
     }
 
     #[test]

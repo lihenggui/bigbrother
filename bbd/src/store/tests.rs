@@ -12,7 +12,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-use super::SandboxEntry;
+use std::{sync::Barrier, thread};
+
+use crate::record::{Category, MODE_READ};
+
+use super::{Counters, Reader, SandboxEntry, Writer};
 
 pub(super) fn sandbox_entry_for(uid: u32) -> SandboxEntry {
     SandboxEntry {
@@ -26,4 +30,76 @@ pub(super) fn sandbox_entry_for(uid: u32) -> SandboxEntry {
         created: 1000,
         settings: String::new(),
     }
+}
+
+const FLUSHES_PER_WRITER: i64 = 30;
+const ACCESS: &str = "/proc/cpuinfo";
+
+#[test]
+fn wal_keeps_flushes_and_sandbox_writes_consistent_while_a_reader_holds_a_snapshot() {
+    let dir = std::env::temp_dir().join(format!("bbd-test-wal-{}", std::process::id()));
+    let db = dir.join("bb.db");
+    let sandbox = Writer::open(&db).unwrap();
+    sandbox.put_sandbox(&sandbox_entry_for(10100)).unwrap();
+    let writers = [Writer::open(&db).unwrap(), Writer::open(&db).unwrap()];
+    let reader = Reader::open(&db).unwrap();
+    let snapshot = reader.connection().unchecked_transaction().unwrap();
+    assert_eq!(reader.stats().unwrap().rows, 0);
+    let start = Barrier::new(4);
+    thread::scope(|scope| {
+        for mut writer in writers {
+            let start = &start;
+            scope.spawn(move || {
+                start.wait();
+                for at in 1..=FLUSHES_PER_WRITER {
+                    writer.record(
+                        10100,
+                        "com.a",
+                        Category::System,
+                        ACCESS.into(),
+                        MODE_READ,
+                        true,
+                        at,
+                        0,
+                    );
+                    writer.flush(&Counters::default(), at).unwrap();
+                }
+            });
+        }
+        let start = &start;
+        scope.spawn(move || {
+            start.wait();
+            for _ in 0..FLUSHES_PER_WRITER {
+                sandbox
+                    .write_sandbox(|tx| {
+                        let created: i64 = tx.query_row(
+                            "SELECT created FROM sandbox WHERE uid = 10100",
+                            [],
+                            |row| row.get(0),
+                        )?;
+                        tx.execute(
+                            "UPDATE sandbox SET created = ?1 WHERE uid = 10100",
+                            [created + 1],
+                        )?;
+                        Ok(())
+                    })
+                    .unwrap();
+            }
+        });
+        start.wait();
+        assert!(reader.history(10100, ACCESS, 0).unwrap().is_empty());
+    });
+    assert_eq!(reader.stats().unwrap().rows, 0);
+    assert_eq!(reader.sandbox_entries().unwrap()[0].created, 1000);
+    snapshot.commit().unwrap();
+    assert_eq!(reader.stats().unwrap().rows, 1);
+    let history = reader.history(10100, ACCESS, 0).unwrap();
+    assert_eq!(history.len(), FLUSHES_PER_WRITER as usize);
+    assert!(history.iter().all(|row| row.ok == 2 && row.fail == 0));
+    assert_eq!(
+        reader.sandbox_entries().unwrap()[0].created,
+        1000 + FLUSHES_PER_WRITER
+    );
+    drop(reader);
+    std::fs::remove_dir_all(dir).unwrap();
 }
