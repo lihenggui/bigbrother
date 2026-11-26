@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <plurals name="readers_label">
+        <item quantity="other">앱이 파일을 읽습니다</item>
+    </plurals>
+    <string name="no_reads">앱에서 읽은 파일이 없습니다</string>
+    <plurals name="looked_only">
+        <item quantity="other">%d개의 추가 앱이 파일을 읽지 않고 파일을 찾았습니다</item>
+    </plurals>
+    <string name="more_count">+%d</string>
+    <string name="other_categories">기타 민감한 권한</string>
+    <plurals name="category_count">
+        <item quantity="other">%d종</item>
+    </plurals>
+
+    <plurals name="category_group_read_files">
+        <item quantity="other">%d개의 앱이 파일을 읽습니다</item>
+    </plurals>
+    <plurals name="category_group_looked_only">
+        <item quantity="other">%d개의 앱은 파일만 찾았습니다</item>
+    </plurals>
+
+    <string name="status_stopped">기록 중지됨</string>
+    <string name="daemon_stopped">그 동안의 접속은 기록되지 않습니다.</string>
+    <string name="daemon_starting">기록 시작 중…</string>
+    <string name="start_daemon">기록 시작</string>
+    <string name="install_module">기록 설정</string>
+    <string name="updating_module">업데이트를 마무리하는 중…</string>
+    <string name="update_failed_title">업데이트를 완료할 수 없습니다</string>
+    <string name="module_pending_reboot">다시 시작해야 함</string>
+    <string name="module_pending_reboot_body">root 관리자에서 설치한 모듈은 기기를 다시 시작한 후 적용됩니다.</string>
+    <string name="installing_module">기록 설정 중…</string>
+    <string name="install_failed_title">기록을 설정할 수 없습니다</string>
+    <string name="setup_body">Big Brother는 root 권한으로 접근을 기록합니다. 설정할 때 기기를 다시 시작할 필요가 없습니다.</string>
+    <string name="setup_pending_body">root 관리자에서 설치한 모듈은 기기를 다시 시작한 후 적용됩니다. 기기를 다시 시작하지 않고 지금 기록을 설정할 수도 있습니다.</string>
+</resources>

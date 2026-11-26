@@ -1,0 +1,206 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="isolated_process_uid">격리된 프로세스(UID %d)</string>
+    <string name="back">뒤로</string>
+    <string name="retry">다시 시도하세요</string>
+    <string name="settings_write_failed">설정을 저장할 수 없습니다</string>
+    <string name="search">검색</string>
+    <string name="recording_stopped">기록 중지됨</string>
+    <string name="close_search">검색 닫기</string>
+    <string name="clear_search">검색 지우기</string>
+    <string name="no_matches">일치하는 항목 없음</string>
+
+    <string name="empty_title">이 기간에는 기록이 없습니다</string>
+    <string name="no_root_title">root 권한 필요</string>
+    <string name="no_root_body">root 관리자(KernelSU, Magisk 또는 APatch)에서 root 권한을 허용한 후 다시 시도하세요.</string>
+    <string name="no_module_title">기록이 설정되지 않음</string>
+    <string name="no_module_body">개요에서 기록을 설정하세요.</string>
+    <string name="old_module_title">업데이트가 완료되지 않았습니다</string>
+    <string name="old_module_body">업데이트가 완료될 때까지 이 기능을 사용할 수 없습니다. 개요를 열면 업데이트가 완료됩니다.</string>
+    <string name="error_title">기록을 불러올 수 없음</string>
+
+    <string name="topic_mac_address_title">MAC 주소</string>
+    <string name="topic_network_interfaces_title">네트워크 인터페이스</string>
+    <string name="topic_arp_table_title">ARP 테이블</string>
+    <string name="topic_network_state_title">네트워크 상태</string>
+    <string name="topic_device_serial_title">일련번호</string>
+    <string name="topic_soc_info_title">SoC 세부정보</string>
+    <string name="topic_cpu_model_title">프로세서 모델</string>
+    <string name="topic_kernel_version_title">커널 버전</string>
+    <string name="topic_other_processes_title">다른 프로세스</string>
+    <string name="topic_mounts_title">마운트된 파일 시스템</string>
+    <string name="topic_kernel_modules_title">커널 모듈</string>
+    <string name="topic_selinux_state_title">SELinux 상태</string>
+    <string name="topic_block_devices_title">블록 장치</string>
+    <string name="topic_emulator_probe_title">에뮬레이터 감지</string>
+    <string name="topic_input_devices_title">입력 기기</string>
+    <string name="topic_battery_title">배터리 상태</string>
+    <string name="topic_root_check_title">root 감지</string>
+    <string name="topic_app_probe_title">앱 설치 여부 확인</string>
+    <string name="topic_system_properties_title">시스템 속성</string>
+    <string name="topic_installed_apps_title">설치된 앱</string>
+    <string name="topic_system_settings_title">시스템 설정</string>
+    <string name="topic_shell_command_title">셸 명령</string>
+    <string name="topic_local_ports_title">로컬 포트</string>
+    <string name="topic_local_network_title">로컬 네트워크 연결</string>
+    <string name="topic_device_discovery_title">로컬 네트워크 기기 검색</string>
+    <string name="topic_process_memory_title">다른 프로세스의 메모리</string>
+    <string name="topic_contacts_title">연락처</string>
+    <string name="topic_call_log_title">통화 기록</string>
+    <string name="topic_messages_title">문자 메시지</string>
+    <string name="topic_calendar_title">캘린더</string>
+    <string name="topic_sim_info_title">SIM 및 이동통신사 정보</string>
+    <string name="topic_clipboard_title">클립보드</string>
+    <string name="topic_location_title">위치</string>
+    <string name="topic_wifi_info_title">Wi-Fi 검색 및 연결 정보</string>
+    <string name="topic_phone_identity_title">전화 및 SIM 식별자</string>
+    <string name="topic_accounts_title">계정</string>
+    <string name="topic_running_apps_title">실행 중인 앱</string>
+    <string name="topic_usage_stats_title">앱 사용 통계</string>
+    <string name="topic_enabled_services_title">활성화된 입력 방식 및 접근성 서비스</string>
+    <string name="topic_sensors_title">센서</string>
+    <string name="topic_android_id_title">Android ID</string>
+    <string name="topic_device_name_title">기기 이름</string>
+    <string name="topic_camera_title">카메라</string>
+    <string name="topic_microphone_title">마이크</string>
+
+    <string name="category_messages">SMS 및 통화 기록</string>
+    <string name="category_contacts">연락처</string>
+    <string name="category_location">위치</string>
+    <string name="category_sensors">카메라, 마이크 및 센서</string>
+    <string name="category_files">파일 및 미디어</string>
+    <string name="category_calendar">캘린더</string>
+    <string name="category_personal_info">개인정보</string>
+    <string name="category_app_activity">앱 활동</string>
+    <string name="category_device_ids">기기 식별자</string>
+    <string name="category_network">네트워크 및 근처 기기</string>
+    <string name="category_device_profile">기기 지문</string>
+    <string name="category_environment">환경 감지</string>
+
+    <string name="range_hour">지난 시간</string>
+    <string name="range_day">지난 24시간</string>
+    <string name="range_week">지난 7일</string>
+    <string name="range_all">모든 시간</string>
+
+    <string name="range_hour_short">시간</string>
+    <string name="range_day_short">일</string>
+    <string name="range_week_short">주</string>
+    <string name="range_all_short">모두</string>
+
+    <string name="select_app">앱을 선택하여 액세스한 내용을 확인하세요</string>
+
+    <plurals name="summary_storage">
+        <item quantity="other">%d개 파일</item>
+    </plurals>
+    <string name="summary_separator">", "</string>
+    <plurals name="summary_more">
+        <item quantity="other">%1$s 외 %2$d개</item>
+    </plurals>
+    <string name="summary_media_library">미디어 라이브러리</string>
+    <string name="summary_not_read">%s(읽지 않음)</string>
+    <string name="app_name_with_user">%1$s(사용자 %2$d)</string>
+    <plurals name="app_count">
+        <item quantity="other">앱 %d개</item>
+    </plurals>
+
+    <plurals name="clipboard_read">
+        <item quantity="other">%d회 읽음</item>
+    </plurals>
+    <string name="clipboard_listens">변경사항 감지</string>
+    <plurals name="clipboard_written">
+        <item quantity="other">%d회 씀</item>
+    </plurals>
+    <plurals name="clipboard_read_denied">
+        <item quantity="other">%d번 읽기 거부됨</item>
+    </plurals>
+    <plurals name="clipboard_write_denied">
+        <item quantity="other">쓰기 거부 %d회</item>
+    </plurals>
+    <string name="clipboard_read_short">읽기 %d×</string>
+    <string name="clipboard_listens_short">감지</string>
+    <string name="clipboard_written_short">쓰기 %d×</string>
+    <string name="clipboard_read_denied_short">읽기 거부됨 %d×</string>
+    <string name="clipboard_write_denied_short">쓰기 거부됨 %d×</string>
+    <string name="clipboard_partly_denied">%1$s(%2$d회 거부)</string>
+
+    <string name="sensor_high_rate">%s(높은 샘플링 빈도)</string>
+    <plurals name="sensor_times">
+        <item quantity="other">%d회</item>
+    </plurals>
+    <string name="sensor_times_short">%d×</string>
+    <string name="sensor_unknown">알 수 없는 센서</string>
+    <string name="sensor_type_number">센서 유형 %s</string>
+    <string name="sensor_accelerometer">가속도계</string>
+    <string name="sensor_accelerometer_uncalibrated">가속도계(보정되지 않음)</string>
+    <string name="sensor_accelerometer_limited_axes">가속도계(제한된 축)</string>
+    <string name="sensor_accelerometer_limited_axes_uncalibrated">가속도계(제한된 축, 교정되지 않음)</string>
+    <string name="sensor_gyroscope">자이로스코프</string>
+    <string name="sensor_gyroscope_uncalibrated">자이로스코프(보정되지 않음)</string>
+    <string name="sensor_gyroscope_limited_axes">자이로스코프(축이 제한됨)</string>
+    <string name="sensor_gyroscope_limited_axes_uncalibrated">자이로스코프(제한된 축, 교정되지 않음)</string>
+    <string name="sensor_magnetic_field">자력계</string>
+    <string name="sensor_magnetic_field_uncalibrated">자력계(보정되지 않음)</string>
+    <string name="sensor_orientation">오리엔테이션</string>
+    <string name="sensor_light">광센서</string>
+    <string name="sensor_proximity">근접 센서</string>
+    <string name="sensor_pressure">기압계</string>
+    <string name="sensor_relative_humidity">습도 센서</string>
+    <string name="sensor_ambient_temperature">주변 온도</string>
+    <string name="sensor_gravity">중력</string>
+    <string name="sensor_linear_acceleration">선형 가속도</string>
+    <string name="sensor_rotation_vector">회전 벡터</string>
+    <string name="sensor_game_rotation_vector">게임 회전 벡터</string>
+    <string name="sensor_geomagnetic_rotation_vector">지자기 회전 벡터</string>
+    <string name="sensor_significant_motion">중요한 움직임</string>
+    <string name="sensor_step_detector">걸음수 감지기</string>
+    <string name="sensor_step_counter">만보기</string>
+    <string name="sensor_heart_rate">심박수</string>
+    <string name="sensor_heart_beat">하트비트</string>
+    <string name="sensor_device_orientation">기기 방향</string>
+    <string name="sensor_pick_up_gesture">기기 들어 올리기</string>
+    <string name="sensor_tilt_detector">기울기 감지기</string>
+    <string name="sensor_hinge_angle">힌지 각도</string>
+    <string name="sensor_low_latency_offbody_detect">착용 해제 감지</string>
+    <string name="sensor_stationary_detect">정지 감지</string>
+    <string name="sensor_motion_detect">모션 감지</string>
+    <string name="sensor_pose_6dof">6DoF 포즈</string>
+    <string name="sensor_head_tracker">헤드 트래커</string>
+    <string name="sensor_heading">방위</string>
+    <string name="command_failed">작업을 완료할 수 없습니다.</string>
+    <string name="daemon_bad_response">응답을 읽을 수 없습니다.</string>
+    <string name="database_busy">기록 데이터베이스가 사용 중입니다.</string>
+    <string name="daemon_unavailable">기록 기능이 실행 중이 아닙니다.</string>
+    <string name="destination_missing">목적지를 더 이상 사용할 수 없습니다.</string>
+    <string name="app_missing">이 Android 사용자에게는 이 앱이 더 이상 설치되지 않습니다.</string>
+    <string name="timed_out">작업 시간이 초과되었습니다.</string>
+    <string name="invalid_period">더 짧고 비어 있지 않은 기간을 선택하세요.</string>
+    <string name="module_version_unreadable">설치된 버전을 읽을 수 없습니다.</string>
+    <string name="unsupported_architecture">기록은 이 기기의 프로세서를 지원하지 않습니다.</string>
+    <string name="kernel_btf_missing">커널에는 BTF 지원이 부족합니다. GKI 5.10 이상이 필요합니다.</string>
+    <string name="kernel_too_old">커널 5.10 이상이 필요합니다.</string>
+    <string name="module_archive_invalid">기록에 필요한 파일을 앱 패키지에서 읽을 수 없습니다. 앱을 다시 설치하세요.</string>
+    <string name="database_incompatible">이 버전에서는 기존 기록을 읽을 수 없습니다.</string>
+    <string name="module_install_failed">설정을 완료하지 못했습니다. 버그를 신고하려면 설정에서 로그를 내보내세요.</string>
+    <string name="module_update_failed">다시 시도하세요. 다시 실패하면 설정에서 버그 신고용 로그를 내보내세요.</string>
+    <string name="daemon_start_failed">기록을 시작할 수 없습니다.</string>
+    <string name="installed_apps_unavailable">설치된 앱을 읽을 수 없습니다.</string>
+    <string name="module_disabled">Big Brother 모듈이 root 관리자에서 꺼져 있거나 삭제할 항목으로 지정되어 있습니다. root 관리자에서 설정을 변경하세요.</string>
+    <string name="module_remove_failed">제거되지 않았습니다. 다시 시도해 보세요.</string>
+    <string name="daemon_not_reporting">시작되었지만 아직 아무것도 기록되지 않았습니다. 이 문제가 지속되면 버그 신고를 위해 설정에서 로그를 내보내세요.</string>
+    <string name="file_access_denied">공유 저장공간에 접근할 수 없습니다. root 권한이 허용되었는지 확인하세요.</string>
+    <string name="export_logs_failed">로그를 수집할 수 없습니다.</string>
+</resources>

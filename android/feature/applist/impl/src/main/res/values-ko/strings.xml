@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="all_categories">모든 데이터</string>
+    <string name="sort_sensitivity">감도</string>
+    <string name="sort_recent">마지막 액세스</string>
+    <string name="sort_name">이름</string>
+    <string name="show_system_apps">시스템 앱 표시</string>
+    <string name="only_system_apps">기본적으로 숨겨진 앱에 대해서만 기록이 존재합니다</string>
+    <plurals name="list_group_read_files">
+        <item quantity="other">파일 읽기 · 앱 %d개</item>
+    </plurals>
+    <plurals name="list_group_other">
+        <item quantity="other">기타 · 앱 %d개</item>
+    </plurals>
+</resources>
