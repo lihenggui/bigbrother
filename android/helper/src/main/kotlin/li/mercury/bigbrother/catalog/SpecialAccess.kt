@@ -23,9 +23,6 @@ import android.content.pm.PackageManager
 import android.os.IBinder
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.PermissionState
 import li.mercury.bigbrother.catalog.Taking.HoldResult
-import java.util.concurrent.FutureTask
-import java.util.concurrent.TimeUnit
-import kotlin.concurrent.thread
 
 private const val NOTIFICATION_ACCESS = "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
 
@@ -34,17 +31,14 @@ private const val ACCESSIBILITY_SERVICES = "enabled_accessibility_services"
 
 private const val ACCESSIBILITY_UPDATE_LIMIT = 3
 
-private const val CMD = "/system/bin/cmd"
-
 /**
  * The access to the notifications and to the screen the user gave an
  * app's services ([AppOpsGuardProtocol.SPECIAL_ACCESS]): notification
  * listeners through the notification service ([notifications], an
  * `INotificationManager`), as the system's settings grant it;
- * accessibility services through the setting the accessibility service
- * reads, changed with the `settings` command, as the system's settings
- * change it. A service is one or the other by the permission it is
- * bound with, which it declares; [packages] is an `IPackageManager`.
+ * accessibility services through the secure setting the accessibility
+ * service reads. A service is one or the other by the permission it is
+ * bound with, which it declares.
  *
  * Taken from every service of the uid that has it, and given back to
  * those that had it, and to no other: one never given the access must
@@ -58,13 +52,19 @@ private const val CMD = "/system/bin/cmd"
  * reached, which then cannot fail them.
  */
 @SuppressLint("PrivateApi")
-internal class SpecialAccess(private val packages: Any) : Taking {
+internal class SpecialAccess(
+    private val services: (uid: Int, permission: String) -> Set<String>,
+    private val settings: SettingsStore,
+    private val requireOwner: (Int) -> Unit,
+) : Taking {
+    /** [packages] is an `IPackageManager`. */
+    constructor(
+        packages: Any,
+        settings: SettingsStore = FallbackSettingsStore(BinderSettingsStore(), CmdSettingsStore(), System.err::println),
+    ) : this(DeclaredServices(packages)::forUid, settings, Framework::requireOwner)
+
     // All accessibility services for a user share one setting.
     private val accessibilityUpdates = Any()
-    private val packageType = Class.forName("android.content.pm.IPackageManager")
-    private val packagesForUid = packageType.getMethod("getPackagesForUid", INT)
-    private val packageInfo = packageType.optionalMethod("getPackageInfo", STRING, LONG, INT)
-    private val packageInfoInt = if (packageInfo == null) packageType.getMethod("getPackageInfo", STRING, INT, INT) else null
 
     private val notificationType by lazy { Class.forName("android.app.INotificationManager") }
     private val notifications by lazy {
@@ -120,19 +120,6 @@ internal class SpecialAccess(private val packages: Any) : Taking {
         check(readback.toSet() intersect services == wanted) { "the system did not give special access back" }
     }
 
-    /** The services of [uid]'s packages the system binds with [name], as `<package>/<class>`. */
-    private fun services(uid: Int, name: String): Set<String> {
-        val names = packagesForUid.call(packages, uid) as Array<*>? ?: return emptySet()
-        return names.filterIsInstance<String>().flatMap { pkg ->
-            val info = if (packageInfo != null) {
-                packageInfo.call(packages, pkg, PackageManager.GET_SERVICES.toLong(), userOf(uid))
-            } else {
-                packageInfoInt!!.call(packages, pkg, PackageManager.GET_SERVICES, userOf(uid))
-            } as PackageInfo?
-            info?.services.orEmpty().filter { it.permission == name }.map { "${it.packageName}/${it.name}" }
-        }.toSet()
-    }
-
     /** Those of [services] that have [name] now. */
     private fun given(uid: Int, name: String, services: Set<String>): Set<String> = (if (name == NOTIFICATION_ACCESS) notificationListeners(uid) else accessibilityServices(uid)).toSet() intersect services
 
@@ -141,14 +128,22 @@ internal class SpecialAccess(private val packages: Any) : Taking {
         .map { it.flattenToString() }
 
     /** As the setting lists them, in its order, each in its long form. */
-    private fun accessibilityServices(uid: Int): List<String> = settings("get", "--user", userOf(uid).toString(), "secure", ACCESSIBILITY_SERVICES)
+    private fun accessibilityServices(uid: Int): List<String> = settings.getSecure(userOf(uid), ACCESSIBILITY_SERVICES)
+        ?.trim()
         .takeUnless { it == "null" }.orEmpty()
         .split(':')
-        .mapNotNull { ComponentName.unflattenFromString(it)?.flattenToString() }
+        .mapNotNull { service ->
+            val slash = service.indexOf('/')
+            if (slash == -1 || slash == service.lastIndex) return@mapNotNull null
+            // Like ComponentName.unflattenFromString, expand a relative class name.
+            if (service[slash + 1] != '.') return@mapNotNull service
+            val pkg = service.substring(0, slash)
+            "$pkg/$pkg${service.substring(slash + 1)}"
+        }
 
     private fun setNotificationListeners(uid: Int, services: Set<String>, given: Boolean) {
         if (services.isEmpty()) return
-        Framework.requireOwner(uid)
+        requireOwner(uid)
         for (service in services) {
             val component = ComponentName.unflattenFromString(service) ?: continue
             val withUserSet = grantListener
@@ -166,25 +161,32 @@ internal class SpecialAccess(private val packages: Any) : Taking {
             wanted,
             read = { accessibilityServices(uid) },
             write = {
-                Framework.requireOwner(uid)
-                settings("put", "--user", userOf(uid).toString(), "secure", ACCESSIBILITY_SERVICES, it.joinToString(":"))
+                requireOwner(uid)
+                settings.putSecure(userOf(uid), ACCESSIBILITY_SERVICES, it.joinToString(":"))
             },
             initial = initial,
         )
     }
+}
 
-    /** Run the `settings` command; what it printed. */
-    private fun settings(vararg args: String): String {
-        val process = ProcessBuilder(listOf(CMD, "settings") + args).redirectErrorStream(true).start()
-        // Drain the pipe while waiting so a full buffer cannot hold the child open.
-        val printed = FutureTask { process.inputStream.bufferedReader().use { it.readText().trim() } }
-        thread(isDaemon = true, name = "settings-output") { printed.run() }
-        try {
-            check(process.waitFor(2, TimeUnit.SECONDS) && process.exitValue() == 0) { "settings ${args.first()} failed" }
-            return printed.get(250, TimeUnit.MILLISECONDS)
-        } finally {
-            if (process.isAlive) process.destroyForcibly()
-        }
+@SuppressLint("PrivateApi")
+private class DeclaredServices(private val packages: Any) {
+    private val packageType = Class.forName("android.content.pm.IPackageManager")
+    private val packagesForUid = packageType.getMethod("getPackagesForUid", INT)
+    private val packageInfo = packageType.optionalMethod("getPackageInfo", STRING, LONG, INT)
+    private val packageInfoInt = if (packageInfo == null) packageType.getMethod("getPackageInfo", STRING, INT, INT) else null
+
+    /** The services of [uid]'s packages the system binds with [permission], as `<package>/<class>`. */
+    fun forUid(uid: Int, permission: String): Set<String> {
+        val names = packagesForUid.call(packages, uid) as Array<*>? ?: return emptySet()
+        return names.filterIsInstance<String>().flatMap { pkg ->
+            val info = if (packageInfo != null) {
+                packageInfo.call(packages, pkg, PackageManager.GET_SERVICES.toLong(), userOf(uid))
+            } else {
+                packageInfoInt!!.call(packages, pkg, PackageManager.GET_SERVICES, userOf(uid))
+            } as PackageInfo?
+            info?.services.orEmpty().filter { it.permission == permission }.map { "${it.packageName}/${it.name}" }
+        }.toSet()
     }
 }
 
