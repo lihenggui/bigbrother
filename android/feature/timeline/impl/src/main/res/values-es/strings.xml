@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="all_data">Todos los datos</string>
+    <string name="records_access">Lecturas y accesos</string>
+    <string name="records_all">Todos los registros</string>
+    <string name="timeline_empty">Sin registros</string>
+    <string name="today">hoy</string>
+    <string name="yesterday">ayer</string>
+    <plurals name="read_files">
+        <item quantity="one">Se leyó %d archivo</item>
+        <item quantity="many">Se leyeron %d archivos</item>
+        <item quantity="other">Se leyeron %d archivos</item>
+    </plurals>
+    <plurals name="looked_for_paths">
+        <item quantity="one">Se comprobó %d ruta</item>
+        <item quantity="many">Se comprobaron %d rutas</item>
+        <item quantity="other">Se comprobaron %d rutas</item>
+    </plurals>
+    <string name="media_queried">Consultado la biblioteca multimedia</string>
+    <plurals name="media_opened">
+        <item quantity="one">Se abrió %d archivo a través de la biblioteca multimedia</item>
+        <item quantity="many">Abrió %d archivos a través de la biblioteca multimedia</item>
+        <item quantity="other">Abrió %d archivos a través de la biblioteca multimedia</item>
+    </plurals>
+    <plurals name="media_denied">
+        <item quantity="one">%d acceso a la biblioteca multimedia denegado</item>
+        <item quantity="many">%d accesos a la biblioteca multimedia denegados</item>
+        <item quantity="other">%d accesos a la biblioteca multimedia denegados</item>
+    </plurals>
+    <plurals name="times">
+        <item quantity="one">%d vez</item>
+        <item quantity="many">%d veces</item>
+        <item quantity="other">%d veces</item>
+    </plurals>
+    <plurals name="times_denied">
+        <item quantity="one">Denegado %d vez</item>
+        <item quantity="many">Negado %d veces</item>
+        <item quantity="other">Negado %d veces</item>
+    </plurals>
+</resources>

@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <plurals name="readers_label">
+        <item quantity="one">aplicación leyó archivos</item>
+        <item quantity="many">aplicaciones leyeron archivos</item>
+        <item quantity="other">aplicaciones leyeron archivos</item>
+    </plurals>
+    <string name="no_reads">Ninguna aplicación lee archivos</string>
+    <plurals name="looked_only">
+        <item quantity="one">%d aplicación más buscó archivos sin leerlos</item>
+        <item quantity="many">%d aplicaciones más buscaron archivos sin leerlos</item>
+        <item quantity="other">%d aplicaciones más buscaron archivos sin leerlos</item>
+    </plurals>
+    <string name="more_count">+%d</string>
+    <string name="other_categories">Otros permisos sensibles</string>
+    <plurals name="category_count">
+        <item quantity="one">%d tipo</item>
+        <item quantity="many">%d tipos</item>
+        <item quantity="other">%d tipos</item>
+    </plurals>
+
+    <plurals name="category_group_read_files">
+        <item quantity="one">%d aplicación leyó archivos</item>
+        <item quantity="many">%d aplicaciones leyeron archivos</item>
+        <item quantity="other">%d aplicaciones leyeron archivos</item>
+    </plurals>
+    <plurals name="category_group_looked_only">
+        <item quantity="one">%d aplicación solo buscaba archivos</item>
+        <item quantity="many">%d aplicaciones solo buscaban archivos</item>
+        <item quantity="other">%d aplicaciones solo buscaban archivos</item>
+    </plurals>
+
+    <string name="status_stopped">Registro detenido</string>
+    <string name="daemon_stopped">Mientras tanto, el acceso no queda registrado.</string>
+    <string name="daemon_starting">Iniciando el registro…</string>
+    <string name="start_daemon">Iniciar registro</string>
+    <string name="install_module">Configurar registro</string>
+    <string name="updating_module">Terminando la actualización…</string>
+    <string name="update_failed_title">No se pudo finalizar la actualización</string>
+    <string name="module_pending_reboot">Reiniciar necesario</string>
+    <string name="module_pending_reboot_body">El módulo instalado en el gestor root surtirá efecto tras el próximo reinicio.</string>
+    <string name="installing_module">Configurando el registro…</string>
+    <string name="install_failed_title">No se pudo configurar el registro</string>
+    <string name="setup_body">Big Brother registra los accesos con permisos root. No hace falta reiniciar para configurar el registro.</string>
+    <string name="setup_pending_body">El módulo instalado en el gestor root surtirá efecto tras el próximo reinicio. También puedes configurar el registro ahora, sin reiniciar.</string>
+</resources>

@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="settings_title">Ajustes</string>
+    <string name="section_recording">Registro</string>
+    <string name="section_display">Pantalla</string>
+    <string name="section_about">Acerca de</string>
+    <string name="recording_active">Registrando</string>
+    <string name="recording_unknown">Estado del registro desconocido</string>
+    <string name="retention">Registros conservados durante 30 días</string>
+    <string name="coverage_title">No compatible con este dispositivo</string>
+    <string name="feature_files">Archivos abiertos</string>
+    <string name="feature_exec">Ejecución de comando</string>
+    <string name="feature_network">Conexiones de red locales</string>
+    <string name="feature_process">Acceso a la memoria de proceso</string>
+    <string name="feature_netlink">Consultas Netlink</string>
+    <string name="feature_binder">Llamadas de servicio del sistema</string>
+    <string name="feature_appops">Uso de permisos</string>
+    <string name="remove_module">Eliminar registro</string>
+    <string name="remove_module_summary">Detiene el registro y elimina los registros</string>
+    <string name="remove_module_removing">Eliminando registro…</string>
+    <string name="remove_module_title">¿Quitar registro?</string>
+    <string name="remove_module_body">Se detendrá el registro y se borrarán los registros. Las aplicaciones de la cárcel volverán a recibir datos reales y se reiniciarán. Puedes volver a configurar el registro en Resumen.</string>
+    <string name="remove_module_confirm">Quitar</string>
+    <string name="cancel">Cancelar</string>
+    <string name="module_in_manager">Instalado como módulo en el gestor root</string>
+    <string name="module_in_manager_summary">Para quitar el registro, retira el módulo en el gestor root y reinicia el dispositivo. Se borrarán los registros.</string>
+    <string name="module_in_manager_pending">Entra en vigor después del próximo reinicio</string>
+    <string name="lsposed_title">Módulo de LSPosed</string>
+    <string name="lsposed_summary">Activa Big Brother en LSPosed para registrar los accesos a la biblioteca multimedia, los contactos, los mensajes y el calendario.</string>
+    <string name="setting_system_apps">Mostrar aplicaciones del sistema</string>
+    <string name="setting_system_apps_summary">Oculto de forma predeterminada, junto con procesos aislados que no se remontan a una aplicación: la lectura de datos es parte de cómo funcionan los componentes del sistema.</string>
+    <string name="theme">Tema</string>
+    <string name="theme_system">Como el sistema</string>
+    <string name="theme_light">Claro</string>
+    <string name="theme_dark">Oscuro</string>
+    <string name="dynamic_color">Usa colores de fondo de pantalla</string>
+    <string name="dynamic_color_summary">Cuando está apagada, la aplicación usa sus propios colores</string>
+    <string name="version">Versión</string>
+    <string name="source_code">código fuente</string>
+    <string name="license">Licencia</string>
+    <string name="export_logs">Exportar registros de diagnóstico</string>
+    <string name="export_logs_summary">Registros de diagnóstico de la aplicación y del sistema de registro para informar de un error</string>
+    <string name="export_logs_collecting">Recolectando registros…</string>
+</resources>

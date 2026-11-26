@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="open_jail">Aislar o gestionar app</string>
+    <string name="isolate_app_title">¿Aislar %1$s?</string>
+    <string name="isolate_app_summary">La aplicación se cerrará y se le aplicarán los ajustes de la cárcel. Después podrás ajustar sus restricciones.</string>
+    <string name="isolate_app">Aislar</string>
+    <string name="isolating_app">Aislando la aplicación…</string>
+    <string name="jail_action_failed">No se han podido abrir los ajustes de la cárcel</string>
+
+    <string name="action_read">Lectura</string>
+    <string name="action_write">Modificación</string>
+    <string name="action_read_write">Lectura y modificación</string>
+    <string name="action_list">Listado del directorio</string>
+    <string name="action_probe">Comprobación</string>
+    <string name="action_watch">Supervisión</string>
+    <string name="action_read_provider">Lectura a través del proveedor</string>
+    <string name="action_write_provider">Modificación a través del proveedor</string>
+    <string name="action_query">Consulta</string>
+    <string name="action_connect">Conexión</string>
+    <string name="action_exec">ejecutado</string>
+    <string name="action_used">Uso</string>
+    <string name="action_call">Llamada a servicio</string>
+    <string name="action_clipboard_write">Escritura</string>
+    <string name="search_paths">Buscar rutas</string>
+    <plurals name="access_query">
+        <item quantity="one">Consultado una vez, %2$d entradas</item>
+        <item quantity="many">Consultado %1$d veces, hasta %2$d entradas</item>
+        <item quantity="other">Consultado %1$d veces, hasta %2$d entradas</item>
+    </plurals>
+
+    <string name="internal_storage">Almacenamiento interno</string>
+    <string name="internal_storage_user">Almacenamiento interno (usuario %d)</string>
+
+    <string name="collection_images">Fotos</string>
+    <string name="collection_videos">Vídeos</string>
+    <string name="collection_audio">Música y audio</string>
+    <string name="collection_downloads">Descargas</string>
+    <string name="collection_files">Todos los medios y archivos</string>
+    <string name="collection_documents">Carpetas otorgadas a través del selector de documentos</string>
+
+    <string name="results_truncated">Mostrando solo las entradas más recientes.</string>
+
+    <string name="access_allowed">%1$s %2$d×</string>
+    <string name="access_blocked">%1$s %2$d×, acceso denegado</string>
+    <string name="access_partly_blocked">%1$s %2$d× (%3$d× con acceso denegado)</string>
+    <string name="access_separator">"; "</string>
+    <plurals name="total_allowed">
+        <item quantity="one">Se leyó %d vez</item>
+        <item quantity="many">Se leyó %d veces</item>
+        <item quantity="other">Se leyó %d veces</item>
+    </plurals>
+    <plurals name="total_requested">
+        <item quantity="one">%d llamada al servicio</item>
+        <item quantity="many">%d llamadas al servicio</item>
+        <item quantity="other">%d llamadas al servicio</item>
+    </plurals>
+    <plurals name="total_contacted">
+        <item quantity="one">Conectado %d vez</item>
+        <item quantity="many">Conectado %d veces</item>
+        <item quantity="other">Conectado %d veces</item>
+    </plurals>
+    <plurals name="total_ran">
+        <item quantity="one">Ejecutado %d vez</item>
+        <item quantity="many">Ejecutado %d veces</item>
+        <item quantity="other">Ejecutado %d veces</item>
+    </plurals>
+    <plurals name="total_not_run">
+        <item quantity="one">La ejecución falló %d vez</item>
+        <item quantity="many">La ejecución falló %d veces</item>
+        <item quantity="other">La ejecución falló %d veces</item>
+    </plurals>
+    <plurals name="total_blocked">
+        <item quantity="one">Denegado %d vez</item>
+        <item quantity="many">Negado %d veces</item>
+        <item quantity="other">Negado %d veces</item>
+    </plurals>
+    <string name="removable_storage">Almacenamiento %s</string>
+
+    <string name="filter_read">Leídos</string>
+    <string name="filter_all">Todo acceso</string>
+    <string name="no_files_read">No se ha leído ningún archivo</string>
+
+    <string name="storage_root">Almacenamiento</string>
+    <string name="group_media">Biblioteca multimedia</string>
+
+    <string name="read_count">%d×</string>
+
+    <string name="open_file_missing">Archivo no encontrado.</string>
+    <string name="open_file_no_viewer">Ninguna aplicación puede abrir este archivo.</string>
+
+    <string name="open_file">Abrir</string>
+    <string name="show_all_details">Ver todos (%d)</string>
+    <plurals name="apps_asked">
+        <item quantity="one">Se consultó la información de %d aplicación</item>
+        <item quantity="many">Se consultó la información de %d aplicaciones</item>
+        <item quantity="other">Se consultó la información de %d aplicaciones</item>
+    </plurals>
+    <plurals name="root_apps_asked">
+        <item quantity="one">Buscó %d aplicación relacionada con root</item>
+        <item quantity="many">Buscó %d aplicaciones relacionadas con root</item>
+        <item quantity="other">Buscó %d aplicaciones relacionadas con root</item>
+    </plurals>
+    <plurals name="absent_apps_asked">
+        <item quantity="one">Se buscó %d aplicación que no está en este dispositivo</item>
+        <item quantity="many">Se buscaron %d aplicaciones que no están en este dispositivo</item>
+        <item quantity="other">Se buscaron %d aplicaciones que no están en este dispositivo</item>
+    </plurals>
+    <string name="tab_info">Información de la aplicación</string>
+    <string name="header_subtitle">%1$s · %2$s</string>
+    <string name="source_permissions">Uso de permisos</string>
+    <plurals name="total_used">
+        <item quantity="one">Usado %d vez</item>
+        <item quantity="many">Usado %d veces</item>
+        <item quantity="other">Usado %d veces</item>
+    </plurals>
+    <string name="info_package">Nombre del paquete</string>
+    <string name="info_version">Versión</string>
+    <string name="info_version_value">%1$s (%2$d)</string>
+    <string name="info_target_sdk">SDK de destino</string>
+    <string name="info_first_install">Instalado</string>
+    <string name="info_last_update">Última actualización</string>
+    <string name="info_open_settings">Ajustes de aplicación</string>
+    <string name="info_launch">Abrir aplicación</string>
+    <string name="info_copied">Copiado</string>
+    <string name="source_isolated">Proceso aislado</string>
+
+    <string name="last_access">Último acceso: %s</string>
+    <plurals name="files_read">
+        <item quantity="one">Se leyó %d archivo</item>
+        <item quantity="many">Se leyeron %d archivos</item>
+        <item quantity="other">Se leyeron %d archivos</item>
+    </plurals>
+    <plurals name="paths_looked_for">
+        <item quantity="one">Se comprobó %d ruta más</item>
+        <item quantity="many">Se comprobaron %d rutas más</item>
+        <item quantity="other">Se comprobaron %d rutas más</item>
+    </plurals>
+    <string name="browse_files">Todos los registros de archivos</string>
+    <string name="media_collection">Biblioteca multimedia · %s</string>
+    <plurals name="opened_via_media">
+        <item quantity="one">Abierto %d vez</item>
+        <item quantity="many">Abierto %d veces</item>
+        <item quantity="other">Abierto %d veces</item>
+    </plurals>
+    <string name="files_title">Archivos</string>
+    <string name="close">Cerrar</string>
+    <string name="record_details">Detalles</string>
+    <string name="record_history">Cada acceso</string>
+    <string name="record_history_partial">Horarios mostrados para los registros más recientes de este tipo.</string>
+
+    <string name="sensor_sessions">Uso de sensores</string>
+    <string name="sensor_total">total %s</string>
+    <string name="session_span">%1$s – %2$s</string>
+    <string name="sensor_since">Desde %s</string>
+    <string name="sensor_still_on">Todavía en</string>
+    <string name="high_rate">Muestreo rápido</string>
+    <string name="rate_fastest">Más rápido</string>
+    <string name="sensor_sessions_note">Se muestran las frecuencias de muestreo solicitadas. El sistema puede entregar menos eventos.</string>
+    <string name="duration_seconds">%d s</string>
+    <string name="duration_minutes">%d min</string>
+    <string name="duration_hours">%d h</string>
+    <string name="duration_hours_minutes">%1$d h %2$d min</string>
+    <string name="duration_days">%d d</string>
+    <string name="duration_days_hours">%1$d d %2$d h</string>
+    <string name="expanded">Expandido</string>
+    <string name="collapsed">Contraído</string>
+</resources>
