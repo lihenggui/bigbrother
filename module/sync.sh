@@ -40,9 +40,11 @@ rm -f "$NEXT/bin/bbd" "$NEXT/helper.apk"
 unzip -p "$APK" "$DAEMON" > "$NEXT/bin/bbd" && [ -s "$NEXT/bin/bbd" ] || exit 1
 chmod 755 "$NEXT/bin/bbd"
 "$NEXT/bin/bbd" module-check-db
-cp "$APK" "$NEXT/helper.apk"
+if ! unzip -p "$APK" helper.apk > "$NEXT/helper.apk" || [ ! -s "$NEXT/helper.apk" ]; then
+    echo "Failed to extract helper.apk" >&2
+    exit 1
+fi
 chmod 644 "$NEXT/helper.apk"
-cmp -s "$APK" "$NEXT/helper.apk"
 # Keep the previous payload even if power is lost just after publication.
 # This copy lets the owner recover the previous module files.
 DATA=/data/adb/big_brother

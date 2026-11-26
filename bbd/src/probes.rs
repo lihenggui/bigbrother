@@ -26,6 +26,10 @@ use bb_common::{BinderKey, BinderValue, OFF_COUNT, OFF_MISSING};
 
 use crate::{btf::Btf, syscalls};
 
+const MODERN_OBJECT: &[u8] = aya::include_bytes_aligned!(concat!(env!("OUT_DIR"), "/bb-ebpf"));
+const LEGACY_OBJECT: &[u8] =
+    aya::include_bytes_aligned!(concat!(env!("OUT_DIR"), "/bb-ebpf-legacy"));
+
 /// (program, kernel function) pairs a feature is attached to.
 pub type Plan = Vec<(&'static str, &'static str)>;
 
@@ -56,16 +60,14 @@ pub fn load_probes() -> anyhow::Result<Probes> {
     }
 
     let offsets = Btf::from_kernel()?.kernel_offsets()?;
-    let modern = aya::include_bytes_aligned!(concat!(env!("OUT_DIR"), "/bb-ebpf"));
-    let legacy = aya::include_bytes_aligned!(concat!(env!("OUT_DIR"), "/bb-ebpf-legacy"));
-    let mut ebpf = match load_file_programs(modern, &offsets, true) {
+    let mut ebpf = match load_file_programs(MODERN_OBJECT, &offsets, true) {
         Ok(ebpf) => ebpf,
         Err(error) => {
             eprintln!(
                 "bbd: using the syscall hash table: {error} ({})",
                 error.root_cause()
             );
-            load_file_programs(legacy, &offsets, false)?
+            load_file_programs(LEGACY_OBJECT, &offsets, false)?
         }
     };
 
@@ -304,4 +306,31 @@ pub fn print_profile(ebpf: &aya::Ebpf) {
 pub fn dropped_events(map: &PerCpuArray<MapData, u64>) -> u64 {
     map.get(&0, 0)
         .map_or(0, |per_cpu| per_cpu.iter().sum::<u64>())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LEGACY_OBJECT, MODERN_OBJECT};
+
+    #[test]
+    fn stripped_objects_retain_metadata_and_programs_for_aya() {
+        for (name, data) in [
+            ("bb-ebpf", MODERN_OBJECT),
+            ("bb-ebpf-legacy", LEGACY_OBJECT),
+        ] {
+            let object =
+                aya_obj::Object::parse(data).unwrap_or_else(|error| panic!("{name}: {error}"));
+            assert!(object.btf.is_some(), "{name} is missing .BTF");
+            assert!(object.btf_ext.is_some(), "{name} is missing .BTF.ext");
+            assert_eq!(object.license.as_c_str(), c"GPL", "{name}");
+            assert!(
+                object.maps.contains_key("EVENTS"),
+                "{name} is missing EVENTS"
+            );
+            assert!(
+                object.programs.contains_key("file_open"),
+                "{name} is missing file_open"
+            );
+        }
+    }
 }

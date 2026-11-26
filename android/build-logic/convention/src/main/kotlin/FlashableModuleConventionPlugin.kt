@@ -66,8 +66,14 @@ class FlashableModuleConventionPlugin : Plugin<Project> {
                     defaultConfig.versionName = moduleProp.getProperty("version").removePrefix("v")
                 }
 
+                val moduleHelper = configurations.dependencyScope("moduleHelper")
+                val helperFiles = configurations.resolvable("moduleHelperFiles") {
+                    extendsFrom(moduleHelper.get())
+                }
+                dependencies.add(moduleHelper.name, dependencies.project(mapOf("path" to ":helper", "configuration" to moduleHelper.name)))
                 val stageModule = tasks.register<StageModule>("stageModule") {
                     moduleFiles.set(moduleDir)
+                    helperApk.from(helperFiles)
                     daemons.from(
                         fileTree(repository.resolve("out")) { include("$DAEMON_PREFIX*") },
                     )
@@ -91,6 +97,10 @@ abstract class StageModule : DefaultTask() {
     @get:InputDirectory
     abstract val moduleFiles: DirectoryProperty
 
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.NAME_ONLY)
+    abstract val helperApk: ConfigurableFileCollection
+
     /**
      * The daemons, built by scripts/build.sh before Gradle runs, one per
      * architecture. Their names carry the architecture, so they are inputs
@@ -113,7 +123,10 @@ abstract class StageModule : DefaultTask() {
             throw GradleException("No daemon in out/. Build it first: ./scripts/build.sh")
         }
         files.sync {
-            from(moduleFiles)
+            from(moduleFiles) {
+                exclude("**/*.md")
+            }
+            from(helperApk.singleFile)
             for (binary in binaries) {
                 from(binary) {
                     into("bin/${binary.name.removePrefix(DAEMON_PREFIX)}")

@@ -70,12 +70,9 @@ for file in module.prop service.sh supervise.sh stop.sh uninstall.sh \
     action.sh direct.sh bin/bbd; do
     [ -f "$MODPATH/$file" ] || abort "! $file is missing from the archive"
 done
-# The daemon runs two small programs out of the app's APK (see
-# bbd/src/helper.rs). It takes them from this copy, which only root can
-# replace, rather than from whatever app is installed under the package name.
-if unzip -l "$ZIPFILE" classes.dex >/dev/null 2>&1; then
-    cp "$ZIPFILE" "$MODPATH/helper.apk" ||
-        ui_print "! Could not keep a copy of the app; service calls and permission use will not be recorded"
+# The daemon and sandbox recovery load the helpers from the root-owned module.
+if ! unzip -p "$ZIPFILE" helper.apk > "$MODPATH/helper.apk" || [ ! -s "$MODPATH/helper.apk" ]; then
+    abort "! Failed to extract helper.apk"
 fi
 set_perm_recursive "$MODPATH" 0 0 0755 0644
 set_perm "$MODPATH/bin/bbd" 0 0 0755

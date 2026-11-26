@@ -103,8 +103,8 @@ if ! "$fast"; then
     step 'Build the APK' ./scripts/build.sh
     step 'Test the app' gradle test
     step "Check the app's dependencies, permissions and licenses" \
-        gradle :app:dependencyGuard :app:checkReleaseBadging :app:licenseeAndroidRelease
-    step 'Lint the app' gradle :app:lintRelease
+        gradle :app:dependencyGuard :app:checkReleaseBadging :app:licenseeAndroidRelease :helper:licenseeAndroidRelease
+    step 'Lint the app and its helper' gradle :app:lintRelease :helper:lintRelease
 fi
 
 step 'Check Kotlin source structure and test names' gradle lintStructure -PlintStructureOnly

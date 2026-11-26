@@ -35,7 +35,6 @@ import li.mercury.bigbrother.core.data.root.ModulePaths.PENDING_UPDATE_DIR
 import li.mercury.bigbrother.core.data.root.RootShell
 import li.mercury.bigbrother.core.data.root.shellQuoted
 import li.mercury.bigbrother.core.model.LoadFailure
-import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
 import java.util.zip.ZipFile
@@ -166,7 +165,7 @@ internal class RootModuleRepository @Inject constructor(
     }
 
     override suspend fun compareWithBundled(): InstalledModule {
-        val files = (MODULE_FILES + "bin/bbd" + "helper.apk").joinToString(" ") { "$MODULE_DIR/$it" }
+        val files = (MODULE_FILES + "bin/bbd" + HELPER_APK).joinToString(" ") { "$MODULE_DIR/$it" }
         // A module this app installed that turned itself off is not replaced
         // behind the user's back: it is compared once it is started again.
         val installed = rootShell.run(
@@ -215,11 +214,10 @@ internal class RootModuleRepository @Inject constructor(
         val entry = daemonEntry ?: return@withContext null
         try {
             ZipFile(context.applicationInfo.sourceDir).use { zip ->
-                val digests = (MODULE_FILES + entry).map { name ->
+                (MODULE_FILES + entry + HELPER_APK).map { name ->
                     val file = zip.getEntry(name) ?: return@withContext null
                     zip.getInputStream(file).use(::digest)
-                }
-                (digests + File(context.applicationInfo.sourceDir).inputStream().use(::digest)).joinToString(" ")
+                }.joinToString(" ")
             }
         } catch (_: IOException) {
             throw RecordsException.CommandFailed(LoadFailure.Operation.MODULE_ARCHIVE_INVALID)
@@ -245,6 +243,7 @@ internal class RootModuleRepository @Inject constructor(
         val ARCH_BY_ABI = mapOf("arm64-v8a" to "arm64", "x86_64" to "x64")
 
         const val BUFFER_SIZE = 64 * 1024
+        const val HELPER_APK = "helper.apk"
         const val MODULE_VERSION_MISSING = "module-version-missing"
         const val IS_APP_INSTALLATION = "[ $MODULE_DIR = $DIRECT_DIR ] && [ -f $DIRECT_DIR/direct.sh ]"
     }

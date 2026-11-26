@@ -1,5 +1,5 @@
-# Stack traces in the app's log keep file names and line numbers; the
-# mapping saved with each release (build/outputs/mapping/release) turns the
-# rest back into names.
+# Stack traces in the app's log keep line numbers and replace file names
+# with "SourceFile". The release mapping (build/outputs/mapping/release)
+# restores the original names.
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile

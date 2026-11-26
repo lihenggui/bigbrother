@@ -14,7 +14,7 @@ libc = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "net", "process", "signal", "sync", "time"] }
 rusqlite = { version = "0.43.0", features = ["bundled", "limits"] }
 socket2 = "0.6.5"
-clap = { version = "4.6.8", features = ["derive", "env"] }
+clap = { version = "4.6.8", default-features = false, features = ["std", "derive", "env", "help", "usage", "error-context"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 
@@ -22,9 +22,13 @@ serde_json = "1.0.154"
 anyhow = { workspace = true, default-features = true }
 aya-build = { workspace = true }
 cargo_metadata = { workspace = true }
+which = { workspace = true }
 # Not a real code dependency: aya-build compiles this crate for the BPF target
 # from build.rs. Listing it here makes cargo rebuild bbd when it changes.
 bb-ebpf = { path = "../bb-ebpf" }
+
+[dev-dependencies]
+aya-obj = "0.6.0"
 
 [[bin]]
 name = "bbd"
