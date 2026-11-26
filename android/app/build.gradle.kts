@@ -78,7 +78,7 @@ android {
     androidResources {
         // Locales the app is translated into; drives the per-app language picker.
         generateLocaleConfig = true
-        localeFilters += listOf("en", "zh")
+        localeFilters += providers.gradleProperty("appLocales").get().split(',')
     }
 
     packaging.resources {

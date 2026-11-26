@@ -54,7 +54,20 @@ private fun Lint.configure(structureOnly: Boolean) {
     if (structureOnly) {
         checkTestSources = true
         checkOnly += listOf("TestMethodName", "LongFunction", "LongComposeFile", "LongSourceFile")
+        checkOnly += translationIssues
     }
+    error += translationIssues
     // Dependabot proposes newer versions.
     disable += "GradleDependency"
 }
+
+private val translationIssues = listOf(
+    "StringFormatMatches",
+    "StringFormatInvalid",
+    "StringFormatCount",
+    "MissingQuantity",
+    "UnusedQuantity",
+    "ImpliedQuantity",
+    "MissingTranslation",
+    "ExtraTranslation",
+)
