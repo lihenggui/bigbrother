@@ -179,7 +179,7 @@ requests and merge groups. All three exclude Markdown changes.
 | Workflow | Runs for these changes |
 | --- | --- |
 | CI | Files outside `docs/`. |
-| Device | The Rust components and Cargo files, the module, scripts, `android/app/`, `android/helper/`, `android/hook/`, `android/canary/`, Gradle build logic and project configuration, `.github/actions/setup/` or `device.yml`. |
+| Device | The Rust components and Cargo files, the module, scripts, `testdata/permissions/`, `android/app/`, `android/helper/`, `android/hook/`, `android/canary/`, Gradle build logic and project configuration, `.github/actions/setup/` or `device.yml`. Changes limited to `android/app/` run only the four `checks` emulators and skip the eight `permissions-1`/`permissions-2` shards. |
 | Kernels | The Rust components and Cargo files, `scripts/check-kernels.sh` or `kernels.yml`. |
 
 CI runs the full build on pushes to `main`. Device runs nightly. Kernels

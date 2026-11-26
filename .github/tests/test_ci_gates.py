@@ -57,16 +57,23 @@ class CiGateTests(unittest.TestCase):
                 self.assertEqual(build["needs"], "changes")
                 self.assertEqual(build["if"], "needs.changes.outputs.run == 'true'")
                 if name == "device":
-                    self.assertEqual(jobs["check"]["needs"], "build")
+                    self.assertEqual(jobs["check"]["needs"], ["changes", "build"])
+                    self.assertEqual(
+                        jobs["check"]["strategy"]["matrix"]["part"],
+                        "${{ fromJson(needs.changes.outputs.parts) }}",
+                    )
 
     def test_changed_file_steps_use_the_existing_path_rules(self):
         cases = (
-            (("README.md", "bbd/AGENTS.md", "android/app/AGENTS.md", "docs/diagram.png"), ()),
-            (("bbd/src/lib.rs",), ("ci", "device", "kernels")),
-            (("android/app/build.gradle.kts",), ("ci", "device")),
-            (("android/core/model/build.gradle.kts",), ("ci",)),
-            ((".github/tests/test_ci_gates.py", "deny.toml"), ("ci",)),
-            ((".github/workflows/kernels.yml",), ("ci", "kernels")),
+            (("README.md", "bbd/AGENTS.md", "android/app/AGENTS.md", "docs/diagram.png"), (), False),
+            (("bbd/src/lib.rs",), ("ci", "device", "kernels"), True),
+            (("testdata/permissions/matrix.tsv",), ("ci", "device"), True),
+            (("android/helper/src/main/kotlin/Example.kt",), ("ci", "device"), True),
+            (("android/app/build.gradle.kts",), ("ci", "device"), False),
+            (("android/app/src/main/kotlin/Example.kt",), ("ci", "device"), False),
+            (("android/core/model/build.gradle.kts",), ("ci",), False),
+            ((".github/tests/test_ci_gates.py", "deny.toml"), ("ci",), False),
+            ((".github/workflows/kernels.yml",), ("ci", "kernels"), False),
         )
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)
@@ -93,7 +100,7 @@ class CiGateTests(unittest.TestCase):
             git("commit", "--quiet", "-m", "Advance main")
             base = git("rev-parse", "HEAD")
 
-            for paths, selected in cases:
+            for paths, selected, device_permissions in cases:
                 git("switch", "--quiet", "--detach", fork_point)
                 for name in paths:
                     path = repo / name
@@ -112,10 +119,10 @@ class CiGateTests(unittest.TestCase):
                         self.assertIn("changes", jobs)
                         step = next(step for step in jobs["changes"]["steps"] if step.get("id") == "paths")
                         expected_match = workflow_name in selected
-                        for diff_range, expected in (
-                            (f"{base}...{head}", expected_match),
-                            (f"{base}..{merge_group}", expected_match),
-                            ("", True),
+                        for diff_range, expected_run, expected_perms in (
+                            (f"{base}...{head}", expected_match, device_permissions),
+                            (f"{base}..{merge_group}", expected_match, device_permissions),
+                            ("", True, True),
                         ):
                             output.unlink(missing_ok=True)
                             subprocess.run(
@@ -124,56 +131,71 @@ class CiGateTests(unittest.TestCase):
                                 check=True,
                                 env={**os.environ, "GITHUB_OUTPUT": str(output), "DIFF_RANGE": diff_range},
                             )
-                            self.assertEqual(output.read_text(encoding="utf-8"), f"run={str(expected).lower()}\n")
+                            parsed = dict(
+                                line.split("=", 1)
+                                for line in output.read_text(encoding="utf-8").splitlines()
+                            )
+                            self.assertEqual(parsed["run"], str(expected_run).lower())
+                            if workflow_name == "device":
+                                expected_parts = (
+                                    '["checks","permissions-1","permissions-2"]'
+                                    if expected_perms
+                                    else '["checks"]'
+                                )
+                                expected_legs = "12" if expected_perms else "4"
+                                self.assertEqual(parsed["parts"], expected_parts)
+                                self.assertEqual(parsed["expected_legs"], expected_legs)
 
     def test_device_result_checks_individual_matrix_conclusions(self):
         jobs = self.read_workflow("device")["jobs"]
-        matrix = jobs["check"]["strategy"]["matrix"]
+        apis = jobs["check"]["strategy"]["matrix"]["api"]
         job_name = jobs["check"]["name"]
-        legs = [
-            {
-                "name": job_name.replace("${{ matrix.api }}", api).replace("${{ matrix.part }}", part),
-                "status": "completed",
-                "conclusion": "success",
-                "run_attempt": 1,
-            }
-            for api in matrix["api"]
-            for part in matrix["part"]
-        ]
-        self.assertEqual(len(legs), 12)
         steps = jobs["result"]["steps"]
         self.assertEqual(len(steps), 2)
         verify_matrix = steps[1]
         self.assertEqual(verify_matrix["if"], "needs.check.result == 'success'")
+        self.assertEqual(verify_matrix["env"]["EXPECTED_LEGS"], "${{ needs.changes.outputs.expected_legs }}")
 
-        last = legs[-1]
-        skipped = {**last, "conclusion": "skipped"}
-        failed = {**last, "conclusion": "failure"}
-        cancelled = {**last, "conclusion": "cancelled"}
-        running = {**last, "status": "in_progress", "conclusion": None}
-        rerun_success = {**last, "run_attempt": 2}
-        rerun_cancelled = {**cancelled, "run_attempt": 2}
-        unrelated_job = {**failed, "name": "Build"}
+        for parts in (["checks", "permissions-1", "permissions-2"], ["checks"]):
+            legs = [
+                {
+                    "name": job_name.replace("${{ matrix.api }}", api).replace("${{ matrix.part }}", part),
+                    "status": "completed",
+                    "conclusion": "success",
+                    "run_attempt": 1,
+                }
+                for api in apis
+                for part in parts
+            ]
+            expected_legs = len(legs)
+            last = legs[-1]
+            skipped = {**last, "conclusion": "skipped"}
+            failed = {**last, "conclusion": "failure"}
+            cancelled = {**last, "conclusion": "cancelled"}
+            running = {**last, "status": "in_progress", "conclusion": None}
+            rerun_success = {**last, "run_attempt": 2}
+            rerun_cancelled = {**cancelled, "run_attempt": 2}
+            unrelated_job = {**failed, "name": "Build"}
 
-        def pages(*last_legs):
-            # A partial rerun can be on a different page from the original jobs.
-            return [{"jobs": list(last_legs[1:]) + [unrelated_job]}, {"jobs": legs[:-1] + list(last_legs[:1])}]
+            def pages(*last_legs):
+                # A partial rerun can be on a different page from the original jobs.
+                return [{"jobs": list(last_legs[1:]) + [unrelated_job]}, {"jobs": legs[:-1] + list(last_legs[:1])}]
 
-        for case, responses, succeeds in (
-            ("all passed", [pages(last)], True),
-            ("one skipped", [pages(skipped)], True),
-            ("one failed", [pages(failed)], False),
-            ("one cancelled", [pages(cancelled)], False),
-            ("one missing", [pages()], False),
-            ("successful rerun", [pages(failed, rerun_success)], True),
-            ("cancelled rerun", [pages(last, rerun_cancelled)], False),
-            ("eventually completed", [pages(running), pages(last)], True),
-            ("still running", [pages(running)] * 12, False),
-        ):
-            with self.subTest(case=case):
-                self.assert_device_result(verify_matrix["run"], responses, succeeds)
+            for case, responses, succeeds in (
+                ("all passed", [pages(last)], True),
+                ("one skipped", [pages(skipped)], True),
+                ("one failed", [pages(failed)], False),
+                ("one cancelled", [pages(cancelled)], False),
+                ("one missing", [pages()], False),
+                ("successful rerun", [pages(failed, rerun_success)], True),
+                ("cancelled rerun", [pages(last, rerun_cancelled)], False),
+                ("eventually completed", [pages(running), pages(last)], True),
+                ("still running", [pages(running)] * 12, False),
+            ):
+                with self.subTest(expected_legs=expected_legs, case=case):
+                    self.assert_device_result(verify_matrix["run"], responses, succeeds, expected_legs)
 
-    def assert_device_result(self, script, responses, succeeds):
+    def assert_device_result(self, script, responses, succeeds, expected_legs):
         mocks = """
 gh() {
     local response
@@ -184,7 +206,12 @@ sleep() { printf 'Retrying the jobs API\\n' >&2; }
 """
         result = subprocess.run(
             ["bash", "-euo", "pipefail", "-c", mocks + script],
-            env={**os.environ, "GITHUB_REPOSITORY": "example/repo", "GITHUB_RUN_ID": "1"},
+            env={
+                **os.environ,
+                "GITHUB_REPOSITORY": "example/repo",
+                "GITHUB_RUN_ID": "1",
+                "EXPECTED_LEGS": str(expected_legs),
+            },
             input="".join(json.dumps(pages) + "\n" for pages in responses),
             text=True,
             capture_output=True,

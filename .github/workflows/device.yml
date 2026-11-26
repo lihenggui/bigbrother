@@ -31,6 +31,8 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       run: ${{ steps.paths.outputs.run }}
+      parts: ${{ steps.paths.outputs.parts }}
+      expected_legs: ${{ steps.paths.outputs.expected_legs }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
@@ -49,20 +51,34 @@ jobs:
                 format('{0}..{1}', github.event.merge_group.base_sha, github.event.merge_group.head_sha) || '' }}
         run: |
           run=true
+          permissions=true
           if [[ -n "$DIFF_RANGE" ]]; then
+            permission_paths=(
+              ':(glob)bb-ebpf/**' ':(glob)bb-common/**' ':(glob)bbd/**' Cargo.toml Cargo.lock
+              ':(glob)module/**' ':(glob)scripts/**' ':(glob)testdata/permissions/**'
+              ':(glob)android/helper/**' ':(glob)android/hook/**'
+              ':(glob)android/canary/**' ':(glob)android/build-logic/**' ':(glob)android/gradle/**'
+              android/build.gradle.kts android/settings.gradle.kts
+              ':(glob).github/actions/setup/**' .github/workflows/device.yml
+              ':(exclude,glob)**/*.md'
+            )
             changed=$(git diff --name-only --no-renames "$DIFF_RANGE" -- \
-              ':(glob)bb-ebpf/**' ':(glob)bb-common/**' ':(glob)bbd/**' Cargo.toml Cargo.lock \
-              ':(glob)module/**' ':(glob)scripts/**' \
-              ':(glob)android/app/**' ':(glob)android/helper/**' ':(glob)android/hook/**' \
-              ':(glob)android/canary/**' ':(glob)android/build-logic/**' ':(glob)android/gradle/**' \
-              android/build.gradle.kts android/settings.gradle.kts \
-              ':(glob).github/actions/setup/**' .github/workflows/device.yml \
-              ':(exclude,glob)**/*.md')
+              "${permission_paths[@]}" ':(glob)android/app/**')
             if [[ -z "$changed" ]]; then
               run=false
+              permissions=false
+            elif [[ -z "$(git diff --name-only --no-renames "$DIFF_RANGE" -- "${permission_paths[@]}")" ]]; then
+              permissions=false
             fi
           fi
           echo "run=$run" >>"$GITHUB_OUTPUT"
+          if [[ "$permissions" == true ]]; then
+            echo 'parts=["checks","permissions-1","permissions-2"]' >>"$GITHUB_OUTPUT"
+            echo 'expected_legs=12' >>"$GITHUB_OUTPUT"
+          else
+            echo 'parts=["checks"]' >>"$GITHUB_OUTPUT"
+            echo 'expected_legs=4' >>"$GITHUB_OUTPUT"
+          fi
 
   build:
     name: Build
@@ -99,7 +115,7 @@ jobs:
 
   check:
     name: API ${{ matrix.api }} ${{ matrix.part }}
-    needs: build
+    needs: [changes, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
@@ -111,8 +127,8 @@ jobs:
         # emulator's software rendering and takes the system down with it.
         api: ["33", "34", "35", "36"]
         # The permission matrix takes longer than the other checks together,
-        # so two emulators share it.
-        part: [checks, permissions-1, permissions-2]
+        # so two emulators share it when permission-affecting files change.
+        part: ${{ fromJson(needs.changes.outputs.parts) }}
     env:
       IMAGE: system-images;android-${{ matrix.api }};google_apis;x86_64
       LOGS: ${{ github.workspace }}/device-logs
@@ -268,6 +284,7 @@ jobs:
         if: needs.check.result == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
+          EXPECTED_LEGS: ${{ needs.changes.outputs.expected_legs }}
         run: |
           # A partial rerun can carry forward earlier legs. The jobs API can
           # still show a job that has just ended as running, without its
@@ -280,5 +297,5 @@ jobs:
             ((attempt < 12)) || break
             sleep 5
           done
-          # Four APIs with three parts each.
-          jq -e 'length == 12 and all(.[]; .conclusion == "success" or .conclusion == "skipped")' <<<"$legs"
+          jq -e --argjson expected "$EXPECTED_LEGS" \
+            'length == $expected and all(.[]; .conclusion == "success" or .conclusion == "skipped")' <<<"$legs"
