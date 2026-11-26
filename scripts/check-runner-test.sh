@@ -35,11 +35,16 @@ cat >"$fixture/scripts/build.sh" <<'SH'
 # GNU General Public License
 printf 'build %s\n' "$CI" >>"$CALLS"
 SH
+cat >"$fixture/scripts/check-module-recovery.sh" <<'SH'
+#!/bin/sh
+# GNU General Public License
+exit 0
+SH
 cat >"$fixture/android/gradlew" <<'SH'
 #!/usr/bin/env bash
 printf 'gradle %s %s\n' "$CI" "$*" >>"$CALLS"
 SH
-chmod +x "$scratch/bin/cargo" "$fixture/scripts/build.sh" "$fixture/android/gradlew"
+chmod +x "$scratch/bin/cargo" "$fixture/scripts/"*.sh "$fixture/android/gradlew"
 git -C "$fixture" init -q
 git -C "$fixture" add .
 export PATH="$scratch/bin:$PATH" CALLS="$scratch/calls"
@@ -57,8 +62,8 @@ cargo test
 gradle true spotlessCheck :build-logic:convention:spotlessCheck
 build true
 gradle true test
-gradle true :app:dependencyGuard :app:checkReleaseBadging :app:licenseeAndroidRelease
-gradle true :app:lintRelease
+gradle true :app:dependencyGuard :app:checkReleaseBadging :app:licenseeAndroidRelease :helper:licenseeAndroidRelease
+gradle true :app:lintRelease :helper:lintRelease
 gradle true lintStructure -PlintStructureOnly
 EXPECTED
 mv "$CALLS" "$scratch/full"

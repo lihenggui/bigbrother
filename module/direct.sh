@@ -72,6 +72,7 @@ install() {
     # While a module is in the root manager, that one is in use. One flashed
     # and not yet applied has no daemon there until the next boot.
     [ ! -e "$MODULE/bin/bbd" ] || abort "! The module is already in the root manager"
+    # shellcheck disable=SC2034
     case "$(getprop ro.product.cpu.abi)" in
     arm64-v8a) ARCH=arm64 ;;
     x86_64) ARCH=x64 ;;
@@ -85,6 +86,7 @@ install() {
         abort "! customize.sh is missing from the archive"
     fi
     # The module's own installer does the installing, as in a root manager.
+    # shellcheck disable=SC2034
     DIRECT_INSTALL=true
     # shellcheck source=module/customize.sh
     . "$stage/customize.sh"

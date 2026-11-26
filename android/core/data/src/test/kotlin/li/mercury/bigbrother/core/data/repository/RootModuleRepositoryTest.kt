@@ -54,9 +54,10 @@ class RootModuleRepositoryTest {
     @Test
     fun givenMatchingVersionAndPayload_whenCompared_thenBundledModuleIsCurrent() = runTest {
         val apk = directory.newFile("bundled.apk")
-        val files = listOf("module.prop", "service.sh", "supervise.sh", "stop.sh", "uninstall.sh", "action.sh", "direct.sh", "bin/x64/bbd")
+        val files = listOf("module.prop", "service.sh", "supervise.sh", "stop.sh", "uninstall.sh", "action.sh", "direct.sh")
+        val bundledFiles = files + listOf("bin/x64/bbd", "helper.apk")
         ZipOutputStream(apk.outputStream()).use { zip ->
-            files.forEach { name ->
+            (bundledFiles + "classes.dex").forEach { name ->
                 zip.putNextEntry(ZipEntry(name))
                 zip.write(name.toByteArray())
                 zip.closeEntry()
@@ -65,8 +66,8 @@ class RootModuleRepositoryTest {
         app.applicationInfo.sourceDir = apk.path
         shadowOf(app.packageManager).getInternalMutablePackageInfo(app.packageName).setLongVersionCode(42)
         ShadowBuild.setSupportedAbis(arrayOf("x86_64"))
-        val installedFiles = files.dropLast(1) + listOf("bin/bbd", "helper.apk")
-        val contents = files.map { it.toByteArray() } + listOf(apk.readBytes())
+        val installedFiles = files + listOf("bin/bbd", "helper.apk")
+        val contents = bundledFiles.map { it.toByteArray() }
         val hashes = installedFiles.zip(contents) { file, bytes ->
             val digest = MessageDigest.getInstance("SHA-256").digest(bytes).toHexString()
             "$digest  /data/adb/modules/big_brother/$file"
@@ -76,7 +77,8 @@ class RootModuleRepositoryTest {
         val repository = repository(shell)
 
         assertEquals(InstalledModule.CURRENT, repository.compareWithBundled())
-        output = output.replace(hashes.last().substringBefore(' '), "0".repeat(64))
+        val legacyDigest = MessageDigest.getInstance("SHA-256").digest(apk.readBytes()).toHexString()
+        output = output.replace(hashes.last().substringBefore(' '), legacyDigest)
         assertEquals(InstalledModule.OUTDATED, repository.compareWithBundled())
         assertTrue(shell.lines.first().startsWith("$LOCATE; "))
         assertTrue(shell.lines.first().contains(installedFiles.joinToString(" ") { "\$bb/$it" }))

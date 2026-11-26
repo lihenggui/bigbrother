@@ -30,11 +30,10 @@ use anyhow::Context as _;
 
 const APP_PROCESS: &str = "/system/bin/app_process";
 const CLASS_PACKAGE: &str = "li.mercury.bigbrother.catalog";
-/// The module's own copy of the app's APK, next to `bin/`.
+/// The standalone helper archive, next to `bin/`.
 const HELPER_APK: &str = "helper.apk";
 
-/// Where the helper classes are loaded from: the copy of the APK the module
-/// installer placed in the module's directory.
+/// The archive the installer extracted into the module directory.
 ///
 /// Deliberately not the installed app. This code runs as root, and the
 /// installed app is whatever APK holds the package name at the moment, which

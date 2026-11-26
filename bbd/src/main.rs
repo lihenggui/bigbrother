@@ -65,7 +65,7 @@ use serde::Serialize;
 
 #[derive(Parser)]
 #[command(
-    version,
+    version = env!("BB_VERSION"),
     about = "Records which apps open user files and device/system information"
 )]
 struct Cli {

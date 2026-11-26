@@ -48,6 +48,9 @@ android {
 
     defaultConfig {
         applicationId = "li.mercury.bigbrother"
+        ndk {
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
     }
 
     buildTypes {
@@ -75,6 +78,20 @@ android {
     androidResources {
         // Locales the app is translated into; drives the per-app language picker.
         generateLocaleConfig = true
+        localeFilters += listOf("en", "zh")
+    }
+
+    packaging.resources {
+        // Keep one copy of the identical Apache license and the separate protobuf license.
+        excludes += listOf(
+            "META-INF/androidx/collection/collection-ktx/LICENSE.txt",
+            "META-INF/androidx/collection/collection/LICENSE.txt",
+            "META-INF/androidx/datastore/datastore-core-okio/LICENSE.txt",
+            "META-INF/androidx/datastore/datastore-preferences-proto/LICENSE.txt",
+            "META-INF/androidx/lifecycle/lifecycle-common-java8/LICENSE.txt",
+            "META-INF/androidx/lifecycle/lifecycle-common/LICENSE.txt",
+            "META-INF/*.version",
+        )
     }
 
     testOptions.unitTests.isIncludeAndroidResources = true
@@ -100,8 +117,6 @@ dependencies {
     implementation(projects.core.navigation)
     implementation(projects.core.ui)
 
-    // The root helpers and the LSPosed hook ship in the same APK.
-    implementation(projects.helper)
     implementation(projects.hook)
 
     implementation(libs.androidx.activity.compose)

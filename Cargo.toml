@@ -26,8 +26,12 @@ too_many_lines = "warn"
 [profile.release]
 lto = true
 strip = true
+opt-level = "s"
+codegen-units = 1
 
 [profile.release.package.bb-ebpf]
+# Keep the existing optimization level for programs that run on kernel hot paths.
+opt-level = 3
 debug = 2
 codegen-units = 1
 strip = false

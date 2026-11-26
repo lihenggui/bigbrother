@@ -8,7 +8,8 @@ details that help.
 
 Prerequisites:
 
-- Rust stable, and nightly with `rust-src`; targets `aarch64-linux-android`
+- Rust stable with `llvm-tools` (or `llvm-objcopy` available in PATH), and
+  nightly with `rust-src`; targets `aarch64-linux-android`
   and `x86_64-linux-android`
 - [bpf-linker](https://github.com/aya-rs/bpf-linker)
 - Android SDK (platform 37) and NDK
