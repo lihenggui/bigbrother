@@ -70,8 +70,12 @@ import li.mercury.bigbrother.core.ui.Reveal
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.core.ui.appDisplayName
+import li.mercury.bigbrother.core.ui.appLabelArgument
+import li.mercury.bigbrother.core.ui.appLabelStyle
 import li.mercury.bigbrother.core.ui.exactDateTime
 import li.mercury.bigbrother.core.ui.failureReason
+import li.mercury.bigbrother.core.ui.ltrContent
+import li.mercury.bigbrother.core.ui.rawTextSemantics
 import li.mercury.bigbrother.core.ui.relativeTime
 import li.mercury.bigbrother.core.ui.topicIcon
 import li.mercury.bigbrother.core.ui.topicRecordsSummary
@@ -251,13 +255,16 @@ private fun Header(state: RecordUiState, uid: Int, packageName: String, onClose:
                         group != null -> group.topic
                         else -> ""
                     },
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleLarge.ltrContent(title == null),
                 )
                 val app = appDisplayName(AppSummary(uid, packageName, emptyMap(), 0), state.appInfo)
+                val subtitle = group?.let { stringResource(R.string.header_subtitle, appLabelArgument(app, packageName), stringResource(it.category.title)) }
+                    ?: app
+                val style = MaterialTheme.typography.bodyMedium
                 Text(
-                    text = group?.let { stringResource(R.string.header_subtitle, app, stringResource(it.category.title)) }
-                        ?: app,
-                    style = MaterialTheme.typography.bodyMedium,
+                    subtitle,
+                    modifier = Modifier.rawTextSemantics(subtitle),
+                    style = if (group == null) style.appLabelStyle(app, packageName) else style,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -303,7 +310,7 @@ private fun Details(details: List<RecordDetail.Plain>, modifier: Modifier = Modi
         SelectionContainer {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 for (detail in shown) {
-                    Text(detail.text, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                    Text(detail.text, style = MaterialTheme.typography.bodySmall.ltrContent(), fontFamily = FontFamily.Monospace)
                 }
             }
         }

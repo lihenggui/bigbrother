@@ -173,6 +173,7 @@ private fun FileResult(match: PathMatch, results: SearchUiState, index: Int, cou
         // Below the storage volume, the path says where the file is in terms
         // a file manager uses.
         supporting = path.replaceFirst(VOLUME_ROOT, "").removePrefix("/").ifEmpty { path },
+        supportingIsTechnical = true,
         trailing = shortTime(match.access.lastSeen),
         index = index,
         count = count,

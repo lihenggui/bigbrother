@@ -77,19 +77,18 @@ internal suspend fun SandboxRepository.relevantStatus(): SandboxStatus = getStat
 sealed interface JailMessage {
     /**
      * [apps] were put in the sandbox, and can be taken out again.
-     * [notIsolated] names those chosen with them that could not be.
+     * [notIsolated] are the apps chosen with them that could not be.
      */
     data class Isolated(
-        val names: List<String>,
         val apps: List<InstalledApp>,
-        val notIsolated: List<String> = emptyList(),
+        val notIsolated: List<InstalledApp> = emptyList(),
     ) : JailMessage
 
-    /** None of the apps chosen, [names], could be put in the sandbox, first for [failure]. */
-    data class NotIsolated(val names: List<String>, val failure: LoadFailure) : JailMessage
+    /** None of the apps chosen, [apps], could be put in the sandbox, first for [failure]. */
+    data class NotIsolated(val apps: List<InstalledApp>, val failure: LoadFailure) : JailMessage
 
-    /** Undoing left [names] in the sandbox, first for [failure]. */
-    data class NotReleased(val names: List<String>, val failure: LoadFailure) : JailMessage
+    /** Undoing left [apps] in the sandbox, first for [failure]. */
+    data class NotReleased(val apps: List<InstalledApp>, val failure: LoadFailure) : JailMessage
 }
 
 @HiltViewModel
@@ -133,8 +132,8 @@ class JailViewModel @Inject constructor(
         viewModelScope.launch {
             val (done, failed, failure) = eachApp(apps) { sandboxRepository.isolate(it.packageName, it.userId, refresh = false) }
             val message = when {
-                done.isEmpty() -> failure?.let { JailMessage.NotIsolated(failed.names(), it) }
-                else -> JailMessage.Isolated(done.names(), done, notIsolated = failed.names())
+                done.isEmpty() -> failure?.let { JailMessage.NotIsolated(failed, it) }
+                else -> JailMessage.Isolated(done, notIsolated = failed)
             }
             load.update { it.copy(message = message) }
         }
@@ -144,7 +143,7 @@ class JailViewModel @Inject constructor(
     fun undoIsolate(apps: List<InstalledApp>) {
         viewModelScope.launch {
             val (_, failed, failure) = eachApp(apps) { sandboxRepository.release(it.packageName, it.userId, refresh = false) }
-            if (failure != null) load.update { it.copy(message = JailMessage.NotReleased(failed.names(), failure)) }
+            if (failure != null) load.update { it.copy(message = JailMessage.NotReleased(failed, failure)) }
         }
     }
 
@@ -192,8 +191,6 @@ class JailViewModel @Inject constructor(
 
     /** The apps a change was made for and those it failed for, and why the first one failed. */
     private data class Outcome(val done: List<InstalledApp>, val failed: List<InstalledApp>, val failure: LoadFailure?)
-
-    private fun List<InstalledApp>.names() = map { it.info.label }
 
     /** Whether no other app could fare better: root, or the daemon itself, is missing. */
     private val RecordsException.failsEveryApp: Boolean

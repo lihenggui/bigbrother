@@ -21,7 +21,6 @@ import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.TopAppBarDefaults
@@ -39,7 +38,9 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import li.mercury.bigbrother.core.model.NetworkTarget
 import li.mercury.bigbrother.core.model.TimeRange
+import li.mercury.bigbrother.core.ui.isolateLtr
 import li.mercury.bigbrother.feature.jail.impl.ErrorEffect
+import li.mercury.bigbrother.feature.jail.impl.JailSnackbarHost
 import li.mercury.bigbrother.feature.jail.impl.R
 
 /** What can be done on the network activity page. */
@@ -127,7 +128,7 @@ internal fun NetworkActivityScreen(
     Scaffold(
         modifier = modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         containerColor = background,
-        snackbarHost = { SnackbarHost(snackbar) },
+        snackbarHost = { JailSnackbarHost(snackbar) },
         topBar = {
             NetworkTopBar(
                 state = state,
@@ -160,7 +161,7 @@ internal fun NetworkActivityScreen(
 @Composable
 internal fun MessageEffect(message: NetworkMessage?, snackbar: SnackbarHostState, onUndo: () -> Unit, onDismiss: () -> Unit) {
     val text = message?.let {
-        stringResource(if (it is NetworkMessage.Blocked) R.string.jail_net_blocked_message else R.string.jail_net_unblocked_message, it.target.name)
+        stringResource(if (it is NetworkMessage.Blocked) R.string.jail_net_blocked_message else R.string.jail_net_unblocked_message, isolateLtr(it.target.name))
     }
     val undo = stringResource(R.string.jail_undo)
     LaunchedEffect(message) {

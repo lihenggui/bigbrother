@@ -28,6 +28,7 @@ import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -44,6 +45,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
 import li.mercury.bigbrother.core.designsystem.component.segmentShape
 import li.mercury.bigbrother.core.model.ConnectionCounts
+import li.mercury.bigbrother.core.ui.ltrContent
 import li.mercury.bigbrother.feature.jail.impl.R
 
 /**
@@ -93,7 +95,7 @@ internal fun DestinationRow(
         },
         trailingContent = row.toggle?.let { { BlockToggle(row.title, row.blocked, onToggle) } },
         verticalAlignment = Alignment.CenterVertically,
-    ) { Text(row.title) }
+    ) { Text(row.title, style = LocalTextStyle.current.ltrContent()) }
 }
 
 /** The second line of a row: what was blocked and refused, or what went to it. */

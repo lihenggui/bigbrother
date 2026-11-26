@@ -26,6 +26,7 @@ import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -43,6 +44,7 @@ import li.mercury.bigbrother.core.model.SubjectCount
 import li.mercury.bigbrother.core.ui.DataCategory
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.dataCategoryOf
+import li.mercury.bigbrother.core.ui.ltrContent
 import li.mercury.bigbrother.core.ui.shortTime
 import li.mercury.bigbrother.core.ui.topicIcon
 import li.mercury.bigbrother.core.ui.topicRecordsSummary
@@ -164,6 +166,7 @@ internal fun TopicRow(
     ) {
         Text(
             text = if (title != null) stringResource(title) else group.topic,
+            style = LocalTextStyle.current.ltrContent(title == null),
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )

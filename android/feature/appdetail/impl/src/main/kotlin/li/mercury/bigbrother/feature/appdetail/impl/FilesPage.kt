@@ -36,6 +36,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.ButtonGroupDefaults
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -51,7 +52,10 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import li.mercury.bigbrother.core.ui.isolateLtr
 import li.mercury.bigbrother.core.ui.label
+import li.mercury.bigbrother.core.ui.ltrContent
+import li.mercury.bigbrother.core.ui.rawTextSemantics
 import li.mercury.bigbrother.core.ui.rememberPredictiveBackTransition
 import li.mercury.bigbrother.feature.appdetail.impl.tree.FileNode
 
@@ -154,7 +158,8 @@ private fun Breadcrumb(content: FileTree, location: String, onNavigate: (String)
     ) {
         val single = content.volumes.singleOrNull()
         TextButton(onClick = { onNavigate(Location.ROOT) }) {
-            Text(if (single != null) storageLabel(single) else stringResource(R.string.storage_root))
+            val label = if (single != null) storageLabel(single) else stringResource(R.string.storage_root)
+            Text(label, modifier = Modifier.rawTextSemantics(label))
         }
         val trail: List<Pair<String, String>> = when (location) {
             Location.ROOT -> emptyList()
@@ -171,7 +176,10 @@ private fun Breadcrumb(content: FileTree, location: String, onNavigate: (String)
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            TextButton(onClick = { onNavigate(target) }) { Text(label) }
+            val isPath = target != Location.MEDIA && content.volumes.none { it.path == target }
+            TextButton(onClick = { onNavigate(target) }) {
+                Text(label, modifier = Modifier.rawTextSemantics(label), style = LocalTextStyle.current.ltrContent(isPath))
+            }
         }
     }
 }
@@ -186,7 +194,7 @@ internal fun storageLabel(node: FileNode): String {
         user != null -> stringResource(R.string.internal_storage_user, user)
 
         node.path.startsWith("/storage/") ->
-            stringResource(R.string.removable_storage, node.path.removePrefix("/storage/"))
+            stringResource(R.string.removable_storage, isolateLtr(node.path.removePrefix("/storage/")))
 
         else -> node.name
     }

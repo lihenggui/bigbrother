@@ -49,6 +49,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -69,6 +70,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -82,7 +84,9 @@ import li.mercury.bigbrother.core.ui.ContentKind
 import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.animatedRow
+import li.mercury.bigbrother.core.ui.appLabelStyle
 import li.mercury.bigbrother.core.ui.failureReason
+import li.mercury.bigbrother.core.ui.ltrContent
 import li.mercury.bigbrother.core.ui.rememberPredictiveDismissProgress
 import li.mercury.bigbrother.core.ui.R as UiR
 
@@ -229,6 +233,7 @@ private fun AddAppsHeader(count: Int, onDismiss: () -> Unit, onConfirm: () -> Un
 private fun AddAppsSearch(query: TextFieldState) {
     TextField(
         state = query,
+        textStyle = LocalTextStyle.current.copy(textDirection = TextDirection.Content),
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 4.dp),
@@ -294,10 +299,10 @@ private fun AddAppsList(apps: List<InstalledApp>, selected: Set<String>, onToggl
                 shapes = ListItemDefaults.segmentedShapes(index, apps.size),
                 colors = ListItemDefaults.segmentedColors(),
                 leadingContent = { AppIcon(app.info, app.info.label, 40.dp) },
-                supportingContent = { Text(app.packageName) },
+                supportingContent = { Text(app.packageName, style = LocalTextStyle.current.ltrContent()) },
                 trailingContent = { Checkbox(checked = checked, onCheckedChange = null) },
                 verticalAlignment = Alignment.CenterVertically,
-            ) { Text(app.info.label) }
+            ) { Text(app.info.label, style = LocalTextStyle.current.appLabelStyle(app.info.label, app.packageName)) }
         }
     }
 }

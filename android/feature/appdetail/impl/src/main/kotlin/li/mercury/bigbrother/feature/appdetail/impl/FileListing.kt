@@ -35,6 +35,7 @@ import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -53,6 +54,8 @@ import li.mercury.bigbrother.core.ui.LocalWallClock
 import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.core.ui.label
+import li.mercury.bigbrother.core.ui.ltrContent
+import li.mercury.bigbrother.core.ui.rawTextSemantics
 import li.mercury.bigbrother.core.ui.relativeTime
 import li.mercury.bigbrother.feature.appdetail.impl.tree.FileNode
 import li.mercury.bigbrother.core.ui.R as UiR
@@ -184,7 +187,14 @@ private fun LazyItemScope.EntryRow(
 ) {
     val shapes = ListItemDefaults.segmentedShapes(index, count)
     val colors = ListItemDefaults.segmentedColors()
-    val name = @Composable { Text(if (isVolume) storageLabel(node) else node.name) }
+    val name = @Composable {
+        if (isVolume) {
+            val label = storageLabel(node)
+            Text(label, modifier = Modifier.rawTextSemantics(label))
+        } else {
+            Text(node.name, style = LocalTextStyle.current.ltrContent())
+        }
+    }
     val detail: (@Composable () -> Unit)? = node.accesses.takeIf { it.isNotEmpty() }?.let { accesses ->
         {
             // Switching between reads and all accesses fades the line
@@ -342,7 +352,7 @@ private fun LazyItemScope.CollectionRow(access: Access, index: Int, count: Int) 
         if (label != null) {
             Text(stringResource(label))
         } else {
-            Text(access.path, fontFamily = FontFamily.Monospace)
+            Text(access.path, fontFamily = FontFamily.Monospace, style = LocalTextStyle.current.ltrContent())
         }
     }
 }

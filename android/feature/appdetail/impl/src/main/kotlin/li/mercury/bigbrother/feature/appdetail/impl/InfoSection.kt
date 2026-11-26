@@ -28,6 +28,7 @@ import android.widget.Toast
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -38,6 +39,7 @@ import androidx.compose.ui.res.stringResource
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.PackageDetails
 import li.mercury.bigbrother.core.ui.exactDateTime
+import li.mercury.bigbrother.core.ui.ltrContent
 import java.time.ZoneId
 
 /**
@@ -77,7 +79,7 @@ internal fun InfoRow(label: Int, value: String, index: Int, count: Int, modifier
         modifier = modifier,
         shapes = ListItemDefaults.segmentedShapes(index, count),
         colors = ListItemDefaults.segmentedColors(),
-        supportingContent = { Text(value) },
+        supportingContent = { Text(value, style = LocalTextStyle.current.ltrContent(label == R.string.info_package)) },
     ) {
         Text(stringResource(label))
     }

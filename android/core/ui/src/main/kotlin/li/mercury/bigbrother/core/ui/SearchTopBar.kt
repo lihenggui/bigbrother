@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextDirection
 
 /** Keeps the normal title available as the return preview from an inline search. */
 @Composable
@@ -108,7 +109,7 @@ fun SearchTopBar(
                     .focusRequester(focusRequester),
                 placeholder = { Text(placeholder) },
                 singleLine = true,
-                textStyle = MaterialTheme.typography.bodyLarge,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(textDirection = TextDirection.Content),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 // The bar itself is the container; the field draws none.
                 colors = TextFieldDefaults.colors(

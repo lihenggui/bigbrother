@@ -36,15 +36,22 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Warning
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarDefaults
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
@@ -60,6 +67,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.offset
@@ -77,6 +85,7 @@ import li.mercury.bigbrother.core.ui.AppIcon
 import li.mercury.bigbrother.core.ui.ExpandChevron
 import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.Reveal
+import li.mercury.bigbrother.core.ui.rawTextSemantics
 
 /**
  * A row that opens something, in a segmented group. [selected] is whether
@@ -93,6 +102,7 @@ internal fun LinkRow(
     leading: @Composable () -> Unit,
     modifier: Modifier = Modifier,
     selected: Boolean? = null,
+    titleStyle: @Composable TextStyle.() -> TextStyle = { this },
 ) {
     ListItem(
         modifier = modifier
@@ -109,7 +119,32 @@ internal fun LinkRow(
         leadingContent = leading,
         supportingContent = { Text(supporting) },
         verticalAlignment = Alignment.CenterVertically,
-    ) { Text(title) }
+    ) { Text(title, modifier = Modifier.rawTextSemantics(title), style = LocalTextStyle.current.titleStyle()) }
+}
+
+/** Jail messages can have display-only isolates around app labels or destinations. */
+@Composable
+internal fun JailSnackbarHost(state: SnackbarHostState, modifier: Modifier = Modifier) {
+    SnackbarHost(state, modifier) { data ->
+        val message = data.visuals.message
+        val messageModifier = Modifier.rawTextSemantics(message)
+        if (messageModifier == Modifier) {
+            Snackbar(data)
+        } else {
+            val action = data.visuals.actionLabel
+            Snackbar(
+                modifier = Modifier.padding(12.dp),
+                action = action?.let {
+                    {
+                        TextButton(
+                            onClick = data::performAction,
+                            colors = ButtonDefaults.textButtonColors(contentColor = SnackbarDefaults.actionColor),
+                        ) { Text(it) }
+                    }
+                },
+            ) { Text(message, modifier = messageModifier) }
+        }
+    }
 }
 
 /** An app's icon, with the cage that marks it as isolated. */

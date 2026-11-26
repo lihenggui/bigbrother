@@ -74,6 +74,7 @@ import li.mercury.bigbrother.core.ui.Reveal
 import li.mercury.bigbrother.core.ui.animatedRow
 import li.mercury.bigbrother.core.ui.dateWithWeekday
 import li.mercury.bigbrother.core.ui.failureTitle
+import li.mercury.bigbrother.core.ui.isolateLtr
 import li.mercury.bigbrother.core.ui.namedList
 import li.mercury.bigbrother.core.ui.rememberMenuOptions
 import li.mercury.bigbrother.core.ui.timeOfDay
@@ -369,7 +370,7 @@ private fun entrySummary(entry: TimelineEntry): String {
             } else {
                 pluralStringResource(R.plurals.looked_for_paths, entry.paths, entry.paths)
             }
-            listOfNotNull(what, entry.folder).joinToString(separator)
+            listOfNotNull(what, entry.folder?.let(::isolateLtr)).joinToString(separator)
         }
 
         Category.PROVIDER -> when {

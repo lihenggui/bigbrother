@@ -33,6 +33,7 @@ import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -57,7 +58,10 @@ import li.mercury.bigbrother.core.model.Action
 import li.mercury.bigbrother.core.ui.Message
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.animatedRow
+import li.mercury.bigbrother.core.ui.isolateLtr
 import li.mercury.bigbrother.core.ui.label
+import li.mercury.bigbrother.core.ui.ltrContent
+import li.mercury.bigbrother.core.ui.rawTextSemantics
 import li.mercury.bigbrother.core.ui.shortTime
 import li.mercury.bigbrother.core.ui.R as UiR
 
@@ -202,7 +206,7 @@ private fun FolderRow(item: Item.Folder, onClick: () -> Unit, modifier: Modifier
         supportingContent = { Text(readFiles(item.folder.filesRead)) },
         trailingContent = { Text(shortTime(item.folder.lastSeen), style = MaterialTheme.typography.labelMedium) },
     ) {
-        Text(item.folder.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(item.folder.label, maxLines = 1, overflow = TextOverflow.Ellipsis, style = LocalTextStyle.current.ltrContent())
     }
 }
 
@@ -232,8 +236,10 @@ private fun CollectionSummaryRow(item: Item.Collection, onClick: () -> Unit, mod
         },
         trailingContent = { Text(shortTime(access.lastSeen), style = MaterialTheme.typography.labelMedium) },
     ) {
+        val text = stringResource(R.string.media_collection, label?.let { stringResource(it) } ?: isolateLtr(access.path))
         Text(
-            text = stringResource(R.string.media_collection, label?.let { stringResource(it) } ?: access.path),
+            text,
+            modifier = Modifier.rawTextSemantics(text),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )

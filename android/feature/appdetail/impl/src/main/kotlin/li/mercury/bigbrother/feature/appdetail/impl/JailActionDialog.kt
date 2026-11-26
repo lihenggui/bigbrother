@@ -20,18 +20,24 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import li.mercury.bigbrother.core.ui.FadeThrough
+import li.mercury.bigbrother.core.ui.appLabelArgument
 import li.mercury.bigbrother.core.ui.failureReason
+import li.mercury.bigbrother.core.ui.rawTextSemantics
 
 @Composable
-internal fun JailActionDialog(action: JailAction?, appName: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+internal fun JailActionDialog(action: JailAction?, appName: String, packageName: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
     when (action) {
         JailAction.Confirm, JailAction.Isolating -> {
             val busy = action == JailAction.Isolating
             AlertDialog(
                 onDismissRequest = { if (!busy) onDismiss() },
-                title = { Text(stringResource(R.string.isolate_app_title, appName)) },
+                title = {
+                    val title = stringResource(R.string.isolate_app_title, appLabelArgument(appName, packageName))
+                    Text(title, modifier = Modifier.rawTextSemantics(title))
+                },
                 text = {
                     FadeThrough(if (busy) R.string.isolating_app else R.string.isolate_app_summary, kind = { it }) { Text(stringResource(it)) }
                 },

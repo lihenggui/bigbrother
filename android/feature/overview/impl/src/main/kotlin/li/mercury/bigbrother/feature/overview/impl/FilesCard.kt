@@ -53,6 +53,8 @@ import li.mercury.bigbrother.core.ui.DataCategory
 import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.RevealNotNull
 import li.mercury.bigbrother.core.ui.appDisplayName
+import li.mercury.bigbrother.core.ui.isolateLtr
+import li.mercury.bigbrother.core.ui.rawTextSemantics
 import li.mercury.bigbrother.core.ui.R as UiR
 
 /** Apps shown on the files card before the rest are counted. */
@@ -135,11 +137,12 @@ private fun Reads(files: FilesOverview, appInfo: Map<String, AppInfo>, wide: Boo
         }
         if (!wide) IconStack(files, appInfo)
         val places = buildList {
-            if (files.folders.isNotEmpty()) add(files.folders.joinToString(stringResource(UiR.string.summary_separator)))
+            if (files.folders.isNotEmpty()) add(files.folders.joinToString(stringResource(UiR.string.summary_separator), transform = ::isolateLtr))
             if (files.mediaLibrary) add(stringResource(UiR.string.summary_media_library))
         }
         RevealNotNull(places.takeIf { it.isNotEmpty() }) { shown ->
-            Text(shown.joinToString(stringResource(UiR.string.dot_separator)), style = MaterialTheme.typography.bodyMedium)
+            val text = shown.joinToString(stringResource(UiR.string.dot_separator))
+            Text(text, modifier = Modifier.rawTextSemantics(text), style = MaterialTheme.typography.bodyMedium)
         }
     }
 }

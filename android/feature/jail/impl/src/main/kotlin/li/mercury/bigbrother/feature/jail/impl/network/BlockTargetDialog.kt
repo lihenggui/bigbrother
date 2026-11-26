@@ -19,6 +19,7 @@ package li.mercury.bigbrother.feature.jail.impl.network
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -35,6 +36,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDirection
 import li.mercury.bigbrother.core.model.NetworkTarget
 import li.mercury.bigbrother.feature.jail.impl.R
 
@@ -64,6 +67,7 @@ internal fun BlockTargetDialog(
         text = {
             OutlinedTextField(
                 value = text,
+                textStyle = LocalTextStyle.current.copy(textDirection = TextDirection.Ltr, textAlign = TextAlign.Left),
                 onValueChange = {
                     text = it
                     invalid = false
