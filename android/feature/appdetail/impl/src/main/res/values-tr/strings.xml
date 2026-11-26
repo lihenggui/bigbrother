@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="open_jail">Yalıt veya yönet</string>
+    <string name="isolate_app_title">Yalıtılsın mı: %1$s?</string>
+    <string name="isolate_app_summary">Uygulama kapanıp hapishane ayarlarını kullanır. Kısıtlamalarını daha sonra değiştirebilirsiniz.</string>
+    <string name="isolate_app">Yalıt</string>
+    <string name="isolating_app">Uygulama yalıtılıyor…</string>
+    <string name="jail_action_failed">Hapishane ayarları açılamadı</string>
+
+    <string name="action_read">Okundu</string>
+    <string name="action_write">Değiştirildi</string>
+    <string name="action_read_write">Okundu ve değiştirildi</string>
+    <string name="action_list">Dizin listelendi</string>
+    <string name="action_probe">Denetlendi</string>
+    <string name="action_watch">İzlendi</string>
+    <string name="action_read_provider">Sağlayıcı üzerinden okundu</string>
+    <string name="action_write_provider">Sağlayıcı üzerinden değiştirildi</string>
+    <string name="action_query">Sorgulandı</string>
+    <string name="action_connect">Bağlanıldı</string>
+    <string name="action_exec">Yürütüldü</string>
+    <string name="action_used">Kullanıldı</string>
+    <string name="action_call">Hizmet çağrıldı</string>
+    <string name="action_clipboard_write">Yazıldı</string>
+    <string name="search_paths">Yol ara</string>
+    <plurals name="access_query">
+        <item quantity="one">Bir kez sorgulandı, %2$d giriş</item>
+        <item quantity="other">%1$d kez sorgulandı, en fazla %2$d giriş</item>
+    </plurals>
+
+    <string name="internal_storage">Dahili Bellek</string>
+    <string name="internal_storage_user">Dahili depolama (kullanıcı %d)</string>
+
+    <string name="collection_images">Fotoğraflar</string>
+    <string name="collection_videos">Videolar</string>
+    <string name="collection_audio">Müzik ve ses</string>
+    <string name="collection_downloads">İndirilenler</string>
+    <string name="collection_files">Tüm medya ve dosyalar</string>
+    <string name="collection_documents">Belge seçici aracılığıyla verilen klasörler</string>
+
+    <string name="results_truncated">Yalnızca en son girişler gösteriliyor.</string>
+
+    <string name="access_allowed">%1$s %2$d×</string>
+    <string name="access_blocked">%1$s %2$d×, reddedildi</string>
+    <string name="access_partly_blocked">%1$s %2$d × (%3$d × reddedildi)</string>
+    <string name="access_separator">"; "</string>
+    <plurals name="total_allowed">
+        <item quantity="one">%d kez okundu</item>
+        <item quantity="other">%d kez okundu</item>
+    </plurals>
+    <plurals name="total_requested">
+        <item quantity="one">Hizmet %d kez çağrıldı</item>
+        <item quantity="other">Hizmet %d kez çağrıldı</item>
+    </plurals>
+    <plurals name="total_contacted">
+        <item quantity="one">%d kez bağlanıldı</item>
+        <item quantity="other">%d kez bağlanıldı</item>
+    </plurals>
+    <plurals name="total_ran">
+        <item quantity="one">%d kez çalıştırıldı</item>
+        <item quantity="other">%d kez çalıştırıldı</item>
+    </plurals>
+    <plurals name="total_not_run">
+        <item quantity="one">Yürütme %d kez başarısız oldu</item>
+        <item quantity="other">Yürütme %d kez başarısız oldu</item>
+    </plurals>
+    <plurals name="total_blocked">
+        <item quantity="one">%d kez reddedildi</item>
+        <item quantity="other">%d kez reddedildi</item>
+    </plurals>
+    <string name="removable_storage">Depolama %s</string>
+
+    <string name="filter_read">Okunanlar</string>
+    <string name="filter_all">Tam erişim</string>
+    <string name="no_files_read">Okunan dosya yok</string>
+
+    <string name="storage_root">Depolama</string>
+    <string name="group_media">Medya kitaplığı</string>
+
+    <string name="read_count">%d×</string>
+
+    <string name="open_file_missing">Dosya bulunamadı.</string>
+    <string name="open_file_no_viewer">Bu dosyayı hiçbir uygulama açamaz.</string>
+
+    <string name="open_file">Aç</string>
+    <string name="show_all_details">Tümünü göster (%d)</string>
+    <plurals name="apps_asked">
+        <item quantity="one">%d uygulamanın bilgileri sorgulandı</item>
+        <item quantity="other">%d uygulamanın bilgileri sorgulandı</item>
+    </plurals>
+    <plurals name="root_apps_asked">
+        <item quantity="one">root ile ilgili %d uygulamanın varlığı denetlendi</item>
+        <item quantity="other">root ile ilgili %d uygulamanın varlığı denetlendi</item>
+    </plurals>
+    <plurals name="absent_apps_asked">
+        <item quantity="one">Bu cihazda olmayan %d uygulama arandı</item>
+        <item quantity="other">Bu cihazda olmayan %d uygulamayı aradım</item>
+    </plurals>
+    <string name="tab_info">Uygulama bilgisi</string>
+    <string name="header_subtitle">%1$s · %2$s</string>
+    <string name="source_permissions">İzin kullanımı</string>
+    <plurals name="total_used">
+        <item quantity="one">%d kez kullanıldı</item>
+        <item quantity="other">%d kez kullanıldı</item>
+    </plurals>
+    <string name="info_package">Paket adı</string>
+    <string name="info_version">Sürüm</string>
+    <string name="info_version_value">%1$s (%2$d)</string>
+    <string name="info_target_sdk">Hedef SDK</string>
+    <string name="info_first_install">Yüklendi</string>
+    <string name="info_last_update">Son güncelleme</string>
+    <string name="info_open_settings">Uygulama ayarları</string>
+    <string name="info_launch">Uygulamayı aç</string>
+    <string name="info_copied">Kopyalandı</string>
+    <string name="source_isolated">İzole süreç</string>
+
+    <string name="last_access">Son %s</string>
+    <plurals name="files_read">
+        <item quantity="one">%d dosya okundu</item>
+        <item quantity="other">%d dosya okundu</item>
+    </plurals>
+    <plurals name="paths_looked_for">
+        <item quantity="one">%d yol daha arandı</item>
+        <item quantity="other">%d yol daha arandı</item>
+    </plurals>
+    <string name="browse_files">Tüm dosya kayıtları</string>
+    <string name="media_collection">Medya kitaplığı · %s</string>
+    <plurals name="opened_via_media">
+        <item quantity="one">%d kez açıldı</item>
+        <item quantity="other">%d kez açıldı</item>
+    </plurals>
+    <string name="files_title">Dosyalar</string>
+    <string name="close">Kapat</string>
+    <string name="record_details">Ayrıntılar</string>
+    <string name="record_history">Her erişim</string>
+    <string name="record_history_partial">Bu türden en yeni kayıtlar için gösterilen zamanlar.</string>
+
+    <string name="sensor_sessions">Sensör kullanımı</string>
+    <string name="sensor_total">%s toplamı</string>
+    <string name="session_span">%1$s – %2$s</string>
+    <string name="sensor_since">Başlangıç: %s</string>
+    <string name="sensor_still_on">Hala açık</string>
+    <string name="high_rate">Yüksek örnekleme hızı</string>
+    <string name="rate_fastest">En hızlı</string>
+    <string name="sensor_sessions_note">İstenen örnekleme hızları gösterilir. Sistem daha az etkinlik iletebilir.</string>
+    <string name="duration_seconds">%d sn</string>
+    <string name="duration_minutes">%d dk</string>
+    <string name="duration_hours">%d sa</string>
+    <string name="duration_hours_minutes">%1$d sa %2$d dk</string>
+    <string name="duration_days">%d gün</string>
+    <string name="duration_days_hours">%1$d gün %2$d sa</string>
+    <string name="expanded">Genişletildi</string>
+    <string name="collapsed">Daraltıldı</string>
+</resources>

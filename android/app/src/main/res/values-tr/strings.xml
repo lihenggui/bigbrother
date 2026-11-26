@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="module_description">Uygulamaların dosya erişimini ve Android içerik sağlayıcıları üzerinden yaptığı kişisel veri sorgularını kaydeder. Hapishane, Android ID, reklam kimlikleri, uygulama görünürlüğü ve dosya erişim izinleri için yalıtım kontrolleri sağlar.</string>
+    <string name="nav_overview">Genel bakış</string>
+    <string name="nav_apps">Uygulamalar</string>
+    <string name="nav_timeline">Zaman çizelgesi</string>
+    <string name="nav_jail">Hapishane</string>
+
+    <string name="guide_access_title">Kişisel verilere erişimi izle</string>
+    <string name="guide_access_body">Big Brother her uygulamanın hangi verileri ne zaman okuduğunu kaydeder: dosyalar, konum, pano ve cihaz tanımlayıcıları. Kayıtlar yalnızca bu cihazda saklanır.</string>
+    <string name="guide_timeline_title">Zaman çizelgesini görüntüle</string>
+    <string name="guide_timeline_body">Zaman çizelgesi erişimleri saate ve uygulamaya göre gruplandırır. Ayrıntılar için bir kayıt açın.</string>
+    <string name="guide_jail_title">Seçili uygulamaları yalıt</string>
+    <string name="guide_jail_body">Hapishanede yalıtılan uygulamaya ayrı depolama alanı, boş bir pano ve sanal cihaz kimliği sağlanır. Her öğe ayrı ayrı değiştirilebilir.</string>
+    <string name="guide_skip">Atla</string>
+    <string name="guide_next">İleri</string>
+    <string name="guide_back">Önceki sayfa</string>
+    <string name="guide_start">Başla</string>
+    <string name="guide_progress">Sayfa %1$d / %2$d</string>
+    <string name="guide_guard_description">Örnek: Koruma dört uygulamayı kontrol ediyor ve her birinin okuduğunu kaydediyor.</string>
+    <string name="guide_timeline_description">Örnek zaman çizelgesi: Hava Durumu, Mağaza, Sohbet ve El Feneri uygulamalarının okuduğu veriler.</string>
+    <string name="guide_jail_description">Örnek: Hava Durumu uygulaması hapishanede yalıtıldı. Boş pano, sanal cihaz kimliği ve yalıtılmış depolama kullanıyor.</string>
+    <string name="guide_weather">Hava Durumu</string>
+    <string name="guide_shop">Mağaza</string>
+    <string name="guide_chat">Sohbet</string>
+    <string name="guide_flashlight">El feneri</string>
+    <string name="guide_location">Konum</string>
+    <string name="guide_clipboard">Pano</string>
+    <string name="guide_files">Dosyalar</string>
+    <string name="guide_device_id">Cihaz kimliği</string>
+    <string name="guide_isolated_value">%1$s: %2$s</string>
+</resources>

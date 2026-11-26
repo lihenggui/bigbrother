@@ -1,0 +1,320 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="jail_section_isolated">Yalıtılmış uygulamalar</string>
+    <string name="jail_section_settings">Hapishane ayarları</string>
+    <string name="jail_add_apps">Uygulama ekle</string>
+    <string name="jail_global_settings">Genel ayarlar</string>
+    <string name="jail_all_items_on">Tüm öğeler yalıtıldı</string>
+    <string name="jail_items_off">Yalıtılmayanlar: %1$s</string>
+    <string name="jail_no_items_on">Yalıtılmış öğe yok</string>
+    <string name="jail_empty_title">Yalıtılmış uygulama yok</string>
+    <string name="jail_empty_files_title">Dosyalar</string>
+    <string name="jail_empty_files">Yalnızca kendine ait boş depolama alanına erişir</string>
+    <string name="jail_empty_permissions_title">Kişiler, konum, kamera ve daha fazlası</string>
+    <string name="jail_empty_permissions">İzinler verilmiş olarak görünür ancak sorgular veri döndürmez</string>
+    <string name="jail_empty_device_title">Cihaz ve uygulamalar</string>
+    <string name="jail_empty_device">Sanal Android ID. Yalnızca sistem uygulamaları görünür</string>
+    <string name="jail_hook_missing_title">Cihaz tanımlayıcıları ve uygulama listesi gizlenmiyor</string>
+    <string name="jail_hook_missing">LSPosed’da Big Brother için “Sistem Çerçevesi” kapsamını etkinleştirip cihazı yeniden başlatın.</string>
+    <string name="jail_gate_missing_title">Depolama alanı ve işlemci bilgileri yalıtılamıyor</string>
+    <string name="jail_gate_missing">Uygulamalar başlatıldığında yalıtım kullanılamaz.</string>
+    <string name="jail_appops_missing_title">Kişiler, konum, kamera ve diğer öğeler yalıtılmıyor</string>
+    <string name="jail_appops_missing">Big Brother’ın bu verilere erişimi kısıtlayan bileşeni çalışmıyor. Otomatik olarak yeniden başlatılır.</string>
+
+    <string name="jail_isolated">%1$s yalıtıldı</string>
+    <string name="jail_undo">Geri al</string>
+    <string name="jail_failed">Değişmedi: %1$s</string>
+    <string name="jail_isolated_partly">%1$s yalıtıldı. %2$s yalıtılamedi</string>
+    <plurals name="jail_isolated_partly_count">
+        <item quantity="one">%1$s yalıtıldı. %2$d uygulama yalıtılamadı</item>
+        <item quantity="other">%1$s yalıtıldı. %2$d uygulama yalıtılamadı</item>
+    </plurals>
+    <string name="jail_not_isolated">%1$s yalıtılamadı: %2$s</string>
+    <plurals name="jail_not_isolated_count">
+        <item quantity="one">%1$d uygulama yalıtılamadı: %2$s</item>
+        <item quantity="other">%1$d uygulama yalıtılamadı: %2$s</item>
+    </plurals>
+    <string name="jail_not_released">%1$s hâlâ hapishanede: %2$s</string>
+    <plurals name="jail_not_released_count">
+        <item quantity="one">%1$d uygulama hâlâ hapishanede: %2$s</item>
+        <item quantity="other">%1$d uygulama hâlâ hapishanede: %2$s</item>
+    </plurals>
+
+    <string name="jail_add_search">Uygulamaları arayın</string>
+    <plurals name="jail_add_confirm">
+        <item quantity="one">%d uygulamayı yalıt</item>
+        <item quantity="other">%d uygulamayı yalıt</item>
+    </plurals>
+    <string name="jail_add_confirm_none">Yalıt</string>
+    <string name="jail_add_restart">Çalışan uygulamalar kapatılır ve yeniden başlatılır.</string>
+    <string name="jail_add_empty">Eklenecek uygulama yok</string>
+    <string name="jail_close">Kapat</string>
+
+    <string name="jail_release">Yalıtımı kaldır</string>
+    <string name="jail_records">Erişim kayıtları</string>
+    <string name="jail_section_items">Yalıtım</string>
+    <string name="jail_items_summary">Açık öğeler boş veya sanal veri ya da yalıtılmış depolama alanı sağlar. Kapalı öğeler sistem kurallarına uyar.</string>
+    <string name="jail_reset">Genel ayarları kullan</string>
+    <plurals name="jail_more_items">
+        <item quantity="one">Uygulamanın istemediği %d öğe daha</item>
+        <item quantity="other">Uygulamanın istemediği %d öğe daha</item>
+    </plurals>
+    <string name="jail_fewer_items">Daha az göster</string>
+    <string name="jail_restart_note">Bir öğeyi açmak veya depolama ya da işlemci bilgilerini değiştirmek uygulamayı yeniden başlatır.</string>
+    <string name="jail_custom">Özel</string>
+    <string name="jail_choices_shown">Genişletildi</string>
+    <string name="jail_choices_hidden">Daraltıldı</string>
+    <string name="jail_show_choices">Seçenekleri göster</string>
+    <string name="jail_hide_choices">Seçimleri gizle</string>
+    <string name="jail_not_in_effect_hook">Etkin değil: LSPosed’da “Sistem Çerçevesi” kapsamını etkinleştirin ve cihazı yeniden başlatın</string>
+    <string name="jail_hook_unavailable">“Sistem Çerçevesi” kısıtlamaları kullanılamıyor</string>
+    <string name="jail_hook_incompatible">Bu Android sürümünde desteklenmiyor</string>
+    <string name="jail_hook_degraded">Kısıtlamalar çalışmayı durdurdu. Cihazı yeniden başlatın.</string>
+    <string name="jail_hook_status_unknown">“Sistem Çerçevesi” kısıtlamalarının durumu bilinmiyor.</string>
+    <string name="jail_not_in_effect_mounts">Etkin değil: depolama yalıtımı çalışmıyor</string>
+    <string name="jail_mount_start_failed">Uygulamanın başlatılması bekletilemedi.</string>
+    <string name="jail_mount_setup_failed">Başlangıçta yalıtım uygulanamadı.</string>
+    <string name="jail_mount_timed_out">Yalıtım başlangıçta zaman aşımına uğradı.</string>
+    <string name="jail_mount_launch_refused">%1$s Bu yalıtım seçeneği açıkken uygulama başlatılamaz. Başlatmak için etkilenen öğeleri kapatın veya uygulamayı hapishaneden çıkarın.</string>
+    <string name="jail_checking_app_ops">Android kısıtlaması kontrol ediliyor…</string>
+    <string name="jail_app_ops_unknown">Android kısıtlamasının durumu doğrulanamadı.</string>
+    <string name="jail_not_in_effect_app_ops">Kısıtlama kullanılamıyor. Uygulamanın erişimi devam ediyor olabilir.</string>
+
+    <string name="jail_settings_subtitle">Kendi ayarları olmayan yalıtılmış uygulamalar için</string>
+    <string name="jail_auto_isolate">Yeni yüklenen uygulamaları yalıt</string>
+    <string name="jail_auto_isolate_summary">Gelecekteki yüklemeler için aşağıdaki ayarları kullanın</string>
+    <string name="jail_group_files">Dosyalar</string>
+    <string name="jail_group_personal">Kişisel veriler</string>
+    <string name="jail_group_sensors">Konum ve sensörler</string>
+    <string name="jail_group_device">Cihaz ve uygulamalar</string>
+    <string name="jail_section_status">Durum</string>
+    <string name="jail_status_title">Bileşenler</string>
+    <string name="jail_status_ok">Depolama yalıtımı, “Sistem Çerçevesi” kancası ve ağ filtreleme etkin</string>
+    <string name="jail_status_network_missing">Ağ filtreleme bu çekirdekte mevcut değil</string>
+    <string name="jail_status_checking">Kontrol ediliyor…</string>
+    <string name="jail_status_hook_missing">“Sistem Çerçevesi” kancası yüklenmedi</string>
+    <string name="jail_status_gate_missing">Depolama yalıtımı kullanılamıyor</string>
+    <string name="jail_status_appops_missing">Kişiler, konum ve diğer öğeler için kısıtlamalar etkin değil</string>
+    <string name="jail_status_new_apps_not_held">Yeni uygulamalar yalıtımdan önce başlayabilir</string>
+    <plurals name="jail_status_new_apps_held">
+        <item quantity="one">Yeni yüklenen %d uygulama henüz yalıtılmadı. Başlatılması engellendi</item>
+        <item quantity="other">Yeni yüklenen %d uygulama henüz yalıtılmadı. Başlatılmaları engellendi</item>
+    </plurals>
+    <plurals name="jail_status_new_apps_failed">
+        <item quantity="one">Yeni yüklenen %d uygulama yalıtılamadı. Uygulama yalıtım olmadan başlatılabilir.</item>
+        <item quantity="other">Yeni yüklenen %d uygulama yalıtılamadı. Uygulamalar yalıtım olmadan başlatılabilir.</item>
+    </plurals>
+    <plurals name="jail_status_new_apps_pending">
+        <item quantity="one">Yeni yüklenen %d uygulama henüz yalıtılmadı</item>
+        <item quantity="other">Yeni yüklenen %d uygulama henüz yalıtılmadı</item>
+    </plurals>
+    <string name="jail_release_all">Tüm yalıtımı kaldır</string>
+    <string name="jail_release_all_summary">Yalıtılmış depolama alanındaki dosyalar saklanır</string>
+    <string name="jail_release_all_title">Tüm yalıtım kaldırılsın mı?</string>
+    <plurals name="jail_release_all_body">
+        <item quantity="one">%d uygulama tekrar gerçek verileri alır ve yeniden başlatılır. Dosyalar izole depolama alanında tutulur.</item>
+        <item quantity="other">%d uygulama tekrar gerçek verileri alır ve yeniden başlatılır. Dosyalar izole depolama alanında tutulur.</item>
+    </plurals>
+    <plurals name="jail_release_all_left">
+        <item quantity="one">%d uygulama hâlâ hapishanede. Tekrar deneyin.</item>
+        <item quantity="other">%d uygulama hâlâ hapishanede. Tekrar deneyin.</item>
+    </plurals>
+    <string name="jail_cancel">İptal</string>
+
+    <string name="jail_item_storage">Dosyalar ve medya</string>
+    <string name="jail_item_storage_on">Yalıtılmış depolama</string>
+    <string name="jail_item_storage_on_detail">Uygulamanın kendine ait, başlangıçta boş bir depolama alanı olur. Kaydettiği dosyalar burada kalır. Gerçek fotoğraflar, indirilenler ve belgeler görünmez. Sistem dosya seçicisinde seçilen dosyaya yalnızca o kullanım için erişilebilir.</string>
+    <string name="jail_item_cpu_info">İşlemci bilgileri</string>
+    <string name="jail_item_cpu_info_on">Çip modeli gizli</string>
+    <string name="jail_item_cpu_info_on_detail">Çekirdek sayısı ve talimat seti kalır; çip modeli ve diğer tanımlayıcılar kaldırılır.</string>
+    <string name="jail_item_contacts">Kişiler</string>
+    <string name="jail_item_contacts_on">Boş liste</string>
+    <string name="jail_item_contacts_on_detail">İzin verilmiş olarak görünür, ancak kişi sorguları veri döndürmez.</string>
+    <string name="jail_item_messages">Mesajlar ve arama kayıtları</string>
+    <string name="jail_item_messages_on">Boş liste</string>
+    <string name="jail_item_messages_on_detail">İzin verilmiş olarak görünür, ancak mesaj ve arama kaydı sorguları veri döndürmez.</string>
+    <string name="jail_item_calendar">Takvim</string>
+    <string name="jail_item_calendar_on">Boş takvim</string>
+    <string name="jail_item_calendar_on_detail">İzin verilmiş olarak görünür, ancak takvim sorguları veri döndürmez.</string>
+    <string name="jail_item_clipboard_accounts">Pano ve hesaplar</string>
+    <string name="jail_item_clipboard_accounts_on">Boş</string>
+    <string name="jail_item_clipboard_accounts_on_detail">Pano ve hesap listesi boş.</string>
+    <string name="jail_item_location">Konum</string>
+    <string name="jail_item_location_on">Konum yok</string>
+    <string name="jail_item_location_on_detail">İzin verilmiş olarak görünür, ancak konum bilgisi kullanılamaz.</string>
+    <string name="jail_item_camera">Kamera</string>
+    <string name="jail_item_camera_on">Kullanılamıyor</string>
+    <string name="jail_item_camera_on_detail">İzin verilmiş olarak görünür, ancak kamera görüntüsü alınamaz.</string>
+    <string name="jail_item_microphone">Mikrofon</string>
+    <string name="jail_item_microphone_on">Sessiz</string>
+    <string name="jail_item_microphone_on_detail">İzin verilmiş olarak görünür, ancak ses kayıtları sessizdir.</string>
+    <string name="jail_item_body_sensors">Vücut sensörleri ve fiziksel aktivite</string>
+    <string name="jail_item_body_sensors_on">Veri yok</string>
+    <string name="jail_item_body_sensors_on_detail">Kalp atış hızı, adımlar ve fiziksel aktivite mevcut değildir.</string>
+    <string name="jail_item_device_ids">Cihaz tanımlayıcıları</string>
+    <string name="jail_item_device_ids_on">Sanal kimlik</string>
+    <string name="jail_item_device_ids_on_detail">Uygulama kendine ait sabit bir sanal Android ID alır. Reklam kimliği, telefon numarası ve telefon durumu okunamaz.</string>
+    <string name="jail_item_installed_apps">Yüklü uygulamalar</string>
+    <string name="jail_item_installed_apps_on">Yalnızca sistem uygulamaları</string>
+    <string name="jail_item_installed_apps_on_detail">Yüklü uygulamalar listesinde yalnızca sistem uygulamaları ve uygulamanın kendisi görünür. Kullanım istatistikleri okunamaz.</string>
+    <string name="jail_item_nearby_devices">Yakındaki cihazlar</string>
+    <string name="jail_item_nearby_devices_on">Hiçbiri bulunamadı</string>
+    <string name="jail_item_nearby_devices_on_detail">Bluetooth ve Wi-Fi taramaları hiçbir şey döndürmez.</string>
+    <string name="jail_item_notification_content">Bildirim içeriği</string>
+    <string name="jail_item_notification_content_on">Erişim yok</string>
+    <string name="jail_item_notification_content_on_detail">Uygulama diğer uygulamaların bildirimlerini okuyamaz. Kendi bildirimleri gösterilmeye devam eder. Yalıtım kaldırılınca erişim geri yüklenir.</string>
+    <string name="jail_item_screen_content">Ekran içeriği</string>
+    <string name="jail_item_screen_content_on">Erişim yok</string>
+    <string name="jail_item_screen_content_on_detail">Uygulamanın erişilebilirlik hizmetleri kapalıdır. Uygulama ekrandakileri okuyamaz veya bunlarla etkileşime geçemez. Yalıtım kaldırılınca erişim geri yüklenir.</string>
+
+    <string name="jail_mode_coarse">Yaklaşık konum</string>
+    <string name="jail_mode_coarse_detail">Kesin konum kapatıldı; yalnızca yaklaşık bir konum mevcuttur.</string>
+    <string name="jail_mode_foreground">Sadece uygulama kullanılırken</string>
+    <string name="jail_mode_foreground_detail">Arka planda değil, uygulama kullanımdayken kullanılabilir.</string>
+    <string name="jail_mode_off">Gerçek veriler</string>
+    <string name="jail_mode_off_detail">Uygulama, sistemin ona verdiğini alır.</string>
+    <string name="jail_mode_global">Genel ayarı kullan</string>
+    <string name="jail_mode_global_detail">Şimdi: %1$s</string>
+    <string name="jail_list_separator">", "</string>
+    <string name="jail_select">Yalıtılmış bir uygulamayı veya genel ayarları seçin</string>
+
+    <string name="jail_summary_no_network">Ağ yok</string>
+    <string name="jail_summary_recording">Bağlantılar kaydediliyor</string>
+    <string name="jail_summary_separator">" · "</string>
+
+    <string name="jail_section_network">Ağ</string>
+    <string name="jail_network_access">Ağ erişimi</string>
+    <string name="jail_network_allowed">İzin verildi</string>
+    <string name="jail_network_allowed_detail">Sistemin izin verdiği ölçüde bağlanır.</string>
+    <string name="jail_network_blocked">Ağ yok</string>
+    <string name="jail_network_blocked_detail">Bağlantılar ve ad çözümleme sorguları hemen başarısız olur. Cihaz içindeki bağlantılar çalışmaya devam eder. Uygulama yeniden başlatılmaz.</string>
+    <string name="jail_network_record">Bağlantıları kaydet</string>
+    <string name="jail_network_record_summary">Bağlandığı domainler, adresler ve portlar; 30 gün boyunca saklandı</string>
+    <string name="jail_network_recording_since">Kayıt başlangıcı: %1$s</string>
+    <string name="jail_network_activity">Ağ etkinliği</string>
+    <plurals name="jail_network_activity_summary">
+        <item quantity="one">24 saatte %1$d hedef</item>
+        <item quantity="other">24 saatte %1$d hedef</item>
+    </plurals>
+    <plurals name="jail_network_blocked_count">
+        <item quantity="one">%1$d hedef engellendi</item>
+        <item quantity="other">%1$d hedef engellendi</item>
+    </plurals>
+    <string name="jail_network_name_rules_not_in_effect">Kayıtlı alan adı kuralları tam olarak uygulanmayabilir</string>
+    <string name="jail_network_recording_unavailable">Bağlantı kaydı kullanılamıyor</string>
+    <string name="jail_network_no_permission">Uygulama ağ erişimi istemiyor</string>
+    <string name="jail_not_in_effect_packet_filter">Ağ filtreleme kullanılamıyor</string>
+    <string name="jail_not_in_effect_resolver">Kısmen etkin: ad çözümleme engellenmiyor</string>
+    <string name="jail_network_global_note">Kendi ayarları olmayan yalıtılmış uygulamalar için. Ağ olmadığında bağlantılar hemen başarısız olur; uygulamalar yeniden başlatılmaz.</string>
+
+    <string name="jail_net_subtitle_recording">%1$s · Kayıt sürüyor</string>
+    <string name="jail_net_subtitle_stopped">%1$s · Kayıt yapılmıyor</string>
+    <plurals name="jail_net_destinations">
+        <item quantity="one">hedef</item>
+        <item quantity="other">hedef</item>
+    </plurals>
+    <plurals name="jail_net_facts">
+        <item quantity="one">%1$s bağlantı · %2$s alındı · %3$s gönderildi</item>
+        <item quantity="other">%1$s bağlantı · %2$s alındı · %3$s gönderildi</item>
+    </plurals>
+    <plurals name="jail_net_facts_counts">
+        <item quantity="one">%1$s bağlantı · %2$s reddedildi</item>
+        <item quantity="other">%1$s bağlantı · %2$s reddedildi</item>
+    </plurals>
+    <string name="jail_net_choose_period">Bir dönem seçin</string>
+    <string name="jail_net_all_periods">Tüm dönemler</string>
+    <string name="jail_net_legend_connected">Bağlı</string>
+    <string name="jail_net_legend_refused">Reddedildi</string>
+    <string name="jail_net_now">Şimdi</string>
+    <string name="jail_net_filter_blocked_count">%1$d engellendi</string>
+    <string name="jail_net_sort_data">En çok veri</string>
+    <string name="jail_net_sort_connections">En çok bağlantı</string>
+    <string name="jail_net_sort_recent">En yeni</string>
+    <string name="jail_net_sort_name">İsim</string>
+    <string name="jail_net_section_domains">Alan adları</string>
+    <string name="jail_net_section_addresses">IP adresleri</string>
+    <string name="jail_net_addresses_note">Sistem ad çözümlemesi kullanılmadan doğrudan bağlantı kuruldu.</string>
+    <string name="jail_net_port">Bağlantı noktası %1$d</string>
+    <plurals name="jail_net_connections">
+        <item quantity="one">%1$d bağlantı</item>
+        <item quantity="other">%1$d bağlantı</item>
+    </plurals>
+    <plurals name="jail_net_refused">
+        <item quantity="one">%1$d kez reddedildi</item>
+        <item quantity="other">%1$d kez reddedildi</item>
+    </plurals>
+    <string name="jail_net_blocked">Engellendi</string>
+    <string name="jail_net_show_all">Tümünü göster (%1$d)</string>
+    <string name="jail_net_footer">Kayıtlar 30 gün süreyle saklanır. Engelleme anında etkili olur.</string>
+    <string name="jail_net_search">Alan adlarını ve adresleri arayın</string>
+    <string name="jail_net_no_results">Eşleşen hedef yok</string>
+    <string name="jail_net_empty_title">Henüz bağlantı yok</string>
+    <string name="jail_net_empty_body">Kayıt başlangıcı: %1$s. Uygulama ağı kullanınca bağlantılar burada görünür.</string>
+    <string name="jail_net_stopped">Kayıt yapılmıyor. %1$s tarihine kadar olan kayıtlar gösteriliyor.</string>
+    <string name="jail_net_start">Kaydet</string>
+    <string name="jail_net_no_network_title">Ağ yok</string>
+    <string name="jail_net_no_network_body">Tüm bağlantılar reddedilir. Ad çözümleme başarısız olduğu için hedeflerin çoğu adres olarak görünür.</string>
+    <string name="jail_net_names_missing_title">Alan adları kullanılamıyor</string>
+    <string name="jail_net_names_missing_body">Bu cihazda ad çözümleme sorguları okunamıyor. Hedefler adres olarak gösteriliyor.</string>
+    <string name="jail_net_traffic_missing">Bu cihazda veri miktarları mevcut değil; bağlantı sayıları gösterilir.</string>
+    <string name="jail_net_more_options">Daha fazla seçenek</string>
+    <string name="jail_net_menu_block">Bir alan adını veya adresi engelle…</string>
+    <string name="jail_net_menu_stop">Kaydı durdur</string>
+    <string name="jail_net_menu_clear">Kayıtları temizle</string>
+    <string name="jail_net_clear_title">Ağ kayıtları temizlensin mi?</string>
+    <string name="jail_net_clear_body">%1$s uygulamasının ağ kayıtları silinir. Engellenen hedefler engellenmeye devam eder.</string>
+    <string name="jail_net_clear">Temizle</string>
+
+    <string name="jail_net_block">Engelle</string>
+    <string name="jail_net_unblock">Engeli kaldır</string>
+    <string name="jail_net_block_cd">Engelle: %1$s</string>
+    <string name="jail_net_blocked_message">%1$s engellendi</string>
+    <string name="jail_net_unblocked_message">Engel kaldırıldı: %1$s</string>
+    <string name="jail_net_manual">Manuel olarak eklendi</string>
+    <string name="jail_net_no_attempts">Bu dönemde girişim yok</string>
+
+    <plurals name="jail_net_subdomains">
+        <item quantity="one">%1$d alt alan adı</item>
+        <item quantity="other">%1$d alt alan adı</item>
+    </plurals>
+    <string name="jail_net_first_last">İlk %1$s · Son %2$s</string>
+    <string name="jail_net_block_site">%1$s ve alt alan adlarını engelle</string>
+    <string name="jail_net_block_address">Tüm bağlantı noktalarında engelle: %1$s</string>
+    <string name="jail_net_hour_range">%1$s–%2$s</string>
+    <string name="jail_net_dated_hour_range">%1$s %2$s</string>
+    <string name="jail_net_size_bytes">%1$d B</string>
+    <string name="jail_net_size_kilobytes">%1$d KB</string>
+    <string name="jail_net_size_megabytes">%1$.1f MB</string>
+    <string name="jail_net_size_gigabytes">%1$.1f GB</string>
+    <string name="jail_net_sent">Gönderilen</string>
+    <string name="jail_net_received">Alınan</string>
+    <string name="jail_net_connections_label">Bağlantılar</string>
+    <string name="jail_net_hosts_header">Alt alan adları</string>
+    <string name="jail_net_ports_header">Bağlantı noktaları</string>
+    <string name="jail_net_addresses_header">Adresler</string>
+    <plurals name="jail_net_more">
+        <item quantity="one">%1$d tane daha</item>
+        <item quantity="other">%1$d tane daha</item>
+    </plurals>
+    <string name="jail_net_shared">Bu alan adı %1$s ile aynı adresleri kullanıyor. Bu alan adları da engellenecek.</string>
+    <string name="jail_net_own_resolver">Uygulamanın adını kendi çözümlediği bağlantılar etkilenmez. Bu bağlantılar IP adresleri altında listelenir ve oradan engellenebilir.</string>
+
+    <string name="jail_net_add_title">Bir alan adını veya adresi engelle</string>
+    <string name="jail_net_add_label">Etki alanı, IP adresi veya adres:bağlantı noktası</string>
+    <string name="jail_net_add_supporting">Bir alan adı, alt alan adlarını içerir.</string>
+    <string name="jail_net_add_invalid">Alan adı veya IP adresi değil</string>
+</resources>

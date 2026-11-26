@@ -1,0 +1,214 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="isolated_process_uid">Yalıtılmış süreç (UID %d)</string>
+    <string name="back">Geri</string>
+    <string name="retry">Tekrar dene</string>
+    <string name="settings_write_failed">Ayar kaydedilemedi</string>
+    <string name="search">Ara</string>
+    <string name="recording_stopped">Kayıt durduruldu</string>
+    <string name="close_search">Aramayı kapat</string>
+    <string name="clear_search">Aramayı temizle</string>
+    <string name="no_matches">Eşleşme yok</string>
+
+    <string name="empty_title">Bu zaman aralığında kayıt yok</string>
+    <string name="no_root_title">root erişimi gerekli</string>
+    <string name="no_root_body">root yöneticisinde (KernelSU, Magisk veya APatch) root erişimi verip tekrar deneyin.</string>
+    <string name="no_module_title">Kayıt kurulmadı</string>
+    <string name="no_module_body">Genel bakış sekmesinde kaydı ayarlayın.</string>
+    <string name="old_module_title">Güncelleme tamamlanmadı</string>
+    <string name="old_module_body">Bu özellik güncelleme bitene kadar kullanılamaz. Güncellemeyi tamamlamak için Genel bakış sekmesini açın.</string>
+    <string name="error_title">Kayıtlar yüklenemedi</string>
+
+    <string name="topic_mac_address_title">MAC adresi</string>
+    <string name="topic_network_interfaces_title">Ağ arayüzleri</string>
+    <string name="topic_arp_table_title">ARP tablosu</string>
+    <string name="topic_network_state_title">Ağ durumu</string>
+    <string name="topic_device_serial_title">Seri numaraları</string>
+    <string name="topic_soc_info_title">SoC ayrıntıları</string>
+    <string name="topic_cpu_model_title">İşlemci modeli</string>
+    <string name="topic_kernel_version_title">Çekirdek sürümü</string>
+    <string name="topic_other_processes_title">Diğer işlemler</string>
+    <string name="topic_mounts_title">Monte edilmiş dosya sistemleri</string>
+    <string name="topic_kernel_modules_title">Çekirdek modülleri</string>
+    <string name="topic_selinux_state_title">SELinux durumu</string>
+    <string name="topic_block_devices_title">Blok aygıtları</string>
+    <string name="topic_emulator_probe_title">Emülatör tespiti</string>
+    <string name="topic_input_devices_title">Giriş cihazları</string>
+    <string name="topic_battery_title">Pil durumu</string>
+    <string name="topic_root_check_title">root tespiti</string>
+    <string name="topic_app_probe_title">Yüklü uygulamaları denetleme</string>
+    <string name="topic_system_properties_title">Sistem özellikleri</string>
+    <string name="topic_installed_apps_title">Yüklü uygulamalar</string>
+    <string name="topic_system_settings_title">Sistem ayarları</string>
+    <string name="topic_shell_command_title">Kabuk komutları</string>
+    <string name="topic_local_ports_title">Yerel bağlantı noktaları</string>
+    <string name="topic_local_network_title">Yerel ağ bağlantıları</string>
+    <string name="topic_device_discovery_title">Yerel ağda cihaz keşfi</string>
+    <string name="topic_process_memory_title">Diğer işlemlerin belleği</string>
+    <string name="topic_contacts_title">Kişiler</string>
+    <string name="topic_call_log_title">Arama kayıtları</string>
+    <string name="topic_messages_title">Metin mesajları</string>
+    <string name="topic_calendar_title">Takvim</string>
+    <string name="topic_sim_info_title">SIM ve operatör bilgileri</string>
+    <string name="topic_clipboard_title">Pano</string>
+    <string name="topic_location_title">Konum</string>
+    <string name="topic_wifi_info_title">Wi-Fi taraması ve bağlantı bilgileri</string>
+    <string name="topic_phone_identity_title">Telefon ve SIM tanımlayıcıları</string>
+    <string name="topic_accounts_title">Hesaplar</string>
+    <string name="topic_running_apps_title">Çalışan uygulamalar</string>
+    <string name="topic_usage_stats_title">Uygulama kullanım istatistikleri</string>
+    <string name="topic_enabled_services_title">Etkin giriş yöntemleri ve erişilebilirlik hizmetleri</string>
+    <string name="topic_sensors_title">Sensörler</string>
+    <string name="topic_android_id_title">Android ID</string>
+    <string name="topic_device_name_title">Cihaz adı</string>
+    <string name="topic_camera_title">Kamera</string>
+    <string name="topic_microphone_title">Mikrofon</string>
+
+    <string name="category_messages">SMS ve çağrı kayıtları</string>
+    <string name="category_contacts">Kişiler</string>
+    <string name="category_location">Konum</string>
+    <string name="category_sensors">Kamera, mikrofon ve sensörler</string>
+    <string name="category_files">Dosyalar ve medya</string>
+    <string name="category_calendar">Takvim</string>
+    <string name="category_personal_info">Kişisel bilgiler</string>
+    <string name="category_app_activity">Uygulama etkinliği</string>
+    <string name="category_device_ids">Cihaz tanımlayıcıları</string>
+    <string name="category_network">Ağ ve yakındaki cihazlar</string>
+    <string name="category_device_profile">Cihaz parmak izi</string>
+    <string name="category_environment">Ortam algılama</string>
+
+    <string name="range_hour">Son saat</string>
+    <string name="range_day">Son 24 saat</string>
+    <string name="range_week">Son 7 gün</string>
+    <string name="range_all">Tüm zamanlar</string>
+
+    <string name="range_hour_short">Saat</string>
+    <string name="range_day_short">Gün</string>
+    <string name="range_week_short">Hafta</string>
+    <string name="range_all_short">Hepsi</string>
+
+    <string name="select_app">Neye eriştiğini görmek için bir uygulama seçin</string>
+
+    <plurals name="summary_storage">
+        <item quantity="one">%d dosya</item>
+        <item quantity="other">%d dosya</item>
+    </plurals>
+    <string name="summary_separator">", "</string>
+    <plurals name="summary_more">
+        <item quantity="one">%1$s ve %2$d tane daha</item>
+        <item quantity="other">%1$s ve %2$d tane daha</item>
+    </plurals>
+    <string name="summary_media_library">Medya kitaplığı</string>
+    <string name="summary_not_read">%s (okunmadı)</string>
+    <string name="app_name_with_user">%1$s (%2$d kullanıcısı)</string>
+    <plurals name="app_count">
+        <item quantity="one">%d uygulama</item>
+        <item quantity="other">%d uygulama</item>
+    </plurals>
+
+    <plurals name="clipboard_read">
+        <item quantity="one">Bir kez okundu</item>
+        <item quantity="other">%d kez okundu</item>
+    </plurals>
+    <string name="clipboard_listens">Değişiklikleri izliyor</string>
+    <plurals name="clipboard_written">
+        <item quantity="one">Bir kez yazıldı</item>
+        <item quantity="other">%d kere yazıldı</item>
+    </plurals>
+    <plurals name="clipboard_read_denied">
+        <item quantity="one">Okuma bir kez reddedildi</item>
+        <item quantity="other">Okuma %d kez reddedildi</item>
+    </plurals>
+    <plurals name="clipboard_write_denied">
+        <item quantity="one">Yazma bir kez reddedildi</item>
+        <item quantity="other">Yazma %d kez reddedildi</item>
+    </plurals>
+    <string name="clipboard_read_short">Okuma %d×</string>
+    <string name="clipboard_listens_short">İzliyor</string>
+    <string name="clipboard_written_short">Yazma %d×</string>
+    <string name="clipboard_read_denied_short">Okuma reddedildi %d×</string>
+    <string name="clipboard_write_denied_short">Yazma reddedildi %d×</string>
+    <string name="clipboard_partly_denied">%1$s (%2$d ret)</string>
+
+    <string name="sensor_high_rate">%s (yüksek örnekleme hızı)</string>
+    <plurals name="sensor_times">
+        <item quantity="one">%d kez</item>
+        <item quantity="other">%d kez</item>
+    </plurals>
+    <string name="sensor_times_short">%d×</string>
+    <string name="sensor_unknown">Bilinmeyen sensör</string>
+    <string name="sensor_type_number">Sensör tipi %s</string>
+    <string name="sensor_accelerometer">İvmeölçer</string>
+    <string name="sensor_accelerometer_uncalibrated">İvmeölçer (kalibre edilmemiş)</string>
+    <string name="sensor_accelerometer_limited_axes">İvmeölçer (sınırlı eksenler)</string>
+    <string name="sensor_accelerometer_limited_axes_uncalibrated">İvmeölçer (sınırlı eksenler, kalibre edilmemiş)</string>
+    <string name="sensor_gyroscope">Jiroskop</string>
+    <string name="sensor_gyroscope_uncalibrated">Jiroskop (kalibre edilmemiş)</string>
+    <string name="sensor_gyroscope_limited_axes">Jiroskop (sınırlı eksenler)</string>
+    <string name="sensor_gyroscope_limited_axes_uncalibrated">Jiroskop (sınırlı eksenler, kalibre edilmemiş)</string>
+    <string name="sensor_magnetic_field">Manyetometre</string>
+    <string name="sensor_magnetic_field_uncalibrated">Manyetometre (kalibre edilmemiş)</string>
+    <string name="sensor_orientation">Oryantasyon</string>
+    <string name="sensor_light">Işık sensörü</string>
+    <string name="sensor_proximity">Yakınlık sensörü</string>
+    <string name="sensor_pressure">Barometre</string>
+    <string name="sensor_relative_humidity">Nem sensörü</string>
+    <string name="sensor_ambient_temperature">Ortam sıcaklığı</string>
+    <string name="sensor_gravity">Yerçekimi</string>
+    <string name="sensor_linear_acceleration">Doğrusal ivme</string>
+    <string name="sensor_rotation_vector">Döndürme vektörü</string>
+    <string name="sensor_game_rotation_vector">Oyun döndürme vektörü</string>
+    <string name="sensor_geomagnetic_rotation_vector">Jeomanyetik dönme vektörü</string>
+    <string name="sensor_significant_motion">Önemli hareket</string>
+    <string name="sensor_step_detector">Adım dedektörü</string>
+    <string name="sensor_step_counter">Adım sayacı</string>
+    <string name="sensor_heart_rate">Kalp atış hızı</string>
+    <string name="sensor_heart_beat">Kalp atışı</string>
+    <string name="sensor_device_orientation">Cihaz yönü</string>
+    <string name="sensor_pick_up_gesture">Cihazı kaldırma hareketi</string>
+    <string name="sensor_tilt_detector">Eğim dedektörü</string>
+    <string name="sensor_hinge_angle">Menteşe açısı</string>
+    <string name="sensor_low_latency_offbody_detect">Cihazın çıkarıldığını algılama</string>
+    <string name="sensor_stationary_detect">Hareketsizlik algılama</string>
+    <string name="sensor_motion_detect">Hareket algılama</string>
+    <string name="sensor_pose_6dof">6DoF pozu</string>
+    <string name="sensor_head_tracker">Kafa izleyici</string>
+    <string name="sensor_heading">Yön</string>
+    <string name="command_failed">İşlem tamamlanamadı.</string>
+    <string name="daemon_bad_response">Yanıt okunamadı.</string>
+    <string name="database_busy">Kayıt veritabanı meşgul.</string>
+    <string name="daemon_unavailable">Kayıt çalışmıyor.</string>
+    <string name="destination_missing">Hedef artık mevcut değil.</string>
+    <string name="app_missing">Bu uygulama artık bu Android kullanıcısı için yüklü değil.</string>
+    <string name="timed_out">İşlem zaman aşımına uğradı.</string>
+    <string name="invalid_period">Daha kısa, boş olmayan bir zaman aralığı seçin.</string>
+    <string name="module_version_unreadable">Yüklenen sürüm okunamadı.</string>
+    <string name="unsupported_architecture">Kayıt bu cihazın işlemcisini desteklemiyor.</string>
+    <string name="kernel_btf_missing">Çekirdek BTF desteğinden yoksundur. GKI 5.10 veya daha yenisi gereklidir.</string>
+    <string name="kernel_too_old">Çekirdek 5.10 veya daha yenisi gereklidir.</string>
+    <string name="module_archive_invalid">Kayıt için gereken dosyalar uygulama paketinden okunamadı. Uygulamayı yeniden yükleyin.</string>
+    <string name="database_incompatible">Bu sürüm mevcut kayıtları okuyamıyor.</string>
+    <string name="module_install_failed">Kurulum tamamlanmadı. Bir hata raporu için günlükleri Ayarlar\'da dışa aktarın.</string>
+    <string name="module_update_failed">Tekrar deneyin. Tekrar başarısız olursa, bir hata raporu için günlükleri Ayarlar\'a aktarın.</string>
+    <string name="daemon_start_failed">Kayıt başlatılamadı.</string>
+    <string name="installed_apps_unavailable">Yüklenen uygulamalar okunamadı.</string>
+    <string name="module_disabled">Big Brother modülü root yöneticisinde kapalı veya kaldırılmak üzere işaretlenmiş. Ayarı oradan değiştirin.</string>
+    <string name="module_remove_failed">Kaldırılmadı. Tekrar deneyin.</string>
+    <string name="daemon_not_reporting">Başlatıldı ancak henüz bir şey kaydedilmedi. Bu durum devam ederse, bir hata raporu için günlükleri Ayarlar\'a aktarın.</string>
+    <string name="file_access_denied">Paylaşılan depolama alanına erişilemiyor. root erişimi verildiğini kontrol edin.</string>
+    <string name="export_logs_failed">Günlükler toplanamadı.</string>
+</resources>
