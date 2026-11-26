@@ -15,10 +15,12 @@
 -->
 <resources>
     <string name="all_categories">All data</string>
+    <!-- Order apps by the sensitivity of the data they accessed. -->
     <string name="sort_sensitivity">Sensitivity</string>
     <string name="sort_recent">Last access</string>
     <string name="sort_name">Name</string>
     <string name="show_system_apps">Show system apps</string>
+    <!-- Records exist, but the display setting hides the apps they belong to. -->
     <string name="only_system_apps">Records exist only for apps hidden by default</string>
     <!-- Groups in sensitivity order. -->
     <plurals name="list_group_read_files">

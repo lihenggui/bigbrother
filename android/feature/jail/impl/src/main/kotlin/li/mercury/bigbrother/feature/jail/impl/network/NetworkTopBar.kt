@@ -26,6 +26,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MediumFlexibleTopAppBar
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
@@ -35,10 +36,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import li.mercury.bigbrother.core.ui.PredictiveSearchTopBar
+import li.mercury.bigbrother.core.ui.appLabelArgument
+import li.mercury.bigbrother.core.ui.appLabelStyle
 import li.mercury.bigbrother.core.ui.appNameWithUser
+import li.mercury.bigbrother.core.ui.rawTextSemantics
 import li.mercury.bigbrother.feature.jail.impl.R
 import li.mercury.bigbrother.core.ui.R as UiR
 
@@ -65,13 +70,18 @@ internal fun NetworkTopBar(
         MediumFlexibleTopAppBar(
             title = { Text(stringResource(R.string.jail_network_activity)) },
             subtitle = {
-                val name = appNameWithUser(state.name, state.otherUser)
+                val name = appNameWithUser(state.name, state.otherUser, state.packageName)
+                val nameArgument = appLabelArgument(name, state.packageName)
+                val subtitle = when (recording?.on) {
+                    null -> name
+                    true -> stringResource(R.string.jail_net_subtitle_recording, nameArgument)
+                    false -> stringResource(R.string.jail_net_subtitle_stopped, nameArgument)
+                }
+                val style = LocalTextStyle.current
                 Text(
-                    when (recording?.on) {
-                        null -> name
-                        true -> stringResource(R.string.jail_net_subtitle_recording, name)
-                        false -> stringResource(R.string.jail_net_subtitle_stopped, name)
-                    },
+                    subtitle,
+                    modifier = Modifier.rawTextSemantics(subtitle),
+                    style = if (recording == null) style.appLabelStyle(state.name, state.packageName, state.otherUser) else style,
                 )
             },
             navigationIcon = {

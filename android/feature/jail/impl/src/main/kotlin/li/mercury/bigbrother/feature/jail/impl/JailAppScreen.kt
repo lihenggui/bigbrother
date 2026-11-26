@@ -37,6 +37,7 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MediumFlexibleTopAppBar
 import androidx.compose.material3.OutlinedButton
@@ -60,6 +61,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -77,8 +79,11 @@ import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.Pop
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.animatedRow
+import li.mercury.bigbrother.core.ui.appLabelStyle
 import li.mercury.bigbrother.core.ui.appNameWithUser
 import li.mercury.bigbrother.core.ui.failureReason
+import li.mercury.bigbrother.core.ui.ltrContent
+import li.mercury.bigbrother.core.ui.rawTextSemantics
 import li.mercury.bigbrother.feature.jail.impl.network.NetworkSectionActions
 import li.mercury.bigbrother.feature.jail.impl.network.networkSection
 import li.mercury.bigbrother.core.ui.R as UiR
@@ -147,8 +152,10 @@ internal fun JailAppScreen(
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             JailAppTopBar(
-                title = appNameWithUser(state.name, state.otherUser),
+                title = appNameWithUser(state.name, state.otherUser, state.packageName),
+                titleStyle = { appLabelStyle(state.name, state.packageName, state.otherUser) },
                 subtitle = state.packageName,
+                subtitleStyle = { ltrContent() },
                 showBack = showBack,
                 background = background,
                 scrollBehavior = scrollBehavior,
@@ -217,11 +224,13 @@ internal fun JailAppTopBar(
     background: Color,
     scrollBehavior: TopAppBarScrollBehavior,
     onBack: () -> Unit,
+    titleStyle: @Composable TextStyle.() -> TextStyle = { this },
+    subtitleStyle: @Composable TextStyle.() -> TextStyle = { this },
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     MediumFlexibleTopAppBar(
-        title = { Text(title) },
-        subtitle = { Text(subtitle) },
+        title = { Text(title, modifier = Modifier.rawTextSemantics(title), style = LocalTextStyle.current.titleStyle()) },
+        subtitle = { Text(subtitle, style = LocalTextStyle.current.subtitleStyle()) },
         navigationIcon = {
             if (showBack) {
                 IconButton(onClick = onBack) {

@@ -27,6 +27,7 @@ import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -66,8 +67,11 @@ fun AppListItem(
     modifier: Modifier = Modifier,
     selected: Boolean = false,
     badge: ImageVector? = null,
+    supportingIsTechnical: Boolean = false,
 ) {
     val name = appDisplayName(app, info)
+    val otherUser = app.userId.takeUnless { it == 0 || app.isUnattributedIsolated }
+    val displayName = appNameWithUser(name, otherUser, app.packageName)
     ListItem(
         selected = selected && LocalShowsDetailBesideList.current,
         onClick = onClick,
@@ -75,10 +79,26 @@ fun AppListItem(
         shapes = ListItemDefaults.segmentedShapes(index, count),
         colors = ListItemDefaults.segmentedColors(),
         leadingContent = { BadgedAppIcon(app, info, name, badge = badge) },
-        supportingContent = supporting?.let { { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
+        supportingContent = supporting?.let {
+            {
+                Text(
+                    it,
+                    modifier = Modifier.rawTextSemantics(it),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = LocalTextStyle.current.ltrContent(supportingIsTechnical),
+                )
+            }
+        },
         trailingContent = trailing?.let { { Text(it, style = MaterialTheme.typography.labelMedium) } },
     ) {
-        Text(appNameWithUser(app, name), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(
+            displayName,
+            modifier = Modifier.rawTextSemantics(displayName),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = LocalTextStyle.current.appLabelStyle(name, app.packageName, otherUser),
+        )
     }
 }
 
@@ -88,14 +108,7 @@ fun AppListItem(
  * same. An isolated process's name already gives its uid.
  */
 @Composable
-fun appNameWithUser(app: AppSummary, name: String): String = appNameWithUser(
-    name,
-    app.userId.takeUnless { it == 0 || app.isUnattributedIsolated },
-)
-
-/** Adds the Android user when the caller needs to distinguish an app's copy. */
-@Composable
-fun appNameWithUser(name: String, otherUser: Int?): String = if (otherUser == null) name else stringResource(R.string.app_name_with_user, name, otherUser)
+fun appNameWithUser(name: String, otherUser: Int?, packageName: String): String = if (otherUser == null) name else stringResource(R.string.app_name_with_user, appLabelArgument(name, packageName), otherUser)
 
 /** An app's icon, with a work badge for another Android user and an optional badge for a kind of data. */
 @Composable

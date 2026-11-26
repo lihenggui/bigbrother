@@ -15,12 +15,15 @@
 -->
 <resources>
     <string name="app_name" translatable="false">Big Brother</string>
-    <!-- Shown in the LSPosed manager as the module's description. -->
+    <!-- Security: LSPosed module description. Recording and Jail controls are separate capabilities. -->
     <string name="module_description">Records app file access and personal data queries through Android content providers. Adds Jail (app isolation) controls for Android ID, advertising IDs, app visibility, and file grants.</string>
     <!-- Navigation: what was accessed, by whom, and when. -->
+    <!-- Navigation tab for the device-wide summary and recording setup. -->
     <string name="nav_overview">Overview</string>
     <string name="nav_apps">Apps</string>
+    <!-- Navigation tab for access records grouped by hour and app. -->
     <string name="nav_timeline">Timeline</string>
+    <!-- Name of the app isolation feature. Use the separate verb "Isolate" for the action. -->
     <string name="nav_jail">Jail</string>
 
     <!-- First-launch guide. All access shown in the illustrations is sample data. -->
@@ -29,11 +32,13 @@
     <string name="guide_timeline_title">View the timeline</string>
     <string name="guide_timeline_body">The timeline groups access by hour and by app. Open an entry for details.</string>
     <string name="guide_jail_title">Isolate selected apps</string>
+    <!-- Security: Describes the example isolation choices on the first-launch guide. -->
     <string name="guide_jail_body">Isolation gives an app its own storage, an empty clipboard and a virtual device ID. Each item can be changed separately.</string>
     <string name="guide_skip">Skip</string>
     <string name="guide_next">Next</string>
     <string name="guide_back">Previous page</string>
     <string name="guide_start">Get started</string>
+    <!-- %1$d: current page number, starting at one. %2$d: total pages. -->
     <string name="guide_progress">Page %1$d of %2$d</string>
     <string name="guide_guard_description">Sample: the bodyguard checks four apps and records what each one read.</string>
     <string name="guide_timeline_description">Sample timeline: Weather, Shop, Chat and Flashlight with what each one read.</string>
@@ -46,6 +51,6 @@
     <string name="guide_clipboard">Clipboard</string>
     <string name="guide_files">Files</string>
     <string name="guide_device_id">Device ID</string>
-    <!-- What an isolated app gets for a kind of data, for example "Clipboard: Empty". -->
+    <!-- %1$s: kind of data. %2$s: what the isolated sample app receives. -->
     <string name="guide_isolated_value">%1$s: %2$s</string>
 </resources>

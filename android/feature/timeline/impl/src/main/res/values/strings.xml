@@ -16,7 +16,9 @@
 <resources>
     <string name="all_data">All data</string>
     <!-- Filter: reads and other access, or also apps looking for files without reading them. -->
+    <!-- Filter for records of reads or other data access. -->
     <string name="records_access">Reads and access</string>
+    <!-- Includes records where an app only looked for files or was denied access. -->
     <string name="records_all">All records</string>
     <string name="timeline_empty">No records</string>
     <string name="today">Today</string>

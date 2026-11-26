@@ -39,6 +39,7 @@ import li.mercury.bigbrother.core.model.Action
 import li.mercury.bigbrother.core.ui.exactDateTime
 import li.mercury.bigbrother.core.ui.failureReason
 import li.mercury.bigbrother.core.ui.label
+import li.mercury.bigbrother.core.ui.ltrContent
 
 /** When one file was accessed: a line per access, most recent first. Shown once the history has loaded. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -53,12 +54,12 @@ internal fun FileDetailsSheet(details: FileDetails, onOpen: () -> Unit, onDismis
         ) {
             Text(
                 text = details.path.substringAfterLast('/'),
-                style = MaterialTheme.typography.titleLarge,
+                style = MaterialTheme.typography.titleLarge.ltrContent(),
             )
             SelectionContainer {
                 Text(
                     text = details.path,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.ltrContent(),
                     fontFamily = FontFamily.Monospace,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

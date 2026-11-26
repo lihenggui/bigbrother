@@ -349,14 +349,13 @@ class JailScreenScreenshotTests {
     /** One of each message the jail tells in a snackbar, by the name its screenshot takes. */
     private fun messages(): List<Pair<String, JailMessage>> {
         val apps = installedApps()
-        val names = apps.map { it.info.label }
         return listOf(
-            "Isolated" to JailMessage.Isolated(names.take(2), apps.take(2)),
-            "IsolatedPartly" to JailMessage.Isolated(names.take(1), apps.take(1), notIsolated = names.subList(1, 2)),
-            "IsolatedPartlyCount" to JailMessage.Isolated(names.take(1), apps.take(1), notIsolated = names.subList(1, 4)),
-            "NotIsolated" to JailMessage.NotIsolated(names.take(1), LoadFailure.ModuleOutdated),
-            "NotIsolatedCount" to JailMessage.NotIsolated(names.take(3), LoadFailure.Operation.TIMED_OUT),
-            "NotReleased" to JailMessage.NotReleased(names.take(1), LoadFailure.NoRoot),
+            "Isolated" to JailMessage.Isolated(apps.take(2)),
+            "IsolatedPartly" to JailMessage.Isolated(apps.take(1), notIsolated = apps.subList(1, 2)),
+            "IsolatedPartlyCount" to JailMessage.Isolated(apps.take(1), notIsolated = apps.subList(1, 4)),
+            "NotIsolated" to JailMessage.NotIsolated(apps.take(1), LoadFailure.ModuleOutdated),
+            "NotIsolatedCount" to JailMessage.NotIsolated(apps.take(3), LoadFailure.Operation.TIMED_OUT),
+            "NotReleased" to JailMessage.NotReleased(apps.take(1), LoadFailure.NoRoot),
         )
     }
 

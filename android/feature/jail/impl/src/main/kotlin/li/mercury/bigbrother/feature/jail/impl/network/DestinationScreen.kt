@@ -44,9 +44,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -73,8 +73,12 @@ import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.animatedRow
+import li.mercury.bigbrother.core.ui.isolateLtr
+import li.mercury.bigbrother.core.ui.ltrContent
+import li.mercury.bigbrother.core.ui.rawTextSemantics
 import li.mercury.bigbrother.core.ui.timeWithDateIfNotToday
 import li.mercury.bigbrother.feature.jail.impl.ErrorEffect
+import li.mercury.bigbrother.feature.jail.impl.JailSnackbarHost
 import li.mercury.bigbrother.feature.jail.impl.R
 import java.text.NumberFormat
 
@@ -141,7 +145,7 @@ internal fun DestinationScreen(
                 else -> details(state, destination, toggle)
             }
         }
-        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(bottom = bottom))
+        JailSnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(bottom = bottom))
     }
 }
 
@@ -162,7 +166,7 @@ private fun LazyListScope.details(
                 for (limit in limits) {
                     Limit(
                         if (limit != null) {
-                            stringResource(R.string.jail_net_shared, limit.joinToString(stringResource(R.string.jail_list_separator)))
+                            stringResource(R.string.jail_net_shared, limit.joinToString(stringResource(R.string.jail_list_separator), transform = ::isolateLtr))
                         } else {
                             stringResource(R.string.jail_net_own_resolver)
                         },
@@ -225,7 +229,7 @@ private fun LazyListScope.details(
 private fun Header(target: NetworkTarget?, destination: DestinationActivity?, onClose: () -> Unit, modifier: Modifier = Modifier) {
     Row(modifier.padding(start = 8.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.Top) {
         Column(Modifier.weight(1f).padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(target?.name.orEmpty(), style = MaterialTheme.typography.titleLarge)
+            Text(target?.name.orEmpty(), style = MaterialTheme.typography.titleLarge.ltrContent())
             if (destination != null) {
                 val separator = stringResource(R.string.jail_summary_separator)
                 val parts = buildList {
@@ -273,12 +277,11 @@ private fun MainAction(destination: DestinationActivity, toggle: (NetworkTarget,
     ) {
         Icon(Icons.Outlined.Block, contentDescription = null, modifier = Modifier.size(18.dp))
         Spacer(Modifier.size(8.dp))
-        Text(
-            when (target) {
-                is NetworkTarget.Domain -> stringResource(R.string.jail_net_block_site, target.name)
-                is NetworkTarget.Address -> stringResource(R.string.jail_net_block_address, target.name)
-            },
-        )
+        val action = when (target) {
+            is NetworkTarget.Domain -> stringResource(R.string.jail_net_block_site, isolateLtr(target.name))
+            is NetworkTarget.Address -> stringResource(R.string.jail_net_block_address, isolateLtr(target.name))
+        }
+        Text(action, modifier = Modifier.rawTextSemantics(action))
     }
 }
 
@@ -287,7 +290,7 @@ private fun MainAction(destination: DestinationActivity, toggle: (NetworkTarget,
 private fun Limit(text: String) {
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Icon(Icons.Outlined.Info, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(text, modifier = Modifier.rawTextSemantics(text), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -355,7 +358,7 @@ private fun PortRow(port: PortActivity, onToggle: ((Boolean) -> Unit)?, index: I
         },
         trailingContent = onToggle?.let { { BlockToggle(title, port.rule != null, it) } },
         verticalAlignment = Alignment.CenterVertically,
-    ) { Text(title) }
+    ) { Text(title, style = LocalTextStyle.current.ltrContent()) }
 }
 
 /** The first few addresses, and how many more. */
@@ -366,7 +369,7 @@ private fun Addresses(addresses: List<String>, count: Int, modifier: Modifier = 
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        addresses.take(ADDRESSES_SHOWN).forEach { Text(it, style = MaterialTheme.typography.bodyMedium) }
+        addresses.take(ADDRESSES_SHOWN).forEach { Text(it, style = MaterialTheme.typography.bodyMedium.ltrContent()) }
         val more = count - minOf(addresses.size, ADDRESSES_SHOWN)
         if (more > 0) {
             Text(pluralStringResource(R.plurals.jail_net_more, more, more), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)

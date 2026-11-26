@@ -60,7 +60,9 @@ import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.TimeRangeButtonGroup
 import li.mercury.bigbrother.core.ui.UserSettingsWriter
+import li.mercury.bigbrother.core.ui.isolateLtr
 import li.mercury.bigbrother.core.ui.namedList
+import li.mercury.bigbrother.core.ui.rawTextSemantics
 import li.mercury.bigbrother.core.ui.rememberSettingsWriteSnackbar
 import li.mercury.bigbrother.core.ui.topicTitle
 import li.mercury.bigbrother.core.ui.R as UiR
@@ -237,7 +239,10 @@ private fun CategoryRow(category: CategoryOverview, index: Int, count: Int, onCl
     // A topic named like its category ("Contacts") would only repeat the title.
     val title = stringResource(category.category.title)
     val topics = namedList(
-        category.topics.map { topic -> topicTitle(topic)?.let { stringResource(it) } ?: topic }.filter { it != title },
+        category.topics.mapNotNull { topic ->
+            val label = topicTitle(topic)?.let { stringResource(it) }
+            if ((label ?: topic) == title) null else label ?: isolateLtr(topic)
+        },
     )
     val apps = pluralStringResource(UiR.plurals.app_count, category.apps, category.apps)
     ListItem(
@@ -246,8 +251,10 @@ private fun CategoryRow(category: CategoryOverview, index: Int, count: Int, onCl
         colors = ListItemDefaults.segmentedColors(),
         leadingContent = { ShapedIcon(category.category.icon) },
         supportingContent = {
+            val text = listOfNotNull(topics, apps).joinToString(stringResource(UiR.string.dot_separator))
             Text(
-                text = listOfNotNull(topics, apps).joinToString(stringResource(UiR.string.dot_separator)),
+                text,
+                modifier = Modifier.rawTextSemantics(text),
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )

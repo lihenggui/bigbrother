@@ -20,6 +20,7 @@ import li.mercury.bigbrother.configureBadgingTasks
 import li.mercury.bigbrother.configureKotlinAndroid
 import li.mercury.bigbrother.configureLicensee
 import li.mercury.bigbrother.configureSpotlessForAndroid
+import li.mercury.bigbrother.libs
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.kotlin.dsl.apply
@@ -33,7 +34,7 @@ class AndroidApplicationConventionPlugin : Plugin<Project> {
             apply(plugin = "bigbrother.android.lint")
             extensions.configure<ApplicationExtension> {
                 configureKotlinAndroid(this)
-                defaultConfig.targetSdk = 37
+                defaultConfig.targetSdk = libs.findVersion("androidTargetSdk").get().requiredVersion.toInt()
             }
             configureSpotlessForAndroid()
             configureLicensee()

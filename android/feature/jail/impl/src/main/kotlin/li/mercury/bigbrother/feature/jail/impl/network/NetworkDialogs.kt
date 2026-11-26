@@ -22,9 +22,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import li.mercury.bigbrother.core.model.NetworkTarget
+import li.mercury.bigbrother.core.ui.appLabelArgument
 import li.mercury.bigbrother.core.ui.appNameWithUser
+import li.mercury.bigbrother.core.ui.rawTextSemantics
 import li.mercury.bigbrother.feature.jail.impl.R
 
 /** A dialog the page can show. */
@@ -52,7 +55,11 @@ internal fun NetworkDialogs(
         NetworkDialog.CLEAR -> AlertDialog(
             onDismissRequest = onDismiss,
             title = { Text(stringResource(R.string.jail_net_clear_title)) },
-            text = { Text(stringResource(R.string.jail_net_clear_body, appNameWithUser(state.name, state.otherUser))) },
+            text = {
+                val name = appNameWithUser(state.name, state.otherUser, state.packageName)
+                val text = stringResource(R.string.jail_net_clear_body, appLabelArgument(name, state.packageName))
+                Text(text, modifier = Modifier.rawTextSemantics(text))
+            },
             confirmButton = {
                 TextButton(onClick = {
                     onDismiss()

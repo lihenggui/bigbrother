@@ -69,7 +69,7 @@ fun categoryDetail(app: AppSummary, category: DataCategory): String? {
     if (category == DataCategory.FILES) {
         val parts = buildList {
             if (app.folders.isNotEmpty()) {
-                namedList(app.folders, total = app.folderCount)?.let(::add)
+                namedList(app.folders.map(::isolateLtr), total = app.folderCount)?.let(::add)
             } else if (app.count(Category.STORAGE) > 0) {
                 add(
                     pluralStringResource(
@@ -88,6 +88,6 @@ fun categoryDetail(app: AppSummary, category: DataCategory): String? {
     }
     val titles = app.topics
         .filter { (topicCategory(it) ?: DataCategory.DEVICE_PROFILE) == category }
-        .map { topic -> topicTitle(topic)?.let { stringResource(it) } ?: topic }
+        .map { topic -> topicTitle(topic)?.let { stringResource(it) } ?: isolateLtr(topic) }
     return namedList(titles)
 }

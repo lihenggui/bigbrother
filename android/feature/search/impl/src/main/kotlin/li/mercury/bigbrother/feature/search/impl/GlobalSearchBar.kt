@@ -35,6 +35,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SearchBarDefaults
 import androidx.compose.material3.SearchBarState
@@ -59,6 +60,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -189,6 +191,7 @@ private fun SearchInputField(
             textFieldState = textFieldState,
             searchBarState = searchBarState,
             onSearch = {},
+            textStyle = LocalTextStyle.current.copy(textDirection = TextDirection.Content),
             // A pane can move focus to its first field. Require a tap so this
             // doesn't open search when the pane comes into view.
             modifier = if (expanded) Modifier else Modifier.focusProperties { canFocus = false },

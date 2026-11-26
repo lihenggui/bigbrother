@@ -48,7 +48,6 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
@@ -85,6 +84,8 @@ import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.Pop
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.animatedRow
+import li.mercury.bigbrother.core.ui.appLabelArgument
+import li.mercury.bigbrother.core.ui.appLabelStyle
 import li.mercury.bigbrother.core.ui.appNameWithUser
 import li.mercury.bigbrother.core.ui.failureReason
 import li.mercury.bigbrother.core.ui.R as UiR
@@ -159,7 +160,7 @@ internal fun JailScreen(
     Scaffold(
         modifier = modifier,
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
-        snackbarHost = { SnackbarHost(snackbar) },
+        snackbarHost = { JailSnackbarHost(snackbar) },
         floatingActionButton = {
             // With no app isolated yet, the empty page has the button of its own.
             Pop(!state.apps.isNullOrEmpty()) {
@@ -229,7 +230,8 @@ private fun JailList(
             }
             itemsIndexed(apps, key = { _, app -> app.app.uid }, contentType = { _, _ -> "isolated-app" }) { index, app ->
                 LinkRow(
-                    title = appNameWithUser(app.name, app.otherUser),
+                    title = appNameWithUser(app.name, app.otherUser, app.app.packageName),
+                    titleStyle = { appLabelStyle(app.name, app.app.packageName, app.otherUser) },
                     supporting = itemsSummary(app.app.items),
                     onClick = { onOpenApp(app) },
                     index = index,
@@ -374,27 +376,29 @@ private fun messageText(message: JailMessage): String {
     val separator = stringResource(R.string.jail_list_separator)
     return when (message) {
         is JailMessage.Isolated -> {
-            val names = message.names.joinToString(separator)
+            val names = message.apps.joinToString(separator, transform = InstalledApp::labelArgument)
             val left = message.notIsolated
             when (left.size) {
                 0 -> stringResource(R.string.jail_isolated, names)
-                1 -> stringResource(R.string.jail_isolated_partly, names, left.single())
+                1 -> stringResource(R.string.jail_isolated_partly, names, left.single().labelArgument())
                 else -> pluralStringResource(R.plurals.jail_isolated_partly_count, left.size, names, left.size)
             }
         }
 
-        is JailMessage.NotIsolated -> notChanged(message.names, R.string.jail_not_isolated, R.plurals.jail_not_isolated_count, message.failure)
+        is JailMessage.NotIsolated -> notChanged(message.apps, R.string.jail_not_isolated, R.plurals.jail_not_isolated_count, message.failure)
 
-        is JailMessage.NotReleased -> notChanged(message.names, R.string.jail_not_released, R.plurals.jail_not_released_count, message.failure)
+        is JailMessage.NotReleased -> notChanged(message.apps, R.string.jail_not_released, R.plurals.jail_not_released_count, message.failure)
     }
 }
 
 /** [one] with the app's name, or [several] with the number of apps, then why. */
 @Composable
-private fun notChanged(names: List<String>, @StringRes one: Int, @PluralsRes several: Int, failure: LoadFailure): String {
+private fun notChanged(apps: List<InstalledApp>, @StringRes one: Int, @PluralsRes several: Int, failure: LoadFailure): String {
     val reason = failureReason(failure)
-    return if (names.size == 1) stringResource(one, names.single(), reason) else pluralStringResource(several, names.size, names.size, reason)
+    return if (apps.size == 1) stringResource(one, apps.single().labelArgument(), reason) else pluralStringResource(several, apps.size, apps.size, reason)
 }
+
+private fun InstalledApp.labelArgument(): String = appLabelArgument(info.label, packageName)
 
 /** Opens the list of apps to add, and puts those chosen in the sandbox. */
 @Composable

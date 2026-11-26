@@ -27,6 +27,7 @@
     </plurals>
     <!-- Apps beyond those whose icons are shown. -->
     <string name="more_count">+%d</string>
+    <!-- Heading for types of access other than those shown on the main cards. -->
     <string name="other_categories">Other sensitive permissions</string>
     <plurals name="category_count">
         <item quantity="one">%d kind</item>
@@ -44,17 +45,30 @@
     </plurals>
 
     <!-- Recording status, shown only when something needs attention. -->
+    <!-- Security: Recording was set up but is currently stopped. -->
     <string name="status_stopped">Recording stopped</string>
+    <!-- Security: Access while recording is stopped will be absent from the records. -->
     <string name="daemon_stopped">Access in the meantime is not recorded.</string>
+    <!-- Security: The recording process is still starting. -->
     <string name="daemon_starting">Starting recording…</string>
+    <!-- Start the already installed recording module. -->
     <string name="start_daemon">Start recording</string>
+    <!-- Set up the root component that records access. -->
     <string name="install_module">Set up recording</string>
+    <!-- Security: The recording module update is in progress. -->
     <string name="updating_module">Finishing the update…</string>
+    <!-- Security: The recording module update failed. -->
     <string name="update_failed_title">Update could not be finished</string>
+    <!-- Security: The module flashed in the root manager is waiting for a reboot. -->
     <string name="module_pending_reboot">Restart needed</string>
+    <!-- Security: The flashed module takes effect after the next reboot. -->
     <string name="module_pending_reboot_body">The module flashed in the root manager takes effect after the next restart.</string>
+    <!-- Security: The recording module is being installed. -->
     <string name="installing_module">Setting up recording…</string>
+    <!-- Security: Recording setup failed. -->
     <string name="install_failed_title">Recording could not be set up</string>
+    <!-- Security: Direct recording setup requires root and can run without a reboot. -->
     <string name="setup_body">Big Brother records with root access. Setting it up needs no restart.</string>
+    <!-- Security: Distinguishes the module waiting for a reboot from direct setup. -->
     <string name="setup_pending_body">The module flashed in the root manager takes effect after the next restart. Recording can also be set up now, without a restart.</string>
 </resources>

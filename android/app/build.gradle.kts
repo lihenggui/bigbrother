@@ -54,6 +54,9 @@ android {
     }
 
     buildTypes {
+        debug {
+            isPseudoLocalesEnabled = true
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -78,7 +81,7 @@ android {
     androidResources {
         // Locales the app is translated into; drives the per-app language picker.
         generateLocaleConfig = true
-        localeFilters += listOf("en", "zh")
+        localeFilters += providers.gradleProperty("appLocales").get().split(',')
     }
 
     packaging.resources {
@@ -95,6 +98,13 @@ android {
     }
 
     testOptions.unitTests.isIncludeAndroidResources = true
+}
+
+androidComponents {
+    // The locale filter would otherwise drop the pseudo-locales from debug builds.
+    onVariants(selector().withBuildType("debug")) { variant ->
+        variant.androidResources.localeFilters.addAll("en-rXA", "ar-rXB")
+    }
 }
 
 dependencies {

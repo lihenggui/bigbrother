@@ -21,6 +21,7 @@
     <string name="retry">Try again</string>
     <string name="settings_write_failed">Couldn’t save the setting</string>
     <string name="search">Search</string>
+    <!-- Security: Banner when the recording process is no longer running. -->
     <string name="recording_stopped">Recording stopped</string>
     <string name="close_search">Close search</string>
     <string name="clear_search">Clear search</string>
@@ -28,11 +29,17 @@
 
     <!-- Empty and error states. -->
     <string name="empty_title">No records in this time range</string>
+    <!-- Security: Big Brother lacks root access. -->
     <string name="no_root_title">Root access needed</string>
+    <!-- Security: Root must be granted in the device’s root manager. -->
     <string name="no_root_body">Grant root in your root manager (KernelSU, Magisk or APatch), then try again.</string>
+    <!-- Security: Recording has not been set up. -->
     <string name="no_module_title">Recording not set up</string>
+    <!-- Security: Points to the Overview tab where recording can be enabled. -->
     <string name="no_module_body">Set up recording on the Overview.</string>
+    <!-- Security: The installed recording module needs an update. -->
     <string name="old_module_title">Update not finished</string>
+    <!-- Security: Access records are unavailable until the module update finishes. -->
     <string name="old_module_body">This is not available until the update finishes. Opening the Overview finishes it.</string>
     <string name="error_title">Could not load records</string>
 
@@ -54,7 +61,9 @@
     <string name="topic_emulator_probe_title">Emulator detection</string>
     <string name="topic_input_devices_title">Input devices</string>
     <string name="topic_battery_title">Battery status</string>
+    <!-- An app checked for root. This describes the recorded activity. -->
     <string name="topic_root_check_title">Root detection</string>
+    <!-- An app checked whether another app was installed. -->
     <string name="topic_app_probe_title">App probing</string>
     <string name="topic_system_properties_title">System properties</string>
     <string name="topic_installed_apps_title">Installed apps</string>
@@ -119,15 +128,18 @@
     </plurals>
     <string name="summary_separator">", "</string>
     <!-- A shortened list: the first names, then how many are not named. -->
+    <!-- %1$s: list of names already shown. %2$d: how many additional names there are. -->
     <plurals name="summary_more">
         <item quantity="one">%1$s and %2$d more</item>
         <item quantity="other">%1$s and %2$d more</item>
     </plurals>
     <string name="summary_media_library">Media library</string>
     <!-- Folders an app listed or was denied, without reading any file. %s is a list of folder names. -->
+    <!-- %s: folders the app inspected, without opening their files. -->
     <string name="summary_not_read">%s (not read)</string>
     <!-- An app's name followed by the Android user it runs as, for cloned apps
          and work profiles: "WeChat (user 999)". -->
+    <!-- %1$s: app label or package name. %2$d: Android user number, for a work profile or clone. -->
     <string name="app_name_with_user">%1$s (user %2$d)</string>
     <plurals name="app_count">
         <item quantity="one">%d app</item>
@@ -162,11 +174,12 @@
     <string name="clipboard_written_short">Written %d×</string>
     <string name="clipboard_read_denied_short">Read denied %d×</string>
     <string name="clipboard_write_denied_short">Write denied %d×</string>
-    <!-- %1$s is a count of reads or writes, %2$d how many of them the system refused. -->
+    <!-- %1$s: summary of successful clipboard actions. %2$d: how many actions Android denied. -->
     <string name="clipboard_partly_denied">%1$s (%2$d\u00A0denied)</string>
 
     <!-- Sensors an app turned on: "Accelerometer, Gyroscope (high rate) · 12 times".
          High rate: the app asked for 200 events a second or more. -->
+    <!-- %s: the sensor name. The app asked for a high sampling rate. -->
     <string name="sensor_high_rate">%s (high rate)</string>
     <!-- How many times sensors were turned on. -->
     <plurals name="sensor_times">
@@ -176,6 +189,7 @@
     <string name="sensor_times_short">%d×</string>
     <string name="sensor_unknown">Unknown sensor</string>
     <!-- A sensor the device names only by number. -->
+    <!-- %s: Android’s numeric identifier for an unrecognized sensor type. -->
     <string name="sensor_type_number">Sensor type %s</string>
     <!-- Sensor types, by the system's names for them (android.sensor.*). -->
     <string name="sensor_accelerometer">Accelerometer</string>
@@ -217,24 +231,37 @@
     <string name="command_failed">The operation could not be completed.</string>
     <string name="daemon_bad_response">The response could not be read.</string>
     <string name="database_busy">The records database is busy.</string>
+    <!-- Security: The recording process is down. -->
     <string name="daemon_unavailable">Recording is not running.</string>
     <string name="destination_missing">The destination is no longer available.</string>
     <string name="app_missing">This app is no longer installed for this Android user.</string>
     <string name="timed_out">The operation timed out.</string>
     <string name="invalid_period">Choose a shorter, nonempty time range.</string>
+    <!-- Security: The installed module version could not be verified. -->
     <string name="module_version_unreadable">The installed version could not be read.</string>
+    <!-- Security: Recording is unavailable for this processor architecture. -->
     <string name="unsupported_architecture">Recording does not support this device\'s processor.</string>
+    <!-- Security: Recording cannot start without the kernel’s BTF support. -->
     <string name="kernel_btf_missing">The kernel lacks BTF support. GKI 5.10 or newer is required.</string>
+    <!-- Security: The kernel is too old to run recording. -->
     <string name="kernel_too_old">Kernel 5.10 or newer is required.</string>
+    <!-- Security: The bundled module files needed to set up recording are unreadable. -->
     <string name="module_archive_invalid">Files needed for recording could not be read from the app package. Reinstall the app.</string>
     <string name="database_incompatible">This version cannot read the existing records.</string>
+    <!-- Security: Recording setup failed. -->
     <string name="module_install_failed">Setup did not complete. Export the logs in Settings for a bug report.</string>
+    <!-- Security: Recovery instructions after the recording module update failed. -->
     <string name="module_update_failed">Try again. If it fails again, export the logs in Settings for a bug report.</string>
+    <!-- Security: The recording process failed to start. -->
     <string name="daemon_start_failed">Recording could not be started.</string>
     <string name="installed_apps_unavailable">The installed apps could not be read.</string>
+    <!-- Security: The root manager reports the module as disabled or pending removal. -->
     <string name="module_disabled">The Big Brother module is turned off or set to be removed in the root manager. Change it there.</string>
+    <!-- Security: Removal did not complete. Do not imply that recording was removed. -->
     <string name="module_remove_failed">Not removed. Try again.</string>
+    <!-- Security: The process started but recording has not yet been confirmed. -->
     <string name="daemon_not_reporting">It was started but has not recorded anything yet. If this persists, export the logs in Settings for a bug report.</string>
+    <!-- Security: Big Brother could not open shared storage via root. -->
     <string name="file_access_denied">Shared storage is not accessible. Check that root access is granted.</string>
     <string name="export_logs_failed">The logs could not be collected.</string>
 </resources>

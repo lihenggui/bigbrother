@@ -27,6 +27,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MediumFlexibleTopAppBar
 import androidx.compose.material3.Scaffold
@@ -55,7 +56,10 @@ import li.mercury.bigbrother.core.ui.LoadFailureMessage
 import li.mercury.bigbrother.core.ui.LocalShowsDetailBesideList
 import li.mercury.bigbrother.core.ui.Pop
 import li.mercury.bigbrother.core.ui.appDisplayName
+import li.mercury.bigbrother.core.ui.appLabelStyle
+import li.mercury.bigbrother.core.ui.isolateLtr
 import li.mercury.bigbrother.core.ui.label
+import li.mercury.bigbrother.core.ui.rawTextSemantics
 import li.mercury.bigbrother.core.ui.R as UiR
 
 /**
@@ -111,7 +115,7 @@ internal fun AppDetailScreen(
     onDismissJailAction: () -> Unit,
 ) {
     val name = appDisplayName(state.app, state.appInfo)
-    JailActionDialog(state.jailAction, name, onConfirmIsolation, onDismissJailAction)
+    JailActionDialog(state.jailAction, name, state.app.packageName, onConfirmIsolation, onDismissJailAction)
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     // Grouped list items are surface-colored and sit on a tonal background,
     // which is what separates the groups.
@@ -163,19 +167,22 @@ private fun AppDetailTopBar(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 AppIcon(state.appInfo, name, size = 40.dp)
-                Text(name, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(
+                    name,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    style = LocalTextStyle.current.appLabelStyle(name, app.packageName),
+                )
             }
         },
         // The records cover the range chosen on the list; it is
         // stated here so the numbers below read correctly.
         subtitle = {
             val range = stringResource(state.range.label)
+            val text = if (app.packageName.isEmpty()) range else stringResource(R.string.header_subtitle, isolateLtr(app.packageName), range)
             Text(
-                text = if (app.packageName.isEmpty()) {
-                    range
-                } else {
-                    stringResource(R.string.header_subtitle, app.packageName, range)
-                },
+                text,
+                modifier = Modifier.rawTextSemantics(text),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
