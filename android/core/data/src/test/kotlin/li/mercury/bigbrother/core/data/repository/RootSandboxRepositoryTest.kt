@@ -106,8 +106,8 @@ class RootSandboxRepositoryTest {
     }
 
     @Test
-    fun givenListUnreadable_whenAutoIsolateChanged_thenSwitchReflectsSuccessfulCommand() = runTest {
-        val dataSource = SandboxDataSource()
+    fun givenGlobalUnreadable_whenAutoIsolateChanged_thenSwitchReflectsSuccessfulCommand() = runTest {
+        val dataSource = SandboxDataSource(failing = setOf("get global"))
         val repository = RootSandboxRepository(dataSource, StandardTestDispatcher(testScheduler))
 
         repository.setAutoIsolate(on = true)
@@ -115,12 +115,48 @@ class RootSandboxRepositoryTest {
         repository.setAutoIsolate(on = false)
         assertEquals(false, repository.autoIsolate.value)
 
-        assertEquals(listOf("auto true", "list", "auto false", "list"), dataSource.calls)
+        assertEquals(listOf("auto true", "get global", "auto false", "get global"), dataSource.calls)
+    }
+
+    @Test
+    fun givenReturnedGlobalSettings_whenChanged_thenReadsOnlyTheAppList() = runTest {
+        val dataSource = SandboxDataSource(failing = emptySet())
+        val repository = RootSandboxRepository(dataSource, StandardTestDispatcher(testScheduler))
+
+        repository.setGlobal(mapOf(SandboxItem.LOCATION to SandboxMode.COARSE))
+
+        assertEquals(SandboxMode.COARSE, repository.global.value?.get(SandboxItem.LOCATION))
+        assertEquals(listOf("set global", "list"), dataSource.calls)
+    }
+
+    @Test
+    fun givenMultipleChanges_whenRefreshIsDeferred_thenOneReadBackServesTheBatch() = runTest {
+        val dataSource = SandboxDataSource(failing = emptySet())
+        val repository = RootSandboxRepository(dataSource, StandardTestDispatcher(testScheduler))
+
+        repository.isolate("com.example.notes", userId = 0, refresh = false)
+        repository.isolate("com.example.media", userId = 0, refresh = false)
+        repository.refresh()
+
+        assertEquals(listOf("enable", "enable", "list", "get global"), dataSource.calls)
+    }
+
+    @Test
+    fun givenLoadedGlobalSettings_whenAutoIsolateReturnsNewValue_thenNoAdditionalReadIsNeeded() = runTest {
+        val dataSource = SandboxDataSource(failing = emptySet(), reportsAuto = true)
+        val repository = RootSandboxRepository(dataSource, StandardTestDispatcher(testScheduler))
+        repository.refresh()
+
+        repository.setAutoIsolate(on = false)
+
+        assertEquals(false, repository.autoIsolate.value)
+        assertEquals(listOf("list", "get global", "auto false"), dataSource.calls)
     }
 
     private class SandboxDataSource(
         private val failing: Set<String> = setOf("list"),
         private val releaseFailure: RecordsException? = null,
+        private val reportsAuto: Boolean = false,
     ) : TestBbdDataSource() {
         val calls = mutableListOf<String>()
 
@@ -146,9 +182,15 @@ class RootSandboxRepositoryTest {
 
         override suspend fun setSandboxItems(packageName: String, userId: Int, changes: Map<SandboxItem, SandboxMode?>) = record("set")
 
-        override suspend fun setSandboxGlobal(changes: Map<SandboxItem, SandboxMode>) = record("set global")
+        override suspend fun setSandboxGlobal(changes: Map<SandboxItem, SandboxMode>): BbdSandboxGlobal {
+            record("set global")
+            return BbdSandboxGlobal(changes, true)
+        }
 
-        override suspend fun setSandboxAuto(on: Boolean) = record("auto $on")
+        override suspend fun setSandboxAuto(on: Boolean): Boolean? {
+            record("auto $on")
+            return on.takeIf { reportsAuto }
+        }
 
         private fun record(call: String) {
             calls += call

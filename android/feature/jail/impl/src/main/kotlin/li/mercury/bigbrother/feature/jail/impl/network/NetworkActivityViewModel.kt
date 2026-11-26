@@ -45,6 +45,7 @@ import li.mercury.bigbrother.core.data.repository.NetworkRepository
 import li.mercury.bigbrother.core.data.repository.SandboxRepository
 import li.mercury.bigbrother.core.data.toLoadFailure
 import li.mercury.bigbrother.core.model.NetworkActivity
+import li.mercury.bigbrother.core.model.NetworkRecording
 import li.mercury.bigbrother.core.model.NetworkTarget
 import li.mercury.bigbrother.core.model.SandboxItem
 import li.mercury.bigbrother.core.model.SandboxMode
@@ -166,8 +167,20 @@ class NetworkActivityViewModel @AssistedInject constructor(
     fun setRecording(on: Boolean) {
         viewModelScope.launch {
             try {
-                sandboxRepository.setItems(packageName, userId, mapOf(SandboxItem.NETWORK_RECORD to if (on) SandboxMode.ON else SandboxMode.OFF))
-                refresh()
+                val app = sandboxRepository.setItems(
+                    packageName,
+                    userId,
+                    mapOf(SandboxItem.NETWORK_RECORD to if (on) SandboxMode.ON else SandboxMode.OFF),
+                )
+                val currentRequest = refreshes.value to networkRepository.changes.value
+                if (app == null || load.value.activity == null || completed != currentRequest) {
+                    refresh()
+                } else {
+                    val recording = NetworkRecording(on = app.recordingSince != null, since = app.recordingSince)
+                    load.update {
+                        it.copy(activity = it.activity?.copy(recording = recording), period = it.period?.copy(recording = recording))
+                    }
+                }
             } catch (e: RecordsException) {
                 load.update { it.copy(error = e.toLoadFailure()) }
             }

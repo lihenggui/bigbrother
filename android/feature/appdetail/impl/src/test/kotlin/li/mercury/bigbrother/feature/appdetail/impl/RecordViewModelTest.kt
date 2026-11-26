@@ -73,6 +73,7 @@ class RecordViewModelTest {
     )
 
     private fun viewModel(topic: String) = RecordViewModel(
+        defaultDispatcher = mainDispatcherRule.testDispatcher,
         accessRepository = accessRepository,
         appInfoRepository = TestAppInfoRepository(),
         uid = 10100,

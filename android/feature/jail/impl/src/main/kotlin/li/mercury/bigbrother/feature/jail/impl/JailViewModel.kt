@@ -19,6 +19,7 @@ package li.mercury.bigbrother.feature.jail.impl
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -27,6 +28,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import li.mercury.bigbrother.core.common.di.CurrentUserId
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.AppInfoRepository
@@ -40,6 +42,7 @@ import li.mercury.bigbrother.core.model.SandboxMode
 import li.mercury.bigbrother.core.model.SandboxStatus
 import li.mercury.bigbrother.core.model.SandboxedApp
 import li.mercury.bigbrother.core.model.labelOrPackageName
+import timber.log.Timber
 import javax.inject.Inject
 
 /**
@@ -126,7 +129,7 @@ class JailViewModel @Inject constructor(
      */
     fun isolate(apps: List<InstalledApp>) {
         viewModelScope.launch {
-            val (done, failed, failure) = eachApp(apps) { sandboxRepository.isolate(it.packageName, it.userId) }
+            val (done, failed, failure) = eachApp(apps) { sandboxRepository.isolate(it.packageName, it.userId, refresh = false) }
             val message = when {
                 done.isEmpty() -> failure?.let { JailMessage.NotIsolated(failed.names(), it) }
                 else -> JailMessage.Isolated(done.names(), done, notIsolated = failed.names())
@@ -138,7 +141,7 @@ class JailViewModel @Inject constructor(
     /** Takes out again what [isolate] put in, each whatever became of the others. */
     fun undoIsolate(apps: List<InstalledApp>) {
         viewModelScope.launch {
-            val (_, failed, failure) = eachApp(apps) { sandboxRepository.release(it.packageName, it.userId) }
+            val (_, failed, failure) = eachApp(apps) { sandboxRepository.release(it.packageName, it.userId, refresh = false) }
             if (failure != null) load.update { it.copy(message = JailMessage.NotReleased(failed.names(), failure)) }
         }
     }
@@ -157,17 +160,29 @@ class JailViewModel @Inject constructor(
         val done = mutableListOf<InstalledApp>()
         val failed = mutableListOf<InstalledApp>()
         var failure: LoadFailure? = null
-        for ((index, app) in apps.withIndex()) {
-            try {
-                change(app)
-                done += app
-            } catch (e: RecordsException) {
-                failure = failure ?: e.toLoadFailure()
-                if (e.failsEveryApp) {
-                    failed += apps.subList(index, apps.size)
-                    break
+        try {
+            for ((index, app) in apps.withIndex()) {
+                try {
+                    change(app)
+                    done += app
+                } catch (e: RecordsException) {
+                    failure = failure ?: e.toLoadFailure()
+                    if (e.failsEveryApp) {
+                        failed += apps.subList(index, apps.size)
+                        break
+                    }
+                    failed += app
                 }
-                failed += app
+            }
+        } finally {
+            if (done.isNotEmpty()) {
+                withContext(NonCancellable) {
+                    try {
+                        sandboxRepository.refresh()
+                    } catch (e: RecordsException) {
+                        Timber.w("Sandbox batch made, lists not read again: %s", e.toLoadFailure())
+                    }
+                }
             }
         }
         return Outcome(done, failed, failure)

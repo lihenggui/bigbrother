@@ -18,6 +18,7 @@ package li.mercury.bigbrother.core.testing.repository
 
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.InstalledModule
+import li.mercury.bigbrother.core.data.repository.ModuleInstallation
 import li.mercury.bigbrother.core.data.repository.ModuleRepository
 import li.mercury.bigbrother.core.model.LoadFailure
 
@@ -36,6 +37,7 @@ class TestModuleRepository(
     var startFailure: RecordsException? = null
     var updateFailure: RecordsException? = null
     var versionFailure: RecordsException? = null
+    var beforeVersionRead: suspend () -> Unit = {}
 
     var comparisons = 0
         private set
@@ -46,7 +48,12 @@ class TestModuleRepository(
     var starts = 0
         private set
 
-    override suspend fun isActive(): Boolean = active
+    override suspend fun getInstallation(): ModuleInstallation = when {
+        updatePending -> ModuleInstallation.MANAGER_PENDING
+        installedByApp -> ModuleInstallation.APP
+        active -> ModuleInstallation.MANAGER
+        else -> ModuleInstallation.NONE
+    }
 
     override suspend fun compareWithBundled(): InstalledModule {
         comparisons++
@@ -61,6 +68,7 @@ class TestModuleRepository(
     }
 
     override suspend fun installedVersion(): String {
+        beforeVersionRead()
         versionFailure?.let { throw it }
         return "v0.1.6"
     }

@@ -93,7 +93,7 @@ class DestinationViewModel @AssistedInject constructor(
         launch {
             combine(refreshes, networkRepository.changes, ::Pair).collectLatest { request ->
                 if (request != completed) {
-                    read()
+                    read(refreshRelated = request.first != completed?.first)
                     completed = request
                 }
             }
@@ -105,7 +105,7 @@ class DestinationViewModel @AssistedInject constructor(
         refreshes.update { it + 1 }
     }
 
-    private suspend fun read() {
+    private suspend fun read(refreshRelated: Boolean) {
         val target = target
         if (target == null) {
             load.update { it.copy(failure = LoadFailure.Operation.DESTINATION_MISSING) }
@@ -115,7 +115,8 @@ class DestinationViewModel @AssistedInject constructor(
             val since = range.since(System.currentTimeMillis() / 1000)
             val detail = networkRepository.getDestination(packageName, userId, target, since, range.bucketSize)
             // What blocking a domain does besides is found among the app's other destinations.
-            val activity = if (target is NetworkTarget.Domain) {
+            val previousAddresses = load.value.detail?.destination?.addresses
+            val activity = if (target is NetworkTarget.Domain && (refreshRelated || previousAddresses != detail.destination.addresses)) {
                 networkRepository.getActivity(packageName, userId, since, bucket = range.bucketSize)
             } else {
                 null
@@ -124,8 +125,8 @@ class DestinationViewModel @AssistedInject constructor(
             load.update {
                 it.copy(
                     detail = detail,
-                    sharedWith = activity?.sharingAddressesWith(detail.destination).orEmpty(),
-                    ownResolver = activity?.addresses?.isNotEmpty() == true,
+                    sharedWith = activity?.sharingAddressesWith(detail.destination) ?: it.sharedWith,
+                    ownResolver = activity?.addresses?.isNotEmpty() ?: it.ownResolver,
                     failure = null,
                 )
             }

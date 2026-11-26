@@ -16,14 +16,17 @@
 
 package li.mercury.bigbrother.feature.settings.impl
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.RecordsException
+import li.mercury.bigbrother.core.data.repository.ModuleInstallation
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.RecorderStatus
 import li.mercury.bigbrother.core.model.UserData
@@ -40,6 +43,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SettingsViewModelTest {
@@ -220,6 +224,34 @@ class SettingsViewModelTest {
 
         assertEquals(ModuleInstallation.APP, viewModel.uiState.value.installation)
         assertEquals(ModuleRemoval.Failed(LoadFailure.Operation.MODULE_REMOVE_FAILED), viewModel.uiState.value.moduleRemoval)
+    }
+
+    @Test
+    fun givenSlowRefresh_whenRefreshedAgain_thenOldReadIsCancelled() = runTest {
+        val started = CompletableDeferred<Unit>()
+        var cancelled = false
+        val module = TestModuleRepository()
+        module.beforeVersionRead = {
+            started.complete(Unit)
+            try {
+                awaitCancellation()
+            } catch (e: CancellationException) {
+                cancelled = true
+                throw e
+            }
+        }
+        val viewModel = settingsWith(module)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect {} }
+        viewModel.refresh()
+        started.await()
+
+        module.beforeVersionRead = {}
+        module.installedByApp = true
+        viewModel.refresh()
+        runCurrent()
+
+        assertTrue(cancelled)
+        assertEquals(ModuleInstallation.APP, viewModel.uiState.value.installation)
     }
 
     private fun settingsWith(module: TestModuleRepository, records: TestAccessRepository = TestAccessRepository()) = SettingsViewModel(

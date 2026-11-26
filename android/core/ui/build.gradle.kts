@@ -33,4 +33,6 @@ dependencies {
     implementation(libs.coil.compose)
 
     testImplementation(libs.kotlin.test.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.robolectric)
 }

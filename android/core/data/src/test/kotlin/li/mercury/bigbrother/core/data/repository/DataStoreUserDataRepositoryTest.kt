@@ -58,6 +58,15 @@ class DataStoreUserDataRepositoryTest {
         assertEquals(saved, reopened.userData.first())
     }
 
+    @Test
+    fun givenCorruptPreferencesFile_whenRead_thenReturnsDefaults() = runTest {
+        val file = File(directory.root, "settings.preferences_pb")
+        file.writeBytes(byteArrayOf(0x0A, 0x05, 0x01))
+        val repository = repository(file, backgroundScope)
+
+        assertEquals(UserData(), repository.userData.first())
+    }
+
     private fun repository(file: File, scope: CoroutineScope): UserDataRepository = DataStoreUserDataRepository(
         UserPreferencesDataSource(PreferenceDataStoreFactory.create(scope = scope) { file }),
     )

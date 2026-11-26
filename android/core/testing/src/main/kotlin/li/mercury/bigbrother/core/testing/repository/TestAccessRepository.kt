@@ -56,6 +56,8 @@ class TestAccessRepository(
 
     /** Thrown by [getSensorSessions] alone, as by a module that does not keep sensor sessions. */
     var sensorSessionsFailure: RecordsException? = null
+    val appRefreshes = mutableListOf<Boolean>()
+    val accessRefreshes = mutableListOf<Boolean>()
     var appReads = 0
         private set
     var sensorSessionReads = 0
@@ -68,14 +70,16 @@ class TestAccessRepository(
         failure?.let { throw it }
     }
 
-    override suspend fun getApps(range: TimeRange): List<AppSummary> {
+    override suspend fun getApps(range: TimeRange, forceRefresh: Boolean): List<AppSummary> {
         check()
         appReads++
+        appRefreshes += forceRefresh
         return apps
     }
 
-    override suspend fun getAccesses(uid: Int, category: Category?, range: TimeRange, limit: Int, offset: Int): List<Access> {
+    override suspend fun getAccesses(uid: Int, category: Category?, range: TimeRange, limit: Int, offset: Int, forceRefresh: Boolean): List<Access> {
         check()
+        accessRefreshes += forceRefresh
         return accesses.drop(offset).take(limit)
     }
 

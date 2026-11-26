@@ -33,6 +33,7 @@ import li.mercury.bigbrother.core.screenshottesting.assertSamplesCover
 import li.mercury.bigbrother.core.screenshottesting.captureForDevice
 import li.mercury.bigbrother.core.screenshottesting.captureMultiDevice
 import li.mercury.bigbrother.core.screenshottesting.screenshotName
+import li.mercury.bigbrother.core.ui.appDisplayName
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -113,8 +114,9 @@ class AppListScreenScreenshotTests {
         }
         SearchScaffold {
             val uiState = state(AppListUiState(apps = shown.apps, appInfo = records.appInfo, hiddenApps = shown.hiddenCount, showSystemApps = showSystemApps))
+            val resources = LocalResources.current
             AppListScreen(
-                presentation = uiState.present(AppListFilter(), LocalResources.current),
+                presentation = uiState.present(AppListFilter()) { app, info -> appDisplayName(app, info, resources) },
                 onSort = {},
                 onCategory = {},
                 selectedUid = null,

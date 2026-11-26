@@ -17,6 +17,7 @@
 package li.mercury.bigbrother
 
 import androidx.profileinstaller.ProfileVerifier
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -37,7 +38,14 @@ class ProfileVerifierLogger @Inject constructor(
 ) {
     operator fun invoke() {
         scope.launch(ioDispatcher) {
-            val status = ProfileVerifier.getCompilationStatusAsync().get()
+            val status = try {
+                ProfileVerifier.getCompilationStatusAsync().get()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                Timber.w("Baseline profile status unavailable")
+                return@launch
+            }
             Timber.i(
                 "Baseline profile: compiled %b, install result %d, awaiting compilation %b",
                 status.isCompiledWithProfile,

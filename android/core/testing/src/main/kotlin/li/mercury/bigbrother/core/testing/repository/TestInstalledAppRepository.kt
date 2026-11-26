@@ -26,10 +26,20 @@ class TestInstalledAppRepository(
     var permissions: Map<String, Set<String>> = emptyMap(),
 ) : InstalledAppRepository {
     var failure: RecordsException? = null
+    var installedListReads = 0
+        private set
+    val uidLookups = mutableListOf<String>()
 
     override suspend fun getInstalledApps(): List<InstalledApp> {
         failure?.let { throw it }
+        installedListReads++
         return apps
+    }
+
+    override suspend fun getInstalledUid(packageName: String): Int? {
+        failure?.let { throw it }
+        uidLookups += packageName
+        return apps.firstOrNull { it.packageName == packageName }?.uid
     }
 
     override suspend fun getRequestedPermissions(packageName: String): Set<String>? = permissions[packageName]

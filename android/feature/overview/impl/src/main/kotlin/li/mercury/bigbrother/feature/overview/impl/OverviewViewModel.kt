@@ -171,8 +171,13 @@ class OverviewViewModel @Inject constructor(
     }
 
     private suspend fun readOverview(request: OverviewRequest, start: Long): LoadFailure? = try {
+        val forceRefresh = request.refresh != (completed?.refresh ?: 0L)
         val (records, status, pending) = withContext(defaultDispatcher) {
-            Triple(getAppRecords(request.range), accessRepository.getRecorderStatus(), moduleRepository.isUpdatePending())
+            Triple(
+                getAppRecords(request.range, forceRefresh),
+                accessRepository.getRecorderStatus(),
+                moduleRepository.isUpdatePending(),
+            )
         }
         loadedAt = SystemClock.elapsedRealtime()
         load.update {
@@ -252,13 +257,13 @@ class OverviewViewModel @Inject constructor(
         }
     }
 
-    private fun runRecorderAction(action: suspend () -> Unit) {
+    private fun runRecorderAction(refreshAfter: Boolean = true, action: suspend () -> Unit) {
         if (!recorderBusy.compareAndSet(expect = false, update = true)) return
         viewModelScope.launch {
             try {
                 action()
             } finally {
-                refresh()
+                if (refreshAfter) refresh()
                 recorderBusy.value = false
             }
         }
@@ -270,9 +275,8 @@ class OverviewViewModel @Inject constructor(
      * until then the records cannot be read, which is not a failure to show.
      */
     fun installModule() {
-        if (load.value.ui.moduleSetup == ModuleSetup.Installing) return
-        updateState { it.copy(moduleSetup = ModuleSetup.Installing) }
-        viewModelScope.launch {
+        runRecorderAction(refreshAfter = false) {
+            updateState { it.copy(moduleSetup = ModuleSetup.Installing) }
             try {
                 moduleRepository.installBundled()
                 try {
@@ -285,9 +289,12 @@ class OverviewViewModel @Inject constructor(
                 refresh()
             } catch (e: RecordsException) {
                 updateState { it.copy(moduleSetup = ModuleSetup.Failed(e.toLoadFailure())) }
+            } finally {
+                updateState { if (it.moduleSetup == ModuleSetup.Installing) it.copy(moduleSetup = ModuleSetup.Idle) else it }
             }
         }
     }
+
     private fun updateState(transform: (OverviewUiState) -> OverviewUiState) {
         load.update { it.copy(ui = transform(it.ui)) }
     }

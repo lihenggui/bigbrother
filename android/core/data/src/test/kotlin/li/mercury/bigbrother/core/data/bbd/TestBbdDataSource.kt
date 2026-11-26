@@ -71,7 +71,7 @@ internal open class TestBbdDataSource : BbdDataSource {
 
     override suspend fun setSandboxItems(packageName: String, userId: Int, changes: Map<SandboxItem, SandboxMode?>): Unit = error("Unexpected setSandboxItems call")
 
-    override suspend fun setSandboxGlobal(changes: Map<SandboxItem, SandboxMode>): Unit = error("Unexpected setSandboxGlobal call")
+    override suspend fun setSandboxGlobal(changes: Map<SandboxItem, SandboxMode>): BbdSandboxGlobal? = error("Unexpected setSandboxGlobal call")
 
-    override suspend fun setSandboxAuto(on: Boolean): Unit = error("Unexpected setSandboxAuto call")
+    override suspend fun setSandboxAuto(on: Boolean): Boolean? = error("Unexpected setSandboxAuto call")
 }

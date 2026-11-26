@@ -70,7 +70,11 @@ class TestSandboxRepository(
     private val _autoIsolate = MutableStateFlow<Boolean?>(null)
     override val autoIsolate: StateFlow<Boolean?> = _autoIsolate
 
+    var refreshCalls = 0
+        private set
+
     override suspend fun refresh() {
+        refreshCalls++
         check()
         refreshFailure?.let { throw it }
         _apps.value = stored.map { it.copy(items = applies(it.settings)) }
@@ -83,7 +87,7 @@ class TestSandboxRepository(
         return status
     }
 
-    override suspend fun isolate(packageName: String, userId: Int) {
+    override suspend fun isolate(packageName: String, userId: Int, refresh: Boolean) {
         check()
         failsToIsolate[packageName]?.let { throw it }
         isolated += packageName
@@ -93,15 +97,15 @@ class TestSandboxRepository(
         } else {
             stored += SandboxedApp(FIRST_APPLICATION_UID + stored.size, packageName, true, 0, emptyMap(), emptyMap())
         }
-        refreshAfterChange()
+        if (refresh) refreshAfterChange()
     }
 
-    override suspend fun release(packageName: String, userId: Int) {
+    override suspend fun release(packageName: String, userId: Int, refresh: Boolean) {
         check()
         failsToRelease[packageName]?.let { throw it }
         released += packageName
         stored.replaceAll { if (it.packageName == packageName) it.copy(enabled = false) else it }
-        refreshAfterChange()
+        if (refresh) refreshAfterChange()
     }
 
     override suspend fun releaseAll(): Int {
@@ -112,15 +116,20 @@ class TestSandboxRepository(
         return kept.size
     }
 
-    override suspend fun setItems(packageName: String, userId: Int, changes: Map<SandboxItem, SandboxMode?>) {
+    override suspend fun setItems(packageName: String, userId: Int, changes: Map<SandboxItem, SandboxMode?>): SandboxedApp? {
         check()
         stored.replaceAll { app ->
             if (app.packageName != packageName) return@replaceAll app
             val settings = app.settings.toMutableMap()
             changes.forEach { (item, mode) -> if (mode == null) settings.remove(item) else settings[item] = mode }
-            app.copy(settings = settings)
+            val recording = when (changes[SandboxItem.NETWORK_RECORD]) {
+                SandboxMode.ON -> app.recordingSince ?: 1L
+                SandboxMode.OFF -> null
+                else -> app.recordingSince
+            }
+            app.copy(settings = settings, recordingSince = recording)
         }
-        refreshAfterChange()
+        return if (refreshAfterChange()) _apps.value?.firstOrNull { it.packageName == packageName && it.userId == userId } else null
     }
 
     override suspend fun setGlobal(changes: Map<SandboxItem, SandboxMode>) {
@@ -137,12 +146,12 @@ class TestSandboxRepository(
 
     private fun applies(own: Map<SandboxItem, SandboxMode>): Map<SandboxItem, SandboxMode> = SandboxItem.entries.associateWith { own[it] ?: globalModes[it] ?: it.default }
 
-    private suspend fun refreshAfterChange() {
-        try {
-            refresh()
-        } catch (_: RecordsException) {
-            // Made all the same.
-        }
+    private suspend fun refreshAfterChange(): Boolean = try {
+        refresh()
+        true
+    } catch (_: RecordsException) {
+        // Made all the same.
+        false
     }
 
     private fun check() {

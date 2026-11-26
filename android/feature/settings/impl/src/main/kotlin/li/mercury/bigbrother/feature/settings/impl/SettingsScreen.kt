@@ -76,6 +76,7 @@ import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import li.mercury.bigbrother.core.data.repository.ModuleInstallation
 import li.mercury.bigbrother.core.designsystem.component.SegmentedSwitchRow
 import li.mercury.bigbrother.core.ui.FadeThrough
 import li.mercury.bigbrother.core.ui.SectionHeader

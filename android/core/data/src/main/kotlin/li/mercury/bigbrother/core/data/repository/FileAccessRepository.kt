@@ -19,6 +19,10 @@ package li.mercury.bigbrother.core.data.repository
 import android.content.Context
 import android.os.Environment
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.withContext
+import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.IO
+import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.root.RootShell
 import li.mercury.bigbrother.core.data.root.shellQuoted
@@ -37,10 +41,11 @@ interface FileAccessRepository {
 internal class RootFileAccessRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val rootShell: RootShell,
+    @Dispatcher(IO) private val ioDispatcher: CoroutineDispatcher,
 ) : FileAccessRepository {
 
-    override suspend fun ensureAllFilesAccess() {
-        if (Environment.isExternalStorageManager()) return
+    override suspend fun ensureAllFilesAccess() = withContext(ioDispatcher) {
+        if (Environment.isExternalStorageManager()) return@withContext
         // The app already runs with root, so it grants itself the permission
         // instead of sending the user to the settings screen.
         rootShell.run(

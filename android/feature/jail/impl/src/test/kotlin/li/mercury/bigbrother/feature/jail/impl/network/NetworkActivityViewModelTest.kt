@@ -248,9 +248,12 @@ class NetworkActivityViewModelTest {
     fun givenRecording_whenStopped_thenRecordingItemTurnedOff() = runTest {
         val viewModel = viewModel()
 
+        val readsBefore = networkRepository.asked.size
         viewModel.setRecording(false)
 
         assertEquals(SandboxMode.OFF, sandboxRepository.apps.value?.single()?.settings?.get(SandboxItem.NETWORK_RECORD))
+        assertEquals(false, viewModel.uiState.value.activity?.recording?.on)
+        assertEquals(readsBefore, networkRepository.asked.size)
     }
 
     @Test

@@ -20,6 +20,7 @@ import android.annotation.SuppressLint
 import android.util.Log
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import li.mercury.bigbrother.core.common.di.ApplicationScope
@@ -27,7 +28,9 @@ import li.mercury.bigbrother.core.common.di.FilesDir
 import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.IO
 import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import timber.log.Timber
+import java.io.BufferedOutputStream
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -64,13 +67,22 @@ class ReleaseTree internal constructor(
     ) : this(filesDir, scope, ioDispatcher, LocalDate::now, LocalDateTime::now)
 
     private val directory = File(filesDir, LOG_DIR)
-    private val lines = Channel<String>(Channel.UNLIMITED)
+    private val lines = Channel<String>(QUEUE_CAPACITY, BufferOverflow.DROP_OLDEST)
+    private val available = Channel<Unit>(Channel.CONFLATED)
+    private val writeLock = Any()
+    private var output: BufferedOutputStream? = null
+    private var openedFor: LocalDate? = null
+    private var reportedFailure: LocalDate? = null
+    private var writtenBytes = 0L
 
     init {
         scope.launch(ioDispatcher) {
-            directory.mkdirs()
-            deleteOldFiles()
-            for (line in lines) append(line)
+            try {
+                synchronized(writeLock) { deleteOldFiles() }
+                for (signal in available) writePending()
+            } finally {
+                synchronized(writeLock) { closeOutput(today()) }
+            }
         }
     }
 
@@ -78,7 +90,8 @@ class ReleaseTree internal constructor(
 
     override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
         // Timber has already appended the stack trace of t to the message.
-        lines.trySend(format(priority, tag, message))
+        lines.trySend(format(priority, tag, message.take(MAX_LINE_CHARS)))
+        available.trySend(Unit)
     }
 
     /**
@@ -86,8 +99,8 @@ class ReleaseTree internal constructor(
      * what was logged before it: the process ends right after.
      */
     fun logCrash(thread: Thread, error: Throwable) {
-        while (true) append(lines.tryReceive().getOrNull() ?: break)
-        append(format(Log.ERROR, null, "Crash on thread ${thread.name}\n${error.stackTraceToString()}"))
+        val message = "Crash on thread ${thread.name}\n${error.stackTraceToString()}"
+        writePending(crash = format(Log.ERROR, null, message.take(MAX_LINE_CHARS)))
     }
 
     private fun format(priority: Int, tag: String?, message: String): String {
@@ -102,16 +115,63 @@ class ReleaseTree internal constructor(
         return if (tag == null) "$time $level $message" else "$time $level/$tag $message"
     }
 
+    private fun writePending(crash: String? = null) = synchronized(writeLock) {
+        val first = lines.tryReceive().getOrNull()
+        if (first == null && crash == null) return@synchronized
+        val day = today()
+        try {
+            val sink = outputFor(day)
+            if (first != null) {
+                append(sink, first, DAILY_LIMIT_BYTES - CRASH_RESERVE_BYTES)
+                for (index in 1 until QUEUE_CAPACITY) {
+                    val line = lines.tryReceive().getOrNull() ?: break
+                    append(sink, line, DAILY_LIMIT_BYTES - CRASH_RESERVE_BYTES)
+                }
+            }
+            if (crash != null) append(sink, crash, DAILY_LIMIT_BYTES)
+            sink.flush()
+        } catch (_: IOException) {
+            reportFailure(day)
+            closeOutput(day)
+        }
+    }
+
+    private fun outputFor(day: LocalDate): BufferedOutputStream {
+        if (openedFor == day) output?.let { return it }
+        closeOutput(day)
+        directory.mkdirs()
+        val file = File(directory, "$day.log")
+        writtenBytes = file.length()
+        return FileOutputStream(file, true).buffered().also {
+            output = it
+            openedFor = day
+            deleteOldFiles()
+        }
+    }
+
+    private fun append(sink: BufferedOutputStream, line: String, limit: Long) {
+        val bytes = (line + "\n").toByteArray(Charsets.UTF_8)
+        if (writtenBytes + bytes.size > limit) return
+        sink.write(bytes)
+        writtenBytes += bytes.size
+    }
+
+    private fun closeOutput(day: LocalDate) {
+        try {
+            output?.close()
+        } catch (_: IOException) {
+            reportFailure(day)
+        } finally {
+            output = null
+        }
+    }
+
     // The log can't report its own failure through itself.
     @SuppressLint("LogNotTimber")
-    @Synchronized
-    private fun append(line: String) {
-        try {
-            directory.mkdirs()
-            File(directory, "${today()}.log").appendText(line + "\n")
-        } catch (e: IOException) {
-            Log.e(LOG_TAG, "Could not write the log", e)
-        }
+    private fun reportFailure(day: LocalDate) {
+        if (reportedFailure == day) return
+        reportedFailure = day
+        Log.e(LOG_TAG, "Could not write the log")
     }
 
     /** Files are named by date, so the oldest sort first. */
@@ -122,6 +182,10 @@ class ReleaseTree internal constructor(
 
     internal companion object {
         const val DAYS_KEPT = 7
+        private const val QUEUE_CAPACITY = 256
+        private const val MAX_LINE_CHARS = 16_384
+        private const val DAILY_LIMIT_BYTES = 2L * 1024 * 1024
+        private const val CRASH_RESERVE_BYTES = 64 * 1024
         private const val LOG_TAG = "ReleaseTree"
         private val TIME_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS")
     }

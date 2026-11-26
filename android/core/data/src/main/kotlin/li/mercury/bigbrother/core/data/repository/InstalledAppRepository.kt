@@ -34,6 +34,9 @@ interface InstalledAppRepository {
     /** Throws [RecordsException] if Android cannot supply the installed apps. */
     suspend fun getInstalledApps(): List<InstalledApp>
 
+    /** The live uid for a single package, or null if it is not installed for the calling user. */
+    suspend fun getInstalledUid(packageName: String): Int?
+
     /**
      * The permissions the app's manifest names: those it asks for, and
      * those its services are bound with (a notification listener's, an
@@ -51,14 +54,26 @@ internal class PackageManagerInstalledAppRepository @Inject constructor(
     private val packageManager = context.packageManager
 
     override suspend fun getInstalledApps(): List<InstalledApp> = withContext(ioDispatcher) {
-        try {
-            readInstalledApps()
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: RuntimeException) {
-            // PackageManager rethrows Binder failures as runtime exceptions.
-            throw RecordsException.CommandFailed(LoadFailure.Operation.INSTALLED_APPS_UNAVAILABLE)
+        readPackageManager { readInstalledApps() }
+    }
+
+    override suspend fun getInstalledUid(packageName: String): Int? = withContext(ioDispatcher) {
+        readPackageManager {
+            try {
+                packageManager.getPackageUid(packageName, 0)
+            } catch (_: PackageManager.NameNotFoundException) {
+                null
+            }
         }
+    }
+
+    private inline fun <T> readPackageManager(read: () -> T): T = try {
+        read()
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: RuntimeException) {
+        // PackageManager rethrows Binder failures as runtime exceptions.
+        throw RecordsException.CommandFailed(LoadFailure.Operation.INSTALLED_APPS_UNAVAILABLE)
     }
 
     private fun readInstalledApps(): List<InstalledApp> = packageManager.getInstalledPackages(0).mapNotNull { packageInfo ->
