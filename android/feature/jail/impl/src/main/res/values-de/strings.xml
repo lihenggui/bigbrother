@@ -1,0 +1,320 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="jail_section_isolated">Isolierte Apps</string>
+    <string name="jail_section_settings">Gefängniseinstellungen</string>
+    <string name="jail_add_apps">Hinzufügen</string>
+    <string name="jail_global_settings">Globale Einstellungen</string>
+    <string name="jail_all_items_on">Alles isoliert</string>
+    <string name="jail_items_off">Nicht isoliert: %1$s</string>
+    <string name="jail_no_items_on">Kein Element isoliert</string>
+    <string name="jail_empty_title">Keine isolierten Apps</string>
+    <string name="jail_empty_files_title">Dateien</string>
+    <string name="jail_empty_files">Nur Zugriff auf einen eigenen, leeren Speicherbereich</string>
+    <string name="jail_empty_permissions_title">Kontakte, Standort, Kamera und mehr</string>
+    <string name="jail_empty_permissions">Berechtigungen werden weiter als erteilt angezeigt, Abfragen liefern keine Daten</string>
+    <string name="jail_empty_device_title">Gerät und Apps</string>
+    <string name="jail_empty_device">Virtuelle Android ID. Nur System-Apps sind sichtbar</string>
+    <string name="jail_hook_missing_title">Gerätekennungen und die App-Liste werden nicht ausgeblendet</string>
+    <string name="jail_hook_missing">Aktivieren Sie in LSPosed den Geltungsbereich „System-Framework“ für Big Brother und starten Sie das Gerät neu.</string>
+    <string name="jail_gate_missing_title">Speicher- und Prozessorinformationen können nicht isoliert werden</string>
+    <string name="jail_gate_missing">Die Isolierung ist beim Starten von Apps nicht verfügbar.</string>
+    <string name="jail_appops_missing_title">Kontakte, Standort, Kamera und mehr sind nicht isoliert</string>
+    <string name="jail_appops_missing">Die Big Brother-Komponente, die diese Zugriffe beschränkt, läuft nicht. Sie startet automatisch neu.</string>
+
+    <string name="jail_isolated">%1$s isoliert</string>
+    <string name="jail_undo">Rückgängig machen</string>
+    <string name="jail_failed">Nicht verändert: %1$s</string>
+    <string name="jail_isolated_partly">%1$s isoliert. %2$s konnte nicht isoliert werden</string>
+    <plurals name="jail_isolated_partly_count">
+        <item quantity="one">%1$s wurde isoliert. %2$d App konnte nicht isoliert werden</item>
+        <item quantity="other">%1$s isoliert. %2$d Apps konnten nicht isoliert werden</item>
+    </plurals>
+    <string name="jail_not_isolated">%1$s konnte nicht isoliert werden: %2$s</string>
+    <plurals name="jail_not_isolated_count">
+        <item quantity="one">%1$d App konnte nicht isoliert werden: %2$s</item>
+        <item quantity="other">%1$d Apps konnten nicht isoliert werden: %2$s</item>
+    </plurals>
+    <string name="jail_not_released">%1$s bleibt im Gefängnis: %2$s</string>
+    <plurals name="jail_not_released_count">
+        <item quantity="one">%1$d App bleibt im Gefängnis: %2$s</item>
+        <item quantity="other">%1$d Apps bleiben im Gefängnis: %2$s</item>
+    </plurals>
+
+    <string name="jail_add_search">Apps suchen</string>
+    <plurals name="jail_add_confirm">
+        <item quantity="one">%d App isolieren</item>
+        <item quantity="other">%d Apps isolieren</item>
+    </plurals>
+    <string name="jail_add_confirm_none">Isolieren</string>
+    <string name="jail_add_restart">Laufende Apps werden geschlossen und neu gestartet.</string>
+    <string name="jail_add_empty">Keine Apps zum Hinzufügen</string>
+    <string name="jail_close">Schließen</string>
+
+    <string name="jail_release">Isolation beenden</string>
+    <string name="jail_records">Protokoll</string>
+    <string name="jail_section_items">Isolation</string>
+    <string name="jail_items_summary">Aktive Elemente liefern leere oder virtuelle Daten oder isolierten Speicher. Für deaktivierte Elemente gelten die Regeln des Systems.</string>
+    <string name="jail_reset">Standard übernehmen</string>
+    <plurals name="jail_more_items">
+        <item quantity="one">%d weiterer Artikel, nach dem die App nicht fragt</item>
+        <item quantity="other">%d weitere Elemente, nach denen die App nicht fragt</item>
+    </plurals>
+    <string name="jail_fewer_items">Weniger anzeigen</string>
+    <string name="jail_restart_note">Wenn Sie ein Element aktivieren oder Speicher- oder Prozessorinformationen ändern, wird die App neu gestartet.</string>
+    <string name="jail_custom">Angepasst</string>
+    <string name="jail_choices_shown">Ausgeklappt</string>
+    <string name="jail_choices_hidden">Eingeklappt</string>
+    <string name="jail_show_choices">Auswahlmöglichkeiten anzeigen</string>
+    <string name="jail_hide_choices">Auswahlmöglichkeiten ausblenden</string>
+    <string name="jail_not_in_effect_hook">Nicht aktiv: „System-Framework“ in LSPosed aktivieren und Gerät neu starten</string>
+    <string name="jail_hook_unavailable">Beschränkungen für „System-Framework“ nicht verfügbar</string>
+    <string name="jail_hook_incompatible">Wird von dieser Android-Version nicht unterstützt</string>
+    <string name="jail_hook_degraded">Die Beschränkungen funktionieren nicht mehr. Starten Sie das Gerät neu.</string>
+    <string name="jail_hook_status_unknown">Der Status der Beschränkungen für „System-Framework“ ist unbekannt.</string>
+    <string name="jail_not_in_effect_mounts">Nicht aktiv: Die Speicherisolation läuft nicht</string>
+    <string name="jail_mount_start_failed">Der App-Start konnte nicht angehalten werden.</string>
+    <string name="jail_mount_setup_failed">Die Isolation konnte beim Start nicht angewendet werden.</string>
+    <string name="jail_mount_timed_out">Beim Start kam es zu einer Zeitüberschreitung der Isolierung.</string>
+    <string name="jail_mount_launch_refused">%1$s Solange diese Isolation eingeschaltet ist, kann die App nicht starten. Deaktivieren Sie die betroffenen Optionen oder entfernen Sie die App aus dem Gefängnis, damit sie starten kann.</string>
+    <string name="jail_checking_app_ops">Android-Einschränkung wird überprüft…</string>
+    <string name="jail_app_ops_unknown">Der Status der Android-Beschränkung konnte nicht überprüft werden.</string>
+    <string name="jail_not_in_effect_app_ops">Beschränkung nicht verfügbar. Die App hat möglicherweise weiterhin Zugriff.</string>
+
+    <string name="jail_settings_subtitle">Für isolierte Apps ohne eigene Einstellung</string>
+    <string name="jail_auto_isolate">Neu installierte Apps isolieren</string>
+    <string name="jail_auto_isolate_summary">Verwenden Sie die folgenden Einstellungen für zukünftige Installationen</string>
+    <string name="jail_group_files">Dateien</string>
+    <string name="jail_group_personal">Persönliche Daten</string>
+    <string name="jail_group_sensors">Standort und Sensoren</string>
+    <string name="jail_group_device">Gerät und Apps</string>
+    <string name="jail_section_status">Status</string>
+    <string name="jail_status_title">Komponenten</string>
+    <string name="jail_status_ok">Speicherisolation, Hook für „System-Framework“ und Netzwerkfilter sind aktiv</string>
+    <string name="jail_status_network_missing">Netzwerkfilterung ist auf diesem Kernel nicht verfügbar</string>
+    <string name="jail_status_checking">Wird geprüft…</string>
+    <string name="jail_status_hook_missing">Hook für „System-Framework“ nicht geladen</string>
+    <string name="jail_status_gate_missing">Speicherisolierung nicht verfügbar</string>
+    <string name="jail_status_appops_missing">Beschränkungen für Kontakte, Standort und weitere Daten sind nicht aktiv</string>
+    <string name="jail_status_new_apps_not_held">Neue Apps werden möglicherweise vor der Isolation gestartet</string>
+    <plurals name="jail_status_new_apps_held">
+        <item quantity="one">%d neu installierte App ist noch nicht isoliert. Ihr Start wird verhindert</item>
+        <item quantity="other">%d neu installierte Apps sind noch nicht isoliert. Ihr Start wird verhindert</item>
+    </plurals>
+    <plurals name="jail_status_new_apps_failed">
+        <item quantity="one">%d neue App konnte nicht isoliert werden. Sie kann ohne Isolation starten.</item>
+        <item quantity="other">%d neue Apps konnten nicht isoliert werden. Sie können ohne Isolation starten.</item>
+    </plurals>
+    <plurals name="jail_status_new_apps_pending">
+        <item quantity="one">%d neu installierte App noch nicht isoliert</item>
+        <item quantity="other">%d neu installierte Apps sind noch nicht isoliert</item>
+    </plurals>
+    <string name="jail_release_all">Gesamte Isolation beenden</string>
+    <string name="jail_release_all_summary">Dateien im isolierten Speicher bleiben erhalten</string>
+    <string name="jail_release_all_title">Gesamte Isolation beenden?</string>
+    <plurals name="jail_release_all_body">
+        <item quantity="one">%d App erhält wieder echte Daten und wird neu gestartet. Dateien im isolierten Speicher bleiben erhalten.</item>
+        <item quantity="other">%d Apps erhalten wieder echte Daten und werden neu gestartet. Dateien im isolierten Speicher bleiben erhalten.</item>
+    </plurals>
+    <plurals name="jail_release_all_left">
+        <item quantity="one">%d App bleibt im Gefängnis. Versuchen Sie es erneut.</item>
+        <item quantity="other">%d Apps bleiben im Gefängnis. Versuchen Sie es erneut.</item>
+    </plurals>
+    <string name="jail_cancel">Abbrechen</string>
+
+    <string name="jail_item_storage">Dateien und Medien</string>
+    <string name="jail_item_storage_on">Isolierter Speicher</string>
+    <string name="jail_item_storage_on_detail">Die App erhält einen eigenen, anfangs leeren Speicherbereich. Von ihr gespeicherte Dateien bleiben darin. Echte Fotos, Downloads und Dokumente sind für die App nicht sichtbar. Eine über die Systemdateiauswahl ausgewählte Datei ist nur für diesen Vorgang zugänglich.</string>
+    <string name="jail_item_cpu_info">Informationen zum Prozessor</string>
+    <string name="jail_item_cpu_info_on">Chipmodell ausgeblendet</string>
+    <string name="jail_item_cpu_info_on_detail">Die Anzahl der Kerne und der Befehlssatz bleiben erhalten; Das Chipmodell und andere Kennungen werden entfernt.</string>
+    <string name="jail_item_contacts">Kontakte</string>
+    <string name="jail_item_contacts_on">Leere Liste</string>
+    <string name="jail_item_contacts_on_detail">Die Berechtigung wird als erteilt angezeigt. Kontaktabfragen liefern keine Daten.</string>
+    <string name="jail_item_messages">Nachrichten und Anrufliste</string>
+    <string name="jail_item_messages_on">Leere Liste</string>
+    <string name="jail_item_messages_on_detail">Die Berechtigung wird als erteilt angezeigt. Abfragen zu Nachrichten und zur Anrufliste liefern keine Daten.</string>
+    <string name="jail_item_calendar">Kalender</string>
+    <string name="jail_item_calendar_on">Leerer Kalender</string>
+    <string name="jail_item_calendar_on_detail">Die Berechtigung wird als erteilt angezeigt. Kalenderabfragen liefern keine Daten.</string>
+    <string name="jail_item_clipboard_accounts">Zwischenablage und Konten</string>
+    <string name="jail_item_clipboard_accounts_on">Leer</string>
+    <string name="jail_item_clipboard_accounts_on_detail">Die Zwischenablage und die Kontoliste sind leer.</string>
+    <string name="jail_item_location">Standort</string>
+    <string name="jail_item_location_on">Kein Standort</string>
+    <string name="jail_item_location_on_detail">Die Berechtigung wird als erteilt angezeigt. Der Standort ist nicht verfügbar.</string>
+    <string name="jail_item_camera">Kamera</string>
+    <string name="jail_item_camera_on">Nicht verfügbar</string>
+    <string name="jail_item_camera_on_detail">Die Berechtigung wird als erteilt angezeigt. Ein Kamerabild ist nicht verfügbar.</string>
+    <string name="jail_item_microphone">Mikrofon</string>
+    <string name="jail_item_microphone_on">Stumm</string>
+    <string name="jail_item_microphone_on_detail">Die Berechtigung wird als erteilt angezeigt. Aufnahmen bleiben stumm.</string>
+    <string name="jail_item_body_sensors">Körpersensoren und körperliche Aktivität</string>
+    <string name="jail_item_body_sensors_on">Keine Daten</string>
+    <string name="jail_item_body_sensors_on_detail">Herzfrequenz, Schritte und körperliche Aktivität sind nicht verfügbar.</string>
+    <string name="jail_item_device_ids">Gerätekennungen</string>
+    <string name="jail_item_device_ids_on">Virtuelle ID</string>
+    <string name="jail_item_device_ids_on_detail">Die App erhält eine eigene, feste virtuelle Android ID. Werbe-ID, Telefonnummer und Telefonstatus können nicht gelesen werden.</string>
+    <string name="jail_item_installed_apps">Installierte Apps</string>
+    <string name="jail_item_installed_apps_on">Nur System-Apps</string>
+    <string name="jail_item_installed_apps_on_detail">Die Liste der installierten Apps zeigt nur die System-Apps und die isolierte App selbst. Nutzungsstatistiken sind nicht lesbar.</string>
+    <string name="jail_item_nearby_devices">Geräte in der Nähe</string>
+    <string name="jail_item_nearby_devices_on">Keine gefunden</string>
+    <string name="jail_item_nearby_devices_on_detail">Bluetooth- und Wi-Fi-Scans geben nichts zurück.</string>
+    <string name="jail_item_notification_content">Benachrichtigungsinhalt</string>
+    <string name="jail_item_notification_content_on">Kein Zugriff</string>
+    <string name="jail_item_notification_content_on_detail">Die App kann Benachrichtigungen anderer Apps nicht lesen. Ihre eigenen Benachrichtigungen werden weiterhin angezeigt. Nach Ende der Isolation wird der Zugriff wiederhergestellt.</string>
+    <string name="jail_item_screen_content">Bildschirminhalt</string>
+    <string name="jail_item_screen_content_on">Kein Zugriff</string>
+    <string name="jail_item_screen_content_on_detail">Die Bedienungshilfen der App sind ausgeschaltet. Sie kann Bildschirminhalte weder lesen noch damit interagieren. Nach Ende der Isolation wird der Zugriff wiederhergestellt.</string>
+
+    <string name="jail_mode_coarse">Ungefährer Standort</string>
+    <string name="jail_mode_coarse_detail">Präziser Standort ausgeschaltet; Es ist nur ein ungefährer Standort verfügbar.</string>
+    <string name="jail_mode_foreground">Nur während der App-Nutzung</string>
+    <string name="jail_mode_foreground_detail">Verfügbar, während die App verwendet wird, nicht im Hintergrund.</string>
+    <string name="jail_mode_off">Echte Daten</string>
+    <string name="jail_mode_off_detail">Die App bekommt, was das System ihr gibt.</string>
+    <string name="jail_mode_global">Globaler Standard</string>
+    <string name="jail_mode_global_detail">Jetzt: %1$s</string>
+    <string name="jail_list_separator">", "</string>
+    <string name="jail_select">Wählen Sie eine isolierte App oder die globalen Einstellungen aus</string>
+
+    <string name="jail_summary_no_network">Kein Netzwerk</string>
+    <string name="jail_summary_recording">Verbindungen werden aufgezeichnet</string>
+    <string name="jail_summary_separator">" · "</string>
+
+    <string name="jail_section_network">Netzwerk</string>
+    <string name="jail_network_access">Netzwerkzugriff</string>
+    <string name="jail_network_allowed">Erlaubt</string>
+    <string name="jail_network_allowed_detail">Verbindet sich, wie es das System zulässt.</string>
+    <string name="jail_network_blocked">Kein Netzwerk</string>
+    <string name="jail_network_blocked_detail">Verbindungen und Namensanfragen schlagen sofort fehl. Verbindungen innerhalb des Geräts funktionieren weiter. Die App wird nicht neu gestartet.</string>
+    <string name="jail_network_record">Verbindungen aufzeichnen</string>
+    <string name="jail_network_record_summary">Domänen, Adressen und Ports, mit denen eine Verbindung hergestellt wird; 30 Tage aufbewahrt</string>
+    <string name="jail_network_recording_since">Aufzeichnung seit %1$s</string>
+    <string name="jail_network_activity">Netzwerkaktivität</string>
+    <plurals name="jail_network_activity_summary">
+        <item quantity="one">%1$d Ziel in 24 Std.</item>
+        <item quantity="other">%1$d Ziele in 24 Std.</item>
+    </plurals>
+    <plurals name="jail_network_blocked_count">
+        <item quantity="one">%1$d blockiert</item>
+        <item quantity="other">%1$d blockiert</item>
+    </plurals>
+    <string name="jail_network_name_rules_not_in_effect">Gespeicherte Domainregeln greifen möglicherweise nur teilweise</string>
+    <string name="jail_network_recording_unavailable">Verbindungsaufzeichnung nicht verfügbar</string>
+    <string name="jail_network_no_permission">Die App fordert keinen Netzwerkzugriff an</string>
+    <string name="jail_not_in_effect_packet_filter">Netzwerkfilterung nicht verfügbar</string>
+    <string name="jail_not_in_effect_resolver">Teilweise aktiv: Namensauflösung wird nicht blockiert</string>
+    <string name="jail_network_global_note">Für isolierte Apps ohne eigene Einstellung. Ohne Netzwerk scheitern die Verbindungen sofort; Apps werden nicht neu gestartet.</string>
+
+    <string name="jail_net_subtitle_recording">%1$s · Aufzeichnung läuft</string>
+    <string name="jail_net_subtitle_stopped">%1$s · Keine Aufzeichnung</string>
+    <plurals name="jail_net_destinations">
+        <item quantity="one">Ziel</item>
+        <item quantity="other">Ziele</item>
+    </plurals>
+    <plurals name="jail_net_facts">
+        <item quantity="one">%1$s Verbindung · %2$s empfangen · %3$s gesendet</item>
+        <item quantity="other">%1$s Verbindungen · %2$s empfangen · %3$s gesendet</item>
+    </plurals>
+    <plurals name="jail_net_facts_counts">
+        <item quantity="one">%1$s Verbindung · %2$s abgelehnt</item>
+        <item quantity="other">%1$s Verbindungen · %2$s abgelehnt</item>
+    </plurals>
+    <string name="jail_net_choose_period">Wählen Sie einen Zeitraum</string>
+    <string name="jail_net_all_periods">Alle Perioden</string>
+    <string name="jail_net_legend_connected">Verbunden</string>
+    <string name="jail_net_legend_refused">Abgelehnt</string>
+    <string name="jail_net_now">Jetzt</string>
+    <string name="jail_net_filter_blocked_count">%1$d gesperrt</string>
+    <string name="jail_net_sort_data">Nach Datenmenge</string>
+    <string name="jail_net_sort_connections">Nach Verbindungen</string>
+    <string name="jail_net_sort_recent">Neueste zuerst</string>
+    <string name="jail_net_sort_name">Name</string>
+    <string name="jail_net_section_domains">Domänen</string>
+    <string name="jail_net_section_addresses">IP-Adressen</string>
+    <string name="jail_net_addresses_note">Direkt verbunden, ohne Namensauflösung durch das System.</string>
+    <string name="jail_net_port">Port %1$d</string>
+    <plurals name="jail_net_connections">
+        <item quantity="one">%1$d Verbindung</item>
+        <item quantity="other">%1$d Verbindungen</item>
+    </plurals>
+    <plurals name="jail_net_refused">
+        <item quantity="one">%1$d-mal abgelehnt</item>
+        <item quantity="other">%1$d-mal abgelehnt</item>
+    </plurals>
+    <string name="jail_net_blocked">Gesperrt</string>
+    <string name="jail_net_show_all">Alle anzeigen (%1$d)</string>
+    <string name="jail_net_footer">Aufzeichnungen werden 30 Tage lang aufbewahrt. Die Sperrung wird sofort wirksam.</string>
+    <string name="jail_net_search">Domains und Adressen suchen</string>
+    <string name="jail_net_no_results">Keine passenden Ziele</string>
+    <string name="jail_net_empty_title">Noch keine Verbindungen</string>
+    <string name="jail_net_empty_body">Aufzeichnung seit %1$s. Sobald die App das Netzwerk nutzt, werden hier Verbindungen angezeigt.</string>
+    <string name="jail_net_stopped">Aufzeichnung gestoppt. Angezeigt werden Aufzeichnungen bis %1$s.</string>
+    <string name="jail_net_start">Aufzeichnen</string>
+    <string name="jail_net_no_network_title">Kein Netzwerk</string>
+    <string name="jail_net_no_network_body">Alle Verbindungen werden abgelehnt. Da die Namensauflösung fehlschlägt, werden die meisten Ziele als Adressen angezeigt.</string>
+    <string name="jail_net_names_missing_title">Domainnamen nicht verfügbar</string>
+    <string name="jail_net_names_missing_body">Dieses Gerät kann Anfragen zur Namensauflösung nicht auslesen. Ziele werden als Adressen angezeigt.</string>
+    <string name="jail_net_traffic_missing">Datenmengen sind auf diesem Gerät nicht verfügbar; Die Anzahl der Verbindungen wird angezeigt.</string>
+    <string name="jail_net_more_options">Weitere Optionen</string>
+    <string name="jail_net_menu_block">Domain oder Adresse sperren…</string>
+    <string name="jail_net_menu_stop">Aufzeichnung stoppen</string>
+    <string name="jail_net_menu_clear">Aufzeichnungen löschen</string>
+    <string name="jail_net_clear_title">Netzwerkaufzeichnungen löschen?</string>
+    <string name="jail_net_clear_body">Netzwerkaufzeichnungen von %1$s werden gelöscht. Gesperrte Ziele bleiben gesperrt.</string>
+    <string name="jail_net_clear">Löschen</string>
+
+    <string name="jail_net_block">Sperren</string>
+    <string name="jail_net_unblock">Entsperren</string>
+    <string name="jail_net_block_cd">%1$s sperren</string>
+    <string name="jail_net_blocked_message">%1$s gesperrt</string>
+    <string name="jail_net_unblocked_message">Sperre für %1$s aufgehoben</string>
+    <string name="jail_net_manual">Manuell hinzugefügt</string>
+    <string name="jail_net_no_attempts">Keine Versuche in diesem Zeitraum</string>
+
+    <plurals name="jail_net_subdomains">
+        <item quantity="one">%1$d Subdomain</item>
+        <item quantity="other">%1$d Subdomains</item>
+    </plurals>
+    <string name="jail_net_first_last">Erste %1$s · Letzte %2$s</string>
+    <string name="jail_net_block_site">%1$s und Subdomains sperren</string>
+    <string name="jail_net_block_address">%1$s auf allen Ports sperren</string>
+    <string name="jail_net_hour_range">%1$s–%2$s</string>
+    <string name="jail_net_dated_hour_range">%1$s %2$s</string>
+    <string name="jail_net_size_bytes">%1$d B</string>
+    <string name="jail_net_size_kilobytes">%1$d KB</string>
+    <string name="jail_net_size_megabytes">%1$.1f MB</string>
+    <string name="jail_net_size_gigabytes">%1$.1f GB</string>
+    <string name="jail_net_sent">Gesendet</string>
+    <string name="jail_net_received">Empfangen</string>
+    <string name="jail_net_connections_label">Verbindungen</string>
+    <string name="jail_net_hosts_header">Subdomains</string>
+    <string name="jail_net_ports_header">Ports</string>
+    <string name="jail_net_addresses_header">Adressen</string>
+    <plurals name="jail_net_more">
+        <item quantity="one">%1$d mehr</item>
+        <item quantity="other">%1$d weitere</item>
+    </plurals>
+    <string name="jail_net_shared">Diese Domain teilt ihre Adressen mit %1$s. Die Sperre wirkt sich auch auf diese Domains aus.</string>
+    <string name="jail_net_own_resolver">Die Regel greift nicht bei Verbindungen, für die die App Namen selbst auflöst. Diese Verbindungen lassen sich unter „IP-Adressen“ sperren.</string>
+
+    <string name="jail_net_add_title">Domain oder Adresse sperren</string>
+    <string name="jail_net_add_label">Domäne, IP-Adresse oder Adresse:Port</string>
+    <string name="jail_net_add_supporting">Eine Domain umfasst ihre Subdomains.</string>
+    <string name="jail_net_add_invalid">Keine Domäne oder IP-Adresse</string>
+</resources>

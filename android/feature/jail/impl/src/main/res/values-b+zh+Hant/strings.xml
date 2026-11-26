@@ -1,0 +1,301 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="jail_section_isolated">已隔離的應用程式</string>
+    <string name="jail_section_settings">監獄設定</string>
+    <string name="jail_add_apps">新增應用程式</string>
+    <string name="jail_global_settings">全域設定</string>
+    <string name="jail_all_items_on">所有項目已隔離</string>
+    <string name="jail_items_off">未隔離：%1$s</string>
+    <string name="jail_no_items_on">未隔離任何項目</string>
+    <string name="jail_empty_title">沒有已隔離的應用程式</string>
+    <string name="jail_empty_files_title">檔案</string>
+    <string name="jail_empty_files">只能存取專用的空白儲存空間</string>
+    <string name="jail_empty_permissions_title">聯絡人、位置、相機等</string>
+    <string name="jail_empty_permissions">權限仍顯示為已授予，查詢時不會取得資料</string>
+    <string name="jail_empty_device_title">裝置與應用程式</string>
+    <string name="jail_empty_device">使用虛擬 Android ID，只會顯示系統應用程式</string>
+    <string name="jail_hook_missing_title">裝置識別碼和應用程式清單未隱藏</string>
+    <string name="jail_hook_missing">在 LSPosed 中為 Big Brother 啟用「系統框架」（香港介面稱「系統架構」），然後重新啟動裝置。</string>
+    <string name="jail_gate_missing_title">無法隔離儲存空間和處理器資訊</string>
+    <string name="jail_gate_missing">應用程式啟動時無法啟用隔離。</string>
+    <string name="jail_appops_missing_title">無法隔離聯絡人、位置、相機等</string>
+    <string name="jail_appops_missing">Big Brother 用來限制這些項目的元件目前未執行，會自動重新啟動。</string>
+
+    <string name="jail_isolated">%1$s 已隔離</string>
+    <string name="jail_undo">撤銷</string>
+    <string name="jail_failed">未更改：%1$s</string>
+    <string name="jail_isolated_partly">%1$s 已隔離，%2$s 未能隔離</string>
+    <plurals name="jail_isolated_partly_count">
+        <item quantity="other">%1$s 已隔離，%2$d 個應用程式未能隔離</item>
+    </plurals>
+    <string name="jail_not_isolated">%1$s 未隔離：%2$s</string>
+    <plurals name="jail_not_isolated_count">
+        <item quantity="other">%1$d 個應用程式未能隔離：%2$s</item>
+    </plurals>
+    <string name="jail_not_released">%1$s 仍在監獄中：%2$s</string>
+    <plurals name="jail_not_released_count">
+        <item quantity="other">仍有 %1$d 個應用程式在監獄中：%2$s</item>
+    </plurals>
+
+    <string name="jail_add_search">搜尋應用程式</string>
+    <plurals name="jail_add_confirm">
+        <item quantity="other">隔離 %d 個</item>
+    </plurals>
+    <string name="jail_add_confirm_none">隔離</string>
+    <string name="jail_add_restart">正在執行的應用程式會關閉並重新啟動。</string>
+    <string name="jail_add_empty">沒有可新增的應用程式</string>
+    <string name="jail_close">關閉</string>
+
+    <string name="jail_release">解除隔離</string>
+    <string name="jail_records">存取記錄</string>
+    <string name="jail_section_items">隔離項目</string>
+    <string name="jail_items_summary">開啟的項目會提供空白或虛擬資料，或隔離儲存空間。關閉的項目依系統規則運作。</string>
+    <string name="jail_reset">恢復全域設定</string>
+    <plurals name="jail_more_items">
+        <item quantity="other">另有 %d 項，應用程式未申請相關權限</item>
+    </plurals>
+    <string name="jail_fewer_items">收起</string>
+    <string name="jail_restart_note">開啟項目，或變更儲存空間或處理器資訊時，應用程式會重新啟動。</string>
+    <string name="jail_custom">自訂</string>
+    <string name="jail_choices_shown">已展開</string>
+    <string name="jail_choices_hidden">已收合</string>
+    <string name="jail_show_choices">顯示選項</string>
+    <string name="jail_hide_choices">隱藏選項</string>
+    <string name="jail_not_in_effect_hook">未生效：在 LSPosed 啟用「系統框架」（香港介面稱「系統架構」）並重新啟動裝置</string>
+    <string name="jail_hook_unavailable">無法套用「系統框架」限制</string>
+    <string name="jail_hook_incompatible">目前 Android 版本不支援此限制</string>
+    <string name="jail_hook_degraded">限制已停止生效。請重新啟動裝置。</string>
+    <string name="jail_hook_status_unknown">「系統框架」限制的狀態未知。</string>
+    <string name="jail_not_in_effect_mounts">未生效：儲存空間隔離未執行</string>
+    <string name="jail_mount_start_failed">無法在啟動時暫緩執行應用程式。</string>
+    <string name="jail_mount_setup_failed">啟動時未能啟用隔離。</string>
+    <string name="jail_mount_timed_out">應用程式啟動時隔離逾時。</string>
+    <string name="jail_mount_launch_refused">%1$s 此隔離項目開啟時，應用程式無法啟動。關閉受影響的項目，或將應用程式移出監獄，即可啟動。</string>
+    <string name="jail_checking_app_ops">正在驗證 Android 限制…</string>
+    <string name="jail_app_ops_unknown">無法確認 Android 限制是否生效。</string>
+    <string name="jail_not_in_effect_app_ops">無法套用限制。應用程式仍可能存取資料。</string>
+
+    <string name="jail_settings_subtitle">適用於未單獨設定的已隔離應用程式</string>
+    <string name="jail_auto_isolate">自動隔離新安裝的應用程式</string>
+    <string name="jail_auto_isolate_summary">對之後安裝的應用程式使用以下設定</string>
+    <string name="jail_group_files">檔案</string>
+    <string name="jail_group_personal">個人資料</string>
+    <string name="jail_group_sensors">位置與感測器</string>
+    <string name="jail_group_device">裝置與應用程式</string>
+    <string name="jail_section_status">狀態</string>
+    <string name="jail_status_title">元件</string>
+    <string name="jail_status_ok">儲存空間隔離、「系統框架」掛鉤及網路篩選已生效</string>
+    <string name="jail_status_network_missing">此核心不支援網路過濾</string>
+    <string name="jail_status_checking">正在檢查…</string>
+    <string name="jail_status_hook_missing">未載入「系統框架」掛鉤</string>
+    <string name="jail_status_gate_missing">無法使用儲存空間隔離</string>
+    <string name="jail_status_appops_missing">聯絡人、位置等項目的限制未生效</string>
+    <string name="jail_status_new_apps_not_held">新安裝的應用程式可能在隔離前啟動</string>
+    <plurals name="jail_status_new_apps_held">
+        <item quantity="other">有 %d 個新安裝的應用程式尚未隔離，目前無法啟動</item>
+    </plurals>
+    <plurals name="jail_status_new_apps_failed">
+        <item quantity="other">無法隔離 %d 個新應用程式。這些應用程式可以在未隔離的情況下啟動。</item>
+    </plurals>
+    <plurals name="jail_status_new_apps_pending">
+        <item quantity="other">有 %d 個新安裝的應用程式尚未隔離</item>
+    </plurals>
+    <string name="jail_release_all">解除全部隔離</string>
+    <string name="jail_release_all_summary">隔離儲存空間中的檔案保留</string>
+    <string name="jail_release_all_title">解除全部隔離？</string>
+    <plurals name="jail_release_all_body">
+        <item quantity="other">%d 個應用程式將恢復讀取真實資料並重新啟動。隔離儲存空間中的檔案保留。</item>
+    </plurals>
+    <plurals name="jail_release_all_left">
+        <item quantity="other">仍有 %d 個應用程式在監獄中。請重試。</item>
+    </plurals>
+    <string name="jail_cancel">取消</string>
+
+    <string name="jail_item_storage">檔案和媒體</string>
+    <string name="jail_item_storage_on">隔離儲存空間</string>
+    <string name="jail_item_storage_on_detail">應用程式有獨立且初始為空的儲存空間，儲存的檔案會留在其中。應用程式看不到真實的相片、下載項目與文件。透過系統檔案選擇器選取的檔案僅供該次使用。</string>
+    <string name="jail_item_cpu_info">處理器資訊</string>
+    <string name="jail_item_cpu_info_on">隱藏晶片型號</string>
+    <string name="jail_item_cpu_info_on_detail">保留核心數量和指令集，移除晶片型號及其他識別碼。</string>
+    <string name="jail_item_contacts">聯絡人</string>
+    <string name="jail_item_contacts_on">空清單</string>
+    <string name="jail_item_contacts_on_detail">權限顯示為已授予，但聯絡人查詢傳回空結果。</string>
+    <string name="jail_item_messages">簡訊和通話記錄</string>
+    <string name="jail_item_messages_on">空清單</string>
+    <string name="jail_item_messages_on_detail">權限顯示為已授予，但簡訊和通話記錄查詢傳回空結果。</string>
+    <string name="jail_item_calendar">日曆</string>
+    <string name="jail_item_calendar_on">空日曆</string>
+    <string name="jail_item_calendar_on_detail">權限顯示為已授予，但日曆查詢傳回空結果。</string>
+    <string name="jail_item_clipboard_accounts">剪貼簿和帳戶</string>
+    <string name="jail_item_clipboard_accounts_on">空</string>
+    <string name="jail_item_clipboard_accounts_on_detail">剪貼簿和帳戶清單均為空白。</string>
+    <string name="jail_item_location">位置</string>
+    <string name="jail_item_location_on">不提供位置</string>
+    <string name="jail_item_location_on_detail">權限顯示為已授予，但無法取得位置。</string>
+    <string name="jail_item_camera">相機</string>
+    <string name="jail_item_camera_on">無法使用</string>
+    <string name="jail_item_camera_on_detail">權限顯示為已授予，但無法取得相機畫面。</string>
+    <string name="jail_item_microphone">麥克風</string>
+    <string name="jail_item_microphone_on">靜音</string>
+    <string name="jail_item_microphone_on_detail">權限顯示為已授予，但錄音沒有聲音。</string>
+    <string name="jail_item_body_sensors">人體感測器和體能活動</string>
+    <string name="jail_item_body_sensors_on">無資料</string>
+    <string name="jail_item_body_sensors_on_detail">無法取得心率、步數和健身運動資料。</string>
+    <string name="jail_item_device_ids">裝置識別碼</string>
+    <string name="jail_item_device_ids_on">虛擬 ID</string>
+    <string name="jail_item_device_ids_on_detail">應用程式會取得專用且固定的虛擬 Android ID，無法讀取廣告 ID、電話號碼或電話狀態。</string>
+    <string name="jail_item_installed_apps">已安裝的應用程式</string>
+    <string name="jail_item_installed_apps_on">僅系統應用程式</string>
+    <string name="jail_item_installed_apps_on_detail">已安裝的應用程式清單只會列出系統應用程式和該應用程式本身。無法讀取使用統計資料。</string>
+    <string name="jail_item_nearby_devices">鄰近裝置</string>
+    <string name="jail_item_nearby_devices_on">無裝置</string>
+    <string name="jail_item_nearby_devices_on_detail">藍牙和 Wi‑Fi 掃描結果為空。</string>
+    <string name="jail_item_notification_content">通知內容</string>
+    <string name="jail_item_notification_content_on">無法讀取</string>
+    <string name="jail_item_notification_content_on_detail">應用程式無法讀取其他應用程式的通知，本身的通知仍會顯示。解除隔離後即恢復存取。</string>
+    <string name="jail_item_screen_content">螢幕內容</string>
+    <string name="jail_item_screen_content_on">無法讀取</string>
+    <string name="jail_item_screen_content_on_detail">應用程式的無障礙服務已關閉，無法讀取或操作螢幕內容。解除隔離後即恢復。</string>
+
+    <string name="jail_mode_coarse">大概位置</string>
+    <string name="jail_mode_coarse_detail">確切位置已關閉，僅能取得大概位置。</string>
+    <string name="jail_mode_foreground">僅限使用應用程式時</string>
+    <string name="jail_mode_foreground_detail">應用程式使用期間可用，在背景時不可用。</string>
+    <string name="jail_mode_off">使用真實資料</string>
+    <string name="jail_mode_off_detail">應用程式獲得系統提供的資料。</string>
+    <string name="jail_mode_global">跟隨全域設定</string>
+    <string name="jail_mode_global_detail">目前：%1$s</string>
+    <string name="jail_list_separator">"、"</string>
+    <string name="jail_select">選擇已隔離的應用程式或全域設定</string>
+
+    <string name="jail_summary_no_network">禁止連網</string>
+    <string name="jail_summary_recording">正在記錄連線</string>
+    <string name="jail_summary_separator">" · "</string>
+
+    <string name="jail_section_network">網路</string>
+    <string name="jail_network_access">網路存取</string>
+    <string name="jail_network_allowed">允許</string>
+    <string name="jail_network_allowed_detail">按系統設定聯網。</string>
+    <string name="jail_network_blocked">禁止連網</string>
+    <string name="jail_network_blocked_detail">連線與名稱查詢會立即失敗，裝置內的連線仍可運作。應用程式不會重新啟動。</string>
+    <string name="jail_network_record">記錄連線</string>
+    <string name="jail_network_record_summary">記錄連線的網域名稱、位址和連接埠，保留 30 天</string>
+    <string name="jail_network_recording_since">自 %1$s 起記錄</string>
+    <string name="jail_network_activity">網路活動</string>
+    <plurals name="jail_network_activity_summary">
+        <item quantity="other">24 小時內 %1$d 個目標</item>
+    </plurals>
+    <plurals name="jail_network_blocked_count">
+        <item quantity="other">已封鎖 %1$d 個</item>
+    </plurals>
+    <string name="jail_network_name_rules_not_in_effect">已儲存的網域規則可能無法完全生效</string>
+    <string name="jail_network_recording_unavailable">無法記錄連線</string>
+    <string name="jail_network_no_permission">此應用程式未申請網路權限</string>
+    <string name="jail_not_in_effect_packet_filter">無法進行網路過濾</string>
+    <string name="jail_not_in_effect_resolver">部分生效：網域名稱查詢未被封鎖</string>
+    <string name="jail_network_global_note">作用於未單獨設定的已隔離應用程式。禁止連網時連線立即失敗，應用程式不會重新啟動。</string>
+
+    <string name="jail_net_subtitle_recording">%1$s · 正在記錄</string>
+    <string name="jail_net_subtitle_stopped">%1$s · 未記錄</string>
+    <plurals name="jail_net_destinations">
+        <item quantity="other">個目標</item>
+    </plurals>
+    <plurals name="jail_net_facts">
+        <item quantity="other">連線 %1$s 次 · 接收 %2$s · 傳送 %3$s</item>
+    </plurals>
+    <plurals name="jail_net_facts_counts">
+        <item quantity="other">連線 %1$s 次 · 拒絕 %2$s 次</item>
+    </plurals>
+    <string name="jail_net_choose_period">選擇時段</string>
+    <string name="jail_net_all_periods">全部時段</string>
+    <string name="jail_net_legend_connected">已連線</string>
+    <string name="jail_net_legend_refused">已拒絕</string>
+    <string name="jail_net_now">現在</string>
+    <string name="jail_net_filter_blocked_count">已封鎖 %1$d</string>
+    <string name="jail_net_sort_data">流量最多</string>
+    <string name="jail_net_sort_connections">連線最多</string>
+    <string name="jail_net_sort_recent">最近連線</string>
+    <string name="jail_net_sort_name">名稱</string>
+    <string name="jail_net_section_domains">網域名稱</string>
+    <string name="jail_net_section_addresses">IP 位址</string>
+    <string name="jail_net_addresses_note">直接連線，未透過系統解析名稱。</string>
+    <string name="jail_net_port">連接埠 %1$d</string>
+    <plurals name="jail_net_connections">
+        <item quantity="other">連線 %1$d 次</item>
+    </plurals>
+    <plurals name="jail_net_refused">
+        <item quantity="other">拒絕 %1$d 次</item>
+    </plurals>
+    <string name="jail_net_blocked">已封鎖</string>
+    <string name="jail_net_show_all">顯示所有 %1$d 個目的地</string>
+    <string name="jail_net_footer">記錄保留 30 天。封鎖立即生效。</string>
+    <string name="jail_net_search">搜尋網域名稱和位址</string>
+    <string name="jail_net_no_results">無符合的目標</string>
+    <string name="jail_net_empty_title">尚無連線</string>
+    <string name="jail_net_empty_body">自 %1$s 起記錄。應用程式聯網後在此顯示。</string>
+    <string name="jail_net_stopped">未在記錄。顯示截至 %1$s 的記錄。</string>
+    <string name="jail_net_start">開始記錄</string>
+    <string name="jail_net_no_network_title">已禁止連網</string>
+    <string name="jail_net_no_network_body">所有連線都會遭拒。由於名稱解析失敗，大多數目的地會顯示為位址。</string>
+    <string name="jail_net_names_missing_title">無法取得網域名稱</string>
+    <string name="jail_net_names_missing_body">這部裝置無法讀取名稱查詢，目的地會顯示為位址。</string>
+    <string name="jail_net_traffic_missing">此裝置不支援流量統計，僅顯示連線次數。</string>
+    <string name="jail_net_more_options">更多選項</string>
+    <string name="jail_net_menu_block">封鎖網域名稱或位址…</string>
+    <string name="jail_net_menu_stop">停止記錄</string>
+    <string name="jail_net_menu_clear">清除記錄</string>
+    <string name="jail_net_clear_title">清除網路記錄？</string>
+    <string name="jail_net_clear_body">%1$s 的網路記錄將被刪除，已封鎖的目標保持封鎖。</string>
+    <string name="jail_net_clear">清除</string>
+
+    <string name="jail_net_block">封鎖</string>
+    <string name="jail_net_unblock">取消封鎖</string>
+    <string name="jail_net_block_cd">封鎖 %1$s</string>
+    <string name="jail_net_blocked_message">已封鎖 %1$s</string>
+    <string name="jail_net_unblocked_message">已取消封鎖 %1$s</string>
+    <string name="jail_net_manual">手動新增</string>
+    <string name="jail_net_no_attempts">此時段內無連線嘗試</string>
+
+    <plurals name="jail_net_subdomains">
+        <item quantity="other">%1$d 個子網域</item>
+    </plurals>
+    <string name="jail_net_first_last">首次 %1$s · 最近 %2$s</string>
+    <string name="jail_net_block_site">封鎖 %1$s 及其子網域</string>
+    <string name="jail_net_block_address">封鎖 %1$s 的所有連接埠</string>
+    <string name="jail_net_hour_range">%1$s–%2$s</string>
+    <string name="jail_net_dated_hour_range">%1$s %2$s</string>
+    <string name="jail_net_size_bytes">%1$d B</string>
+    <string name="jail_net_size_kilobytes">%1$d KB</string>
+    <string name="jail_net_size_megabytes">%1$.1f MB</string>
+    <string name="jail_net_size_gigabytes">%1$.1f GB</string>
+    <string name="jail_net_sent">已傳送</string>
+    <string name="jail_net_received">已接收</string>
+    <string name="jail_net_connections_label">連線次數</string>
+    <string name="jail_net_hosts_header">子網域</string>
+    <string name="jail_net_ports_header">連接埠</string>
+    <string name="jail_net_addresses_header">位址</string>
+    <plurals name="jail_net_more">
+        <item quantity="other">另有 %1$d 個</item>
+    </plurals>
+    <string name="jail_net_shared">這個網域名稱和 %1$s 共用位址，因此這些網域也會一併封鎖。</string>
+    <string name="jail_net_own_resolver">應用程式自行解析名稱的連線不受影響。這些連線會列在「IP 位址」下方，可在該處封鎖。</string>
+
+    <string name="jail_net_add_title">封鎖網域名稱或位址</string>
+    <string name="jail_net_add_label">網域名稱、IP 位址或位址:連接埠</string>
+    <string name="jail_net_add_supporting">網域名稱封鎖規則也適用於其子網域。</string>
+    <string name="jail_net_add_invalid">並非網域名稱或 IP 位址</string>
+</resources>

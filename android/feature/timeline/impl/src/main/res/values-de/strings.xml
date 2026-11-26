@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="all_data">Alle Daten</string>
+    <string name="records_access">Lese- und Zugriffe</string>
+    <string name="records_all">Alle Einträge</string>
+    <string name="timeline_empty">Keine Aufzeichnungen</string>
+    <string name="today">Heute</string>
+    <string name="yesterday">Gestern</string>
+    <plurals name="read_files">
+        <item quantity="one">%d Datei gelesen</item>
+        <item quantity="other">%d Dateien gelesen</item>
+    </plurals>
+    <plurals name="looked_for_paths">
+        <item quantity="one">%d Pfad geprüft</item>
+        <item quantity="other">%d Pfade geprüft</item>
+    </plurals>
+    <string name="media_queried">Habe die Medienbibliothek abgefragt</string>
+    <plurals name="media_opened">
+        <item quantity="one">%d Datei über die Medienbibliothek geöffnet</item>
+        <item quantity="other">%d Dateien über die Medienbibliothek geöffnet</item>
+    </plurals>
+    <plurals name="media_denied">
+        <item quantity="one">Medienbibliothek: %d Zugriff verweigert</item>
+        <item quantity="other">Medienbibliothek: %d Zugriffe verweigert</item>
+    </plurals>
+    <plurals name="times">
+        <item quantity="one">%d Mal</item>
+        <item quantity="other">%d Mal</item>
+    </plurals>
+    <plurals name="times_denied">
+        <item quantity="one">%d Mal abgelehnt</item>
+        <item quantity="other">%d Mal abgelehnt</item>
+    </plurals>
+</resources>

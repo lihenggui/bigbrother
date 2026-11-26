@@ -1,0 +1,223 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <string name="isolated_process_uid">Processo isolado (UID %d)</string>
+    <string name="back">Voltar</string>
+    <string name="retry">Tente novamente</string>
+    <string name="settings_write_failed">Não foi possível salvar a configuração</string>
+    <string name="search">Pesquisar</string>
+    <string name="recording_stopped">Registro interrompido</string>
+    <string name="close_search">Fechar pesquisa</string>
+    <string name="clear_search">Limpar pesquisa</string>
+    <string name="no_matches">Nenhuma correspondência</string>
+
+    <string name="empty_title">Não há registros neste intervalo de tempo</string>
+    <string name="no_root_title">Acesso root necessário</string>
+    <string name="no_root_body">Conceda acesso root no gerenciador root (KernelSU, Magisk ou APatch) e tente novamente.</string>
+    <string name="no_module_title">Registro não configurado</string>
+    <string name="no_module_body">Configure o registro em Visão geral.</string>
+    <string name="old_module_title">Atualização não concluída</string>
+    <string name="old_module_body">Este recurso fica indisponível até a conclusão da atualização. Abra Visão geral para concluí-la.</string>
+    <string name="error_title">Não foi possível carregar os registros</string>
+
+    <string name="topic_mac_address_title">Endereço MAC</string>
+    <string name="topic_network_interfaces_title">Interfaces de rede</string>
+    <string name="topic_arp_table_title">Tabela ARP</string>
+    <string name="topic_network_state_title">Estado da rede</string>
+    <string name="topic_device_serial_title">Números de série</string>
+    <string name="topic_soc_info_title">Detalhes do SoC</string>
+    <string name="topic_cpu_model_title">Modelo de processador</string>
+    <string name="topic_kernel_version_title">Versão do kernel</string>
+    <string name="topic_other_processes_title">Outros processos</string>
+    <string name="topic_mounts_title">Sistemas de arquivos montados</string>
+    <string name="topic_kernel_modules_title">Módulos do kernel</string>
+    <string name="topic_selinux_state_title">Estado SELinux</string>
+    <string name="topic_block_devices_title">Dispositivos de bloco</string>
+    <string name="topic_emulator_probe_title">Detecção de emulador</string>
+    <string name="topic_input_devices_title">Dispositivos de entrada</string>
+    <string name="topic_battery_title">Status da bateria</string>
+    <string name="topic_root_check_title">Detecção de root</string>
+    <string name="topic_app_probe_title">Verificação de apps instalados</string>
+    <string name="topic_system_properties_title">Propriedades do sistema</string>
+    <string name="topic_installed_apps_title">Apps instalados</string>
+    <string name="topic_system_settings_title">Configurações do sistema</string>
+    <string name="topic_shell_command_title">Comandos de shell</string>
+    <string name="topic_local_ports_title">Portas locais</string>
+    <string name="topic_local_network_title">Conexões de rede local</string>
+    <string name="topic_device_discovery_title">Descoberta de dispositivos na rede local</string>
+    <string name="topic_process_memory_title">Memória de outros processos</string>
+    <string name="topic_contacts_title">Contatos</string>
+    <string name="topic_call_log_title">Registro de chamadas</string>
+    <string name="topic_messages_title">Mensagens de texto</string>
+    <string name="topic_calendar_title">Agenda</string>
+    <string name="topic_sim_info_title">Informações do SIM e da operadora</string>
+    <string name="topic_clipboard_title">Área de transferência</string>
+    <string name="topic_location_title">Localização</string>
+    <string name="topic_wifi_info_title">Verificação de Wi-Fi e informações de conexão</string>
+    <string name="topic_phone_identity_title">Identificadores de telefone e SIM</string>
+    <string name="topic_accounts_title">Contas</string>
+    <string name="topic_running_apps_title">Apps em execução</string>
+    <string name="topic_usage_stats_title">Estatísticas de uso de apps</string>
+    <string name="topic_enabled_services_title">Métodos de entrada e serviços de acessibilidade habilitados</string>
+    <string name="topic_sensors_title">Sensores</string>
+    <string name="topic_android_id_title">Android ID</string>
+    <string name="topic_device_name_title">Nome do dispositivo</string>
+    <string name="topic_camera_title">Câmera</string>
+    <string name="topic_microphone_title">Microfone</string>
+
+    <string name="category_messages">SMS e registros de chamadas</string>
+    <string name="category_contacts">Contatos</string>
+    <string name="category_location">Localização</string>
+    <string name="category_sensors">Câmera, microfone e sensores</string>
+    <string name="category_files">Arquivos e mídia</string>
+    <string name="category_calendar">Agenda</string>
+    <string name="category_personal_info">Informações pessoais</string>
+    <string name="category_app_activity">Atividade do app</string>
+    <string name="category_device_ids">Identificadores do dispositivo</string>
+    <string name="category_network">Rede e dispositivos próximos</string>
+    <string name="category_device_profile">Impressão digital do dispositivo</string>
+    <string name="category_environment">Detecção de ambiente</string>
+
+    <string name="range_hour">Última hora</string>
+    <string name="range_day">Últimas 24 horas</string>
+    <string name="range_week">Últimos 7 dias</string>
+    <string name="range_all">Todo o tempo</string>
+
+    <string name="range_hour_short">Hora</string>
+    <string name="range_day_short">Dia</string>
+    <string name="range_week_short">Semana</string>
+    <string name="range_all_short">Todos</string>
+
+    <string name="select_app">Selecione um app para ver o que ele acessou</string>
+
+    <plurals name="summary_storage">
+        <item quantity="one">%d arquivo</item>
+        <item quantity="many">%d arquivos</item>
+        <item quantity="other">%d arquivos</item>
+    </plurals>
+    <string name="summary_separator">", "</string>
+    <plurals name="summary_more">
+        <item quantity="one">%1$s e mais %2$d</item>
+        <item quantity="many">%1$s e mais %2$d</item>
+        <item quantity="other">%1$s e mais %2$d</item>
+    </plurals>
+    <string name="summary_media_library">Biblioteca de mídia</string>
+    <string name="summary_not_read">%s (não lido)</string>
+    <string name="app_name_with_user">%1$s (usuário %2$d)</string>
+    <plurals name="app_count">
+        <item quantity="one">%d app</item>
+        <item quantity="many">%d apps</item>
+        <item quantity="other">%d apps</item>
+    </plurals>
+
+    <!-- Clipboard summaries are only shown for positive counts, so the one form means one here. -->
+    <plurals name="clipboard_read">
+        <item quantity="one" tools:ignore="ImpliedQuantity">Lido uma vez</item>
+        <item quantity="many">Lido %d vezes</item>
+        <item quantity="other">Lido %d vezes</item>
+    </plurals>
+    <string name="clipboard_listens">Monitora alterações</string>
+    <plurals name="clipboard_written">
+        <item quantity="one" tools:ignore="ImpliedQuantity">Escrito uma vez</item>
+        <item quantity="many">Escrito %d vezes</item>
+        <item quantity="other">Escrito %d vezes</item>
+    </plurals>
+    <plurals name="clipboard_read_denied">
+        <item quantity="one" tools:ignore="ImpliedQuantity">Leitura negada uma vez</item>
+        <item quantity="many">Leitura negada %d vezes</item>
+        <item quantity="other">Leitura negada %d vezes</item>
+    </plurals>
+    <plurals name="clipboard_write_denied">
+        <item quantity="one" tools:ignore="ImpliedQuantity">Escrita negada uma vez</item>
+        <item quantity="many">Escrita negada %d vezes</item>
+        <item quantity="other">Escrita negada %d vezes</item>
+    </plurals>
+    <string name="clipboard_read_short">Leitura %d×</string>
+    <string name="clipboard_listens_short">Monitoramento</string>
+    <string name="clipboard_written_short">Escrita %d×</string>
+    <string name="clipboard_read_denied_short">Leitura negada %d×</string>
+    <string name="clipboard_write_denied_short">Escrita negada %d×</string>
+    <string name="clipboard_partly_denied">%1$s (recusas: %2$d)</string>
+
+    <string name="sensor_high_rate">%s (alta taxa de amostragem)</string>
+    <plurals name="sensor_times">
+        <item quantity="one">%d vez</item>
+        <item quantity="many">%d vezes</item>
+        <item quantity="other">%d vezes</item>
+    </plurals>
+    <string name="sensor_times_short">%d×</string>
+    <string name="sensor_unknown">Sensor desconhecido</string>
+    <string name="sensor_type_number">Tipo de sensor %s</string>
+    <string name="sensor_accelerometer">Acelerômetro</string>
+    <string name="sensor_accelerometer_uncalibrated">Acelerômetro (não calibrado)</string>
+    <string name="sensor_accelerometer_limited_axes">Acelerômetro (eixos limitados)</string>
+    <string name="sensor_accelerometer_limited_axes_uncalibrated">Acelerômetro (eixos limitados, não calibrados)</string>
+    <string name="sensor_gyroscope">Giroscópio</string>
+    <string name="sensor_gyroscope_uncalibrated">Giroscópio (não calibrado)</string>
+    <string name="sensor_gyroscope_limited_axes">Giroscópio (eixos limitados)</string>
+    <string name="sensor_gyroscope_limited_axes_uncalibrated">Giroscópio (eixos limitados, não calibrados)</string>
+    <string name="sensor_magnetic_field">Magnetômetro</string>
+    <string name="sensor_magnetic_field_uncalibrated">Magnetômetro (não calibrado)</string>
+    <string name="sensor_orientation">Orientação</string>
+    <string name="sensor_light">Sensor de luz</string>
+    <string name="sensor_proximity">Sensor de proximidade</string>
+    <string name="sensor_pressure">Barômetro</string>
+    <string name="sensor_relative_humidity">Sensor de umidade</string>
+    <string name="sensor_ambient_temperature">Temperatura ambiente</string>
+    <string name="sensor_gravity">Gravidade</string>
+    <string name="sensor_linear_acceleration">Aceleração linear</string>
+    <string name="sensor_rotation_vector">Vetor de rotação</string>
+    <string name="sensor_game_rotation_vector">Vetor de rotação do jogo</string>
+    <string name="sensor_geomagnetic_rotation_vector">Vetor de rotação geomagnética</string>
+    <string name="sensor_significant_motion">Movimento significativo</string>
+    <string name="sensor_step_detector">Detector de passos</string>
+    <string name="sensor_step_counter">Contador de passos</string>
+    <string name="sensor_heart_rate">Frequência cardíaca</string>
+    <string name="sensor_heart_beat">Batimento cardíaco</string>
+    <string name="sensor_device_orientation">Orientação do dispositivo</string>
+    <string name="sensor_pick_up_gesture">Gesto de levantar o dispositivo</string>
+    <string name="sensor_tilt_detector">Detector de inclinação</string>
+    <string name="sensor_hinge_angle">Ângulo da dobradiça</string>
+    <string name="sensor_low_latency_offbody_detect">Detecção de remoção do dispositivo</string>
+    <string name="sensor_stationary_detect">Detecção de imobilidade</string>
+    <string name="sensor_motion_detect">Detecção de movimento</string>
+    <string name="sensor_pose_6dof">Pose 6DoF</string>
+    <string name="sensor_head_tracker">Rastreador de cabeça</string>
+    <string name="sensor_heading">Rumo</string>
+    <string name="command_failed">A operação não pôde ser concluída.</string>
+    <string name="daemon_bad_response">A resposta não pôde ser lida.</string>
+    <string name="database_busy">O banco de dados de registros está ocupado.</string>
+    <string name="daemon_unavailable">O registro não está em execução.</string>
+    <string name="destination_missing">O destino não está mais disponível.</string>
+    <string name="app_missing">Este app não está mais instalado para este usuário do Android.</string>
+    <string name="timed_out">A operação expirou.</string>
+    <string name="invalid_period">Escolha um intervalo de tempo mais curto e não vazio.</string>
+    <string name="module_version_unreadable">A versão instalada não pôde ser lida.</string>
+    <string name="unsupported_architecture">O registro não é compatível com o processador deste dispositivo.</string>
+    <string name="kernel_btf_missing">O kernel não possui suporte BTF. É necessário o GKI 5.10 ou mais recente.</string>
+    <string name="kernel_too_old">É necessário o kernel 5.10 ou mais recente.</string>
+    <string name="module_archive_invalid">Os arquivos necessários para registro não puderam ser lidos no pacote do app. Reinstale o app.</string>
+    <string name="database_incompatible">Esta versão não pode ler os registros existentes.</string>
+    <string name="module_install_failed">A configuração não foi concluída. Exporte os logs em Configurações para um relatório de bug.</string>
+    <string name="module_update_failed">Tente novamente. Se falhar novamente, exporte os logs em Configurações para obter um relatório de bug.</string>
+    <string name="daemon_start_failed">Não foi possível iniciar o registro.</string>
+    <string name="installed_apps_unavailable">Os apps instalados não puderam ser lidos.</string>
+    <string name="module_disabled">O módulo Big Brother está desativado ou marcado para remoção no gerenciador root. Altere a configuração no gerenciador.</string>
+    <string name="module_remove_failed">Não removido. Tente novamente.</string>
+    <string name="daemon_not_reporting">Foi iniciado mas ainda não gravou nada. Se isso persistir, exporte os logs em Configurações para obter um relatório de bug.</string>
+    <string name="file_access_denied">O armazenamento compartilhado não está acessível. Verifique se o acesso root foi concedido.</string>
+    <string name="export_logs_failed">Os logs não puderam ser coletados.</string>
+</resources>

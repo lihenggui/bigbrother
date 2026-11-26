@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <plurals name="readers_label">
+        <item quantity="one">uygulama dosya okudu</item>
+        <item quantity="other">uygulama dosya okudu</item>
+    </plurals>
+    <string name="no_reads">Hiçbir uygulama dosya okumadı</string>
+    <plurals name="looked_only">
+        <item quantity="one">%d uygulama daha dosyaları okumadan aradı</item>
+        <item quantity="other">%d uygulama daha dosyaları okumadan aradı</item>
+    </plurals>
+    <string name="more_count">+%d</string>
+    <string name="other_categories">Diğer hassas izinler</string>
+    <plurals name="category_count">
+        <item quantity="one">%d çeşit</item>
+        <item quantity="other">%d çeşit</item>
+    </plurals>
+
+    <plurals name="category_group_read_files">
+        <item quantity="one">%d uygulama dosya okudu</item>
+        <item quantity="other">%d uygulama dosya okudu</item>
+    </plurals>
+    <plurals name="category_group_looked_only">
+        <item quantity="one">%d uygulama yalnızca dosyaları aradı</item>
+        <item quantity="other">%d uygulama yalnızca dosyaları aradı</item>
+    </plurals>
+
+    <string name="status_stopped">Kayıt durduruldu</string>
+    <string name="daemon_stopped">Kayıt durduğunda gerçekleşen erişimler kaydedilmez.</string>
+    <string name="daemon_starting">Kayıt başlatılıyor…</string>
+    <string name="start_daemon">Kaydı başlat</string>
+    <string name="install_module">Kaydı ayarla</string>
+    <string name="updating_module">Güncelleme tamamlanıyor…</string>
+    <string name="update_failed_title">Güncelleme tamamlanamadı</string>
+    <string name="module_pending_reboot">Yeniden başlatma gerekli</string>
+    <string name="module_pending_reboot_body">root yöneticisinden yüklenen modül, cihaz bir sonraki yeniden başlatıldığında etkinleşir.</string>
+    <string name="installing_module">Kayıt ayarlanıyor…</string>
+    <string name="install_failed_title">Kayıt ayarlanamadı</string>
+    <string name="setup_body">Big Brother, erişimleri root yetkisiyle kaydeder. Kurulum için yeniden başlatmak gerekmez.</string>
+    <string name="setup_pending_body">root yöneticisinden yüklenen modül, cihaz bir sonraki yeniden başlatıldığında etkinleşir. Kayıt, cihazı yeniden başlatmadan da kurulabilir.</string>
+</resources>

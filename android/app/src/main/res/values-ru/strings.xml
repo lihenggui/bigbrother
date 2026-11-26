@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="module_description">Записывает обращения приложений к файлам и запросы персональных данных через поставщики контента Android. Тюрьма позволяет управлять Android ID, рекламными идентификаторами, видимостью приложений и доступом к файлам.</string>
+    <string name="nav_overview">Обзор</string>
+    <string name="nav_apps">Приложения</string>
+    <string name="nav_timeline">Хронология</string>
+    <string name="nav_jail">Тюрьма</string>
+
+    <string name="guide_access_title">Отслеживание доступа к личным данным</string>
+    <string name="guide_access_body">Big Brother записывает, когда и какие данные считывают приложения: файлы, местоположение, буфер обмена и идентификаторы устройства. Записи хранятся только на этом устройстве.</string>
+    <string name="guide_timeline_title">Хронология доступа</string>
+    <string name="guide_timeline_body">В хронологии записи сгруппированы по часам и приложениям. Откройте запись, чтобы увидеть подробности.</string>
+    <string name="guide_jail_title">Изолировать выбранные приложения</string>
+    <string name="guide_jail_body">Изоляция в тюрьме даёт приложению отдельное хранилище, пустой буфер обмена и виртуальный ID устройства. Каждый параметр можно изменить отдельно.</string>
+    <string name="guide_skip">Пропустить</string>
+    <string name="guide_next">Далее</string>
+    <string name="guide_back">Предыдущая страница</string>
+    <string name="guide_start">Начать</string>
+    <string name="guide_progress">Страница %1$d из %2$d</string>
+    <string name="guide_guard_description">Пример: телохранитель проверяет четыре приложения и записывает то, что читает каждое из них.</string>
+    <string name="guide_timeline_description">Пример хронологии: какие данные прочитали приложения «Погода», «Магазин», «Чат» и «Фонарик».</string>
+    <string name="guide_jail_description">Пример: приложение «Погода» в тюрьме. У него пустой буфер обмена, виртуальный ID и изолированное хранилище.</string>
+    <string name="guide_weather">Погода</string>
+    <string name="guide_shop">Магазин</string>
+    <string name="guide_chat">Чат</string>
+    <string name="guide_flashlight">Фонарик</string>
+    <string name="guide_location">Местоположение</string>
+    <string name="guide_clipboard">Буфер</string>
+    <string name="guide_files">Файлы</string>
+    <string name="guide_device_id">ID устройства</string>
+    <string name="guide_isolated_value">%1$s: %2$s</string>
+</resources>

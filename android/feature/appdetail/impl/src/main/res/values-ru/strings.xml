@@ -1,0 +1,195 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="open_jail">Изолировать или настроить</string>
+    <string name="isolate_app_title">Изолировать %1$s?</string>
+    <string name="isolate_app_summary">Приложение закроется, и к нему применятся настройки тюрьмы. Затем ограничения можно изменить.</string>
+    <string name="isolate_app">Изолировать</string>
+    <string name="isolating_app">Изолирование приложения…</string>
+    <string name="jail_action_failed">Не удалось открыть настройки тюрьмы</string>
+
+    <string name="action_read">Чтение</string>
+    <string name="action_write">Изменение</string>
+    <string name="action_read_write">Чтение и изменение</string>
+    <string name="action_list">Просмотр каталога</string>
+    <string name="action_probe">Проверка</string>
+    <string name="action_watch">Наблюдение</string>
+    <string name="action_read_provider">Чтение через поставщика контента</string>
+    <string name="action_write_provider">Изменение через поставщика контента</string>
+    <string name="action_query">Запрос</string>
+    <string name="action_connect">Подключение</string>
+    <string name="action_exec">Выполнено</string>
+    <string name="action_used">Использование</string>
+    <string name="action_call">Вызов</string>
+    <string name="action_clipboard_write">Запись</string>
+    <string name="search_paths">Поиск по путям</string>
+    <plurals name="access_query">
+        <item quantity="one">Медиатека · до %2$d записей</item>
+        <item quantity="few">%1$d запроса · до %2$d записей</item>
+        <item quantity="many">Запросов: %1$d · до %2$d записей</item>
+        <item quantity="other">Запросов: %1$d · до %2$d записей</item>
+    </plurals>
+
+    <string name="internal_storage">Внутр. накопитель</string>
+    <string name="internal_storage_user">Внутренняя память (пользователь %d)</string>
+
+    <string name="collection_images">Фотографии</string>
+    <string name="collection_videos">Видео</string>
+    <string name="collection_audio">Музыка и аудио</string>
+    <string name="collection_downloads">Загрузки</string>
+    <string name="collection_files">Все медиа и файлы</string>
+    <string name="collection_documents">Папки, предоставленные через средство выбора документов</string>
+
+    <string name="results_truncated">Показаны только самые последние записи.</string>
+
+    <string name="access_allowed">%1$s %2$d×</string>
+    <string name="access_blocked">%1$s %2$d×, отказано</string>
+    <string name="access_partly_blocked">%1$s %2$d× (%3$d× отказано)</string>
+    <string name="access_separator">"; "</string>
+    <plurals name="total_allowed">
+        <item quantity="one">Прочитано %d раз</item>
+        <item quantity="few">Прочитано %d раза</item>
+        <item quantity="many">Прочитано %d раз</item>
+        <item quantity="other">Прочитано %d раз</item>
+    </plurals>
+    <plurals name="total_requested">
+        <item quantity="one">Вызовов: %d</item>
+        <item quantity="few">Вызовов: %d</item>
+        <item quantity="many">Вызовов: %d</item>
+        <item quantity="other">Вызовов: %d</item>
+    </plurals>
+    <plurals name="total_contacted">
+        <item quantity="one">Подключений: %d</item>
+        <item quantity="few">Подключений: %d</item>
+        <item quantity="many">Подключений: %d</item>
+        <item quantity="other">Подключений: %d</item>
+    </plurals>
+    <plurals name="total_ran">
+        <item quantity="one">Выполнено %d раз</item>
+        <item quantity="few">Выполнено %d раза</item>
+        <item quantity="many">Выполнено %d раз</item>
+        <item quantity="other">Выполнено %d раз</item>
+    </plurals>
+    <plurals name="total_not_run">
+        <item quantity="one">Не выполнено %d раз</item>
+        <item quantity="few">Не выполнено %d раза</item>
+        <item quantity="many">Не выполнено %d раз</item>
+        <item quantity="other">Не выполнено %d раз</item>
+    </plurals>
+    <plurals name="total_blocked">
+        <item quantity="one">Отказано %d раз</item>
+        <item quantity="few">Отказано %d раза</item>
+        <item quantity="many">Отказано %d раз</item>
+        <item quantity="other">Отказано %d раз</item>
+    </plurals>
+    <string name="removable_storage">Накопитель %s</string>
+
+    <string name="filter_read">Прочитано</string>
+    <string name="filter_all">Весь доступ</string>
+    <string name="no_files_read">Чтений файлов нет</string>
+
+    <string name="storage_root">Хранилище</string>
+    <string name="group_media">Медиатека</string>
+
+    <string name="read_count">%d×</string>
+
+    <string name="open_file_missing">Файл не найден.</string>
+    <string name="open_file_no_viewer">Ни одно приложение не может открыть этот файл.</string>
+
+    <string name="open_file">Открыть</string>
+    <string name="show_all_details">Показать все (%d)</string>
+    <plurals name="apps_asked">
+        <item quantity="one">Сведения о %d приложении запрошены</item>
+        <item quantity="few">Сведения о %d приложениях запрошены</item>
+        <item quantity="many">Сведения о %d приложениях запрошены</item>
+        <item quantity="other">Сведения о %d приложениях запрошены</item>
+    </plurals>
+    <plurals name="root_apps_asked">
+        <item quantity="one">Проверено наличие root: %d приложение</item>
+        <item quantity="few">Проверено наличие root: %d приложения</item>
+        <item quantity="many">Проверено наличие root: %d приложений</item>
+        <item quantity="other">Проверено наличие root: %d приложений</item>
+    </plurals>
+    <plurals name="absent_apps_asked">
+        <item quantity="one">Искал %d приложение, которого нет на этом устройстве</item>
+        <item quantity="few">Искал %d приложения, которых нет на этом устройстве</item>
+        <item quantity="many">Искал %d приложений, которых нет на этом устройстве</item>
+        <item quantity="other">Искал %d приложений, которых нет на этом устройстве</item>
+    </plurals>
+    <string name="tab_info">Информация о приложении</string>
+    <string name="header_subtitle">%1$s · %2$s</string>
+    <string name="source_permissions">Использование разрешений</string>
+    <plurals name="total_used">
+        <item quantity="one">Использовано %d раз</item>
+        <item quantity="few">Использовано %d раза</item>
+        <item quantity="many">Использовано %d раз</item>
+        <item quantity="other">Использовано %d раз</item>
+    </plurals>
+    <string name="info_package">Имя пакета</string>
+    <string name="info_version">Версия</string>
+    <string name="info_version_value">%1$s (%2$d)</string>
+    <string name="info_target_sdk">Целевой SDK</string>
+    <string name="info_first_install">Установлено</string>
+    <string name="info_last_update">Последнее обновление</string>
+    <string name="info_open_settings">Настройки приложения</string>
+    <string name="info_launch">Открыть приложение</string>
+    <string name="info_copied">Скопировано</string>
+    <string name="source_isolated">Изолированный процесс</string>
+
+    <string name="last_access">Последний доступ: %s</string>
+    <plurals name="files_read">
+        <item quantity="one">Прочитано %d файл</item>
+        <item quantity="few">Прочитано %d файла</item>
+        <item quantity="many">Прочитано %d файлов</item>
+        <item quantity="other">Прочитано %d файлов</item>
+    </plurals>
+    <plurals name="paths_looked_for">
+        <item quantity="one">Проверено ещё %d путь</item>
+        <item quantity="few">Проверено ещё %d пути</item>
+        <item quantity="many">Проверено ещё %d путей</item>
+        <item quantity="other">Проверено ещё %d путей</item>
+    </plurals>
+    <string name="browse_files">Все записи доступа к файлам</string>
+    <string name="media_collection">Медиатека · %s</string>
+    <plurals name="opened_via_media">
+        <item quantity="one">Открыто %d раз</item>
+        <item quantity="few">Открыто %d раза</item>
+        <item quantity="many">Открыто %d раз</item>
+        <item quantity="other">Открыто %d раз</item>
+    </plurals>
+    <string name="files_title">Файлы</string>
+    <string name="close">Закрыть</string>
+    <string name="record_details">Подробности</string>
+    <string name="record_history">Каждый доступ</string>
+    <string name="record_history_partial">Время указано для самых последних записей такого рода.</string>
+
+    <string name="sensor_sessions">Использование датчика</string>
+    <string name="sensor_total">Всего %s</string>
+    <string name="session_span">%1$s – %2$s</string>
+    <string name="sensor_since">С %s</string>
+    <string name="sensor_still_on">Все еще включено</string>
+    <string name="high_rate">Высокая частота опроса</string>
+    <string name="rate_fastest">Самый быстрый</string>
+    <string name="sensor_sessions_note">Указана запрошенная частота опроса. Система может передавать меньше событий.</string>
+    <string name="duration_seconds">%d с</string>
+    <string name="duration_minutes">%d мин</string>
+    <string name="duration_hours">%d ч</string>
+    <string name="duration_hours_minutes">%1$d ч %2$d мин</string>
+    <string name="duration_days">%d дн.</string>
+    <string name="duration_days_hours">%1$d дн. %2$d ч</string>
+    <string name="expanded">Развёрнуто</string>
+    <string name="collapsed">Свёрнуто</string>
+</resources>

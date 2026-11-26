@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="settings_title">Настройки</string>
+    <string name="section_recording">Запись</string>
+    <string name="section_display">Экран</string>
+    <string name="section_about">О приложении</string>
+    <string name="recording_active">Идёт запись</string>
+    <string name="recording_unknown">Статус записи неизвестен</string>
+    <string name="retention">Записи хранятся 30 дней</string>
+    <string name="coverage_title">Не поддерживается на этом устройстве</string>
+    <string name="feature_files">Файлы открыты</string>
+    <string name="feature_exec">Выполнение команды</string>
+    <string name="feature_network">Подключения к локальной сети</string>
+    <string name="feature_process">Доступ к памяти процесса</string>
+    <string name="feature_netlink">Запросы Netlink</string>
+    <string name="feature_binder">Вызов системной службы</string>
+    <string name="feature_appops">Использование разрешений</string>
+    <string name="remove_module">Удалить запись</string>
+    <string name="remove_module_summary">Останавливает запись и удаляет записи</string>
+    <string name="remove_module_removing">Удаление записи…</string>
+    <string name="remove_module_title">Удалить запись?</string>
+    <string name="remove_module_body">Запись остановится, а записи будут удалены. Приложения в тюрьме снова получат реальные данные и будут перезапущены. Запись можно настроить заново на вкладке «Обзор».</string>
+    <string name="remove_module_confirm">Удалить</string>
+    <string name="cancel">Отмена</string>
+    <string name="module_in_manager">Установлено как модуль в менеджере root</string>
+    <string name="module_in_manager_summary">Чтобы убрать запись, удалите там модуль и перезагрузите. Это удаляет записи.</string>
+    <string name="module_in_manager_pending">Вступает в силу после следующего перезапуска</string>
+    <string name="lsposed_title">Модуль LSPosed</string>
+    <string name="lsposed_summary">Включите Big Brother в LSPosed, чтобы записывать доступ к медиатеке, контактам, сообщениям и календарю.</string>
+    <string name="setting_system_apps">Показать системные приложения</string>
+    <string name="setting_system_apps_summary">По умолчанию скрыто, а также изолированные процессы, не привязанные к приложению: чтение данных является частью работы компонентов системы.</string>
+    <string name="theme">Тема</string>
+    <string name="theme_system">Как в системе</string>
+    <string name="theme_light">Светлая</string>
+    <string name="theme_dark">Тёмная</string>
+    <string name="dynamic_color">Цвета обоев</string>
+    <string name="dynamic_color_summary">Когда выключено, приложение использует свои собственные цвета</string>
+    <string name="version">Версия</string>
+    <string name="source_code">Исходный код</string>
+    <string name="license">Лицензия</string>
+    <string name="export_logs">Экспорт журналов</string>
+    <string name="export_logs_summary">Журналы приложения и записи для отчета об ошибке</string>
+    <string name="export_logs_collecting">Собираем логи…</string>
+</resources>

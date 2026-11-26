@@ -1,0 +1,206 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="isolated_process_uid">Proses terisolasi (UID %d)</string>
+    <string name="back">Kembali</string>
+    <string name="retry">Coba lagi</string>
+    <string name="settings_write_failed">Setelan tidak dapat disimpan</string>
+    <string name="search">Cari</string>
+    <string name="recording_stopped">Perekaman dihentikan</string>
+    <string name="close_search">Tutup pencarian</string>
+    <string name="clear_search">Hapus pencarian</string>
+    <string name="no_matches">Tidak ada kecocokan</string>
+
+    <string name="empty_title">Tidak ada catatan dalam rentang waktu ini</string>
+    <string name="no_root_title">Akses root diperlukan</string>
+    <string name="no_root_body">Berikan akses root di pengelola root (KernelSU, Magisk, atau APatch), lalu coba lagi.</string>
+    <string name="no_module_title">Perekaman belum disiapkan</string>
+    <string name="no_module_body">Siapkan perekaman di Ringkasan.</string>
+    <string name="old_module_title">Pembaruan belum selesai</string>
+    <string name="old_module_body">Fitur ini tidak tersedia hingga pembaruan selesai. Buka Ringkasan untuk menyelesaikan pembaruan.</string>
+    <string name="error_title">Tidak dapat memuat catatan</string>
+
+    <string name="topic_mac_address_title">alamat MAC</string>
+    <string name="topic_network_interfaces_title">Antarmuka jaringan</string>
+    <string name="topic_arp_table_title">tabel ARP</string>
+    <string name="topic_network_state_title">Status jaringan</string>
+    <string name="topic_device_serial_title">Nomor seri</string>
+    <string name="topic_soc_info_title">Detail SoC</string>
+    <string name="topic_cpu_model_title">Model prosesor</string>
+    <string name="topic_kernel_version_title">Versi kernel</string>
+    <string name="topic_other_processes_title">Proses lain</string>
+    <string name="topic_mounts_title">Sistem file yang terpasang</string>
+    <string name="topic_kernel_modules_title">Modul kernel</string>
+    <string name="topic_selinux_state_title">status SELinux</string>
+    <string name="topic_block_devices_title">Perangkat blok</string>
+    <string name="topic_emulator_probe_title">Deteksi emulator</string>
+    <string name="topic_input_devices_title">Perangkat masukan</string>
+    <string name="topic_battery_title">Status baterai</string>
+    <string name="topic_root_check_title">Deteksi root</string>
+    <string name="topic_app_probe_title">Pemeriksaan aplikasi terinstal</string>
+    <string name="topic_system_properties_title">Properti sistem</string>
+    <string name="topic_installed_apps_title">Aplikasi terinstal</string>
+    <string name="topic_system_settings_title">Setelan sistem</string>
+    <string name="topic_shell_command_title">Perintah shell</string>
+    <string name="topic_local_ports_title">Port lokal</string>
+    <string name="topic_local_network_title">Koneksi jaringan lokal</string>
+    <string name="topic_device_discovery_title">Penemuan perangkat di jaringan lokal</string>
+    <string name="topic_process_memory_title">Memori proses lain</string>
+    <string name="topic_contacts_title">Kontak</string>
+    <string name="topic_call_log_title">Log panggilan</string>
+    <string name="topic_messages_title">Pesan teks</string>
+    <string name="topic_calendar_title">Kalender</string>
+    <string name="topic_sim_info_title">Info SIM dan operator</string>
+    <string name="topic_clipboard_title">papan klip</string>
+    <string name="topic_location_title">Lokasi</string>
+    <string name="topic_wifi_info_title">Pemindaian Wi-Fi dan info koneksi</string>
+    <string name="topic_phone_identity_title">Pengidentifikasi telepon dan SIM</string>
+    <string name="topic_accounts_title">Akun</string>
+    <string name="topic_running_apps_title">Aplikasi yang sedang berjalan</string>
+    <string name="topic_usage_stats_title">Statistik penggunaan aplikasi</string>
+    <string name="topic_enabled_services_title">Metode masukan dan layanan aksesibilitas diaktifkan</string>
+    <string name="topic_sensors_title">Sensor</string>
+    <string name="topic_android_id_title">Android ID</string>
+    <string name="topic_device_name_title">Nama perangkat</string>
+    <string name="topic_camera_title">Kamera</string>
+    <string name="topic_microphone_title">Mikrofon</string>
+
+    <string name="category_messages">SMS dan log panggilan</string>
+    <string name="category_contacts">Kontak</string>
+    <string name="category_location">Lokasi</string>
+    <string name="category_sensors">Kamera, mikrofon, dan sensor</string>
+    <string name="category_files">File dan media</string>
+    <string name="category_calendar">Kalender</string>
+    <string name="category_personal_info">Informasi pribadi</string>
+    <string name="category_app_activity">Aktivitas aplikasi</string>
+    <string name="category_device_ids">ID perangkat</string>
+    <string name="category_network">Jaringan dan perangkat di sekitar</string>
+    <string name="category_device_profile">Sidik jari perangkat</string>
+    <string name="category_environment">Deteksi lingkungan</string>
+
+    <string name="range_hour">Jam terakhir</string>
+    <string name="range_day">24 jam terakhir</string>
+    <string name="range_week">7 hari terakhir</string>
+    <string name="range_all">Sepanjang waktu</string>
+
+    <string name="range_hour_short">Jam</string>
+    <string name="range_day_short">Hari</string>
+    <string name="range_week_short">Minggu</string>
+    <string name="range_all_short">Semua</string>
+
+    <string name="select_app">Pilih aplikasi untuk melihat apa yang diaksesnya</string>
+
+    <plurals name="summary_storage">
+        <item quantity="other">%d file</item>
+    </plurals>
+    <string name="summary_separator">", "</string>
+    <plurals name="summary_more">
+        <item quantity="other">%1$s dan %2$d lainnya</item>
+    </plurals>
+    <string name="summary_media_library">Perpustakaan media</string>
+    <string name="summary_not_read">%s (tidak dibaca)</string>
+    <string name="app_name_with_user">%1$s (pengguna %2$d)</string>
+    <plurals name="app_count">
+        <item quantity="other">%d aplikasi</item>
+    </plurals>
+
+    <plurals name="clipboard_read">
+        <item quantity="other">Dibaca %d kali</item>
+    </plurals>
+    <string name="clipboard_listens">Memantau perubahan</string>
+    <plurals name="clipboard_written">
+        <item quantity="other">Ditulis %d kali</item>
+    </plurals>
+    <plurals name="clipboard_read_denied">
+        <item quantity="other">Baca ditolak %d kali</item>
+    </plurals>
+    <plurals name="clipboard_write_denied">
+        <item quantity="other">Tulis ditolak %d kali</item>
+    </plurals>
+    <string name="clipboard_read_short">Dibaca %d×</string>
+    <string name="clipboard_listens_short">Memantau</string>
+    <string name="clipboard_written_short">Ditulis %d×</string>
+    <string name="clipboard_read_denied_short">Baca ditolak %d×</string>
+    <string name="clipboard_write_denied_short">Tulisan ditolak %d×</string>
+    <string name="clipboard_partly_denied">%1$s (%2$d ditolak)</string>
+
+    <string name="sensor_high_rate">%s (laju sampel tinggi)</string>
+    <plurals name="sensor_times">
+        <item quantity="other">%d kali</item>
+    </plurals>
+    <string name="sensor_times_short">%d×</string>
+    <string name="sensor_unknown">Sensor tidak dikenal</string>
+    <string name="sensor_type_number">Tipe sensor %s</string>
+    <string name="sensor_accelerometer">Akselerometer</string>
+    <string name="sensor_accelerometer_uncalibrated">Akselerometer (tidak dikalibrasi)</string>
+    <string name="sensor_accelerometer_limited_axes">Akselerometer (sumbu terbatas)</string>
+    <string name="sensor_accelerometer_limited_axes_uncalibrated">Akselerometer (sumbu terbatas, tidak dikalibrasi)</string>
+    <string name="sensor_gyroscope">Giroskop</string>
+    <string name="sensor_gyroscope_uncalibrated">Giroskop (tidak dikalibrasi)</string>
+    <string name="sensor_gyroscope_limited_axes">Giroskop (sumbu terbatas)</string>
+    <string name="sensor_gyroscope_limited_axes_uncalibrated">Giroskop (sumbu terbatas, tidak dikalibrasi)</string>
+    <string name="sensor_magnetic_field">magnetometer</string>
+    <string name="sensor_magnetic_field_uncalibrated">Magnetometer (tidak dikalibrasi)</string>
+    <string name="sensor_orientation">Orientasi</string>
+    <string name="sensor_light">Sensor cahaya</string>
+    <string name="sensor_proximity">Sensor jarak</string>
+    <string name="sensor_pressure">Barometer</string>
+    <string name="sensor_relative_humidity">Sensor kelembaban</string>
+    <string name="sensor_ambient_temperature">Suhu lingkungan</string>
+    <string name="sensor_gravity">Gravitasi</string>
+    <string name="sensor_linear_acceleration">Akselerasi linier</string>
+    <string name="sensor_rotation_vector">Vektor rotasi</string>
+    <string name="sensor_game_rotation_vector">Vektor rotasi permainan</string>
+    <string name="sensor_geomagnetic_rotation_vector">Vektor rotasi geomagnetik</string>
+    <string name="sensor_significant_motion">Gerakan yang signifikan</string>
+    <string name="sensor_step_detector">Detektor langkah</string>
+    <string name="sensor_step_counter">Penghitung langkah</string>
+    <string name="sensor_heart_rate">Detak jantung</string>
+    <string name="sensor_heart_beat">Detak jantung</string>
+    <string name="sensor_device_orientation">Orientasi perangkat</string>
+    <string name="sensor_pick_up_gesture">Gerakan mengangkat perangkat</string>
+    <string name="sensor_tilt_detector">Detektor kemiringan</string>
+    <string name="sensor_hinge_angle">Sudut engsel</string>
+    <string name="sensor_low_latency_offbody_detect">Deteksi pelepasan perangkat</string>
+    <string name="sensor_stationary_detect">Deteksi keadaan diam</string>
+    <string name="sensor_motion_detect">Deteksi gerakan</string>
+    <string name="sensor_pose_6dof">pose 6DoF</string>
+    <string name="sensor_head_tracker">Pelacak kepala</string>
+    <string name="sensor_heading">Arah</string>
+    <string name="command_failed">Operasi tidak dapat diselesaikan.</string>
+    <string name="daemon_bad_response">Responsnya tidak dapat dibaca.</string>
+    <string name="database_busy">Basis data catatan sedang sibuk.</string>
+    <string name="daemon_unavailable">Perekaman tidak berjalan.</string>
+    <string name="destination_missing">Tujuannya tidak lagi tersedia.</string>
+    <string name="app_missing">Aplikasi ini tidak lagi dipasang untuk pengguna Android ini.</string>
+    <string name="timed_out">Waktu operasi telah habis.</string>
+    <string name="invalid_period">Pilih rentang waktu yang lebih pendek dan tidak kosong.</string>
+    <string name="module_version_unreadable">Versi yang diinstal tidak dapat dibaca.</string>
+    <string name="unsupported_architecture">Perekaman tidak mendukung prosesor perangkat ini.</string>
+    <string name="kernel_btf_missing">Kernel tidak memiliki dukungan BTF. GKI 5.10 atau yang lebih baru diperlukan.</string>
+    <string name="kernel_too_old">Kernel 5.10 atau yang lebih baru diperlukan.</string>
+    <string name="module_archive_invalid">File yang diperlukan untuk merekam tidak dapat dibaca dari paket aplikasi. Instal ulang aplikasi.</string>
+    <string name="database_incompatible">Versi ini tidak dapat membaca catatan yang ada.</string>
+    <string name="module_install_failed">Penyiapan tidak selesai. Ekspor log di Setelan untuk laporan bug.</string>
+    <string name="module_update_failed">Coba lagi. Jika gagal lagi, ekspor log di Setelan untuk laporan bug.</string>
+    <string name="daemon_start_failed">Perekaman tidak dapat dimulai.</string>
+    <string name="installed_apps_unavailable">Aplikasi yang diinstal tidak dapat dibaca.</string>
+    <string name="module_disabled">Modul Big Brother dinonaktifkan atau ditandai untuk dihapus di pengelola root. Ubah setelannya di sana.</string>
+    <string name="module_remove_failed">Tidak dihapus. Coba lagi.</string>
+    <string name="daemon_not_reporting">Perekaman telah dimulai, tetapi belum ada yang tercatat. Jika masalah berlanjut, ekspor log dari Setelan untuk laporan bug.</string>
+    <string name="file_access_denied">Penyimpanan bersama tidak dapat diakses. Periksa apakah akses root diberikan.</string>
+    <string name="export_logs_failed">Log tidak dapat dikumpulkan.</string>
+</resources>

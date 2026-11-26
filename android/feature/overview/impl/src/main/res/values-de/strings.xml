@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <plurals name="readers_label">
+        <item quantity="one">App hat Dateien gelesen</item>
+        <item quantity="other">Apps haben Dateien gelesen</item>
+    </plurals>
+    <string name="no_reads">Keine App hat Dateien gelesen</string>
+    <plurals name="looked_only">
+        <item quantity="one">%d weitere App hat nach Dateien gesucht, ohne sie zu lesen</item>
+        <item quantity="other">%d weitere Apps suchten nach Dateien, ohne sie zu lesen</item>
+    </plurals>
+    <string name="more_count">+%d</string>
+    <string name="other_categories">Andere sensible Berechtigungen</string>
+    <plurals name="category_count">
+        <item quantity="one">%d Art</item>
+        <item quantity="other">%d Arten</item>
+    </plurals>
+
+    <plurals name="category_group_read_files">
+        <item quantity="one">%d App hat Dateien gelesen</item>
+        <item quantity="other">%d Apps haben Dateien gelesen</item>
+    </plurals>
+    <plurals name="category_group_looked_only">
+        <item quantity="one">%d App hat nur nach Dateien gesucht</item>
+        <item quantity="other">%d Apps haben nur nach Dateien gesucht</item>
+    </plurals>
+
+    <string name="status_stopped">Aufzeichnung gestoppt</string>
+    <string name="daemon_stopped">Zwischenzeitliche Zugriffe werden nicht erfasst.</string>
+    <string name="daemon_starting">Aufzeichnung wird gestartet…</string>
+    <string name="start_daemon">Aufzeichnung starten</string>
+    <string name="install_module">Aufnahme einrichten</string>
+    <string name="updating_module">Das Update wird abgeschlossen…</string>
+    <string name="update_failed_title">Das Update konnte nicht abgeschlossen werden</string>
+    <string name="module_pending_reboot">Neustart erforderlich</string>
+    <string name="module_pending_reboot_body">Das im root-Manager geflashte Modul wird nach dem nächsten Neustart wirksam.</string>
+    <string name="installing_module">Aufzeichnung wird eingerichtet…</string>
+    <string name="install_failed_title">Die Aufnahme konnte nicht eingerichtet werden</string>
+    <string name="setup_body">Big Brother zeichnet Zugriffe mit root-Zugriff auf. Die Einrichtung erfordert keinen Neustart.</string>
+    <string name="setup_pending_body">Das im root-Manager geflashte Modul wird nach dem nächsten Neustart wirksam. Die Aufzeichnung kann jetzt auch ohne Neustart eingerichtet werden.</string>
+</resources>

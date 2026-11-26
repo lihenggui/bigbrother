@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="settings_title">Einstellungen</string>
+    <string name="section_recording">Aufzeichnung</string>
+    <string name="section_display">Anzeige</string>
+    <string name="section_about">Über die App</string>
+    <string name="recording_active">Aufzeichnung läuft</string>
+    <string name="recording_unknown">Aufzeichnungsstatus unbekannt</string>
+    <string name="retention">Aufzeichnungen werden 30 Tage lang aufbewahrt</string>
+    <string name="coverage_title">Wird auf diesem Gerät nicht unterstützt</string>
+    <string name="feature_files">Dateien geöffnet</string>
+    <string name="feature_exec">Befehlsausführung</string>
+    <string name="feature_network">Lokale Netzwerkverbindungen</string>
+    <string name="feature_process">Zugriff auf den Prozessspeicher</string>
+    <string name="feature_netlink">Netlink-Abfragen</string>
+    <string name="feature_binder">Systemdienstaufrufe</string>
+    <string name="feature_appops">Berechtigungsnutzung</string>
+    <string name="remove_module">Aufnahme entfernen</string>
+    <string name="remove_module_summary">Stoppt die Aufzeichnung und löscht die Aufzeichnungen</string>
+    <string name="remove_module_removing">Aufnahme wird entfernt…</string>
+    <string name="remove_module_title">Aufnahme entfernen?</string>
+    <string name="remove_module_body">Die Aufzeichnung endet und die Aufzeichnungen werden gelöscht. Apps im Gefängnis erhalten wieder echte Daten und werden neu gestartet. Die Aufzeichnung lässt sich in der Übersicht erneut einrichten.</string>
+    <string name="remove_module_confirm">Entfernen</string>
+    <string name="cancel">Abbrechen</string>
+    <string name="module_in_manager">Im root-Manager als Modul installiert</string>
+    <string name="module_in_manager_summary">Um die Aufzeichnung zu entfernen, entfernen Sie das Modul dort und starten Sie neu. Dadurch werden die Datensätze gelöscht.</string>
+    <string name="module_in_manager_pending">Wird nach dem nächsten Neustart wirksam</string>
+    <string name="lsposed_title">LSPosed-Modul</string>
+    <string name="lsposed_summary">Aktivieren Sie Big Brother in LSPosed, um den Zugriff auf die Medienbibliothek, Kontakte, Nachrichten und den Kalender aufzuzeichnen.</string>
+    <string name="setting_system_apps">System-Apps anzeigen</string>
+    <string name="setting_system_apps_summary">System-Apps und nicht zugeordnete isolierte Prozesse sind standardmäßig ausgeblendet. Der Zugriff auf Daten gehört zum Betrieb von Systemkomponenten.</string>
+    <string name="theme">Thema</string>
+    <string name="theme_system">Systemstandard</string>
+    <string name="theme_light">Hell</string>
+    <string name="theme_dark">Dunkel</string>
+    <string name="dynamic_color">Hintergrundfarben</string>
+    <string name="dynamic_color_summary">Wenn diese Option deaktiviert ist, verwendet die App ihre eigenen Farben</string>
+    <string name="version">Version</string>
+    <string name="source_code">Quellcode</string>
+    <string name="license">Lizenz</string>
+    <string name="export_logs">Protokolle exportieren</string>
+    <string name="export_logs_summary">Die Protokolle der App und der Aufzeichnung, für einen Fehlerbericht</string>
+    <string name="export_logs_collecting">Protokolle sammeln…</string>
+</resources>

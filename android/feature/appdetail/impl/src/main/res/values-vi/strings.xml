@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="open_jail">Cách ly hoặc quản lý ứng dụng</string>
+    <string name="isolate_app_title">Cách ly %1$s?</string>
+    <string name="isolate_app_summary">Ứng dụng sẽ đóng và áp dụng chế độ cài đặt của nhà tù. Sau đó có thể điều chỉnh các hạn chế của ứng dụng.</string>
+    <string name="isolate_app">Cách ly</string>
+    <string name="isolating_app">Đang cách ly ứng dụng…</string>
+    <string name="jail_action_failed">Không mở được phần cài đặt của nhà tù</string>
+
+    <string name="action_read">Đã đọc</string>
+    <string name="action_write">Đã sửa</string>
+    <string name="action_read_write">Đã đọc và sửa</string>
+    <string name="action_list">Đã liệt kê thư mục</string>
+    <string name="action_probe">Đã kiểm tra</string>
+    <string name="action_watch">Đã theo dõi</string>
+    <string name="action_read_provider">Đã đọc qua trình cung cấp</string>
+    <string name="action_write_provider">Đã sửa qua trình cung cấp</string>
+    <string name="action_query">Đã truy vấn</string>
+    <string name="action_connect">Đã kết nối</string>
+    <string name="action_exec">Đã thực hiện</string>
+    <string name="action_used">Đã sử dụng</string>
+    <string name="action_call">Đã gọi dịch vụ</string>
+    <string name="action_clipboard_write">Đã ghi</string>
+    <string name="search_paths">Tìm đường dẫn</string>
+    <plurals name="access_query">
+        <item quantity="other">Truy vấn %1$d lần, tối đa %2$d mục</item>
+    </plurals>
+
+    <string name="internal_storage">Bộ nhớ trong</string>
+    <string name="internal_storage_user">Bộ nhớ trong (người dùng %d)</string>
+
+    <string name="collection_images">Ảnh</string>
+    <string name="collection_videos">Video</string>
+    <string name="collection_audio">Âm nhạc và âm thanh</string>
+    <string name="collection_downloads">Tải xuống</string>
+    <string name="collection_files">Tất cả phương tiện và tệp</string>
+    <string name="collection_documents">Các thư mục được cấp qua bộ chọn tài liệu</string>
+
+    <string name="results_truncated">Chỉ hiển thị các mục gần đây nhất.</string>
+
+    <string name="access_allowed">%1$s %2$d×</string>
+    <string name="access_blocked">%1$s %2$d×, bị từ chối</string>
+    <string name="access_partly_blocked">%1$s %2$d× (%3$d× bị từ chối)</string>
+    <string name="access_separator">"; "</string>
+    <plurals name="total_allowed">
+        <item quantity="other">Đã đọc %d lần</item>
+    </plurals>
+    <plurals name="total_requested">
+        <item quantity="other">Đã gọi dịch vụ %d lần</item>
+    </plurals>
+    <plurals name="total_contacted">
+        <item quantity="other">Đã kết nối %d lần</item>
+    </plurals>
+    <plurals name="total_ran">
+        <item quantity="other">Đã chạy %d lần</item>
+    </plurals>
+    <plurals name="total_not_run">
+        <item quantity="other">Thực hiện thất bại %d lần</item>
+    </plurals>
+    <plurals name="total_blocked">
+        <item quantity="other">Bị từ chối %d lần</item>
+    </plurals>
+    <string name="removable_storage">Bộ nhớ %s</string>
+
+    <string name="filter_read">Đã đọc</string>
+    <string name="filter_all">Tất cả quyền truy cập</string>
+    <string name="no_files_read">Không có tệp nào được đọc</string>
+
+    <string name="storage_root">Bộ nhớ</string>
+    <string name="group_media">Thư viện phương tiện</string>
+
+    <string name="read_count">%d×</string>
+
+    <string name="open_file_missing">Không tìm thấy tệp.</string>
+    <string name="open_file_no_viewer">Không có ứng dụng nào có thể mở tệp này.</string>
+
+    <string name="open_file">Mở</string>
+    <string name="show_all_details">Hiện tất cả (%d)</string>
+    <plurals name="apps_asked">
+        <item quantity="other">Đã tra cứu %d ứng dụng</item>
+    </plurals>
+    <plurals name="root_apps_asked">
+        <item quantity="other">Đã kiểm tra sự hiện diện của %d ứng dụng liên quan đến root</item>
+    </plurals>
+    <plurals name="absent_apps_asked">
+        <item quantity="other">Đã tìm kiếm %d ứng dụng không có trên thiết bị này</item>
+    </plurals>
+    <string name="tab_info">Thông tin ứng dụng</string>
+    <string name="header_subtitle">%1$s · %2$s</string>
+    <string name="source_permissions">Mức sử dụng quyền</string>
+    <plurals name="total_used">
+        <item quantity="other">Đã sử dụng %d lần</item>
+    </plurals>
+    <string name="info_package">Tên gói</string>
+    <string name="info_version">Phiên bản</string>
+    <string name="info_version_value">%1$s (%2$d)</string>
+    <string name="info_target_sdk">SDK mục tiêu</string>
+    <string name="info_first_install">Đã cài đặt</string>
+    <string name="info_last_update">Cập nhật lần cuối</string>
+    <string name="info_open_settings">Cài đặt ứng dụng</string>
+    <string name="info_launch">Mở ứng dụng</string>
+    <string name="info_copied">Đã sao chép</string>
+    <string name="source_isolated">Tiến trình cách ly</string>
+
+    <string name="last_access">Truy cập lần cuối: %s</string>
+    <plurals name="files_read">
+        <item quantity="other">Đã đọc %d tệp</item>
+    </plurals>
+    <plurals name="paths_looked_for">
+        <item quantity="other">Đã kiểm tra thêm %d đường dẫn</item>
+    </plurals>
+    <string name="browse_files">Tất cả nhật ký truy cập tệp</string>
+    <string name="media_collection">Thư viện phương tiện · %s</string>
+    <plurals name="opened_via_media">
+        <item quantity="other">Đã mở %d lần</item>
+    </plurals>
+    <string name="files_title">Tệp</string>
+    <string name="close">Đóng</string>
+    <string name="record_details">Chi tiết</string>
+    <string name="record_history">Mỗi lần truy cập</string>
+    <string name="record_history_partial">Thời gian hiển thị cho các hồ sơ gần đây nhất thuộc loại này.</string>
+
+    <string name="sensor_sessions">Sử dụng cảm biến</string>
+    <string name="sensor_total">Tổng số %s</string>
+    <string name="session_span">%1$s – %2$s</string>
+    <string name="sensor_since">Kể từ %s</string>
+    <string name="sensor_still_on">Vẫn bật</string>
+    <string name="high_rate">Tần suất lấy mẫu cao</string>
+    <string name="rate_fastest">Nhanh nhất</string>
+    <string name="sensor_sessions_note">Hiển thị tần suất lấy mẫu mà ứng dụng yêu cầu. Hệ thống có thể gửi ít sự kiện hơn.</string>
+    <string name="duration_seconds">%d giây</string>
+    <string name="duration_minutes">%d phút</string>
+    <string name="duration_hours">%d giờ</string>
+    <string name="duration_hours_minutes">%1$d giờ %2$d phút</string>
+    <string name="duration_days">%d ngày</string>
+    <string name="duration_days_hours">%1$d ngày %2$d giờ</string>
+    <string name="expanded">Đã mở rộng</string>
+    <string name="collapsed">Đã thu gọn</string>
+</resources>

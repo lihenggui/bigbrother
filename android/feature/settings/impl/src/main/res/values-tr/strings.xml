@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="settings_title">Ayarlar</string>
+    <string name="section_recording">Kayıt</string>
+    <string name="section_display">Ekran</string>
+    <string name="section_about">Hakkında</string>
+    <string name="recording_active">Kayıt sürüyor</string>
+    <string name="recording_unknown">Kayıt durumu bilinmiyor</string>
+    <string name="retention">Kayıtlar 30 gün süreyle saklandı</string>
+    <string name="coverage_title">Bu cihazda desteklenmiyor</string>
+    <string name="feature_files">Dosyalar açıldı</string>
+    <string name="feature_exec">Komut yürütme</string>
+    <string name="feature_network">Yerel ağ bağlantıları</string>
+    <string name="feature_process">İşlem belleği erişimi</string>
+    <string name="feature_netlink">Netlink sorguları</string>
+    <string name="feature_binder">Sistem servis çağrıları</string>
+    <string name="feature_appops">İzin kullanımı</string>
+    <string name="remove_module">Kaydı kaldır</string>
+    <string name="remove_module_summary">Kaydı durdurur ve kayıtları siler</string>
+    <string name="remove_module_removing">Kayıt kaldırılıyor…</string>
+    <string name="remove_module_title">Kayıt kaldırılsın mı?</string>
+    <string name="remove_module_body">Kayıt durur ve kayıtlar silinir. Hapishanedeki uygulamalar tekrar gerçek verileri alır ve yeniden başlatılır. Kayıt, Genel bakış sekmesinden yeniden ayarlanabilir.</string>
+    <string name="remove_module_confirm">Kaldır</string>
+    <string name="cancel">İptal</string>
+    <string name="module_in_manager">root yöneticisinde modül olarak yüklü</string>
+    <string name="module_in_manager_summary">Kaydı kaldırmak için root yöneticisinden modülü kaldırıp cihazı yeniden başlatın. Kayıtlar silinir.</string>
+    <string name="module_in_manager_pending">Bir sonraki yeniden başlatmanın ardından etkili olur</string>
+    <string name="lsposed_title">LSPosed modülü</string>
+    <string name="lsposed_summary">Medya kitaplığına, kişilere, mesajlara ve takvime erişimi kaydetmek için LSPosed\'da Big Brother\'ı etkinleştirin.</string>
+    <string name="setting_system_apps">Sistem uygulamalarını göster</string>
+    <string name="setting_system_apps_summary">Bir uygulamaya kadar izlenmeyen izole işlemlerle birlikte varsayılan olarak gizlenir: Verilerin okunması, sistem bileşenlerinin çalışma şeklinin bir parçasıdır.</string>
+    <string name="theme">Tema</string>
+    <string name="theme_system">Sistem ayarı</string>
+    <string name="theme_light">Açık</string>
+    <string name="theme_dark">Koyu</string>
+    <string name="dynamic_color">Duvar kağıdı renklerini kullanın</string>
+    <string name="dynamic_color_summary">Bu seçenek kapalıyken uygulama kendi renklerini kullanır</string>
+    <string name="version">Sürüm</string>
+    <string name="source_code">Kaynak kodu</string>
+    <string name="license">Lisans</string>
+    <string name="export_logs">Günlükleri dışa aktar</string>
+    <string name="export_logs_summary">Bir hata raporu için uygulamanın ve kaydın günlükleri</string>
+    <string name="export_logs_collecting">Günlükler toplanıyor…</string>
+</resources>

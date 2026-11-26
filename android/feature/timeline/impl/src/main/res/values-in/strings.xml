@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="all_data">Semua data</string>
+    <string name="records_access">Pembacaan dan akses</string>
+    <string name="records_all">Semua catatan</string>
+    <string name="timeline_empty">Tidak ada catatan</string>
+    <string name="today">Hari ini</string>
+    <string name="yesterday">Kemarin</string>
+    <plurals name="read_files">
+        <item quantity="other">%d file dibaca</item>
+    </plurals>
+    <plurals name="looked_for_paths">
+        <item quantity="other">Mencari %d jalur</item>
+    </plurals>
+    <string name="media_queried">Perpustakaan media dikueri</string>
+    <plurals name="media_opened">
+        <item quantity="other">Membuka %d file melalui perpustakaan media</item>
+    </plurals>
+    <plurals name="media_denied">
+        <item quantity="other">Akses perpustakaan media ditolak %d kali</item>
+    </plurals>
+    <plurals name="times">
+        <item quantity="other">%d kali</item>
+    </plurals>
+    <plurals name="times_denied">
+        <item quantity="other">Ditolak %d kali</item>
+    </plurals>
+</resources>

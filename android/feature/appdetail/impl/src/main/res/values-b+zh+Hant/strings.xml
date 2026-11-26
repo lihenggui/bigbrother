@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="open_jail">隔離或管理應用程式</string>
+    <string name="isolate_app_title">隔離 %1$s？</string>
+    <string name="isolate_app_summary">應用程式會關閉並套用監獄設定。之後可調整各項限制。</string>
+    <string name="isolate_app">隔離</string>
+    <string name="isolating_app">正在隔離應用程式…</string>
+    <string name="jail_action_failed">無法開啟監獄設定</string>
+
+    <string name="action_read">已讀取</string>
+    <string name="action_write">已修改</string>
+    <string name="action_read_write">已讀取並修改</string>
+    <string name="action_list">已列出目錄內容</string>
+    <string name="action_probe">已檢查</string>
+    <string name="action_watch">已監看</string>
+    <string name="action_read_provider">透過內容提供者讀取</string>
+    <string name="action_write_provider">透過內容提供者修改</string>
+    <string name="action_query">已查詢</string>
+    <string name="action_connect">已連線</string>
+    <string name="action_exec">執行</string>
+    <string name="action_used">已使用</string>
+    <string name="action_call">已呼叫</string>
+    <string name="action_clipboard_write">已寫入</string>
+    <string name="search_paths">搜尋路徑</string>
+    <plurals name="access_query">
+        <item quantity="other">查詢 %1$d 次，單次最多回傳 %2$d 條</item>
+    </plurals>
+
+    <string name="internal_storage">內部儲存空間</string>
+    <string name="internal_storage_user">內部儲存空間（使用者 %d）</string>
+
+    <string name="collection_images">照片</string>
+    <string name="collection_videos">影片</string>
+    <string name="collection_audio">音樂和音訊</string>
+    <string name="collection_downloads">下載</string>
+    <string name="collection_files">全部媒體和檔案</string>
+    <string name="collection_documents">透過檔案選擇器授予存取權的資料夾</string>
+
+    <string name="results_truncated">僅顯示最近的記錄。</string>
+
+    <string name="access_allowed">%1$s %2$d 次</string>
+    <string name="access_blocked">%1$s %2$d 次，均遭拒絕</string>
+    <string name="access_partly_blocked">%1$s %2$d 次（%3$d 次被拒絕）</string>
+    <string name="access_separator">"；"</string>
+    <plurals name="total_allowed">
+        <item quantity="other">讀取 %d 次</item>
+    </plurals>
+    <plurals name="total_requested">
+        <item quantity="other">呼叫 %d 次</item>
+    </plurals>
+    <plurals name="total_contacted">
+        <item quantity="other">連線 %d 次</item>
+    </plurals>
+    <plurals name="total_ran">
+        <item quantity="other">執行 %d 次</item>
+    </plurals>
+    <plurals name="total_not_run">
+        <item quantity="other">執行失敗 %d 次</item>
+    </plurals>
+    <plurals name="total_blocked">
+        <item quantity="other">被拒絕 %d 次</item>
+    </plurals>
+    <string name="removable_storage">儲存裝置 %s</string>
+
+    <string name="filter_read">已讀取</string>
+    <string name="filter_all">全部存取</string>
+    <string name="no_files_read">沒有檔案讀取記錄</string>
+
+    <string name="storage_root">儲存空間</string>
+    <string name="group_media">媒體庫</string>
+
+    <string name="read_count">%d 次</string>
+
+    <string name="open_file_missing">檔案不存在。</string>
+    <string name="open_file_no_viewer">沒有可開啟此檔案的應用程式。</string>
+
+    <string name="open_file">開啟</string>
+    <string name="show_all_details">顯示所有 %d 項</string>
+    <plurals name="apps_asked">
+        <item quantity="other">查詢了 %d 個應用程式</item>
+    </plurals>
+    <plurals name="root_apps_asked">
+        <item quantity="other">檢查了 %d 個 root 相關應用程式</item>
+    </plurals>
+    <plurals name="absent_apps_asked">
+        <item quantity="other">尋找了 %d 個本機未安裝的應用程式</item>
+    </plurals>
+    <string name="tab_info">應用程式資訊</string>
+    <string name="header_subtitle">%1$s · %2$s</string>
+    <string name="source_permissions">權限使用記錄</string>
+    <plurals name="total_used">
+        <item quantity="other">使用 %d 次</item>
+    </plurals>
+    <string name="info_package">套件名稱</string>
+    <string name="info_version">版本</string>
+    <string name="info_version_value">%1$s (%2$d)</string>
+    <string name="info_target_sdk">目標 SDK</string>
+    <string name="info_first_install">安裝時間</string>
+    <string name="info_last_update">更新時間</string>
+    <string name="info_open_settings">應用程式設定</string>
+    <string name="info_launch">開啟應用程式</string>
+    <string name="info_copied">已複製</string>
+    <string name="source_isolated">隔離程序</string>
+
+    <string name="last_access">最近 %s</string>
+    <plurals name="files_read">
+        <item quantity="other">讀取 %d 個檔案</item>
+    </plurals>
+    <plurals name="paths_looked_for">
+        <item quantity="other">另尋找 %d 條路徑</item>
+    </plurals>
+    <string name="browse_files">所有檔案存取記錄</string>
+    <string name="media_collection">媒體庫 · %s</string>
+    <plurals name="opened_via_media">
+        <item quantity="other">開啟 %d 次</item>
+    </plurals>
+    <string name="files_title">檔案</string>
+    <string name="close">關閉</string>
+    <string name="record_details">內容</string>
+    <string name="record_history">每次存取</string>
+    <string name="record_history_partial">僅顯示此類最近幾筆記錄的時間。</string>
+
+    <string name="sensor_sessions">感測器開啟時段</string>
+    <string name="sensor_total">累計 %s</string>
+    <string name="session_span">%1$s–%2$s</string>
+    <string name="sensor_since">自 %s 起</string>
+    <string name="sensor_still_on">仍在採集</string>
+    <string name="high_rate">高取樣率</string>
+    <string name="rate_fastest">最快</string>
+    <string name="sensor_sessions_note">顯示應用程式要求的取樣率。系統實際傳回的事件可能較少。</string>
+    <string name="duration_seconds">%d 秒</string>
+    <string name="duration_minutes">%d 分鐘</string>
+    <string name="duration_hours">%d 小時</string>
+    <string name="duration_hours_minutes">%1$d 小時 %2$d 分鐘</string>
+    <string name="duration_days">%d 天</string>
+    <string name="duration_days_hours">%1$d 天 %2$d 小時</string>
+    <string name="expanded">已展開</string>
+    <string name="collapsed">已收合</string>
+</resources>

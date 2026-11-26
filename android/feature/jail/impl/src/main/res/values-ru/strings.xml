@@ -1,0 +1,359 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <string name="jail_section_isolated">Изолированные приложения</string>
+    <string name="jail_section_settings">Настройки тюрьмы</string>
+    <string name="jail_add_apps">Добавить</string>
+    <string name="jail_global_settings">Глобальные настройки</string>
+    <string name="jail_all_items_on">Все пункты изолированы</string>
+    <string name="jail_items_off">Не изолировано: %1$s</string>
+    <string name="jail_no_items_on">Ни один элемент не изолирован</string>
+    <string name="jail_empty_title">Нет изолированных приложений</string>
+    <string name="jail_empty_files_title">Файлы</string>
+    <string name="jail_empty_files">Только отдельное пустое хранилище</string>
+    <string name="jail_empty_permissions_title">Контакты, местоположение, камера и многое другое</string>
+    <string name="jail_empty_permissions">Разрешения отображаются как выданные, но запросы не возвращают данных</string>
+    <string name="jail_empty_device_title">Устройство и приложения</string>
+    <string name="jail_empty_device">Виртуальный Android ID. Видны только системные приложения</string>
+    <string name="jail_hook_missing_title">Идентификаторы устройств и список приложений не скрыты</string>
+    <string name="jail_hook_missing">В LSPosed включите для Big Brother область «Системный фреймворк», затем перезагрузите устройство.</string>
+    <string name="jail_gate_missing_title">Информация о хранилище и процессоре не может быть изолирована</string>
+    <string name="jail_gate_missing">Изоляция недоступна при запуске приложений.</string>
+    <string name="jail_appops_missing_title">Контакты, местоположение, камера и многое другое не изолированы</string>
+    <string name="jail_appops_missing">Компонент Big Brother, который ограничивает доступ к этим данным, не запущен. Он запустится снова автоматически.</string>
+
+    <string name="jail_isolated">Изолировано: %1$s</string>
+    <string name="jail_undo">Отменить</string>
+    <string name="jail_failed">Не изменено: %1$s</string>
+    <string name="jail_isolated_partly">Изолировано: %1$s. Не удалось изолировать %2$s</string>
+    <plurals name="jail_isolated_partly_count">
+        <item quantity="one">Изолировано: %1$s. Не удалось изолировать %2$d приложение</item>
+        <item quantity="few">Изолировано: %1$s. Не удалось изолировать %2$d приложения</item>
+        <item quantity="many">Изолировано: %1$s. Не удалось изолировать %2$d приложений</item>
+        <item quantity="other">Изолировано: %1$s. Не удалось изолировать %2$d приложений</item>
+    </plurals>
+    <string name="jail_not_isolated">Не удалось изолировать %1$s: %2$s</string>
+    <plurals name="jail_not_isolated_count">
+        <item quantity="one">Не удалось изолировать %1$d приложение: %2$s</item>
+        <item quantity="few">Не удалось изолировать %1$d приложения: %2$s</item>
+        <item quantity="many">Не удалось изолировать %1$d приложений: %2$s</item>
+        <item quantity="other">Не удалось изолировать %1$d приложений: %2$s</item>
+    </plurals>
+    <string name="jail_not_released">%1$s по-прежнему в тюрьме: %2$s</string>
+    <plurals name="jail_not_released_count">
+        <item quantity="one">%1$d приложение остаётся в тюрьме: %2$s</item>
+        <item quantity="few">%1$d приложения остаются в тюрьме: %2$s</item>
+        <item quantity="many">%1$d приложений остаются в тюрьме: %2$s</item>
+        <item quantity="other">%1$d приложений остаются в тюрьме: %2$s</item>
+    </plurals>
+
+    <string name="jail_add_search">Поиск приложений</string>
+    <plurals name="jail_add_confirm">
+        <item quantity="one">Изолировать (%d)</item>
+        <item quantity="few">Изолировать (%d)</item>
+        <item quantity="many">Изолировать (%d)</item>
+        <item quantity="other">Изолировать (%d)</item>
+    </plurals>
+    <string name="jail_add_confirm_none">Изолировать</string>
+    <string name="jail_add_restart">Запущенные приложения закрываются и перезапускаются.</string>
+    <string name="jail_add_empty">Нет приложений для добавления</string>
+    <string name="jail_close">Закрыть</string>
+
+    <string name="jail_release">Снять изоляцию</string>
+    <string name="jail_records">Записи</string>
+    <string name="jail_section_items">Изоляция</string>
+    <string name="jail_items_summary">Включённые параметры дают приложению пустые или виртуальные данные либо изолированное хранилище. Для остальных параметров действуют правила системы.</string>
+    <string name="jail_reset">Общие настройки</string>
+    <plurals name="jail_more_items">
+        <item quantity="one">Ещё %d пункт без запроса приложения</item>
+        <item quantity="few">Ещё %d пункта без запроса приложения</item>
+        <item quantity="many">Ещё %d пунктов без запроса приложения</item>
+        <item quantity="other">Ещё %d пункта без запроса приложения</item>
+    </plurals>
+    <string name="jail_fewer_items">Показать меньше</string>
+    <string name="jail_restart_note">Включение элемента или изменение информации о хранилище или процессоре перезапускает приложение.</string>
+    <string name="jail_custom">Свой режим</string>
+    <string name="jail_choices_shown">Развёрнуто</string>
+    <string name="jail_choices_hidden">Свёрнуто</string>
+    <string name="jail_show_choices">Показать варианты</string>
+    <string name="jail_hide_choices">Скрыть варианты</string>
+    <string name="jail_not_in_effect_hook">Не действует: включите «Системный фреймворк» в LSPosed и перезагрузите устройство</string>
+    <string name="jail_hook_unavailable">Ограничения для области «Системный фреймворк» недоступны</string>
+    <string name="jail_hook_incompatible">Не поддерживается в этой версии Android</string>
+    <string name="jail_hook_degraded">Ограничения перестали действовать. Перезагрузите устройство.</string>
+    <string name="jail_hook_status_unknown">Состояние ограничений для области «Системный фреймворк» неизвестно.</string>
+    <string name="jail_not_in_effect_mounts">Не действует: изоляция хранилища не работает</string>
+    <string name="jail_mount_start_failed">Не удалось задержать запуск приложения.</string>
+    <string name="jail_mount_setup_failed">Не удалось применить изоляцию при запуске.</string>
+    <string name="jail_mount_timed_out">Время изоляции истекло при запуске.</string>
+    <string name="jail_mount_launch_refused">%1$s Приложение не может запуститься, пока включён этот параметр изоляции. Чтобы разрешить запуск, отключите затронутые пункты или уберите приложение из тюрьмы.</string>
+    <string name="jail_checking_app_ops">Проверка ограничений Android…</string>
+    <string name="jail_app_ops_unknown">Не удалось проверить, действует ли ограничение Android.</string>
+    <string name="jail_not_in_effect_app_ops">Ограничение недоступно. Приложение всё ещё может иметь доступ к данным.</string>
+
+    <string name="jail_settings_subtitle">Для изолированных приложений без собственных настроек</string>
+    <string name="jail_auto_isolate">Изолировать новые приложения</string>
+    <string name="jail_auto_isolate_summary">Используйте настройки ниже для будущих установок</string>
+    <string name="jail_group_files">Файлы</string>
+    <string name="jail_group_personal">Персональные данные</string>
+    <string name="jail_group_sensors">Местоположение и датчики</string>
+    <string name="jail_group_device">Устройство и приложения</string>
+    <string name="jail_section_status">Статус</string>
+    <string name="jail_status_title">Компоненты</string>
+    <string name="jail_status_ok">Изоляция хранилища, перехват в области «Системный фреймворк» и фильтрация сети действуют</string>
+    <string name="jail_status_network_missing">Сетевая фильтрация недоступна в этом ядре</string>
+    <string name="jail_status_checking">Проверка…</string>
+    <string name="jail_status_hook_missing">Перехват в области «Системный фреймворк» не загружен</string>
+    <string name="jail_status_gate_missing">Изоляция хранилища недоступна</string>
+    <string name="jail_status_appops_missing">Ограничения для контактов, местоположения и других данных не действуют</string>
+    <string name="jail_status_new_apps_not_held">Новые приложения могут запуститься до изоляции</string>
+    <plurals name="jail_status_new_apps_held">
+        <item quantity="one">%d новое приложение ещё не изолировано. Запуск заблокирован</item>
+        <item quantity="few">%d новых приложения ещё не изолированы. Запуск заблокирован</item>
+        <item quantity="many">%d новых приложений ещё не изолированы. Запуск заблокирован</item>
+        <item quantity="other">%d новых приложений ещё не изолированы. Запуск заблокирован</item>
+    </plurals>
+    <plurals name="jail_status_new_apps_failed">
+        <item quantity="one">Не удалось изолировать %d новое приложение. Оно может запуститься без изоляции.</item>
+        <item quantity="few">Не удалось изолировать %d новых приложения. Они могут запуститься без изоляции.</item>
+        <item quantity="many">Не удалось изолировать %d новых приложений. Они могут запуститься без изоляции.</item>
+        <item quantity="other">Не удалось изолировать %d новых приложений. Они могут запуститься без изоляции.</item>
+    </plurals>
+    <plurals name="jail_status_new_apps_pending">
+        <item quantity="one">%d новое приложение ещё не изолировано</item>
+        <item quantity="few">%d новых приложения ещё не изолированы</item>
+        <item quantity="many">%d новых приложений ещё не изолированы</item>
+        <item quantity="other">%d новых приложений ещё не изолированы</item>
+    </plurals>
+    <string name="jail_release_all">Снять изоляцию со всех</string>
+    <string name="jail_release_all_summary">Файлы в изолированном хранилище сохраняются</string>
+    <string name="jail_release_all_title">Снять изоляцию со всех приложений?</string>
+    <plurals name="jail_release_all_body">
+        <item quantity="one">%d приложение снова получит реальные данные и будет перезапущено. Файлы в изолированном хранилище сохранятся.</item>
+        <item quantity="few">%d приложения снова получат реальные данные и будут перезапущены. Файлы в изолированном хранилище сохранятся.</item>
+        <item quantity="many">%d приложений снова получат реальные данные и будут перезапущены. Файлы в изолированном хранилище сохранятся.</item>
+        <item quantity="other">%d приложений снова получат реальные данные и будут перезапущены. Файлы в изолированном хранилище сохранятся.</item>
+    </plurals>
+    <plurals name="jail_release_all_left">
+        <item quantity="one">%d приложение остаётся в тюрьме. Повторите попытку.</item>
+        <item quantity="few">%d приложения остаются в тюрьме. Повторите попытку.</item>
+        <item quantity="many">%d приложений остаются в тюрьме. Повторите попытку.</item>
+        <item quantity="other">%d приложений остаются в тюрьме. Повторите попытку.</item>
+    </plurals>
+    <string name="jail_cancel">Отмена</string>
+
+    <string name="jail_item_storage">Файлы и медиаконтент</string>
+    <string name="jail_item_storage_on">Изолированное хранилище</string>
+    <string name="jail_item_storage_on_detail">Приложению выделено отдельное, изначально пустое хранилище. Сохранённые им файлы остаются там. Настоящие фото, скачанные файлы и документы недоступны. Если выбрать файл в системном окне, он будет доступен только для этого действия.</string>
+    <string name="jail_item_cpu_info">Информация о процессоре</string>
+    <string name="jail_item_cpu_info_on">Модель чипа скрыта</string>
+    <string name="jail_item_cpu_info_on_detail">Количество ядер и набор команд остаются; модель чипа и другие идентификаторы удаляются.</string>
+    <string name="jail_item_contacts">Контакты</string>
+    <string name="jail_item_contacts_on">Пустой список</string>
+    <string name="jail_item_contacts_on_detail">Разрешение отображается как выданное. Запросы контактов ничего не возвращают.</string>
+    <string name="jail_item_messages">Сообщения и список вызовов</string>
+    <string name="jail_item_messages_on">Пустой список</string>
+    <string name="jail_item_messages_on_detail">Разрешение отображается как выданное. Запросы сообщений и списка вызовов ничего не возвращают.</string>
+    <string name="jail_item_calendar">Календарь</string>
+    <string name="jail_item_calendar_on">Пустой календарь</string>
+    <string name="jail_item_calendar_on_detail">Разрешение отображается как выданное. Запросы к календарю ничего не возвращают.</string>
+    <string name="jail_item_clipboard_accounts">Буфер обмена и аккаунты</string>
+    <string name="jail_item_clipboard_accounts_on">Пусто</string>
+    <string name="jail_item_clipboard_accounts_on_detail">Буфер обмена и список учетных записей пусты.</string>
+    <string name="jail_item_location">Местоположение</string>
+    <string name="jail_item_location_on">Нет местоположения</string>
+    <string name="jail_item_location_on_detail">Разрешение отображается как выданное. Местоположение недоступно.</string>
+    <string name="jail_item_camera">Камера</string>
+    <string name="jail_item_camera_on">Недоступно</string>
+    <string name="jail_item_camera_on_detail">Разрешение отображается как выданное. Изображение с камеры недоступно.</string>
+    <string name="jail_item_microphone">Микрофон</string>
+    <string name="jail_item_microphone_on">Без звука</string>
+    <string name="jail_item_microphone_on_detail">Разрешение отображается как выданное. В записях нет звука.</string>
+    <string name="jail_item_body_sensors">Нательные датчики и физическая активность</string>
+    <string name="jail_item_body_sensors_on">Нет данных</string>
+    <string name="jail_item_body_sensors_on_detail">Частота пульса, шаги и физическая активность недоступны.</string>
+    <string name="jail_item_device_ids">Идентификаторы устройства</string>
+    <string name="jail_item_device_ids_on">Вирт. ID</string>
+    <string name="jail_item_device_ids_on_detail">Приложение получает собственный постоянный виртуальный Android ID. Рекламный идентификатор, номер телефона и состояние телефона недоступны.</string>
+    <string name="jail_item_installed_apps">Установленные приложения</string>
+    <string name="jail_item_installed_apps_on">Только системные приложения</string>
+    <string name="jail_item_installed_apps_on_detail">В списке установленных приложений видны только системные приложения и само это приложение. Статистика использования недоступна.</string>
+    <string name="jail_item_nearby_devices">Устройства поблизости</string>
+    <string name="jail_item_nearby_devices_on">Ничего не найдено</string>
+    <string name="jail_item_nearby_devices_on_detail">Сканирование Bluetooth и Wi-Fi ничего не возвращает.</string>
+    <string name="jail_item_notification_content">Содержание уведомления</string>
+    <string name="jail_item_notification_content_on">Нет доступа</string>
+    <string name="jail_item_notification_content_on_detail">Приложение не может читать уведомления других приложений. Его уведомления по-прежнему отображаются. После снятия изоляции доступ восстанавливается.</string>
+    <string name="jail_item_screen_content">Содержимое экрана</string>
+    <string name="jail_item_screen_content_on">Нет доступа</string>
+    <string name="jail_item_screen_content_on_detail">Службы специальных возможностей приложения отключены. Оно не может читать содержимое экрана и взаимодействовать с ним. После снятия изоляции доступ восстанавливается.</string>
+
+    <string name="jail_mode_coarse">Приблизительное местоположение</string>
+    <string name="jail_mode_coarse_detail">Точное местоположение отключено; доступно только приблизительное местоположение.</string>
+    <string name="jail_mode_foreground">Когда открыто приложение</string>
+    <string name="jail_mode_foreground_detail">Доступно, пока приложение используется, а не в фоновом режиме.</string>
+    <string name="jail_mode_off">Реальные данные</string>
+    <string name="jail_mode_off_detail">Приложение получает то, что дает ему система.</string>
+    <string name="jail_mode_global">Общие настройки</string>
+    <string name="jail_mode_global_detail">Сейчас: %1$s</string>
+    <string name="jail_list_separator">", "</string>
+    <string name="jail_select">Выберите изолированное приложение или глобальные настройки</string>
+
+    <string name="jail_summary_no_network">Нет сети</string>
+    <string name="jail_summary_recording">Идёт запись соединений</string>
+    <string name="jail_summary_separator">" · "</string>
+
+    <string name="jail_section_network">Сеть</string>
+    <string name="jail_network_access">Доступ к сети</string>
+    <string name="jail_network_allowed">Разрешено</string>
+    <string name="jail_network_allowed_detail">Подключается так, как позволяет система.</string>
+    <string name="jail_network_blocked">Нет сети</string>
+    <string name="jail_network_blocked_detail">Подключения и запросы на разрешение имён сразу отклоняются. Подключения внутри устройства работают. Приложение не перезапускается.</string>
+    <string name="jail_network_record">Запись соединений</string>
+    <string name="jail_network_record_summary">Домены, адреса и порты, к которым он подключается; хранится 30 дней</string>
+    <string name="jail_network_recording_since">Запись с %1$s</string>
+    <string name="jail_network_activity">Сетевая активность</string>
+    <plurals name="jail_network_activity_summary">
+        <item quantity="one">%1$d адресат за 24 часа</item>
+        <item quantity="few">%1$d адресата за 24 часа</item>
+        <item quantity="many">%1$d адресатов за 24 часа</item>
+        <item quantity="other">%1$d адресата за 24 часа</item>
+    </plurals>
+    <plurals name="jail_network_blocked_count">
+        <item quantity="one">%1$d заблокировано</item>
+        <item quantity="few">%1$d заблокировано</item>
+        <item quantity="many">%1$d заблокировано</item>
+        <item quantity="other">%1$d заблокировано</item>
+    </plurals>
+    <string name="jail_network_name_rules_not_in_effect">Сохранённые правила для доменов могут действовать не полностью</string>
+    <string name="jail_network_recording_unavailable">Запись соединения недоступна</string>
+    <string name="jail_network_no_permission">Приложение не запрашивает доступ к сети</string>
+    <string name="jail_not_in_effect_packet_filter">Сетевая фильтрация недоступна</string>
+    <string name="jail_not_in_effect_resolver">Действует частично: разрешение имён не блокируется</string>
+    <string name="jail_network_global_note">Для изолированных приложений без собственных настроек. Без сети соединения сразу же прерываются; приложения не перезапускаются.</string>
+
+    <string name="jail_net_subtitle_recording">%1$s · Идёт запись</string>
+    <string name="jail_net_subtitle_stopped">%1$s · Запись не ведётся</string>
+    <!-- The count is displayed in a separate label. -->
+    <plurals name="jail_net_destinations" tools:ignore="ImpliedQuantity">
+        <item quantity="one">адресат</item>
+        <item quantity="few">адресата</item>
+        <item quantity="many">адресатов</item>
+        <item quantity="other">адресата</item>
+    </plurals>
+    <plurals name="jail_net_facts">
+        <item quantity="one">%1$s соединение · получено %2$s · отправлено %3$s</item>
+        <item quantity="few">%1$s соединения · получено %2$s · отправлено %3$s</item>
+        <item quantity="many">%1$s соединений · получено %2$s · отправлено %3$s</item>
+        <item quantity="other">%1$s соединения · получено %2$s · отправлено %3$s</item>
+    </plurals>
+    <plurals name="jail_net_facts_counts">
+        <item quantity="one">%1$s соединение · отклонено %2$s</item>
+        <item quantity="few">%1$s соединения · отклонено %2$s</item>
+        <item quantity="many">%1$s соединений · отклонено %2$s</item>
+        <item quantity="other">%1$s соединения · отклонено %2$s</item>
+    </plurals>
+    <string name="jail_net_choose_period">Выберите период</string>
+    <string name="jail_net_all_periods">Все периоды</string>
+    <string name="jail_net_legend_connected">Подключено</string>
+    <string name="jail_net_legend_refused">Отклонено</string>
+    <string name="jail_net_now">Сейчас</string>
+    <string name="jail_net_filter_blocked_count">Заблокировано %1$d</string>
+    <string name="jail_net_sort_data">По трафику</string>
+    <string name="jail_net_sort_connections">По числу соединений</string>
+    <string name="jail_net_sort_recent">По времени</string>
+    <string name="jail_net_sort_name">Имя</string>
+    <string name="jail_net_section_domains">Домены</string>
+    <string name="jail_net_section_addresses">IP-адреса</string>
+    <string name="jail_net_addresses_note">Прямые подключения, без разрешения имён через систему.</string>
+    <string name="jail_net_port">Порт %1$d</string>
+    <plurals name="jail_net_connections">
+        <item quantity="one">%1$d соединение</item>
+        <item quantity="few">%1$d соединения</item>
+        <item quantity="many">%1$d соединений</item>
+        <item quantity="other">%1$d соединения</item>
+    </plurals>
+    <plurals name="jail_net_refused">
+        <item quantity="one">отклонено %1$d раз</item>
+        <item quantity="few">отклонено %1$d раза</item>
+        <item quantity="many">отклонено %1$d раз</item>
+        <item quantity="other">отклонено %1$d раз</item>
+    </plurals>
+    <string name="jail_net_blocked">Заблокировано</string>
+    <string name="jail_net_show_all">Показать все (%1$d)</string>
+    <string name="jail_net_footer">Записи хранятся 30 дней. Блокировка вступает в силу сразу.</string>
+    <string name="jail_net_search">Поиск доменов и адресов</string>
+    <string name="jail_net_no_results">Нет подходящих адресатов</string>
+    <string name="jail_net_empty_title">Пока нет подключений</string>
+    <string name="jail_net_empty_body">Запись с %1$s. Подключения появятся здесь, когда приложение воспользуется сетью.</string>
+    <string name="jail_net_stopped">Запись не ведётся. Показаны записи до %1$s.</string>
+    <string name="jail_net_start">Запись</string>
+    <string name="jail_net_no_network_title">Нет сети</string>
+    <string name="jail_net_no_network_body">Все подключения отклоняются. Из-за сбоев разрешения имён большинство адресатов показаны в виде IP-адресов.</string>
+    <string name="jail_net_names_missing_title">Доменные имена недоступны</string>
+    <string name="jail_net_names_missing_body">На этом устройстве нельзя считывать запросы на разрешение имён. Адресаты показаны в виде IP-адресов.</string>
+    <string name="jail_net_traffic_missing">Объемы данных недоступны на этом устройстве; отображается количество подключений.</string>
+    <string name="jail_net_more_options">Другие параметры</string>
+    <string name="jail_net_menu_block">Заблокировать домен или адрес…</string>
+    <string name="jail_net_menu_stop">Остановить запись</string>
+    <string name="jail_net_menu_clear">Очистить записи</string>
+    <string name="jail_net_clear_title">Очистить сетевые записи?</string>
+    <string name="jail_net_clear_body">Записи о сетевой активности %1$s будут удалены. Правила блокировки продолжат действовать.</string>
+    <string name="jail_net_clear">Очистить</string>
+
+    <string name="jail_net_block">Заблокировать</string>
+    <string name="jail_net_unblock">Разблокировать</string>
+    <string name="jail_net_block_cd">Заблокировать %1$s</string>
+    <string name="jail_net_blocked_message">Заблокировано: %1$s</string>
+    <string name="jail_net_unblocked_message">Снята блокировка: %1$s</string>
+    <string name="jail_net_manual">Добавлено вручную</string>
+    <string name="jail_net_no_attempts">Никаких попыток за этот период</string>
+
+    <plurals name="jail_net_subdomains">
+        <item quantity="one">%1$d поддомен</item>
+        <item quantity="few">%1$d поддомена</item>
+        <item quantity="many">%1$d поддоменов</item>
+        <item quantity="other">%1$d поддомена</item>
+    </plurals>
+    <string name="jail_net_first_last">Первое: %1$s · Последнее: %2$s</string>
+    <string name="jail_net_block_site">Блокировать %1$s с поддоменами</string>
+    <string name="jail_net_block_address">Блокировать %1$s на всех портах</string>
+    <string name="jail_net_hour_range">%1$s–%2$s</string>
+    <string name="jail_net_dated_hour_range">%1$s %2$s</string>
+    <string name="jail_net_size_bytes">%1$d B</string>
+    <string name="jail_net_size_kilobytes">%1$d KB</string>
+    <string name="jail_net_size_megabytes">%1$.1f MB</string>
+    <string name="jail_net_size_gigabytes">%1$.1f GB</string>
+    <string name="jail_net_sent">Отправлено</string>
+    <string name="jail_net_received">Получено</string>
+    <string name="jail_net_connections_label">Соединения</string>
+    <string name="jail_net_hosts_header">Субдомены</string>
+    <string name="jail_net_ports_header">Порты</string>
+    <string name="jail_net_addresses_header">Адреса</string>
+    <plurals name="jail_net_more">
+        <item quantity="one">еще %1$d</item>
+        <item quantity="few">еще %1$d</item>
+        <item quantity="many">еще %1$d</item>
+        <item quantity="other">еще %1$d</item>
+    </plurals>
+    <string name="jail_net_shared">У этого домена общие адреса с %1$s. Блокировка затронет и эти домены.</string>
+    <string name="jail_net_own_resolver">Правило не действует на подключения, для которых приложение разрешает имена самостоятельно. Их можно заблокировать в разделе «IP-адреса».</string>
+
+    <string name="jail_net_add_title">Заблокировать домен или адрес</string>
+    <string name="jail_net_add_label">Домен, IP-адрес или адрес:порт</string>
+    <string name="jail_net_add_supporting">Домен включает в себя свои поддомены.</string>
+    <string name="jail_net_add_invalid">Не домен или IP-адрес</string>
+</resources>

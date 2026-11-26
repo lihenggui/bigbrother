@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="module_description">Ghi nhật ký việc ứng dụng truy cập tệp và truy vấn dữ liệu cá nhân qua trình cung cấp nội dung của Android. Nhà tù cung cấp tuỳ chọn cách ly cho Android ID, mã nhận dạng quảng cáo, khả năng thấy ứng dụng khác và quyền truy cập tệp.</string>
+    <string name="nav_overview">Tổng quan</string>
+    <string name="nav_apps">Ứng dụng</string>
+    <string name="nav_timeline">Dòng thời gian</string>
+    <string name="nav_jail">Nhà tù</string>
+
+    <string name="guide_access_title">Theo dõi truy cập dữ liệu cá nhân</string>
+    <string name="guide_access_body">Big Brother ghi lại thời điểm từng ứng dụng đọc tệp, vị trí, bảng nhớ tạm và mã nhận dạng thiết bị. Nhật ký chỉ lưu trên thiết bị này.</string>
+    <string name="guide_timeline_title">Xem dòng thời gian</string>
+    <string name="guide_timeline_body">Dòng thời gian nhóm lượt truy cập theo giờ và ứng dụng. Mở một mục để xem chi tiết.</string>
+    <string name="guide_jail_title">Cách ly ứng dụng đã chọn</string>
+    <string name="guide_jail_body">Khi được cách ly trong nhà tù, ứng dụng có bộ nhớ riêng, bảng nhớ tạm trống và ID thiết bị ảo. Có thể thay đổi từng mục riêng.</string>
+    <string name="guide_skip">Bỏ qua</string>
+    <string name="guide_next">Tiếp theo</string>
+    <string name="guide_back">Trang trước</string>
+    <string name="guide_start">Bắt đầu</string>
+    <string name="guide_progress">Trang %1$d / %2$d</string>
+    <string name="guide_guard_description">Mẫu: vệ sĩ kiểm tra bốn ứng dụng và ghi lại những gì mỗi ứng dụng đọc.</string>
+    <string name="guide_timeline_description">Dòng thời gian mẫu: dữ liệu mà Thời tiết, Mua sắm, Trò chuyện và Đèn pin đã đọc.</string>
+    <string name="guide_jail_description">Ví dụ: ứng dụng Thời tiết được cách ly trong nhà tù, với bảng nhớ tạm trống, ID thiết bị ảo và bộ nhớ cách ly.</string>
+    <string name="guide_weather">Thời tiết</string>
+    <string name="guide_shop">Mua sắm</string>
+    <string name="guide_chat">Trò chuyện</string>
+    <string name="guide_flashlight">Đèn pin</string>
+    <string name="guide_location">Vị trí</string>
+    <string name="guide_clipboard">Bảng nhớ tạm</string>
+    <string name="guide_files">Tệp</string>
+    <string name="guide_device_id">ID thiết bị</string>
+    <string name="guide_isolated_value">%1$s: %2$s</string>
+</resources>

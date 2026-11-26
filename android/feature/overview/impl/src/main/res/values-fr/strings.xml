@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- The count is displayed in a separate label. -->
+    <plurals name="readers_label" tools:ignore="ImpliedQuantity">
+        <item quantity="one">application a lu des fichiers</item>
+        <item quantity="many">applications ont lu des fichiers</item>
+        <item quantity="other">applications ont lu des fichiers</item>
+    </plurals>
+    <string name="no_reads">Aucune application ne lit les fichiers</string>
+    <plurals name="looked_only">
+        <item quantity="one">%d autre application recherchait des fichiers sans les lire</item>
+        <item quantity="many">%d autres applications recherchaient des fichiers sans les lire</item>
+        <item quantity="other">%d autres applications recherchaient des fichiers sans les lire</item>
+    </plurals>
+    <string name="more_count">+%d</string>
+    <string name="other_categories">Autres autorisations sensibles</string>
+    <plurals name="category_count">
+        <item quantity="one">%d sorte</item>
+        <item quantity="many">%d sortes</item>
+        <item quantity="other">%d sortes</item>
+    </plurals>
+
+    <plurals name="category_group_read_files">
+        <item quantity="one">%d application a lu des fichiers</item>
+        <item quantity="many">%d applications ont lu des fichiers</item>
+        <item quantity="other">%d applications ont lu des fichiers</item>
+    </plurals>
+    <plurals name="category_group_looked_only">
+        <item quantity="one">%d application recherchait uniquement des fichiers</item>
+        <item quantity="many">%d applications recherchaient uniquement des fichiers</item>
+        <item quantity="other">%d applications recherchaient uniquement des fichiers</item>
+    </plurals>
+
+    <string name="status_stopped">L\'enregistrement s\'est arrêté</string>
+    <string name="daemon_stopped">Entre-temps, l\'accès n\'est pas enregistré.</string>
+    <string name="daemon_starting">Démarrage de l\'enregistrement…</string>
+    <string name="start_daemon">Commencer l\'enregistrement</string>
+    <string name="install_module">Configurer l\'enregistrement</string>
+    <string name="updating_module">Fin de la mise à jour…</string>
+    <string name="update_failed_title">La mise à jour n\'a pas pu être terminée</string>
+    <string name="module_pending_reboot">Redémarrage nécessaire</string>
+    <string name="module_pending_reboot_body">Le module installé via le gestionnaire root prend effet après le prochain redémarrage.</string>
+    <string name="installing_module">Configuration de l\'enregistrement…</string>
+    <string name="install_failed_title">L\'enregistrement n\'a pas pu être configuré</string>
+    <string name="setup_body">Big Brother enregistre les accès avec les droits root. La configuration ne nécessite pas de redémarrage.</string>
+    <string name="setup_pending_body">Le module installé via le gestionnaire root prend effet après le prochain redémarrage. Vous pouvez aussi configurer l’enregistrement maintenant, sans redémarrage.</string>
+</resources>

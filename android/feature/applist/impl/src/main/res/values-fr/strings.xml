@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="all_categories">Toutes les données</string>
+    <string name="sort_sensitivity">Sensibilité</string>
+    <string name="sort_recent">Dernier accès</string>
+    <string name="sort_name">Nom</string>
+    <string name="show_system_apps">Afficher les applications système</string>
+    <string name="only_system_apps">Les enregistrements n\'existent que pour les applications masquées par défaut</string>
+    <plurals name="list_group_read_files">
+        <item quantity="one">Lecture de fichiers · %d application</item>
+        <item quantity="many">Lecture de fichiers · %d applications</item>
+        <item quantity="other">Lecture de fichiers · %d applications</item>
+    </plurals>
+    <plurals name="list_group_other">
+        <item quantity="one">Autre · %d application</item>
+        <item quantity="many">Autre · %d applications</item>
+        <item quantity="other">Autre · %d applications</item>
+    </plurals>
+</resources>

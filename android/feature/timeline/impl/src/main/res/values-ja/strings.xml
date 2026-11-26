@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="all_data">すべてのデータ</string>
+    <string name="records_access">読み取りとアクセス</string>
+    <string name="records_all">すべての記録</string>
+    <string name="timeline_empty">記録がありません</string>
+    <string name="today">今日</string>
+    <string name="yesterday">昨日</string>
+    <plurals name="read_files">
+        <item quantity="other">ファイル%d件を読み取り</item>
+    </plurals>
+    <plurals name="looked_for_paths">
+        <item quantity="other">パス%d件を確認</item>
+    </plurals>
+    <string name="media_queried">メディアライブラリに問い合わせ</string>
+    <plurals name="media_opened">
+        <item quantity="other">メディアライブラリ経由でファイル%d件を開いた</item>
+    </plurals>
+    <plurals name="media_denied">
+        <item quantity="other">メディアライブラリで%d回拒否</item>
+    </plurals>
+    <plurals name="times">
+        <item quantity="other">%d回</item>
+    </plurals>
+    <plurals name="times_denied">
+        <item quantity="other">%d回拒否されました</item>
+    </plurals>
+</resources>

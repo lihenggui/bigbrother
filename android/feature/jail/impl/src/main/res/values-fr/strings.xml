@@ -1,0 +1,340 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <string name="jail_section_isolated">Applications isolées</string>
+    <string name="jail_section_settings">Paramètres de la prison</string>
+    <string name="jail_add_apps">Ajouter</string>
+    <string name="jail_global_settings">Paramètres globaux</string>
+    <string name="jail_all_items_on">Toutes les options isolées</string>
+    <string name="jail_items_off">Non isolé : %1$s</string>
+    <string name="jail_no_items_on">Aucun élément isolé</string>
+    <string name="jail_empty_title">Pas d\'applications isolées</string>
+    <string name="jail_empty_files_title">Fichiers</string>
+    <string name="jail_empty_files">Accès limité à un espace de stockage distinct et vide</string>
+    <string name="jail_empty_permissions_title">Contacts, emplacement, caméra et plus</string>
+    <string name="jail_empty_permissions">Les autorisations restent affichées comme accordées, mais les requêtes ne renvoient aucune donnée</string>
+    <string name="jail_empty_device_title">Appareil et applications</string>
+    <string name="jail_empty_device">Android ID virtuel. Seules les applications système sont visibles</string>
+    <string name="jail_hook_missing_title">Les identifiants des appareils et la liste des applications ne sont pas masqués</string>
+    <string name="jail_hook_missing">Dans LSPosed, activez la portée « Cadre du sous-système » pour Big Brother, puis redémarrez l’appareil.</string>
+    <string name="jail_gate_missing_title">Les informations sur le stockage et le processeur ne peuvent pas être isolées</string>
+    <string name="jail_gate_missing">L\'isolement n\'est pas disponible au démarrage des applications.</string>
+    <string name="jail_appops_missing_title">Les contacts, l\'emplacement, la caméra et plus ne sont pas isolés</string>
+    <string name="jail_appops_missing">Le composant de Big Brother qui restreint l’accès à ces données est arrêté. Il redémarrera automatiquement.</string>
+
+    <string name="jail_isolated">%1$s isolé</string>
+    <string name="jail_undo">Annuler</string>
+    <string name="jail_failed">Pas modifié : %1$s</string>
+    <string name="jail_isolated_partly">%1$s isolé. Impossible d\'isoler %2$s</string>
+    <plurals name="jail_isolated_partly_count">
+        <item quantity="one">%1$s isolé. Impossible d\'isoler %2$d application</item>
+        <item quantity="many">%1$s isolé. Impossible d\'isoler %2$d applications</item>
+        <item quantity="other">%1$s isolé. Impossible d\'isoler %2$d applications</item>
+    </plurals>
+    <string name="jail_not_isolated">Impossible d\'isoler %1$s : %2$s</string>
+    <plurals name="jail_not_isolated_count">
+        <item quantity="one">Impossible d\'isoler %1$d application : %2$s</item>
+        <item quantity="many">Impossible d\'isoler %1$d applications : %2$s</item>
+        <item quantity="other">Impossible d\'isoler %1$d applications : %2$s</item>
+    </plurals>
+    <string name="jail_not_released">%1$s reste en prison : %2$s</string>
+    <plurals name="jail_not_released_count">
+        <item quantity="one">%1$d application reste en prison : %2$s</item>
+        <item quantity="many">%1$d applications restent en prison : %2$s</item>
+        <item quantity="other">%1$d applications restent en prison : %2$s</item>
+    </plurals>
+
+    <string name="jail_add_search">Rechercher des applications</string>
+    <plurals name="jail_add_confirm">
+        <item quantity="one">Isoler %d application</item>
+        <item quantity="many">Isoler %d applications</item>
+        <item quantity="other">Isoler %d applications</item>
+    </plurals>
+    <string name="jail_add_confirm_none">Isoler</string>
+    <string name="jail_add_restart">Les applications en cours d\'exécution sont fermées et redémarrées.</string>
+    <string name="jail_add_empty">Aucune application à ajouter</string>
+    <string name="jail_close">Fermer</string>
+
+    <string name="jail_release">Lever l’isolement</string>
+    <string name="jail_records">Journal</string>
+    <string name="jail_section_items">Isolement</string>
+    <string name="jail_items_summary">Les options activées fournissent des données vides ou virtuelles, ou un stockage isolé. Les options désactivées suivent les règles du système.</string>
+    <string name="jail_reset">Appliquer les réglages globaux</string>
+    <plurals name="jail_more_items">
+        <item quantity="one">%d élément supplémentaire que l\'application ne demande pas</item>
+        <item quantity="many">%d éléments supplémentaires que l\'application ne demande pas</item>
+        <item quantity="other">%d éléments supplémentaires que l\'application ne demande pas</item>
+    </plurals>
+    <string name="jail_fewer_items">Afficher moins</string>
+    <string name="jail_restart_note">L\'activation d\'un élément ou la modification des informations de stockage ou du processeur redémarre l\'application.</string>
+    <string name="jail_custom">Personnalisé</string>
+    <string name="jail_choices_shown">Développé</string>
+    <string name="jail_choices_hidden">Réduit</string>
+    <string name="jail_show_choices">Afficher les choix</string>
+    <string name="jail_hide_choices">Masquer les choix</string>
+    <string name="jail_not_in_effect_hook">Sans effet : activez « Cadre du sous-système » dans LSPosed et redémarrez</string>
+    <string name="jail_hook_unavailable">Restrictions de « Cadre du sous-système » indisponibles</string>
+    <string name="jail_hook_incompatible">Non pris en charge sur cette version Android</string>
+    <string name="jail_hook_degraded">Les restrictions ne fonctionnent plus. Redémarrez l’appareil.</string>
+    <string name="jail_hook_status_unknown">L’état des restrictions de « Cadre du sous-système » est inconnu.</string>
+    <string name="jail_not_in_effect_mounts">Sans effet : l’isolement du stockage ne fonctionne pas</string>
+    <string name="jail_mount_start_failed">Le démarrage de l’application n’a pas pu être suspendu.</string>
+    <string name="jail_mount_setup_failed">Impossible d\'appliquer l\'isolement au démarrage.</string>
+    <string name="jail_mount_timed_out">L\'isolement a expiré au démarrage.</string>
+    <string name="jail_mount_launch_refused">%1$s L’application ne peut pas démarrer tant que cette option d’isolement est activée. Désactivez les options concernées ou retirez l’application de la prison pour permettre son démarrage.</string>
+    <string name="jail_checking_app_ops">Vérification des restrictions Android…</string>
+    <string name="jail_app_ops_unknown">L’état de la restriction Android n’a pas pu être vérifié.</string>
+    <string name="jail_not_in_effect_app_ops">Restriction indisponible. L’application pourrait encore avoir accès aux données.</string>
+
+    <string name="jail_settings_subtitle">Pour les applications isolées sans leur propre paramètre</string>
+    <string name="jail_auto_isolate">Isoler les applications nouvellement installées</string>
+    <string name="jail_auto_isolate_summary">Utilisez les paramètres ci-dessous pour les futures installations</string>
+    <string name="jail_group_files">Fichiers</string>
+    <string name="jail_group_personal">Données personnelles</string>
+    <string name="jail_group_sensors">Localisation et capteurs</string>
+    <string name="jail_group_device">Appareil et applications</string>
+    <string name="jail_section_status">Statut</string>
+    <string name="jail_status_title">Composants</string>
+    <string name="jail_status_ok">L’isolement du stockage, le hook de « Cadre du sous-système » et le filtrage réseau sont en vigueur</string>
+    <string name="jail_status_network_missing">Filtrage réseau non disponible sur ce noyau</string>
+    <string name="jail_status_checking">Vérification…</string>
+    <string name="jail_status_hook_missing">Hook de « Cadre du sous-système » non chargé</string>
+    <string name="jail_status_gate_missing">Isolement du stockage indisponible</string>
+    <string name="jail_status_appops_missing">Les restrictions concernant les contacts, la position et d’autres données sont sans effet</string>
+    <string name="jail_status_new_apps_not_held">De nouvelles applications peuvent démarrer avant l’isolement</string>
+    <plurals name="jail_status_new_apps_held">
+        <item quantity="one">%d application nouvellement installée reste à isoler. Son démarrage est bloqué</item>
+        <item quantity="many">%d applications nouvellement installées restent à isoler. Leur démarrage est bloqué</item>
+        <item quantity="other">%d applications nouvellement installées restent à isoler. Leur démarrage est bloqué</item>
+    </plurals>
+    <plurals name="jail_status_new_apps_failed">
+        <item quantity="one">Impossible d’isoler %d nouvelle application. Elle peut démarrer sans isolement.</item>
+        <item quantity="many">Impossible d’isoler %d nouvelles applications. Elles peuvent démarrer sans isolement.</item>
+        <item quantity="other">Impossible d’isoler %d nouvelles applications. Elles peuvent démarrer sans isolement.</item>
+    </plurals>
+    <plurals name="jail_status_new_apps_pending">
+        <item quantity="one">%d application nouvellement installée, pas encore isolée</item>
+        <item quantity="many">%d applications nouvellement installées restent à isoler</item>
+        <item quantity="other">%d applications nouvellement installées restent à isoler</item>
+    </plurals>
+    <string name="jail_release_all">Lever tout isolement</string>
+    <string name="jail_release_all_summary">Les fichiers dans un stockage isolé sont conservés</string>
+    <string name="jail_release_all_title">Lever tout isolement ?</string>
+    <plurals name="jail_release_all_body">
+        <item quantity="one">%d application récupère à nouveau des données réelles et est redémarrée. Les fichiers dans un stockage isolé sont conservés.</item>
+        <item quantity="many">%d applications récupèrent à nouveau des données réelles et sont redémarrées. Les fichiers dans un stockage isolé sont conservés.</item>
+        <item quantity="other">%d applications récupèrent à nouveau des données réelles et sont redémarrées. Les fichiers dans un stockage isolé sont conservés.</item>
+    </plurals>
+    <plurals name="jail_release_all_left">
+        <item quantity="one">%d application reste en prison. Réessayez.</item>
+        <item quantity="many">%d applications restent en prison. Réessayez.</item>
+        <item quantity="other">%d applications restent en prison. Réessayez.</item>
+    </plurals>
+    <string name="jail_cancel">Annuler</string>
+
+    <string name="jail_item_storage">Fichiers et contenus multimédias</string>
+    <string name="jail_item_storage_on">Stockage isolé</string>
+    <string name="jail_item_storage_on_detail">L’application dispose d’un espace de stockage distinct, vide au départ. Les fichiers qu’elle enregistre y restent. Les photos, téléchargements et documents réels sont invisibles. Un fichier choisi dans le sélecteur du système n’est accessible que pour cette utilisation.</string>
+    <string name="jail_item_cpu_info">Informations sur le processeur</string>
+    <string name="jail_item_cpu_info_on">Modèle de puce masqué</string>
+    <string name="jail_item_cpu_info_on_detail">Le nombre de cœurs et le jeu d’instructions restent ; le modèle de puce et les autres identifiants sont supprimés.</string>
+    <string name="jail_item_contacts">Contacts</string>
+    <string name="jail_item_contacts_on">Liste vide</string>
+    <string name="jail_item_contacts_on_detail">L’autorisation est affichée comme accordée, mais les requêtes de contacts ne renvoient aucune donnée.</string>
+    <string name="jail_item_messages">Messages et journaux d\'appels</string>
+    <string name="jail_item_messages_on">Liste vide</string>
+    <string name="jail_item_messages_on_detail">L’autorisation est affichée comme accordée, mais les requêtes de messages et de journaux d’appels ne renvoient aucune donnée.</string>
+    <string name="jail_item_calendar">Agenda</string>
+    <string name="jail_item_calendar_on">Calendrier vide</string>
+    <string name="jail_item_calendar_on_detail">L’autorisation est affichée comme accordée, mais les requêtes d’agenda ne renvoient aucune donnée.</string>
+    <string name="jail_item_clipboard_accounts">Presse-papiers et comptes</string>
+    <string name="jail_item_clipboard_accounts_on">Vide</string>
+    <string name="jail_item_clipboard_accounts_on_detail">Le presse-papiers et la liste des comptes sont vides.</string>
+    <string name="jail_item_location">Position</string>
+    <string name="jail_item_location_on">Aucune position</string>
+    <string name="jail_item_location_on_detail">L’autorisation est affichée comme accordée, mais aucune position n’est disponible.</string>
+    <string name="jail_item_camera">Appareil photo</string>
+    <string name="jail_item_camera_on">Indisponible</string>
+    <string name="jail_item_camera_on_detail">L’autorisation est affichée comme accordée, mais aucune image de la caméra n’est disponible.</string>
+    <string name="jail_item_microphone">Micro</string>
+    <string name="jail_item_microphone_on">Sans son</string>
+    <string name="jail_item_microphone_on_detail">L’autorisation est affichée comme accordée, mais les enregistrements sont muets.</string>
+    <string name="jail_item_body_sensors">Capteurs corporels et activité physique</string>
+    <string name="jail_item_body_sensors_on">Aucune donnée</string>
+    <string name="jail_item_body_sensors_on_detail">La fréquence cardiaque, les pas et l\'activité physique ne sont pas disponibles.</string>
+    <string name="jail_item_device_ids">Identifiants de l’appareil</string>
+    <string name="jail_item_device_ids_on">ID virtuel</string>
+    <string name="jail_item_device_ids_on_detail">L’application reçoit son propre Android ID virtuel et stable. L’identifiant publicitaire, le numéro et l’état du téléphone ne peuvent pas être lus.</string>
+    <string name="jail_item_installed_apps">Applications installées</string>
+    <string name="jail_item_installed_apps_on">Applications système uniquement</string>
+    <string name="jail_item_installed_apps_on_detail">La liste des applications installées montre uniquement les applications système et l’application isolée elle-même. Les statistiques d’utilisation sont illisibles.</string>
+    <string name="jail_item_nearby_devices">Appareils à proximité</string>
+    <string name="jail_item_nearby_devices_on">Aucun trouvé</string>
+    <string name="jail_item_nearby_devices_on_detail">Les analyses Bluetooth et Wi-Fi ne renvoient rien.</string>
+    <string name="jail_item_notification_content">Contenu des notifications</string>
+    <string name="jail_item_notification_content_on">Pas d\'accès</string>
+    <string name="jail_item_notification_content_on_detail">L’application ne peut pas lire les notifications des autres applications. Ses propres notifications restent visibles. L’accès est rétabli à la fin de l’isolement.</string>
+    <string name="jail_item_screen_content">Contenu de l\'écran</string>
+    <string name="jail_item_screen_content_on">Pas d\'accès</string>
+    <string name="jail_item_screen_content_on_detail">Les services d’accessibilité de l’application sont désactivés. Elle ne peut ni lire le contenu de l’écran ni interagir avec lui. L’accès est rétabli à la fin de l’isolement.</string>
+
+    <string name="jail_mode_coarse">Position approximative</string>
+    <string name="jail_mode_coarse_detail">La position précise est désactivée. Seule la position approximative est disponible.</string>
+    <string name="jail_mode_foreground">Seulement lors de l\'utilisation de l\'application</string>
+    <string name="jail_mode_foreground_detail">Disponible lorsque l\'application est en cours d\'utilisation, pas en arrière-plan.</string>
+    <string name="jail_mode_off">Données réelles</string>
+    <string name="jail_mode_off_detail">L\'application obtient ce que le système lui donne.</string>
+    <string name="jail_mode_global">Utiliser le paramètre global</string>
+    <string name="jail_mode_global_detail">Maintenant : %1$s</string>
+    <string name="jail_list_separator">", "</string>
+    <string name="jail_select">Sélectionnez une application isolée ou les paramètres globaux</string>
+
+    <string name="jail_summary_no_network">Pas de réseau</string>
+    <string name="jail_summary_recording">Connexions en cours d’enregistrement</string>
+    <string name="jail_summary_separator">" · "</string>
+
+    <string name="jail_section_network">Réseau</string>
+    <string name="jail_network_access">Accès au réseau</string>
+    <string name="jail_network_allowed">Autorisé</string>
+    <string name="jail_network_allowed_detail">Se connecte comme le système le permet.</string>
+    <string name="jail_network_blocked">Pas de réseau</string>
+    <string name="jail_network_blocked_detail">Les connexions et les résolutions de noms échouent immédiatement. Les connexions internes à l’appareil fonctionnent toujours. L’application ne redémarre pas.</string>
+    <string name="jail_network_record">Enregistrer les connexions</string>
+    <string name="jail_network_record_summary">Domaines, adresses et ports auxquels il se connecte ; conservé 30 jours</string>
+    <string name="jail_network_recording_since">Enregistrement depuis %1$s</string>
+    <string name="jail_network_activity">Activité réseau</string>
+    <plurals name="jail_network_activity_summary">
+        <item quantity="one">%1$d destination en 24 heures</item>
+        <item quantity="many">%1$d destinations en 24 heures</item>
+        <item quantity="other">%1$d destinations en 24 heures</item>
+    </plurals>
+    <plurals name="jail_network_blocked_count">
+        <item quantity="one">%1$d bloqué</item>
+        <item quantity="many">%1$d bloqués</item>
+        <item quantity="other">%1$d bloqué</item>
+    </plurals>
+    <string name="jail_network_name_rules_not_in_effect">Les règles de domaine enregistrées risquent de ne s’appliquer que partiellement</string>
+    <string name="jail_network_recording_unavailable">Enregistrement de connexion indisponible</string>
+    <string name="jail_network_no_permission">L\'application ne demande pas d\'accès au réseau</string>
+    <string name="jail_not_in_effect_packet_filter">Filtrage réseau indisponible</string>
+    <string name="jail_not_in_effect_resolver">En vigueur partiellement : la résolution de noms n’est pas bloquée</string>
+    <string name="jail_network_global_note">Pour les applications isolées sans leur propre paramètre. Sans réseau, les connexions échouent immédiatement ; les applications ne sont pas redémarrées.</string>
+
+    <string name="jail_net_subtitle_recording">%1$s · Enregistrement en cours</string>
+    <string name="jail_net_subtitle_stopped">%1$s · Enregistrement arrêté</string>
+    <!-- The count is displayed in a separate label. -->
+    <plurals name="jail_net_destinations" tools:ignore="ImpliedQuantity">
+        <item quantity="one">destination</item>
+        <item quantity="many">destinations</item>
+        <item quantity="other">destinations</item>
+    </plurals>
+    <plurals name="jail_net_facts">
+        <item quantity="one">%1$s connexion · %2$s reçus · %3$s envoyés</item>
+        <item quantity="many">%1$s connexions · %2$s reçus · %3$s envoyés</item>
+        <item quantity="other">%1$s connexions · %2$s reçus · %3$s envoyés</item>
+    </plurals>
+    <plurals name="jail_net_facts_counts">
+        <item quantity="one">%1$s connexion · refus : %2$s</item>
+        <item quantity="many">%1$s connexions · refus : %2$s</item>
+        <item quantity="other">%1$s connexions · refus : %2$s</item>
+    </plurals>
+    <string name="jail_net_choose_period">Choisissez une période</string>
+    <string name="jail_net_all_periods">Toutes les périodes</string>
+    <string name="jail_net_legend_connected">Connecté</string>
+    <string name="jail_net_legend_refused">Refusées</string>
+    <string name="jail_net_now">Maintenant</string>
+    <string name="jail_net_filter_blocked_count">Blocages : %1$d</string>
+    <string name="jail_net_sort_data">Volume de données</string>
+    <string name="jail_net_sort_connections">Nombre de connexions</string>
+    <string name="jail_net_sort_recent">Les plus récentes</string>
+    <string name="jail_net_sort_name">Nom</string>
+    <string name="jail_net_section_domains">Domaines</string>
+    <string name="jail_net_section_addresses">Adresses IP</string>
+    <string name="jail_net_addresses_note">Connexion directe, sans résolution de noms par le système.</string>
+    <string name="jail_net_port">Port %1$d</string>
+    <plurals name="jail_net_connections">
+        <item quantity="one">%1$d connexion</item>
+        <item quantity="many">%1$d connexions</item>
+        <item quantity="other">%1$d connexions</item>
+    </plurals>
+    <plurals name="jail_net_refused">
+        <item quantity="one">%1$d refus</item>
+        <item quantity="many">%1$d refus</item>
+        <item quantity="other">%1$d refus</item>
+    </plurals>
+    <string name="jail_net_blocked">Bloqué</string>
+    <string name="jail_net_show_all">Tout afficher (%1$d)</string>
+    <string name="jail_net_footer">Les enregistrements sont conservés pendant 30 jours. Le blocage prend effet immédiatement.</string>
+    <string name="jail_net_search">Rechercher des domaines et des adresses</string>
+    <string name="jail_net_no_results">Aucune destination correspondante</string>
+    <string name="jail_net_empty_title">Aucune connexion pour l\'instant</string>
+    <string name="jail_net_empty_body">Enregistrement depuis %1$s. Les connexions apparaissent ici une fois que l\'application utilise le réseau.</string>
+    <string name="jail_net_stopped">Pas d\'enregistrement. Les enregistrements jusqu\'à %1$s sont affichés.</string>
+    <string name="jail_net_start">Enregistrer</string>
+    <string name="jail_net_no_network_title">Pas de réseau</string>
+    <string name="jail_net_no_network_body">Toutes les connexions sont refusées. La résolution des noms échoue, la plupart des destinations sont donc affichées sous forme d’adresses.</string>
+    <string name="jail_net_names_missing_title">Noms de domaine indisponibles</string>
+    <string name="jail_net_names_missing_body">Les requêtes de résolution de noms ne peuvent pas être lues sur cet appareil. Les destinations sont affichées sous forme d’adresses.</string>
+    <string name="jail_net_traffic_missing">Les quantités de données ne sont pas disponibles sur cet appareil ; le nombre de connexions est affiché.</string>
+    <string name="jail_net_more_options">Plus d\'options</string>
+    <string name="jail_net_menu_block">Bloquer un domaine ou une adresse…</string>
+    <string name="jail_net_menu_stop">Arrêter l’enregistrement</string>
+    <string name="jail_net_menu_clear">Effacer les enregistrements</string>
+    <string name="jail_net_clear_title">Effacer les enregistrements réseau ?</string>
+    <string name="jail_net_clear_body">Les enregistrements réseau de %1$s sont supprimés. Les destinations bloquées restent bloquées.</string>
+    <string name="jail_net_clear">Effacer</string>
+
+    <string name="jail_net_block">Bloquer</string>
+    <string name="jail_net_unblock">Débloquer</string>
+    <string name="jail_net_block_cd">Bloquer %1$s</string>
+    <string name="jail_net_blocked_message">%1$s bloqué</string>
+    <string name="jail_net_unblocked_message">%1$s débloqué</string>
+    <string name="jail_net_manual">Ajouté manuellement</string>
+    <string name="jail_net_no_attempts">Aucune tentative pendant cette période</string>
+
+    <plurals name="jail_net_subdomains">
+        <item quantity="one">%1$d sous-domaine</item>
+        <item quantity="many">%1$d sous-domaines</item>
+        <item quantity="other">%1$d sous-domaines</item>
+    </plurals>
+    <string name="jail_net_first_last">Première : %1$s · Dernière : %2$s</string>
+    <string name="jail_net_block_site">Bloquer %1$s et ses sous-domaines</string>
+    <string name="jail_net_block_address">Bloquer %1$s sur tous les ports</string>
+    <string name="jail_net_hour_range">%1$s–%2$s</string>
+    <string name="jail_net_dated_hour_range">%1$s %2$s</string>
+    <string name="jail_net_size_bytes">%1$d B</string>
+    <string name="jail_net_size_kilobytes">%1$d KB</string>
+    <string name="jail_net_size_megabytes">%1$.1f MB</string>
+    <string name="jail_net_size_gigabytes">%1$.1f GB</string>
+    <string name="jail_net_sent">Envoyés</string>
+    <string name="jail_net_received">Reçus</string>
+    <string name="jail_net_connections_label">Connexions</string>
+    <string name="jail_net_hosts_header">Sous-domaines</string>
+    <string name="jail_net_ports_header">Ports</string>
+    <string name="jail_net_addresses_header">Adresses</string>
+    <plurals name="jail_net_more">
+        <item quantity="one">%1$d de plus</item>
+        <item quantity="many">%1$d de plus</item>
+        <item quantity="other">%1$d de plus</item>
+    </plurals>
+    <string name="jail_net_shared">Ce domaine partage ses adresses avec %1$s. Ces domaines seront également bloqués.</string>
+    <string name="jail_net_own_resolver">La règle ne s’applique pas aux connexions dont l’application résout elle-même le nom. Ces connexions figurent dans « Adresses IP », où elles peuvent être bloquées.</string>
+
+    <string name="jail_net_add_title">Bloquer un domaine ou une adresse</string>
+    <string name="jail_net_add_label">Domaine, adresse IP ou adresse : port</string>
+    <string name="jail_net_add_supporting">Une règle de domaine s’applique aussi à ses sous-domaines.</string>
+    <string name="jail_net_add_invalid">Ni un domaine ni une adresse IP</string>
+</resources>

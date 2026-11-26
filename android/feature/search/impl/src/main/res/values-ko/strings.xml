@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="search_hint">앱 및 파일 검색</string>
+    <string name="clear">지우기</string>
+    <string name="settings">설정</string>
+    <string name="results">결과</string>
+    <string name="searching">검색 중…</string>
+    <string name="section_apps">앱</string>
+    <string name="section_files">파일</string>
+    <string name="section_data">데이터의 종류</string>
+</resources>

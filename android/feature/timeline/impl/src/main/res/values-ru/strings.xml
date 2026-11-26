@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="all_data">Все данные</string>
+    <string name="records_access">Чтение и доступ</string>
+    <string name="records_all">Все записи</string>
+    <string name="timeline_empty">Нет записей</string>
+    <string name="today">Сегодня</string>
+    <string name="yesterday">Вчера</string>
+    <plurals name="read_files">
+        <item quantity="one">Прочитано %d файл</item>
+        <item quantity="few">Прочитано %d файла</item>
+        <item quantity="many">Прочитано %d файлов</item>
+        <item quantity="other">Прочитано %d файлов</item>
+    </plurals>
+    <plurals name="looked_for_paths">
+        <item quantity="one">Проверено %d путь</item>
+        <item quantity="few">Проверено %d пути</item>
+        <item quantity="many">Проверено %d путей</item>
+        <item quantity="other">Проверено %d путей</item>
+    </plurals>
+    <string name="media_queried">Запросил медиатеку</string>
+    <plurals name="media_opened">
+        <item quantity="one">Через медиатеку открыто %d файл</item>
+        <item quantity="few">Через медиатеку открыто %d файла</item>
+        <item quantity="many">Через медиатеку открыто %d файлов</item>
+        <item quantity="other">Через медиатеку открыто %d файлов</item>
+    </plurals>
+    <plurals name="media_denied">
+        <item quantity="one">Отказы в медиатеке: %d</item>
+        <item quantity="few">Отказы в медиатеке: %d</item>
+        <item quantity="many">Отказы в медиатеке: %d</item>
+        <item quantity="other">Отказы в медиатеке: %d</item>
+    </plurals>
+    <plurals name="times">
+        <item quantity="one">%d раз</item>
+        <item quantity="few">%d раза</item>
+        <item quantity="many">%d раз</item>
+        <item quantity="other">%d раз</item>
+    </plurals>
+    <plurals name="times_denied">
+        <item quantity="one">Отказано %d раз</item>
+        <item quantity="few">Отказано %d раза</item>
+        <item quantity="many">Отказано %d раз</item>
+        <item quantity="other">Отказано %d раз</item>
+    </plurals>
+</resources>

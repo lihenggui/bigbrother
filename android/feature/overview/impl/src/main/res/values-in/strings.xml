@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <plurals name="readers_label">
+        <item quantity="other">aplikasi membaca file</item>
+    </plurals>
+    <string name="no_reads">Tidak ada aplikasi yang membaca file</string>
+    <plurals name="looked_only">
+        <item quantity="other">%d aplikasi lainnya mencari file tanpa membacanya</item>
+    </plurals>
+    <string name="more_count">+%d</string>
+    <string name="other_categories">Izin sensitif lainnya</string>
+    <plurals name="category_count">
+        <item quantity="other">%d jenis</item>
+    </plurals>
+
+    <plurals name="category_group_read_files">
+        <item quantity="other">%d aplikasi membaca file</item>
+    </plurals>
+    <plurals name="category_group_looked_only">
+        <item quantity="other">%d aplikasi hanya mencari file</item>
+    </plurals>
+
+    <string name="status_stopped">Perekaman dihentikan</string>
+    <string name="daemon_stopped">Akses selama perekaman berhenti tidak dicatat.</string>
+    <string name="daemon_starting">Mulai merekam…</string>
+    <string name="start_daemon">Mulai merekam</string>
+    <string name="install_module">Siapkan rekaman</string>
+    <string name="updating_module">Menyelesaikan pembaruan…</string>
+    <string name="update_failed_title">Pembaruan tidak dapat diselesaikan</string>
+    <string name="module_pending_reboot">Perlu dimulai ulang</string>
+    <string name="module_pending_reboot_body">Modul yang di-flash di pengelola root akan berlaku setelah perangkat dimulai ulang.</string>
+    <string name="installing_module">Menyiapkan perekaman…</string>
+    <string name="install_failed_title">Perekaman tidak dapat diatur</string>
+    <string name="setup_body">Big Brother menggunakan akses root untuk merekam akses. Penyiapan tidak memerlukan mulai ulang.</string>
+    <string name="setup_pending_body">Modul yang di-flash di pengelola root akan berlaku setelah perangkat dimulai ulang. Perekaman juga dapat diatur sekarang, tanpa memulai ulang.</string>
+</resources>

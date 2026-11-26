@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="settings_title">Paramètres</string>
+    <string name="section_recording">Enregistrement</string>
+    <string name="section_display">Affichage</string>
+    <string name="section_about">À propos</string>
+    <string name="recording_active">Enregistrement en cours</string>
+    <string name="recording_unknown">Statut d\'enregistrement inconnu</string>
+    <string name="retention">Dossiers conservés pendant 30 jours</string>
+    <string name="coverage_title">Non pris en charge sur cet appareil</string>
+    <string name="feature_files">Fichiers ouverts</string>
+    <string name="feature_exec">Exécution des commandes</string>
+    <string name="feature_network">Connexions réseau locales</string>
+    <string name="feature_process">Accès à la mémoire des processus</string>
+    <string name="feature_netlink">Requêtes Netlink</string>
+    <string name="feature_binder">Appels de service système</string>
+    <string name="feature_appops">Utilisation des autorisations</string>
+    <string name="remove_module">Supprimer l\'enregistrement</string>
+    <string name="remove_module_summary">Arrête l\'enregistrement et supprime les enregistrements</string>
+    <string name="remove_module_removing">Suppression de l\'enregistrement…</string>
+    <string name="remove_module_title">Supprimer l\'enregistrement ?</string>
+    <string name="remove_module_body">L’enregistrement s’arrête et les journaux sont supprimés. Les applications en prison reçoivent de nouveau les données réelles et redémarrent. L’enregistrement peut être configuré de nouveau dans Aperçu.</string>
+    <string name="remove_module_confirm">Supprimer</string>
+    <string name="cancel">Annuler</string>
+    <string name="module_in_manager">Installé en tant que module dans le gestionnaire root</string>
+    <string name="module_in_manager_summary">Pour supprimer l\'enregistrement, retirez le module et redémarrez. Cela supprime les enregistrements.</string>
+    <string name="module_in_manager_pending">Prend effet après le prochain redémarrage</string>
+    <string name="lsposed_title">Module LSPosed</string>
+    <string name="lsposed_summary">Activez Big Brother dans LSPosed pour enregistrer l\'accès à la médiathèque, aux contacts, aux messages et au calendrier.</string>
+    <string name="setting_system_apps">Afficher les applications système</string>
+    <string name="setting_system_apps_summary">Masqué par défaut, ainsi que des processus isolés non rattachés à une application : la lecture des données fait partie du fonctionnement des composants du système.</string>
+    <string name="theme">Thème</string>
+    <string name="theme_system">Comme le système</string>
+    <string name="theme_light">Clair</string>
+    <string name="theme_dark">Sombre</string>
+    <string name="dynamic_color">Couleurs du fond d’écran</string>
+    <string name="dynamic_color_summary">Lorsqu\'elle est désactivée, l\'application utilise ses propres couleurs</string>
+    <string name="version">Version</string>
+    <string name="source_code">Code source</string>
+    <string name="license">Licence</string>
+    <string name="export_logs">Exporter les journaux</string>
+    <string name="export_logs_summary">Les logs de l\'application et d\'enregistrement, pour un rapport de bug</string>
+    <string name="export_logs_collecting">Collecte des journaux…</string>
+</resources>

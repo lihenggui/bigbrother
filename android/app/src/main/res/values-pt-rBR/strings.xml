@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="module_description">Registra o acesso de apps a arquivos e as consultas de dados pessoais feitas por meio dos provedores de conteúdo do Android. A prisão oferece controles de isolamento para o Android ID, os IDs de publicidade, a visibilidade de apps e as concessões de acesso a arquivos.</string>
+    <string name="nav_overview">Visão geral</string>
+    <string name="nav_apps">Apps</string>
+    <string name="nav_timeline">Linha do tempo</string>
+    <string name="nav_jail">Prisão</string>
+
+    <string name="guide_access_title">Monitorar o acesso a dados pessoais</string>
+    <string name="guide_access_body">Big Brother registra quais dados cada app lê e quando: arquivos, localização, área de transferência e identificadores do dispositivo. Os registros ficam apenas neste dispositivo.</string>
+    <string name="guide_timeline_title">Consultar a linha do tempo</string>
+    <string name="guide_timeline_body">A linha do tempo agrupa os acessos por hora e por app. Abra um registro para ver os detalhes.</string>
+    <string name="guide_jail_title">Isolar apps selecionados</string>
+    <string name="guide_jail_body">Ao isolar um app na prisão, ele recebe armazenamento próprio, uma área de transferência vazia e um ID de dispositivo virtual. Cada item pode ser alterado separadamente.</string>
+    <string name="guide_skip">Pular</string>
+    <string name="guide_next">Avançar</string>
+    <string name="guide_back">Página anterior</string>
+    <string name="guide_start">Começar</string>
+    <string name="guide_progress">Página %1$d de %2$d</string>
+    <string name="guide_guard_description">Exemplo: o guarda-costas verifica quatro apps e registra o que cada um lê.</string>
+    <string name="guide_timeline_description">Exemplo de linha do tempo: o que os apps Tempo, Loja, Chat e Lanterna leram.</string>
+    <string name="guide_jail_description">Exemplo: o app Tempo está isolado na prisão, com área de transferência vazia, ID de dispositivo virtual e armazenamento isolado.</string>
+    <string name="guide_weather">Tempo</string>
+    <string name="guide_shop">Loja</string>
+    <string name="guide_chat">Chat</string>
+    <string name="guide_flashlight">Lanterna</string>
+    <string name="guide_location">Localização</string>
+    <string name="guide_clipboard">Área de transferência</string>
+    <string name="guide_files">Arquivos</string>
+    <string name="guide_device_id">ID do dispositivo</string>
+    <string name="guide_isolated_value">%1$s: %2$s</string>
+</resources>

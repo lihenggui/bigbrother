@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="settings_title">Setelan</string>
+    <string name="section_recording">Perekaman</string>
+    <string name="section_display">Layar</string>
+    <string name="section_about">Tentang</string>
+    <string name="recording_active">Sedang merekam</string>
+    <string name="recording_unknown">Status perekaman tidak diketahui</string>
+    <string name="retention">Catatan disimpan selama 30 hari</string>
+    <string name="coverage_title">Tidak didukung di perangkat ini</string>
+    <string name="feature_files">File dibuka</string>
+    <string name="feature_exec">Eksekusi perintah</string>
+    <string name="feature_network">Koneksi jaringan lokal</string>
+    <string name="feature_process">Proses akses memori</string>
+    <string name="feature_netlink">Kueri Netlink</string>
+    <string name="feature_binder">Panggilan layanan sistem</string>
+    <string name="feature_appops">Penggunaan izin</string>
+    <string name="remove_module">Hapus rekaman</string>
+    <string name="remove_module_summary">Berhenti merekam dan menghapus catatan</string>
+    <string name="remove_module_removing">Menghapus rekaman…</string>
+    <string name="remove_module_title">Hapus rekaman?</string>
+    <string name="remove_module_body">Perekaman berhenti dan catatan dihapus. Aplikasi di Penjara kembali menerima data asli dan dimulai ulang. Perekaman dapat disiapkan kembali di Ringkasan.</string>
+    <string name="remove_module_confirm">Hapus</string>
+    <string name="cancel">Batalkan</string>
+    <string name="module_in_manager">Diinstal sebagai modul di pengelola root</string>
+    <string name="module_in_manager_summary">Untuk menghapus komponen perekaman, hapus modul di pengelola root lalu mulai ulang perangkat. Catatan akan dihapus.</string>
+    <string name="module_in_manager_pending">Berlaku setelah perangkat dimulai ulang</string>
+    <string name="lsposed_title">Modul LSPosed</string>
+    <string name="lsposed_summary">Aktifkan Big Brother di LSPosed untuk merekam akses ke perpustakaan media, kontak, pesan, dan kalender.</string>
+    <string name="setting_system_apps">Tampilkan aplikasi sistem</string>
+    <string name="setting_system_apps_summary">Tersembunyi secara default, bersama dengan proses terisolasi yang tidak dilacak ke aplikasi: membaca data adalah bagian dari cara kerja komponen sistem.</string>
+    <string name="theme">Tema</string>
+    <string name="theme_system">Ikuti sistem</string>
+    <string name="theme_light">Terang</string>
+    <string name="theme_dark">Gelap</string>
+    <string name="dynamic_color">Gunakan warna wallpaper</string>
+    <string name="dynamic_color_summary">Saat nonaktif, aplikasi menggunakan warnanya sendiri</string>
+    <string name="version">Versi</string>
+    <string name="source_code">Kode sumber</string>
+    <string name="license">Lisensi</string>
+    <string name="export_logs">Ekspor log</string>
+    <string name="export_logs_summary">Log aplikasi dan rekaman, untuk laporan bug</string>
+    <string name="export_logs_collecting">Mengumpulkan log…</string>
+</resources>

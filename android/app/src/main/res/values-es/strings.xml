@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="module_description">Registra el acceso de las aplicaciones a archivos y las consultas de datos personales a través de los proveedores de contenido de Android. La cárcel permite controlar el Android ID, los identificadores publicitarios, la visibilidad de aplicaciones y los permisos de acceso a archivos.</string>
+    <string name="nav_overview">Resumen</string>
+    <string name="nav_apps">Aplicaciones</string>
+    <string name="nav_timeline">Cronología</string>
+    <string name="nav_jail">Cárcel</string>
+
+    <string name="guide_access_title">Consultar accesos a datos personales</string>
+    <string name="guide_access_body">Big Brother registra qué datos lee cada aplicación y cuándo: archivos, ubicación, portapapeles e identificadores del dispositivo. Los registros solo se guardan en este dispositivo.</string>
+    <string name="guide_timeline_title">Consultar la cronología</string>
+    <string name="guide_timeline_body">La cronología agrupa los accesos por hora y por aplicación. Abre un registro para ver sus detalles.</string>
+    <string name="guide_jail_title">Aislar aplicaciones seleccionadas</string>
+    <string name="guide_jail_body">Al aislar una aplicación en la cárcel, recibe almacenamiento propio, un portapapeles vacío y un ID de dispositivo virtual. Cada opción se puede ajustar por separado.</string>
+    <string name="guide_skip">Saltar</string>
+    <string name="guide_next">Siguiente</string>
+    <string name="guide_back">Página anterior</string>
+    <string name="guide_start">Empezar</string>
+    <string name="guide_progress">Página %1$d de %2$d</string>
+    <string name="guide_guard_description">Ejemplo: el guardaespaldas revisa cuatro aplicaciones y registra lo que lee cada una.</string>
+    <string name="guide_timeline_description">Ejemplo de cronología: lo que leyeron las aplicaciones El tiempo, Tienda, Chat y Linterna.</string>
+    <string name="guide_jail_description">Ejemplo: la aplicación El tiempo está aislada en la cárcel, con el portapapeles vacío, un ID de dispositivo virtual y almacenamiento aislado.</string>
+    <string name="guide_weather">El tiempo</string>
+    <string name="guide_shop">Tienda</string>
+    <string name="guide_chat">Chat</string>
+    <string name="guide_flashlight">Linterna</string>
+    <string name="guide_location">Ubicación</string>
+    <string name="guide_clipboard">Portapapeles</string>
+    <string name="guide_files">Archivos</string>
+    <string name="guide_device_id">ID del dispositivo</string>
+    <string name="guide_isolated_value">%1$s: %2$s</string>
+</resources>
