@@ -113,8 +113,8 @@ The daemon runs on every device all the time; its cost is the product's cost.
   `/data/system` is watched with inotify for the package list being
   replaced, and `/data/user_de` and each user's directory in it for new
   directories; while a new app waits to be tried again, a timer runs until
-  then. With that off only the package list is watched while a mount
-  policy needs package updates, and no timer is armed for the watch.
+  then. With that off only the package list is watched while an app is
+  sandboxed, and no timer is armed for the watch.
 - Rate-limit repeated work such as helper restarts and back off on failure.
 - Filter as early as possible: in the kernel if the decision can be made there
   (see `bb-ebpf/AGENTS.md`), otherwise before allocating or storing.

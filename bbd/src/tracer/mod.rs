@@ -141,6 +141,7 @@ pub(super) struct Tracer {
     sensors_dropped_log: Limited,
     pub(super) writer: Writer,
     pub(super) write_errors: Limited,
+    record_drops: Limited,
     pub(super) counters: Counters,
     /// Keyed by thread id.
     awaiting_result: HashMap<u32, Vec<Held>>,
@@ -178,6 +179,7 @@ impl Tracer {
             sensors_dropped_log: Limited::new(RECURRING_INTERVAL, Policy::ResetOnChange),
             writer,
             write_errors: Limited::new(RECURRING_INTERVAL, Policy::ResetOnChange),
+            record_drops: Limited::new(RECURRING_INTERVAL, Policy::Shared),
             counters: Counters::default(),
             awaiting_result: HashMap::new(),
             isolated_owners: HashMap::new(),
@@ -199,6 +201,20 @@ impl Tracer {
         }
     }
 
+    pub(super) fn flush(&mut self, query: bool, at: i64) -> anyhow::Result<()> {
+        let dropped = if query {
+            self.writer.flush_for_query(&self.counters, at)?
+        } else {
+            self.writer.flush(&self.counters, at)?
+        };
+        if dropped {
+            self.record_drops.log(format_args!(
+                "bbd: warning: dropping buffered records to preserve space for sandbox recovery"
+            ));
+        }
+        Ok(())
+    }
+
     /// Yield to control requests even when the kernel keeps producing.
     pub(super) fn drain_batch(&mut self, ring: &mut RingBuf<MapData>) -> bool {
         let clock = EventClock::now();
@@ -207,6 +223,16 @@ impl Tracer {
             self.on_event(&item, &clock);
         }
         false
+    }
+
+    #[cfg(test)]
+    pub(crate) fn on_test_event(&mut self, bytes: &[u8], boot_unix: i64) {
+        self.on_event(
+            bytes,
+            &EventClock {
+                boot_unix_ns: boot_unix * 1_000_000_000,
+            },
+        );
     }
 
     /// A flush, self-check or stop needs all records already readable when it

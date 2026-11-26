@@ -32,6 +32,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
+    time::{Duration, Instant},
 };
 
 use anyhow::Context as _;
@@ -43,11 +44,13 @@ use super::{
     items::Settings,
     items_of,
     names::{Names, Refuses, Serves},
+    net_rules::NETWORK_RETRY_DELAY,
     network::Listed,
     target::Target,
 };
 use crate::{
     clock,
+    log::{Limited, Policy, SANDBOX_INTERVAL},
     store::{Writer, net::NameAddress},
     sync::{lock, read},
 };
@@ -208,6 +211,8 @@ pub struct Destinations {
     with_names: HashMap<(u32, Target), SavedAddresses>,
     staged_name: Option<StagedName>,
     next_expiry: Option<i64>,
+    expiry_retry_at: Option<Instant>,
+    expiry_errors: Limited,
     recording_available: bool,
 }
 
@@ -263,6 +268,8 @@ impl Destinations {
             with_names: HashMap::new(),
             staged_name: None,
             next_expiry: None,
+            expiry_retry_at: None,
+            expiry_errors: Limited::new(SANDBOX_INTERVAL, Policy::Shared),
             recording_available: true,
         }
     }
@@ -281,6 +288,7 @@ impl Destinations {
             };
             self.save_address(row.uid, &row.install_id, &target, ip, row.expires);
         }
+        self.update_expiry();
         Ok(())
     }
 
@@ -305,7 +313,17 @@ impl Destinations {
         }
         let expiry = saved.addresses.entry(ip).or_insert(expires);
         *expiry = (*expiry).max(expires);
-        self.next_expiry = Some(self.next_expiry.map_or(*expiry, |old| old.min(*expiry)));
+    }
+
+    fn update_expiry(&mut self) {
+        self.next_expiry = self
+            .with_names
+            .values()
+            .flat_map(|saved| saved.addresses.values().copied())
+            .min();
+        if self.next_expiry.is_none() {
+            self.expiry_retry_at = None;
+        }
     }
 
     pub fn with_recording(&mut self, available: bool) {
@@ -322,9 +340,8 @@ impl Destinations {
     /// the app was given for a name it is kept from. A name is refused
     /// where it is looked up; a connection to an address the app already
     /// has for it would otherwise go on.
-    fn wanted(&mut self, entry: &Entry) -> BTreeSet<Address> {
+    fn wanted(&mut self, entry: &Entry, now: i64) -> BTreeSet<Address> {
         let uid = entry.uid;
-        let now = clock::now();
         let targets: BTreeSet<Target> = {
             let book = lock(&self.book);
             book.get(&uid).cloned().unwrap_or_default()
@@ -415,7 +432,7 @@ impl Destinations {
     }
 
     fn apply_policy(&mut self, entry: &Entry, items: &Settings) -> anyhow::Result<()> {
-        let wanted = self.wanted(entry);
+        let wanted = self.wanted(entry, clock::now());
         self.carry_out(entry.uid, wanted, items.network_recorded())
     }
 
@@ -505,11 +522,13 @@ impl Effect for Destinations {
             .collect()
     }
 
-    fn retry_network(&mut self, snapshot: &super::Snapshot) {
-        let now = clock::now();
-        if self.next_expiry.is_none_or(|expiry| expiry > now) {
-            return;
-        }
+    fn next_network_expiry(&self, at: Instant, wall: i64) -> Option<Instant> {
+        let seconds = self.next_expiry?.saturating_sub(wall).max(0) as u64;
+        let due = at.checked_add(Duration::from_secs(seconds))?;
+        Some(self.expiry_retry_at.map_or(due, |retry| due.max(retry)))
+    }
+
+    fn expire_network(&mut self, snapshot: &super::Snapshot, at: Instant, now: i64) {
         let expired: BTreeSet<_> = self
             .with_names
             .iter()
@@ -529,23 +548,24 @@ impl Effect for Destinations {
             {
                 // Expiry can withdraw addresses. Only normal policy application
                 // may add them after verifying the installation.
-                let mut wanted = self.wanted(entry);
+                let mut wanted = self.wanted(entry, now);
                 wanted.retain(|address| self.listed[&uid].contains(address));
-                if self.apply_addresses(uid, wanted).is_err() {
+                if let Err(e) = self.apply_addresses(uid, wanted) {
                     failed.insert(uid);
+                    self.expiry_errors.log(format_args!(
+                        "bbd: sandbox: could not withdraw expired network addresses: {e:#}"
+                    ));
                 }
             }
         }
-        self.next_expiry = None;
+        self.expiry_retry_at = (!failed.is_empty()).then_some(at + NETWORK_RETRY_DELAY);
         self.with_names.retain(|(uid, _), saved| {
             if !failed.contains(uid) {
                 saved.addresses.retain(|_, expires| *expires > now);
             }
-            for &expiry in saved.addresses.values() {
-                self.next_expiry = Some(self.next_expiry.map_or(expiry, |old| old.min(expiry)));
-            }
             !saved.addresses.is_empty()
         });
+        self.update_expiry();
     }
 
     fn finish_refresh(&mut self, uid: u32) {
@@ -557,6 +577,8 @@ impl Effect for Destinations {
         let targets = book.get(&uid);
         self.with_names
             .retain(|(of, target), _| *of != uid || targets.is_some_and(|t| t.contains(target)));
+        drop(book);
+        self.update_expiry();
     }
 
     fn resume(&mut self, apps: &[Resumed]) {
@@ -572,6 +594,7 @@ impl Effect for Destinations {
 
     fn forget(&mut self, uid: u32) {
         self.with_names.retain(|(owner, _), _| *owner != uid);
+        self.update_expiry();
         if let Err(e) = self.release(uid) {
             eprintln!("bbd: warning: uid {uid} is still kept from destinations: {e:#}");
         }
@@ -918,6 +941,48 @@ mod tests {
     }
 
     #[test]
+    fn failed_address_expiry_backs_off_and_disarms_after_success() {
+        let writer = Writer::open(std::path::Path::new(":memory:")).unwrap();
+        let entry = entry(10100);
+        writer.put_sandbox(&entry).unwrap();
+        let mut sandbox = Sandbox::load(&writer, Vec::new(), None).unwrap();
+        let mut f = fixture_with(sandbox.book());
+        let host = "domain:example.com";
+        let ip = "203.0.113.7".parse().unwrap();
+        f.rule(entry.uid, host);
+        f.effect.save_address(
+            entry.uid,
+            &entry.install_id,
+            &Target::parse(host).unwrap(),
+            ip,
+            102,
+        );
+        f.effect.update_expiry();
+        let wanted = f.effect.wanted(&entry, 100);
+        f.effect.apply_addresses(entry.uid, wanted).unwrap();
+        let kernel = f.kernel.clone();
+        let rule = bytes(&key(entry.uid, (ip, None)));
+        sandbox.add_effect(Box::new(f.effect));
+
+        let at = Instant::now();
+        let expiry = at + Duration::from_secs(2);
+        assert_eq!(sandbox.next_network_work(at, 100), Some(expiry));
+        kernel.borrow_mut().rules_fail = true;
+        sandbox.run_network_work(expiry, 102);
+        assert!(kernel.borrow().rules.contains(&rule));
+        let retry = expiry + NETWORK_RETRY_DELAY;
+        assert_eq!(sandbox.next_network_work(expiry, 102), Some(retry));
+
+        kernel.borrow_mut().rules_fail = false;
+        sandbox.run_network_work(expiry, 102);
+        assert!(kernel.borrow().rules.contains(&rule));
+        let retry_wall = 102 + NETWORK_RETRY_DELAY.as_secs() as i64;
+        sandbox.run_network_work(retry, retry_wall);
+        assert!(!kernel.borrow().rules.contains(&rule));
+        assert_eq!(sandbox.next_network_work(retry, retry_wall), None);
+    }
+
+    #[test]
     fn recording_status_requires_probe_coverage_and_uid_membership() {
         let mut f = fixture();
         let on = items(Mode::On);
@@ -1211,8 +1276,15 @@ mod tests {
         assert_eq!(Writer::open(&db).unwrap().net_rules().unwrap(), rules);
 
         kernel.borrow_mut().fail_insert = None;
-        sandbox.retry_net_refresh();
-        sandbox.retry_net_refresh();
+        let at = Instant::now();
+        let wall = clock::now();
+        let retry = at + NETWORK_RETRY_DELAY;
+        assert_eq!(sandbox.next_network_work(at, wall), Some(retry));
+        sandbox.run_network_work(at, wall);
+        assert_eq!(refreshed.get(), 2);
+        let retry_wall = wall + NETWORK_RETRY_DELAY.as_secs() as i64;
+        sandbox.run_network_work(retry, retry_wall);
+        sandbox.run_network_work(retry, retry_wall);
         assert_eq!(refreshed.get(), 3);
         assert!(kernel.borrow().rules.contains(&key));
         assert!(names.refused(10100, ip));

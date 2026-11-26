@@ -29,7 +29,7 @@ pub enum Policy {
     ResetOnChange,
 }
 
-/// The log is only rotated at boot, so a recurring failure must be bounded.
+/// Bound recurring output while a daemon run keeps the log open.
 pub struct Limited {
     interval: Duration,
     logged: Option<Instant>,

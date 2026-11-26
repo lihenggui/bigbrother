@@ -255,6 +255,7 @@ static NETWORK_RULES: HashMap<NetRuleKey, u32> = HashMap::with_max_entries(8192,
 const BPF_HDR_START_NET: u32 = 1;
 const IPPROTO_TCP: u8 = 6;
 const IPPROTO_UDP: u8 = 17;
+const IPV6_MAX_EXTENSIONS: u32 = 4;
 
 /// Whether a packet is sent from a socket of an app kept from the network,
 /// or to a destination the app is kept from: the match of a rule of the
@@ -387,7 +388,8 @@ fn destination_refused(ctx: &SkBuffContext, uid: u32) -> Option<bool> {
         addr: [0; 16],
     };
     // Where the transport header starts, and its protocol.
-    let (transport, protocol) = if first[0] >> 4 == 4 {
+    let ipv6 = first[0] >> 4 == 6;
+    let (mut transport, mut protocol) = if first[0] >> 4 == 4 {
         let address: [u8; 4] = packet_bytes(ctx, 16)?;
         key.addr[0] = address[0];
         key.addr[1] = address[1];
@@ -395,9 +397,8 @@ fn destination_refused(ctx: &SkBuffContext, uid: u32) -> Option<bool> {
         key.addr[3] = address[3];
         let protocol: [u8; 1] = packet_bytes(ctx, 9)?;
         (u32::from(first[0] & 0xf) * 4, protocol[0])
-    } else if first[0] >> 4 == 6 {
+    } else if ipv6 {
         key.addr = packet_bytes(ctx, 24)?;
-        // Without extension headers, as the packets of a connection are.
         let next: [u8; 1] = packet_bytes(ctx, 6)?;
         (40, next[0])
     } else {
@@ -407,10 +408,38 @@ fn destination_refused(ctx: &SkBuffContext, uid: u32) -> Option<bool> {
     if unsafe { NETWORK_RULES.get(&key) }.is_some() {
         return Some(true);
     }
+    if ipv6 {
+        (transport, protocol) = ipv6_transport(ctx, protocol)?;
+    }
     if protocol != IPPROTO_TCP && protocol != IPPROTO_UDP {
         return Some(false);
     }
     let port: [u8; 2] = packet_bytes(ctx, transport + 2)?;
     key.port = u32::from(u16::from_be_bytes(port));
     Some(unsafe { NETWORK_RULES.get(&key) }.is_some())
+}
+
+#[inline(always)]
+fn ipv6_transport(ctx: &SkBuffContext, mut protocol: u8) -> Option<(u32, u8)> {
+    let mut offset = 40;
+    for _ in 0..IPV6_MAX_EXTENSIONS {
+        match protocol {
+            0 | 43 | 60 => {
+                let header: [u8; 2] = packet_bytes(ctx, offset)?;
+                protocol = header[0];
+                offset += (u32::from(header[1]) + 1) * 8;
+            }
+            44 => {
+                let header: [u8; 4] = packet_bytes(ctx, offset)?;
+                // Only the first fragment has a transport header.
+                if header[2] != 0 || header[3] & 0xf8 != 0 {
+                    return None;
+                }
+                protocol = header[0];
+                offset += 8;
+            }
+            _ => break,
+        }
+    }
+    Some((offset, protocol))
 }

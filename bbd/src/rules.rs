@@ -222,7 +222,7 @@ pub fn classify(
         None => (rest, ""),
     };
     let is_pid = first.bytes().all(|b| b.is_ascii_digit());
-    if is_pid || first == "self" {
+    if is_pid || matches!(first, "self" | "thread-self") {
         // /proc/mounts and /proc/net are symlinks to the caller's own
         // self/mounts and self/net, so a read of the mount table or the
         // network state shows up under a process directory. Record it as
@@ -386,6 +386,13 @@ mod tests {
             c("/proc/self/mounts"),
             Some((Category::System, "/proc/mounts".into()))
         );
+        assert_eq!(
+            c("/proc/thread-self/net/route"),
+            Some((Category::System, "/proc/net/route".into()))
+        );
+        for path in ["/proc/thread-self/mounts", "/proc/thread-self/mountinfo"] {
+            assert_eq!(c(path), Some((Category::System, "/proc/mounts".into())));
+        }
         assert_eq!(topic_of("/proc/mounts"), Some(topic::MOUNTS));
 
         use bb_common::filter::own_proc_entry_matters;

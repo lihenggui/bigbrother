@@ -12,6 +12,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+use std::time::{Duration, Instant};
+
 use anyhow::Context as _;
 
 use crate::{
@@ -25,6 +27,7 @@ use super::{Sandbox, items_of, target::Target, uid_of};
 /// The most destinations one app can be kept from: what bounds the list
 /// the kernel side looks packets up in.
 const RULES_PER_APP: usize = 1024;
+pub(super) const NETWORK_RETRY_DELAY: Duration = Duration::from_secs(30);
 
 impl Sandbox {
     /// Write down which apps have their connections recorded now, with
@@ -156,12 +159,43 @@ impl Sandbox {
         }
     }
 
-    /// Retry one incomplete restoration per periodic flush, taking turns
-    /// when several apps need a retry.
-    pub fn retry_net_refresh(&mut self) {
+    pub fn next_network_work(&mut self, at: Instant, wall: i64) -> Option<Instant> {
+        if !self.pending_net_refresh.is_empty()
+            || self.effects.iter().any(|e| e.network_retry_pending())
+        {
+            self.net_retry_at.get_or_insert(at + NETWORK_RETRY_DELAY);
+        } else {
+            self.net_retry_at = None;
+        }
+        self.effects
+            .iter()
+            .filter_map(|effect| effect.next_network_expiry(at, wall))
+            .chain(self.net_retry_at)
+            .min()
+    }
+
+    pub fn run_network_work(&mut self, at: Instant, wall: i64) {
         let snapshot = self.snapshot();
         for effect in &mut self.effects {
-            effect.retry_network(&snapshot);
+            if effect
+                .next_network_expiry(at, wall)
+                .is_some_and(|due| due <= at)
+            {
+                effect.expire_network(&snapshot, at, wall);
+            }
+        }
+        if self.net_retry_at.is_some_and(|due| due <= at) {
+            self.net_retry_at = None;
+            self.retry_net_refresh();
+        }
+    }
+
+    /// Retry one incomplete restoration at a time so multiple apps get a turn.
+    fn retry_net_refresh(&mut self) {
+        for effect in &mut self.effects {
+            if effect.network_retry_pending() {
+                effect.retry_network();
+            }
         }
         if let Some(uid) = self.pending_net_refresh.pop_front()
             && self.refresh(uid, true).is_err()

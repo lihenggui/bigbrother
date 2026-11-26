@@ -22,6 +22,21 @@ use crate::{
 };
 
 #[test]
+fn package_updates_retire_reassigned_uids_even_without_mount_effects() {
+    let mut f = Fixture::new("sandbox-watch-reassigned");
+    let mut sandbox = f.sandbox_with(Vec::new());
+    assert!(!sandbox.watches_package_updates());
+    sandbox
+        .enable(&f.writer, &mut f.packages, "com.app", 0, 1000)
+        .unwrap();
+    assert!(sandbox.watches_package_updates());
+    std::fs::write(f.dir.join("packages.list"), "com.newcomer 10100 0 /d x\n").unwrap();
+    sandbox.package_list_changed(&f.writer, &mut f.packages, &mut PackageVersions::default());
+    assert!(!f.writer.sandbox_entry(10100).unwrap().unwrap().enabled);
+    assert!(!sandbox.watches_package_updates());
+}
+
+#[test]
 fn an_app_stays_in_while_any_package_of_its_uid_is_installed() {
     let mut f = Fixture::new("sandbox-shared-stays");
     let mut sandbox = f.sandbox();

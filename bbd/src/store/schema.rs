@@ -17,9 +17,10 @@ use std::path::Path;
 use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 
 /// Schema version stored in SQLite's `user_version`. Bump it when the layout changes.
-const SCHEMA_VERSION: i32 = 14;
+const SCHEMA_VERSION: i32 = 15;
 const V030_SCHEMA: i32 = 12;
 const APPOPS_UNDO_VERSION: i32 = 13;
+const NAME_ADDRESSES_VERSION: i32 = 14;
 
 const APPOPS_UNDO_SCHEMA: &str = "
 CREATE TABLE sandbox_appops_undo (
@@ -216,6 +217,11 @@ CREATE TABLE net_name_address (
 ) WITHOUT ROWID;
 ";
 
+const MAINTENANCE_INDEXES: &str = "
+CREATE INDEX IF NOT EXISTS event_path ON event (path_id);
+CREATE INDEX IF NOT EXISTS net_dest_hour ON net_dest (hour);
+";
+
 fn has_tables(conn: &Connection) -> rusqlite::Result<bool> {
     conn.query_row(
         "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table')",
@@ -282,7 +288,10 @@ pub(super) fn create_schema(conn: &mut Connection) -> anyhow::Result<()> {
     if matches!(version, None | Some(V030_SCHEMA)) {
         conn.execute_batch(APPOPS_UNDO_SCHEMA)?;
     }
-    conn.execute_batch(NAME_ADDRESSES)?;
+    if version.is_none_or(|version| version < NAME_ADDRESSES_VERSION) {
+        conn.execute_batch(NAME_ADDRESSES)?;
+    }
+    conn.execute_batch(MAINTENANCE_INDEXES)?;
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     conn.commit()?;
     Ok(())
@@ -293,8 +302,19 @@ mod tests {
     use super::*;
     use crate::store::{Reader, Writer, sandbox::sandbox_global};
 
+    fn assert_maintenance_indexes(conn: &Connection) {
+        for (index, column) in [("event_path", "path_id"), ("net_dest_hour", "hour")] {
+            let indexed: String = conn
+                .query_row("SELECT name FROM pragma_index_info(?1)", [index], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(indexed, column);
+        }
+    }
+
     fn assert_appops_undo(undo: Vec<crate::store::sandbox::AppOpsUndo>, version: i32) {
-        assert_eq!(undo.len(), usize::from(version == APPOPS_UNDO_VERSION));
+        assert_eq!(undo.len(), usize::from(version >= APPOPS_UNDO_VERSION));
         if let Some(row) = undo.first() {
             assert_eq!(row.uid, 10100);
             assert_eq!(row.package, "com.example.app");
@@ -304,14 +324,7 @@ mod tests {
         }
     }
 
-    fn upgrade_preserves_data(version: i32) {
-        let dir =
-            std::env::temp_dir().join(format!("bbd-test-upgrade-{version}-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("sandbox-file");
-        std::fs::write(&file, b"app data").unwrap();
-        let db = dir.join("bb.db");
-        let conn = Connection::open(&db).unwrap();
+    fn seed_previous_schema(conn: &Connection, version: i32) {
         for batch in [SCHEMA, RETIRED_SANDBOX, SANDBOX_AUTO_SCHEMA, NET_SCHEMA] {
             conn.execute_batch(batch).unwrap();
         }
@@ -321,6 +334,13 @@ mod tests {
                 'CAMERA=granted', 123, 'network=on', 'installation');
              INSERT INTO sandbox_global VALUES ('location', 'coarse');
              INSERT INTO sandbox_packages VALUES (10100, 'com.example.app');
+             INSERT INTO sandbox_retired VALUES
+               (10100, 'com.example.app', 0, '11223344aabbccdd', 'android:camera=1',
+                'CAMERA=default', 44, 'network=off', 'older-installation');
+             INSERT INTO sandbox_known VALUES (10100, -1, 'com.example.app', 0);
+             INSERT INTO sensor_session VALUES
+               (10100, 42, 1, 2, 3, 'android.sensor.accelerometer', 1, 100, 122, 123);
+             INSERT INTO meta VALUES ('events_kept', 1);
              INSERT INTO net_rule VALUES (10100, 'domain:example.test', 123, 1);
              INSERT INTO net_recording VALUES (10100, 123);
              INSERT INTO net_dest VALUES
@@ -331,7 +351,7 @@ mod tests {
              INSERT INTO event VALUES (10100, 1, 1, 123, 1, 0);",
         )
         .unwrap();
-        if version == APPOPS_UNDO_VERSION {
+        if version >= APPOPS_UNDO_VERSION {
             conn.execute_batch(APPOPS_UNDO_SCHEMA).unwrap();
             conn.execute_batch(
                 "INSERT INTO sandbox_appops_undo VALUES
@@ -339,7 +359,26 @@ mod tests {
             )
             .unwrap();
         }
+        if version >= NAME_ADDRESSES_VERSION {
+            conn.execute_batch(NAME_ADDRESSES).unwrap();
+            conn.execute_batch(
+                "INSERT INTO net_name_address VALUES
+                   (10100, 'domain:example.test', 'installation', '203.0.113.7', 456);",
+            )
+            .unwrap();
+        }
         conn.pragma_update(None, "user_version", version).unwrap();
+    }
+
+    fn upgrade_preserves_data(version: i32) {
+        let dir =
+            std::env::temp_dir().join(format!("bbd-test-upgrade-{version}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("sandbox-file");
+        std::fs::write(&file, b"app data").unwrap();
+        let db = dir.join("bb.db");
+        let conn = Connection::open(&db).unwrap();
+        seed_previous_schema(&conn, version);
 
         check_module_database(&db).unwrap();
         let before = Reader::open(&db).unwrap();
@@ -348,11 +387,13 @@ mod tests {
         let rules = before.net_rules(10100).unwrap();
         let net = before.net_rows(10100, 0, 3600).unwrap();
         let history = serde_json::to_value(before.history(10100, "/fixture", 0).unwrap()).unwrap();
+        let sessions = before.sensor_sessions(10100, 0).unwrap();
         assert_eq!(version_of(&conn).unwrap(), version);
         drop(before);
 
         let writer = Writer::open(&db).unwrap();
         assert_eq!(version_of(&conn).unwrap(), SCHEMA_VERSION);
+        assert_maintenance_indexes(&conn);
         assert_eq!(writer.sandbox_entries().unwrap(), entries);
         assert_eq!(writer.sandbox_global().unwrap(), "location=coarse");
         assert_eq!(
@@ -361,12 +402,16 @@ mod tests {
         );
         assert_eq!(writer.net_rules().unwrap(), rules);
         assert_eq!(writer.net_recording().unwrap()[&10100], 123);
+        assert_eq!(writer.meta("events_kept").unwrap(), Some(1));
         assert_appops_undo(writer.appops_undo().unwrap(), version);
-        assert!(writer.name_addresses(123).unwrap().is_empty());
+        assert_learned_addresses(&writer, version);
+        assert_retired_and_known_entries(&conn);
 
         let after = Reader::open(&db).unwrap();
         assert_appops_undo(after.appops_undo().unwrap(), version);
         assert_eq!(after.net_rows(10100, 0, 3600).unwrap(), net);
+        assert_eq!(after.sensor_sessions(10100, 0).unwrap(), sessions);
+        assert_eq!(after.stats().unwrap().rows, 1);
         assert_eq!(
             serde_json::to_value(after.history(10100, "/fixture", 0).unwrap()).unwrap(),
             history
@@ -374,6 +419,48 @@ mod tests {
         assert_eq!(std::fs::read(file).unwrap(), b"app data");
         drop((after, writer, conn));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn assert_learned_addresses(writer: &Writer, version: i32) {
+        let addresses = writer.name_addresses(123).unwrap();
+        if version < NAME_ADDRESSES_VERSION {
+            assert!(addresses.is_empty());
+        } else {
+            let [address] = addresses.as_slice() else {
+                panic!("expected one learned address")
+            };
+            assert_eq!(address.uid, 10100);
+            assert_eq!(address.target, "domain:example.test");
+            assert_eq!(address.install_id, "installation");
+            assert_eq!(address.address, "203.0.113.7");
+            assert_eq!(address.expires, 456);
+        }
+    }
+
+    fn assert_retired_and_known_entries(conn: &Connection) {
+        let retired: (String, String, String, String, String) = conn
+            .query_row(
+                "SELECT android_id, saved_ops, saved_permissions, settings, install_id
+                 FROM sandbox_retired WHERE uid = 10100",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            retired,
+            (
+                "11223344aabbccdd".into(),
+                "android:camera=1".into(),
+                "CAMERA=default".into(),
+                "network=off".into(),
+                "older-installation".into()
+            )
+        );
+        let known: String = conn.query_row(
+            "SELECT package FROM sandbox_known WHERE app_id = 10100 AND user = -1 AND library = 0",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(known, "com.example.app");
     }
 
     #[test]
@@ -384,6 +471,11 @@ mod tests {
     #[test]
     fn migrates_the_helper_transaction_schema_and_keeps_its_undo_journal() {
         upgrade_preserves_data(APPOPS_UNDO_VERSION);
+    }
+
+    #[test]
+    fn migrates_the_name_address_schema_and_keeps_its_saved_addresses() {
+        upgrade_preserves_data(NAME_ADDRESSES_VERSION);
     }
 
     #[test]

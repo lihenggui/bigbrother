@@ -74,27 +74,28 @@ fn try_binder_ioctl(ctx: &RawTracePointContext) -> Result<(), i32> {
     // struct binder_write_read begins: write_size, write_consumed,
     // write_buffer, each 64 bits wide (for 32-bit processes too).
     let bwr: [u64; 3] = unsafe { bpf_probe_read_user(arg as *const [u64; 3])? };
-    let end = bwr[2].wrapping_add(bwr[0]);
-    let mut at = bwr[2].wrapping_add(bwr[1]);
-    let mut i = 0;
-    while i < MAX_COMMANDS {
-        if at.wrapping_add(4) > end {
-            return Ok(());
+    let end = bwr[2].checked_add(bwr[0]).ok_or(-1)?;
+    let mut at = bwr[2].checked_add(bwr[1]).ok_or(-1)?;
+    for _ in 0..MAX_COMMANDS {
+        if end.saturating_sub(at) < 4 {
+            break;
         }
         let command: u32 = unsafe { bpf_probe_read_user(at as *const u32)? };
-        if command == BC_TRANSACTION || command == BC_TRANSACTION_SG {
-            return binder_transaction(at + 4, uid);
-        }
         // The size of a command's payload is encoded in the command.
-        at = at.wrapping_add(4 + ((command >> 16) & 0x3fff) as u64);
-        i += 1;
+        let step = 4 + u64::from((command >> 16) & 0x3fff);
+        if step > end - at {
+            break;
+        }
+        if command == BC_TRANSACTION || command == BC_TRANSACTION_SG {
+            // One unreadable parcel (or a full ring) need not end the batch.
+            let _ = binder_transaction(at + 4, uid);
+        }
+        at += step;
     }
     Ok(())
 }
 
 #[inline(always)]
-// Splitting this further risks changing what the BPF verifier sees.
-#[allow(clippy::too_many_lines)]
 fn binder_transaction(transaction: u64, uid: u32) -> Result<(), i32> {
     // struct binder_transaction_data: target and cookie (8 bytes each),
     // code and flags (4 each), sender pid and euid (4 each), data_size,
@@ -110,48 +111,17 @@ fn binder_transaction(transaction: u64, uid: u32) -> Result<(), i32> {
     // A call without arguments has no interface name either; it is looked up
     // under the all-zero key (`BINDER_UNNAMED_KEY`) and has no arguments to
     // copy.
-    let mut args = 0;
-    if size != 0 {
-        if size < PARCEL_NAME_OFFSET {
-            return Ok(());
-        }
-        let prefix: [u32; 4] = unsafe { bpf_probe_read_user(data as *const [u32; 4])? };
-        let len = prefix[3];
-        // Keep both comparisons on len visible to the BPF verifier before deriving offsets.
-        #[allow(clippy::manual_range_contains)]
-        if prefix[2] != PARCEL_HEADER_SYSTEM || len < BINDER_MIN_NAME || len > BINDER_MAX_NAME {
-            return Ok(());
-        }
-        // The name: `len` UTF-16 code units, a terminator, padding to 4 bytes.
-        let name = data + PARCEL_NAME_OFFSET;
-        let name_bytes = len as u64 * 2;
-        let len_bytes = len.to_ne_bytes();
-        key[0] = len_bytes[0];
-        key[1] = len_bytes[1];
-        key[2] = len_bytes[2];
-        key[3] = len_bytes[3];
-        unsafe {
-            let key_bytes = (&raw mut key).cast::<u8>();
-            bpf_probe_read_user_buf(
-                name as *const u8,
-                core::slice::from_raw_parts_mut(key_bytes.add(4), BINDER_KEY_HEAD),
-            )?;
-            bpf_probe_read_user_buf(
-                (name + name_bytes - BINDER_KEY_TAIL as u64) as *const u8,
-                core::slice::from_raw_parts_mut(
-                    key_bytes.add(4 + BINDER_KEY_HEAD),
-                    BINDER_KEY_TAIL,
-                ),
-            )?;
-        }
-        args = name + ((name_bytes + 2 + 3) & !3);
-    }
+    let args = if size == 0 {
+        0
+    } else {
+        binder_interface(data, size, &mut key)?
+    };
     let Some(watched) = (unsafe { BINDER_WATCH.get(&key) }) else {
         return Ok(());
     };
-    // `code` is below BINDER_CODES, so the word index is in range; the mask
-    // tells the verifier.
-    let word = watched[1 + ((code >> 6) & 7) as usize];
+    // Keep LLVM from folding away the mask the verifier needs for this lookup.
+    let index = core::hint::black_box(code >> 6) & 7;
+    let word = watched[1 + index as usize];
     if word & (1 << (code & 63)) == 0 {
         return Ok(());
     }
@@ -181,6 +151,38 @@ fn binder_transaction(transaction: u64, uid: u32) -> Result<(), i32> {
     }
     entry.submit(flags);
     Ok(())
+}
+
+#[inline(always)]
+fn binder_interface(data: u64, size: u64, key: &mut BinderKey) -> Result<u64, i32> {
+    if size < PARCEL_NAME_OFFSET {
+        return Err(-1);
+    }
+    let prefix: [u32; 4] = unsafe { bpf_probe_read_user(data as *const [u32; 4])? };
+    let len = prefix[3];
+    if prefix[2] != PARCEL_HEADER_SYSTEM || !(BINDER_MIN_NAME..=BINDER_MAX_NAME).contains(&len) {
+        return Err(-1);
+    }
+    // The name: `len` UTF-16 code units, a terminator, padding to 4 bytes.
+    let name = data + PARCEL_NAME_OFFSET;
+    let name_bytes = u64::from(len) * 2;
+    let len_bytes = len.to_ne_bytes();
+    key[0] = len_bytes[0];
+    key[1] = len_bytes[1];
+    key[2] = len_bytes[2];
+    key[3] = len_bytes[3];
+    unsafe {
+        let key_bytes = (key as *mut BinderKey).cast::<u8>();
+        bpf_probe_read_user_buf(
+            name as *const u8,
+            core::slice::from_raw_parts_mut(key_bytes.add(4), BINDER_KEY_HEAD),
+        )?;
+        bpf_probe_read_user_buf(
+            (name + name_bytes - BINDER_KEY_TAIL as u64) as *const u8,
+            core::slice::from_raw_parts_mut(key_bytes.add(4 + BINDER_KEY_HEAD), BINDER_KEY_TAIL),
+        )?;
+    }
+    Ok(name + ((name_bytes + 2 + 3) & !3))
 }
 
 #[inline(always)]

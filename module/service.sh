@@ -31,7 +31,7 @@ if [ "$MODDIR" != "$DIRECT" ] && [ -d "$DIRECT" ]; then
     "$MODDIR/bin/bbd" module-stop "$DIRECT" || exit 1
     rm -rf "$DIRECT" /data/adb/service.d/big_brother.sh
 fi
-# shellcheck source=module/stop.sh
+# shellcheck source=module/stop.sh disable=SC1091
 . "$MODDIR/stop.sh"
 
 # Boot guard. A marker is left while the system boots and removed once it has
@@ -71,12 +71,6 @@ if [ -d "$1" ]; then
     exit 0
 fi
 
-# Start a new log once the old one passes 1 MiB. Checked at each start only.
-if [ -f "$LOG" ] && [ "$(stat -c %s "$LOG")" -gt 1048576 ]; then
-    mv -f "$LOG" "$LOG.old"
-fi
-
-echo "--- $(date '+%F %T') starting" >>"$LOG"
 sh "$MODDIR/supervise.sh" &
 # Written here rather than by the supervisor, so that a stop request arriving
 # right away already finds it.

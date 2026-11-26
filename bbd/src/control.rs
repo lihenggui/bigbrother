@@ -29,10 +29,10 @@
 use std::{
     collections::BTreeMap,
     fs,
-    io::{self, BufRead as _, Write as _},
-    os::unix::fs::PermissionsExt as _,
+    io::{self, BufRead as _, Read as _, Write as _},
+    os::unix::{fs::PermissionsExt as _, net::UnixStream as SyncUnixStream},
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::Context as _;
@@ -106,29 +106,25 @@ pub fn request_flush(db: &Path) {
 }
 
 fn request_flush_within(db: &Path, wait: Duration) {
-    let socket = socket_path(db);
-    if !socket.exists() {
-        return;
-    }
-    let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
-        .enable_io()
-        .enable_time()
-        .build()
-    else {
-        return;
-    };
     // Whatever the outcome, the records are read next: a refused connection
     // (a socket left behind), a timeout and an answer all lead there.
-    let _ = runtime.block_on(async {
-        tokio::time::timeout(wait, async {
-            let stream = UnixStream::connect(&socket).await?;
-            read_byte(&stream).await
-        })
-        .await
-    });
+    let _ = wait_for_flush(&socket_path(db), wait);
+}
+
+fn wait_for_flush(path: &Path, wait: Duration) -> io::Result<()> {
+    let start = Instant::now();
+    let address = socket2::SockAddr::unix(path)?;
+    let socket = socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None)?;
+    // On Linux the send timeout also bounds connect against a full accept queue.
+    socket.set_write_timeout(Some(wait.saturating_sub(start.elapsed())))?;
+    socket.connect(&address)?;
+    let mut stream = SyncUnixStream::from(socket);
+    stream.set_read_timeout(Some(wait.saturating_sub(start.elapsed())))?;
+    stream.read(&mut [0; 1]).map(drop)
 }
 
 /// Wait for a byte to arrive, or for the other end to close.
+#[cfg(test)]
 async fn read_byte(stream: &UnixStream) -> io::Result<()> {
     loop {
         stream.readable().await?;
@@ -407,7 +403,7 @@ fn unreachable_daemon(running: bool) -> &'static str {
 /// An answer without `ok` true is an error carrying the daemon's message.
 pub fn command(db: &Path, request: &Request) -> anyhow::Result<serde_json::Value> {
     let path = command_socket_path(db);
-    let mut stream = match std::os::unix::net::UnixStream::connect(&path) {
+    let mut stream = match SyncUnixStream::connect(&path) {
         Ok(stream) => stream,
         Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
             anyhow::bail!("not allowed to reach the daemon; run as root")
@@ -511,6 +507,35 @@ mod tests {
         request_flush_within(&db, Duration::from_secs(5));
         assert!(start.elapsed() < Duration::from_secs(1));
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_full_accept_queue_cannot_extend_the_flush_budget() {
+        let dir = test_dir("control-full-queue");
+        let db = dir.join("bb.db");
+        let path = socket_path(&db);
+        let listener =
+            socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None).unwrap();
+        listener
+            .bind(&socket2::SockAddr::unix(&path).unwrap())
+            .unwrap();
+        listener.listen(0).unwrap();
+        let queued = SyncUnixStream::connect(&path).unwrap();
+
+        let (done, completed) = std::sync::mpsc::channel();
+        let client = std::thread::spawn(move || {
+            request_flush_within(&db, Duration::from_millis(100));
+            done.send(()).unwrap();
+        });
+        let result = completed.recv_timeout(Duration::from_secs(1));
+        listener.shutdown(std::net::Shutdown::Both).unwrap();
+        drop((queued, listener));
+        client.join().unwrap();
+        fs::remove_dir_all(dir).unwrap();
+        assert!(
+            result.is_ok(),
+            "connecting to a busy daemon exceeded the flush budget"
+        );
     }
 
     #[test]
