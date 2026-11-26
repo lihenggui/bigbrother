@@ -19,6 +19,7 @@ package li.mercury.bigbrother.feature.settings.impl
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import li.mercury.bigbrother.core.data.repository.ModuleInstallation
 import li.mercury.bigbrother.core.model.LoadFailure
 import li.mercury.bigbrother.core.model.RecorderStatus
 import li.mercury.bigbrother.core.model.UserData

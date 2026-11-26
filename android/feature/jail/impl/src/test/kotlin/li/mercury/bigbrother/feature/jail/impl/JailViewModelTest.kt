@@ -141,12 +141,14 @@ class JailViewModelTest {
         val message = assertIs<JailMessage.Isolated>(viewModel.uiState.value.message)
         assertEquals(listOf("Shopping", "Flashlight"), message.names)
         assertEquals(listOf("com.example.shopping", "com.example.flashlight"), sandboxRepository.isolated)
+        assertEquals(1, sandboxRepository.refreshCalls)
 
         viewModel.onMessageShown(message)
         viewModel.undoIsolate(message.apps)
 
         assertNull(viewModel.uiState.value.message)
         assertEquals(listOf("com.example.shopping", "com.example.flashlight"), sandboxRepository.released)
+        assertEquals(2, sandboxRepository.refreshCalls)
     }
 
     @Test

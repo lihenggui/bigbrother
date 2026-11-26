@@ -20,11 +20,14 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.DEFAULT
 import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.bbd.BbdDataSource
+import li.mercury.bigbrother.core.data.bbd.BbdSandboxGlobal
 import li.mercury.bigbrother.core.data.bbd.asExternalModel
 import li.mercury.bigbrother.core.data.toLoadFailure
 import li.mercury.bigbrother.core.model.SandboxItem
@@ -59,17 +62,20 @@ interface SandboxRepository {
 
     suspend fun getStatus(): SandboxStatus
 
-    /** Puts an app, with every package that shares its uid, in the sandbox. */
-    suspend fun isolate(packageName: String, userId: Int)
+    /** Puts an app, with every package that shares its uid, in the sandbox. Batch callers can defer the list read. */
+    suspend fun isolate(packageName: String, userId: Int, refresh: Boolean = true)
 
-    /** Takes an app out of the sandbox; it keeps its settings. */
-    suspend fun release(packageName: String, userId: Int)
+    /** Takes an app out of the sandbox; it keeps its settings. Batch callers can defer the list read. */
+    suspend fun release(packageName: String, userId: Int, refresh: Boolean = true)
 
     /** Takes every app out of the sandbox; returns how many are in it still. */
     suspend fun releaseAll(): Int
 
-    /** Sets items of an app to a mode, or with null back to the global setting. */
-    suspend fun setItems(packageName: String, userId: Int, changes: Map<SandboxItem, SandboxMode?>)
+    /**
+     * Sets the modes, with null meaning the global setting. Returns the app from
+     * a fresh read when available.
+     */
+    suspend fun setItems(packageName: String, userId: Int, changes: Map<SandboxItem, SandboxMode?>): SandboxedApp?
 
     suspend fun setGlobal(changes: Map<SandboxItem, SandboxMode>)
 
@@ -91,23 +97,32 @@ internal class RootSandboxRepository @Inject constructor(
     private val _autoIsolate = MutableStateFlow<Boolean?>(null)
     override val autoIsolate: StateFlow<Boolean?> = _autoIsolate.asStateFlow()
 
-    override suspend fun refresh() = withContext(defaultDispatcher) {
-        _apps.value = bbd.listSandboxApps().map { it.asExternalModel() }
-        val settings = bbd.getSandboxGlobal()
+    private val readLock = Mutex()
+
+    override suspend fun refresh(): Unit = withContext(defaultDispatcher) {
+        readLock.withLock {
+            readApps()
+            publishGlobal(bbd.getSandboxGlobal())
+        }
+    }
+
+    private suspend fun readApps(): List<SandboxedApp> = bbd.listSandboxApps().map { it.asExternalModel() }.also { _apps.value = it }
+
+    private fun publishGlobal(settings: BbdSandboxGlobal) {
         _global.value = settings.items
         _autoIsolate.value = settings.auto
     }
 
     override suspend fun getStatus(): SandboxStatus = bbd.getSandboxStatus().asExternalModel()
 
-    override suspend fun isolate(packageName: String, userId: Int) {
+    override suspend fun isolate(packageName: String, userId: Int, refresh: Boolean) {
         bbd.enableSandbox(packageName, userId)
-        refreshAfter("enable")
+        if (refresh) refreshAfter("enable")
     }
 
-    override suspend fun release(packageName: String, userId: Int) {
+    override suspend fun release(packageName: String, userId: Int, refresh: Boolean) {
         bbd.disableSandbox(packageName, userId)
-        refreshAfter("disable")
+        if (refresh) refreshAfter("disable")
     }
 
     override suspend fun releaseAll(): Int {
@@ -122,22 +137,45 @@ internal class RootSandboxRepository @Inject constructor(
         return answer.failedCount
     }
 
-    override suspend fun setItems(packageName: String, userId: Int, changes: Map<SandboxItem, SandboxMode?>) {
-        if (changes.isEmpty()) return
+    override suspend fun setItems(packageName: String, userId: Int, changes: Map<SandboxItem, SandboxMode?>): SandboxedApp? {
+        if (changes.isEmpty()) return null
         bbd.setSandboxItems(packageName, userId, changes)
-        refreshAfter("set")
+        return refreshAfter("set") {
+            withContext(defaultDispatcher) {
+                readLock.withLock {
+                    val updated = readApps().firstOrNull { it.packageName == packageName && it.userId == userId }
+                    if (_global.value == null) publishGlobal(bbd.getSandboxGlobal())
+                    updated
+                }
+            }
+        }
     }
 
     override suspend fun setGlobal(changes: Map<SandboxItem, SandboxMode>) {
         if (changes.isEmpty()) return
-        bbd.setSandboxGlobal(changes)
-        refreshAfter("global")
+        withContext(defaultDispatcher) {
+            readLock.withLock {
+                val settings = bbd.setSandboxGlobal(changes)
+                // Take the returned settings even when refreshing the apps fails.
+                if (settings != null) publishGlobal(settings)
+                refreshAfter("global") {
+                    readApps()
+                    if (settings == null) publishGlobal(bbd.getSandboxGlobal())
+                }
+            }
+        }
     }
 
     override suspend fun setAutoIsolate(on: Boolean) {
-        bbd.setSandboxAuto(on)
-        _autoIsolate.value = on
-        refreshAfter("auto")
+        withContext(defaultDispatcher) {
+            readLock.withLock {
+                val confirmed = bbd.setSandboxAuto(on)
+                _autoIsolate.value = confirmed ?: on
+                if (confirmed == null || _global.value == null) {
+                    refreshAfter("auto") { publishGlobal(bbd.getSandboxGlobal()) }
+                }
+            }
+        }
     }
 
     /**
@@ -146,10 +184,13 @@ internal class RootSandboxRepository @Inject constructor(
      * as not made what the daemon did.
      */
     private suspend fun refreshAfter(command: String) {
-        try {
-            refresh()
-        } catch (e: RecordsException) {
-            Timber.w("bbd sandbox %s made, lists not read again: %s", command, e.toLoadFailure())
-        }
+        refreshAfter(command) { refresh() }
+    }
+
+    private suspend fun <T> refreshAfter(command: String, read: suspend () -> T): T? = try {
+        read()
+    } catch (e: RecordsException) {
+        Timber.w("bbd sandbox %s made, state not read again: %s", command, e.toLoadFailure())
+        null
     }
 }

@@ -17,10 +17,12 @@
 package li.mercury.bigbrother.core.data.repository
 
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import li.mercury.bigbrother.core.common.di.ApplicationScope
 import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.DEFAULT
 import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.data.RecordsException
@@ -42,6 +44,7 @@ import javax.inject.Singleton
 internal class RootAccessRepository @Inject constructor(
     private val bbd: BbdDataSource,
     @Dispatcher(DEFAULT) private val defaultDispatcher: CoroutineDispatcher,
+    @ApplicationScope scope: CoroutineScope,
 ) : AccessRepository {
     private val _recorderStatus = MutableStateFlow<RecorderStatus?>(null)
     override val recorderStatus: StateFlow<RecorderStatus?> = _recorderStatus.asStateFlow()
@@ -50,14 +53,14 @@ internal class RootAccessRepository @Inject constructor(
      * The overview, the app list, a category and an app's page each start
      * from the list of apps; one read serves them all for 5 s.
      */
-    private val recentApps = RecentRead<TimeRange, List<AppSummary>>(maxAgeMs = 5_000)
+    private val recentApps = RecentRead<TimeRange, List<AppSummary>>(scope, maxAgeMs = 5_000)
 
-    override suspend fun getApps(range: TimeRange): List<AppSummary> = recentApps.get(range) {
+    override suspend fun getApps(range: TimeRange, forceRefresh: Boolean): List<AppSummary> = recentApps.get(range, forceRefresh) {
         withContext(defaultDispatcher) { bbd.getApps(range).map { it.asExternalModel() } }
     }
 
     /** An app's page, its files and its records each read all of its records within moments; they share one read. */
-    private val recentAccesses = RecentRead<List<Any?>, List<Access>>(maxAgeMs = 10_000)
+    private val recentAccesses = RecentRead<AccessQuery, List<Access>>(scope, maxAgeMs = 10_000)
 
     override suspend fun getAccesses(
         uid: Int,
@@ -65,9 +68,12 @@ internal class RootAccessRepository @Inject constructor(
         range: TimeRange,
         limit: Int,
         offset: Int,
-    ): List<Access> = recentAccesses.get(listOf(uid, category, range, limit, offset)) {
+        forceRefresh: Boolean,
+    ): List<Access> = recentAccesses.get(AccessQuery(uid, category, range, limit, offset), forceRefresh) {
         withContext(defaultDispatcher) { bbd.getAccesses(uid, category, range, limit, offset).map { it.asExternalModel() } }
     }
+
+    private data class AccessQuery(val uid: Int, val category: Category?, val range: TimeRange, val limit: Int, val offset: Int)
 
     override suspend fun searchPaths(
         text: String,

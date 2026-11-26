@@ -16,7 +16,6 @@
 
 package li.mercury.bigbrother.feature.applist.impl
 
-import android.content.res.Resources
 import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -98,8 +97,7 @@ class AppListViewModel @Inject constructor(
         }.collect { send(it) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppListUiState())
 
-    internal fun present(filters: Flow<AppListFilter>, resources: Resources): Flow<AppListPresentation> = combine(uiState, filters) { state, filter -> state.present(filter, resources) }
-        .flowOn(defaultDispatcher)
+    internal fun present(filters: Flow<AppListFilter>, displayName: (AppSummary, AppInfo?) -> String): Flow<AppListPresentation> = combine(uiState, filters) { state, filter -> state.present(filter, displayName) }.flowOn(defaultDispatcher)
 
     /** Reload when the screen is shown again and the data is stale. */
     fun refreshIfStale() {
@@ -115,7 +113,7 @@ class AppListViewModel @Inject constructor(
         val range = request.first
         load.update { it.copy(ui = it.ui.copy(range = range, refreshing = true)) }
         try {
-            val loaded = getAppRecords(range)
+            val loaded = getAppRecords(range, forceRefresh = request.second != (completed?.second ?: 0L))
             currentCoroutineContext().ensureActive()
             loadedAt = SystemClock.elapsedRealtime()
             completed = request

@@ -20,6 +20,8 @@ import android.content.Context
 import android.os.Build
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.IO
 import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
@@ -38,14 +40,15 @@ import java.io.IOException
 import java.security.MessageDigest
 import java.util.zip.ZipFile
 import javax.inject.Inject
+import javax.inject.Singleton
 
 /**
  * The root module that does the recording: flashed in a root manager
  * (KernelSU, Magisk or APatch), or installed by this app with root alone.
  */
 interface ModuleRepository {
-    /** Whether the module's files are in place, i.e. it is installed and active. */
-    suspend fun isActive(): Boolean
+    /** The installation visible now, including a staged root manager update. */
+    suspend fun getInstallation(): ModuleInstallation
 
     /** How the installed module compares with the one bundled in this app. */
     suspend fun compareWithBundled(): InstalledModule
@@ -90,6 +93,21 @@ interface ModuleRepository {
     suspend fun startDaemon(turnOn: Boolean = true)
 }
 
+/** Where the installation comes from, which decides how it is removed. */
+enum class ModuleInstallation {
+    /** Nothing installed, or not known. */
+    NONE,
+
+    /** Installed by this app, which removes it. */
+    APP,
+
+    /** Flashed in a root manager and in effect: removed there. */
+    MANAGER,
+
+    /** Flashed in a root manager and staged for the next restart. */
+    MANAGER_PENDING,
+}
+
 /** How the installed module compares with the one bundled in this app. */
 enum class InstalledModule {
     /** The one this app carries: nothing to do. */
@@ -129,13 +147,23 @@ internal fun compareModules(
     else -> InstalledModule.OUTDATED
 }
 
+@Singleton
 internal class RootModuleRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val rootShell: RootShell,
     @Dispatcher(IO) private val ioDispatcher: CoroutineDispatcher,
 ) : ModuleRepository {
 
-    override suspend fun isActive(): Boolean = rootShell.run("$LOCATE; [ -x $BBD ]").isSuccess
+    override suspend fun getInstallation(): ModuleInstallation {
+        val result = rootShell.run(
+            "$LOCATE; if [ -d $PENDING_UPDATE_DIR ]; then echo MANAGER_PENDING; " +
+                "elif $IS_APP_INSTALLATION; then echo APP; " +
+                "elif [ -x $BBD ]; then echo MANAGER; else echo NONE; fi",
+            label = "read module installation",
+        )
+        if (!result.isSuccess) throw RecordsException.CommandFailed()
+        return ModuleInstallation.entries.firstOrNull { it.name == result.output } ?: throw RecordsException.BadResponse()
+    }
 
     override suspend fun compareWithBundled(): InstalledModule {
         val files = (MODULE_FILES + "bin/bbd" + "helper.apk").joinToString(" ") { "$MODULE_DIR/$it" }
@@ -144,6 +172,7 @@ internal class RootModuleRepository @Inject constructor(
         val installed = rootShell.run(
             "$LOCATE; if [ $MODULE_DIR != $DIRECT_DIR ] || [ ! -e $MODULE_DIR/disable ]; then " +
                 "sed -n 's/^versionCode=//p' $MODULE_PROP; sha256sum $files 2>/dev/null; fi",
+            label = "compare module payload",
         ).output.lines()
         val code = installed.firstOrNull()?.trim()?.toLongOrNull() ?: return InstalledModule.UNKNOWN
         // sha256sum prints the digest, then the file name.
@@ -175,9 +204,14 @@ internal class RootModuleRepository @Inject constructor(
         Build.SUPPORTED_ABIS.firstNotNullOfOrNull { ARCH_BY_ABI[it] }?.let { "bin/$it/bbd" }
 
     /** Digests in installed-file order, cached for the lifetime of this APK. */
+    private val digestLock = Mutex()
     private var bundledDigest: String? = null
 
-    private suspend fun bundledPayloadDigest(): String? = bundledDigest ?: withContext(ioDispatcher) {
+    private suspend fun bundledPayloadDigest(): String? = digestLock.withLock {
+        bundledDigest ?: readBundledPayloadDigest().also { bundledDigest = it }
+    }
+
+    private suspend fun readBundledPayloadDigest(): String? = withContext(ioDispatcher) {
         val entry = daemonEntry ?: return@withContext null
         try {
             ZipFile(context.applicationInfo.sourceDir).use { zip ->
@@ -190,7 +224,7 @@ internal class RootModuleRepository @Inject constructor(
         } catch (_: IOException) {
             throw RecordsException.CommandFailed(LoadFailure.Operation.MODULE_ARCHIVE_INVALID)
         }
-    }.also { bundledDigest = it }
+    }
 
     private fun digest(input: java.io.InputStream): String {
         val hash = MessageDigest.getInstance("SHA-256")
@@ -212,6 +246,7 @@ internal class RootModuleRepository @Inject constructor(
 
         const val BUFFER_SIZE = 64 * 1024
         const val MODULE_VERSION_MISSING = "module-version-missing"
+        const val IS_APP_INSTALLATION = "[ $MODULE_DIR = $DIRECT_DIR ] && [ -f $DIRECT_DIR/direct.sh ]"
     }
 
     override suspend fun installedVersion(): String {
@@ -226,7 +261,7 @@ internal class RootModuleRepository @Inject constructor(
             ?: throw RecordsException.CommandFailed(LoadFailure.Operation.MODULE_VERSION_UNREADABLE)
     }
 
-    override suspend fun isUpdatePending(): Boolean = rootShell.run("[ -d $PENDING_UPDATE_DIR ]").isSuccess
+    override suspend fun isUpdatePending(): Boolean = rootShell.run("[ -d $PENDING_UPDATE_DIR ]", label = "check staged module").isSuccess
 
     override suspend fun installBundled() {
         val apk = context.applicationInfo.sourceDir.shellQuoted()
@@ -240,7 +275,7 @@ internal class RootModuleRepository @Inject constructor(
         if (!result.isSuccess) throw RecordsException.CommandFailed(moduleInstallerFailure(result.output, LoadFailure.Operation.MODULE_INSTALL_FAILED))
     }
 
-    override suspend fun isInstalledByApp(): Boolean = rootShell.run("$LOCATE; [ $MODULE_DIR = $DIRECT_DIR ] && [ -f $DIRECT_DIR/direct.sh ]").isSuccess
+    override suspend fun isInstalledByApp(): Boolean = rootShell.run("$LOCATE; $IS_APP_INSTALLATION", label = "check direct installation").isSuccess
 
     override suspend fun remove() {
         val result = rootShell.run(
@@ -252,7 +287,12 @@ internal class RootModuleRepository @Inject constructor(
 
     override suspend fun startDaemon(turnOn: Boolean) {
         // No root manager turns this one on again after its boot guard.
-        if (turnOn) rootShell.run("$LOCATE; [ $MODULE_DIR != $DIRECT_DIR ] || rm -f $DIRECT_DIR/disable")
+        if (turnOn) {
+            rootShell.run(
+                "$LOCATE; [ $MODULE_DIR != $DIRECT_DIR ] || rm -f $DIRECT_DIR/disable",
+                label = "enable direct installation",
+            )
+        }
         checkModuleEnabled()
         // The script leaves the supervisor running in the background; with
         // its output detached, the shell returns once it has been started.
@@ -266,7 +306,11 @@ internal class RootModuleRepository @Inject constructor(
     }
 
     private suspend fun checkModuleEnabled() {
-        if (rootShell.run("$LOCATE; [ -e $MODULE_DIR/disable ] || [ -e $MODULE_DIR/remove ]").isSuccess) {
+        if (rootShell.run(
+                "$LOCATE; [ -e $MODULE_DIR/disable ] || [ -e $MODULE_DIR/remove ]",
+                label = "check module enabled",
+            ).isSuccess
+        ) {
             throw RecordsException.CommandFailed(LoadFailure.Operation.MODULE_DISABLED)
         }
     }

@@ -17,20 +17,83 @@
 package li.mercury.bigbrother.core.data.repository
 
 import android.os.SystemClock
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
-/**
- * The last value read, reused for the same key for [maxAgeMs]: screens
- * shown one after another ask for the same records within moments, and
- * each read is a root command.
- */
-internal class RecentRead<K : Any, V : Any>(private val maxAgeMs: Long) {
-    private class Entry<K, V>(val key: K, val readAt: Long, val value: V)
+/** Keeps the most recently used reads and shares work across callers with different lifetimes. */
+internal class RecentRead<K : Any, V : Any>(
+    private val scope: CoroutineScope,
+    private val maxAgeMs: Long,
+    private val nowMs: () -> Long = SystemClock::elapsedRealtime,
+) {
+    private class Entry<V>(val readAt: Long, val value: V)
+    private class Flight<V>(val forced: Boolean) {
+        lateinit var result: Deferred<Result<V>>
+    }
 
-    @Volatile
-    private var last: Entry<K, V>? = null
+    private val lock = Any()
+    private val entries = LinkedHashMap<K, Entry<V>>(CAPACITY, 0.75f, true)
+    private val flights = mutableMapOf<K, Flight<V>>()
 
-    suspend fun get(key: K, read: suspend () -> V): V {
-        last?.let { if (it.key == key && SystemClock.elapsedRealtime() - it.readAt < maxAgeMs) return it.value }
-        return read().also { last = Entry(key, SystemClock.elapsedRealtime(), it) }
+    suspend fun get(key: K, forceRefresh: Boolean = false, read: suspend () -> V): V {
+        currentCoroutineContext().ensureActive()
+        val result = synchronized(lock) {
+            val flight = flights[key]
+            when {
+                flight != null && !flight.result.isCompleted && (!forceRefresh || flight.forced) -> flight.result
+
+                forceRefresh -> startRead(key, true, read)
+
+                else -> {
+                    entries[key]?.let { if (nowMs() - it.readAt < maxAgeMs) return it.value }
+                    startRead(key, false, read)
+                }
+            }
+        }
+        return result.await().getOrThrow()
+    }
+
+    fun invalidate() = synchronized(lock) {
+        entries.clear()
+        flights.clear()
+    }
+
+    private fun startRead(key: K, forceRefresh: Boolean, read: suspend () -> V): Deferred<Result<V>> {
+        val flight = Flight<V>(forceRefresh)
+        entries.remove(key)
+        flights[key] = flight
+        flight.result = scope.async(start = CoroutineStart.LAZY) {
+            try {
+                val value = read()
+                ensureActive()
+                synchronized(lock) {
+                    // A forced read or invalidation may have superseded this read.
+                    if (flights[key] === flight) {
+                        entries[key] = Entry(nowMs(), value)
+                        if (entries.size > CAPACITY) entries.remove(entries.keys.first())
+                    }
+                }
+                Result.success(value)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+        flight.result.invokeOnCompletion {
+            synchronized(lock) {
+                if (flights[key] === flight) flights.remove(key)
+            }
+        }
+        return flight.result
+    }
+
+    private companion object {
+        const val CAPACITY = 8
     }
 }

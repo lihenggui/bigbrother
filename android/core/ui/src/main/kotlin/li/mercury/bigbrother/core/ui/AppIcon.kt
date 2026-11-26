@@ -24,12 +24,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.unit.Dp
 import coil3.compose.AsyncImage
@@ -62,16 +64,19 @@ fun appDisplayName(app: AppSummary, info: AppInfo?, resources: Resources): Strin
 @Composable
 fun AppIcon(info: AppInfo?, name: String, size: Dp, modifier: Modifier = Modifier) {
     val source = info?.iconSource
-    var failed by remember(source) { mutableStateOf(false) }
+    val locales = LocalConfiguration.current.locales
+    var failed by remember(source, locales) { mutableStateOf(false) }
     if (source == null || failed) {
         LetterTile(name, size, modifier)
     } else {
-        AsyncImage(
-            model = source,
-            contentDescription = null,
-            modifier = modifier.size(size),
-            onError = { failed = true },
-        )
+        key(locales) {
+            AsyncImage(
+                model = source,
+                contentDescription = null,
+                modifier = modifier.size(size),
+                onError = { failed = true },
+            )
+        }
     }
 }
 

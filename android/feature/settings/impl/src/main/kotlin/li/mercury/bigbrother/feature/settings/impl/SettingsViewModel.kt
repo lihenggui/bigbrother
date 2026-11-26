@@ -19,6 +19,7 @@ package li.mercury.bigbrother.feature.settings.impl
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -28,6 +29,7 @@ import kotlinx.coroutines.launch
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.AccessRepository
 import li.mercury.bigbrother.core.data.repository.DiagnosticsRepository
+import li.mercury.bigbrother.core.data.repository.ModuleInstallation
 import li.mercury.bigbrother.core.data.repository.ModuleRepository
 import li.mercury.bigbrother.core.data.repository.UserDataRepository
 import li.mercury.bigbrother.core.data.toLoadFailure
@@ -56,21 +58,6 @@ sealed interface ModuleRemoval {
 
     /** The module is still installed. */
     data class Failed(val failure: LoadFailure) : ModuleRemoval
-}
-
-/** Where the installation comes from, which decides how it is removed. */
-enum class ModuleInstallation {
-    /** Nothing installed, or not known. */
-    NONE,
-
-    /** Installed by this app, which removes it. */
-    APP,
-
-    /** Flashed in a root manager and in effect: removed there. */
-    MANAGER,
-
-    /** Flashed in a root manager and staged for the next restart. */
-    MANAGER_PENDING,
 }
 
 data class SettingsUiState(
@@ -119,13 +106,18 @@ class SettingsViewModel @Inject constructor(
         .combine(moduleRemoval) { state, removal -> state.copy(moduleRemoval = removal) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
 
+    private var refreshJob: Job? = null
+
     fun refresh() {
-        viewModelScope.launch { loadRecordingDetails() }
+        if (moduleRemoval.value == ModuleRemoval.Removing) return
+        refreshJob?.cancel()
+        refreshJob = viewModelScope.launch { loadRecordingDetails() }
     }
 
     fun removeModule() {
         if (moduleRemoval.value == ModuleRemoval.Removing) return
         moduleRemoval.value = ModuleRemoval.Removing
+        refreshJob?.cancel()
         viewModelScope.launch {
             val result = try {
                 moduleRepository.remove()
@@ -159,16 +151,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     private suspend fun installation(): ModuleInstallation = try {
-        when {
-            // A staged module replaces whatever runs now, this app's own included.
-            moduleRepository.isUpdatePending() -> ModuleInstallation.MANAGER_PENDING
-
-            moduleRepository.isInstalledByApp() -> ModuleInstallation.APP
-
-            moduleRepository.isActive() -> ModuleInstallation.MANAGER
-
-            else -> ModuleInstallation.NONE
-        }
+        moduleRepository.getInstallation()
     } catch (e: RecordsException) {
         // Removing needs the same root access that just failed: not offered.
         Timber.w("Module origin unknown: %s", e.toLoadFailure())

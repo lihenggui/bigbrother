@@ -37,12 +37,12 @@ class ReleaseTreeTest {
     private val day = LocalDate.of(2026, 11, 16)
 
     // The writer runs for as long as the tree lives: in a test, until it ends.
-    private fun TestScope.tree() = ReleaseTree(
+    private fun TestScope.tree(today: () -> LocalDate = { day }) = ReleaseTree(
         filesDir = folder.root,
         scope = backgroundScope,
         ioDispatcher = StandardTestDispatcher(testScheduler),
-        today = { day },
-        now = { day.atTime(9, 30) },
+        today = today,
+        now = { today().atTime(9, 30) },
     )
 
     private fun logFile(date: LocalDate = day) = File(folder.root, "$LOG_DIR/$date.log")
@@ -82,6 +82,42 @@ class ReleaseTreeTest {
         val kept = directory.list().orEmpty().sorted()
         assertEquals(ReleaseTree.DAYS_KEPT, kept.size)
         assertEquals("${day.minusDays(1)}.log", kept.last())
+    }
+
+    @Test
+    fun givenLogStorm_whenWriterCatchesUp_thenKeepsNewestQueuedLines() = runTest {
+        val tree = tree()
+
+        repeat(300) { tree.i("line %d", it) }
+        runCurrent()
+
+        val lines = logFile().readLines()
+        assertEquals(256, lines.size)
+        assertTrue(lines.first().endsWith("line 44"))
+        assertTrue(lines.last().endsWith("line 299"))
+    }
+
+    @Test
+    fun givenFullDailyLog_whenItRollsOver_thenCapsOldFileAndPrunesHistory() = runTest {
+        val directory = File(folder.root, LOG_DIR).apply { mkdirs() }
+        repeat(ReleaseTree.DAYS_KEPT) { logFile(day.minusDays(it.toLong())).writeText("older") }
+        var date = day
+        val tree = tree { date }
+
+        repeat(200) { tree.i("x".repeat(16_384)) }
+        runCurrent()
+
+        assertTrue(logFile().length() in 2_000_000..2_097_152)
+        tree.logCrash(Thread.currentThread(), IllegalStateException("boom"))
+        assertTrue(logFile().length() <= 2_097_152)
+        assertTrue(logFile().readText().contains("IllegalStateException: boom"))
+
+        date = date.plusDays(1)
+        tree.i("next day")
+        runCurrent()
+
+        assertEquals(ReleaseTree.DAYS_KEPT, directory.list().orEmpty().size)
+        assertTrue(logFile(date).readText().contains("next day"))
     }
 
     @Test

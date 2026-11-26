@@ -20,6 +20,8 @@ import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
+import android.os.LocaleList
+import android.os.SystemClock
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
@@ -28,7 +30,6 @@ import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.model.AppIconSource
 import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.PackageDetails
-import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -48,30 +49,49 @@ interface AppInfoRepository {
 }
 
 /**
- * Backed by the package manager. Names and icons are cached for the process
- * lifetime; package details are looked up each time.
+ * Backed by the package manager. The cache retains recent hits and misses
+ * for the current locale. Package details are looked up each time.
  */
 @Singleton
 internal class PackageManagerAppInfoRepository @Inject constructor(
-    @ApplicationContext context: Context,
+    @ApplicationContext private val context: Context,
     @Dispatcher(IO) private val ioDispatcher: CoroutineDispatcher,
 ) : AppInfoRepository {
     private val packageManager = context.packageManager
-    private val cache = ConcurrentHashMap<String, AppInfo>()
+    private val cache = LinkedHashMap<String, CachedApp>(CAPACITY, 0.75f, true)
 
-    override suspend fun getAppInfo(packageName: String): AppInfo? = cache[packageName] ?: withContext(ioDispatcher) { load(packageName) }
+    override suspend fun getAppInfo(packageName: String): AppInfo? = withContext(ioDispatcher) {
+        cachedOrLoad(packageName, context.resources.configuration.locales)
+    }
 
-    override suspend fun getAppInfo(packageNames: Collection<String>): Map<String, AppInfo> {
-        val missing = packageNames.filterNot { cache.containsKey(it) }
-        // One trip to the IO threads for all of them, not one per app.
-        if (missing.isNotEmpty()) withContext(ioDispatcher) { missing.forEach(::load) }
-        return packageNames.mapNotNull { name -> cache[name]?.let { name to it } }.toMap()
+    override suspend fun getAppInfo(packageNames: Collection<String>): Map<String, AppInfo> = withContext(ioDispatcher) {
+        val locales = context.resources.configuration.locales
+        buildMap {
+            for (name in packageNames) {
+                cachedOrLoad(name, locales)?.let { put(name, it) }
+            }
+        }
+    }
+
+    private fun cachedOrLoad(packageName: String, locales: LocaleList): AppInfo? {
+        synchronized(cache) {
+            cache[packageName]?.let { entry ->
+                if (entry.locales == locales && SystemClock.elapsedRealtime() < entry.expiresAt) return entry.info
+            }
+        }
+        val info = load(packageName)
+        val maxAge = if (info == null) MISSING_TTL_MS else INSTALLED_TTL_MS
+        synchronized(cache) {
+            cache[packageName] = CachedApp(info, locales, SystemClock.elapsedRealtime() + maxAge)
+            if (cache.size > CAPACITY) cache.remove(cache.keys.first())
+        }
+        return info
     }
 
     private fun load(packageName: String): AppInfo? = try {
         val packageInfo = packageManager.getPackageInfo(packageName, 0)
         val info = packageInfo.applicationInfo ?: return null
-        packageManager.toAppInfo(packageInfo, info).also { cache[packageName] = it }
+        packageManager.toAppInfo(packageInfo, info)
     } catch (_: PackageManager.NameNotFoundException) {
         null
     }
@@ -90,6 +110,14 @@ internal class PackageManagerAppInfoRepository @Inject constructor(
         } catch (_: PackageManager.NameNotFoundException) {
             null
         }
+    }
+
+    private data class CachedApp(val info: AppInfo?, val locales: LocaleList, val expiresAt: Long)
+
+    private companion object {
+        const val CAPACITY = 1_024
+        const val MISSING_TTL_MS = 30_000L
+        const val INSTALLED_TTL_MS = 60_000L
     }
 }
 

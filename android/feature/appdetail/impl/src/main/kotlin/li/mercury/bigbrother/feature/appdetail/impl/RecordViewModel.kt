@@ -22,6 +22,7 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -33,6 +34,9 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import li.mercury.bigbrother.core.common.dispatchers.BigBrotherDispatchers.DEFAULT
+import li.mercury.bigbrother.core.common.dispatchers.Dispatcher
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.repository.AccessRepository
 import li.mercury.bigbrother.core.data.repository.AppInfoRepository
@@ -66,6 +70,7 @@ data class RecordUiState(
 class RecordViewModel @AssistedInject constructor(
     private val accessRepository: AccessRepository,
     private val appInfoRepository: AppInfoRepository,
+    @Dispatcher(DEFAULT) private val defaultDispatcher: CoroutineDispatcher,
     @Assisted private val uid: Int,
     @Assisted("packageName") private val packageName: String,
     @Assisted private val range: TimeRange,
@@ -80,7 +85,7 @@ class RecordViewModel @AssistedInject constructor(
         launch {
             refreshes.collectLatest { request ->
                 if (request != completed) {
-                    load()
+                    load(forceRefresh = request != 0L)
                     completed = request
                 }
             }
@@ -92,7 +97,7 @@ class RecordViewModel @AssistedInject constructor(
         refreshes.update { it + 1 }
     }
 
-    private suspend fun load(): Unit = coroutineScope {
+    private suspend fun load(forceRefresh: Boolean): Unit = coroutineScope {
         _uiState.update { it.copy(failure = null, historyFailure = null, sensorSessionsFailure = null) }
         if (packageName.isNotEmpty()) {
             launch {
@@ -102,10 +107,12 @@ class RecordViewModel @AssistedInject constructor(
             }
         }
         try {
-            val accesses = accessRepository.getAccesses(uid, null, range, MAX_ACCESSES, 0)
+            val accesses = accessRepository.getAccesses(uid, null, range, MAX_ACCESSES, 0, forceRefresh)
+            val group = withContext(defaultDispatcher) {
+                groupByCategory(accesses).values.asSequence().flatten()
+                    .firstOrNull { it.topic == topic && it.source.name == source }
+            }
             ensureActive()
-            val group = groupByCategory(accesses).values.flatten()
-                .firstOrNull { it.topic == topic && it.source.name == source }
             _uiState.update { it.copy(group = group, loaded = true, failure = null) }
             if (group != null) {
                 if (group.topic == SENSORS && group.source == RecordSource.APP) loadSensorSessions()
@@ -123,7 +130,9 @@ class RecordViewModel @AssistedInject constructor(
      * ones are enough to show when it happened.
      */
     private suspend fun loadHistory(group: TopicGroup) {
-        val paths = group.accesses.sortedByDescending { it.lastSeen }.map { it.path }.distinct()
+        val paths = withContext(defaultDispatcher) {
+            group.accesses.sortedByDescending { it.lastSeen }.map { it.path }.distinct()
+        }
         try {
             val periods = accessRepository.getHistory(uid, paths.take(MAX_HISTORY_PATHS), range).take(MAX_PERIODS)
             currentCoroutineContext().ensureActive()

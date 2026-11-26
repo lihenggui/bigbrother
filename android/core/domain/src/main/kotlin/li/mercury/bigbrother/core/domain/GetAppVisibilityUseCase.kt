@@ -25,7 +25,6 @@ import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.InstalledApp
 import li.mercury.bigbrother.core.model.TimelineEntry
-import li.mercury.bigbrother.core.model.UserData
 import javax.inject.Inject
 
 class GetAppVisibilityUseCase @Inject constructor(
@@ -36,8 +35,6 @@ class GetAppVisibilityUseCase @Inject constructor(
         .map { it.showSystemApps }
         .distinctUntilChanged()
         .map { AppVisibility(it, ownPackage) }
-
-    fun forSettings(userData: UserData): AppVisibility = AppVisibility(userData.showSystemApps, ownPackage)
 }
 
 data class AppVisibility(val showSystemApps: Boolean, private val ownPackage: String) {

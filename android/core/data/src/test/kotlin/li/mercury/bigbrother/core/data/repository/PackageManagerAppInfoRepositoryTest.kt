@@ -26,6 +26,8 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowSystemClock
+import java.time.Duration
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -46,7 +48,6 @@ class PackageManagerAppInfoRepositoryTest {
         packages.installPackage(testPackage(NOTES, 10101, "Notes"))
         val repository = PackageManagerAppInfoRepository(app, StandardTestDispatcher(testScheduler))
 
-        assertNull(repository.getAppInfo(MEDIA))
         packages.installPackage(testPackage(MEDIA, 10010, "Media", ApplicationInfo.FLAG_SYSTEM))
         val result = repository.getAppInfo(listOf(NOTES, MISSING, MEDIA))
 
@@ -83,6 +84,35 @@ class PackageManagerAppInfoRepositoryTest {
 
         assertEquals(PackageDetails("2.0", 20, 35, 28, 1_000, 3_000), repository.getPackageDetails(NOTES))
         assertNull(repository.getPackageDetails(MISSING))
+    }
+
+    @Test
+    fun givenMissingPackage_whenInstalled_thenFoundAfterNegativeCacheExpires() = runTest {
+        val repository = PackageManagerAppInfoRepository(app, StandardTestDispatcher(testScheduler))
+        assertNull(repository.getAppInfo(MEDIA))
+
+        packages.installPackage(testPackage(MEDIA, 10010, "Media"))
+        assertNull(repository.getAppInfo(MEDIA))
+        ShadowSystemClock.advanceBy(Duration.ofSeconds(30))
+
+        assertEquals("Media", repository.getAppInfo(MEDIA)?.label)
+    }
+
+    @Test
+    fun givenCachedLabel_whenLocaleChanges_thenLoadsUpdatedLabelAndIconKey() = runTest {
+        packages.installPackage(testPackage(NOTES, 10101, "Notes"))
+        val repository = PackageManagerAppInfoRepository(app, StandardTestDispatcher(testScheduler))
+        assertEquals("Notes", repository.getAppInfo(NOTES)?.label)
+        packages.getInternalMutablePackageInfo(NOTES).apply {
+            applicationInfo?.nonLocalizedLabel = "Notas"
+            lastUpdateTime = 2_000
+        }
+
+        RuntimeEnvironment.setQualifiers("+es-rES")
+
+        val info = assertNotNull(repository.getAppInfo(NOTES))
+        assertEquals("Notas", info.label)
+        assertEquals(2_000L, info.iconSource.lastUpdateTime)
     }
 
     private companion object {

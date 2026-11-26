@@ -80,6 +80,12 @@ class DestinationViewModelTest {
         assertEquals(listOf(target to true, target to false), repository.changed)
         assertNull(viewModel.uiState.value.destination?.rule)
         assertNull(viewModel.uiState.value.message)
+        assertEquals(1, repository.asked.size)
+
+        viewModel.refresh()
+        runCurrent()
+
+        assertEquals(2, repository.asked.size)
     }
 
     @Test

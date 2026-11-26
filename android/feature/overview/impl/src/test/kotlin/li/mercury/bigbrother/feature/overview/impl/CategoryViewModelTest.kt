@@ -67,10 +67,10 @@ class CategoryViewModelTest {
         assertEquals(listOf(newerRead, olderRead, lookup), viewModel.uiState.value.apps)
 
         settings.setShowSystemApps(true)
-        viewModel.refresh()
         runCurrent()
 
         assertEquals(listOf(system, newerRead, olderRead, lookup), viewModel.uiState.value.apps)
+        assertEquals(1, access.appReads)
     }
 
     @Test
@@ -88,6 +88,20 @@ class CategoryViewModelTest {
 
         assertEquals(listOf(newerRead, olderRead, lookup), viewModel.uiState.value.apps)
         assertNull(viewModel.uiState.value.failure)
+    }
+
+    @Test
+    fun givenLoadedCategory_whenTimeRangeChangesAndRefreshIsRequested_thenOnlyRefreshForcesRead() = runTest {
+        val viewModel = collectState()
+        runCurrent()
+
+        settings.setTimeRange(TimeRange.HOUR)
+        runCurrent()
+        assertEquals(TimeRange.HOUR, viewModel.uiState.value.range)
+        viewModel.refresh()
+        runCurrent()
+
+        assertEquals(listOf(false, false, true), access.appRefreshes)
     }
 
     private fun TestScope.collectState(): CategoryViewModel {

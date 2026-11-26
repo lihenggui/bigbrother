@@ -104,7 +104,7 @@ class AppDetailViewModel @AssistedInject constructor(
         launch {
             refreshes.collectLatest { request ->
                 if (request != completed) {
-                    load()
+                    load(forceRefresh = request != 0L)
                     completed = request
                 }
             }
@@ -138,7 +138,7 @@ class AppDetailViewModel @AssistedInject constructor(
             try {
                 // The records can outlive an installation. Check the live package again
                 // before applying restrictions to its Android user.
-                if (installedAppRepository.getInstalledApps().none { it.uid == uid && it.packageName == packageName }) {
+                if (installedAppRepository.getInstalledUid(packageName) != uid) {
                     mutableUiState.update { it.copy(canOpenJail = false, jailAction = JailAction.Failed(LoadFailure.Operation.APP_MISSING)) }
                     return@launch
                 }
@@ -159,17 +159,17 @@ class AppDetailViewModel @AssistedInject constructor(
         mutableUiState.update { it.copy(jailAction = action) }
     }
 
-    private suspend fun load(): Unit = coroutineScope {
+    private suspend fun load(forceRefresh: Boolean): Unit = coroutineScope {
         // Package facts and totals can still be shown if reading the records fails.
         if (packageName.isNotEmpty()) launch { loadPackageInfo() }
-        launch { loadSummary() }
-        loadAccesses()
+        launch { loadSummary(forceRefresh) }
+        loadAccesses(forceRefresh)
     }
 
     private suspend fun loadPackageInfo() {
         val info = appInfoRepository.getAppInfo(packageName)
         // The package manager describes this user's copy, which may be a different app.
-        val details = if (userIdOf(uid) == currentUserId) appInfoRepository.getPackageDetails(packageName) else null
+        val details = if (info != null && userIdOf(uid) == currentUserId) appInfoRepository.getPackageDetails(packageName) else null
         val canOpenJail = packageName != ownPackage && isNonCoreUid(uid) && info?.uid == uid
         currentCoroutineContext().ensureActive()
         mutableUiState.update {
@@ -177,9 +177,9 @@ class AppDetailViewModel @AssistedInject constructor(
         }
     }
 
-    private suspend fun loadSummary() {
+    private suspend fun loadSummary(forceRefresh: Boolean) {
         try {
-            val apps = accessRepository.getApps(range)
+            val apps = accessRepository.getApps(range, forceRefresh)
             val app = withContext(defaultDispatcher) { apps.firstOrNull { it.uid == uid } } ?: return
             mutableUiState.update { it.copy(app = app, canOpenJail = it.canOpenJail && app.packageName == packageName) }
         } catch (_: RecordsException) {
@@ -187,9 +187,9 @@ class AppDetailViewModel @AssistedInject constructor(
         }
     }
 
-    private suspend fun loadAccesses() {
+    private suspend fun loadAccesses(forceRefresh: Boolean) {
         try {
-            val accesses = accessRepository.getAccesses(uid, null, range, MAX_ACCESSES, 0)
+            val accesses = accessRepository.getAccesses(uid, null, range, MAX_ACCESSES, 0, forceRefresh)
             val records = withContext(defaultDispatcher) { summarizeAccesses(accesses) }
             mutableUiState.update {
                 it.copy(records = records, truncated = accesses.size == MAX_ACCESSES, failure = null)

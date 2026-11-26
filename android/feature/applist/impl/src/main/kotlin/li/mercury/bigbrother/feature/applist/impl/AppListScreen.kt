@@ -74,6 +74,7 @@ import li.mercury.bigbrother.core.ui.Reveal
 import li.mercury.bigbrother.core.ui.SectionHeader
 import li.mercury.bigbrother.core.ui.UserSettingsWriter
 import li.mercury.bigbrother.core.ui.animatedRow
+import li.mercury.bigbrother.core.ui.appDisplayName
 import li.mercury.bigbrother.core.ui.categoriesSummary
 import li.mercury.bigbrother.core.ui.categoryDetail
 import li.mercury.bigbrother.core.ui.label
@@ -92,7 +93,9 @@ fun AppListScreen(
     val resources = LocalResources.current
     val configuration = LocalConfiguration.current
     val lists = remember(viewModel, resources, configuration) {
-        viewModel.present(snapshotFlow { AppListFilter(sort, category) }, resources)
+        viewModel.present(snapshotFlow { AppListFilter(sort, category) }) { app, info ->
+            appDisplayName(app, info, resources)
+        }
     }
     val presentation by lists.collectAsStateWithLifecycle(initialValue = AppListPresentation())
     // Records keep accumulating in the background, so reload on return.

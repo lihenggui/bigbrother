@@ -194,11 +194,25 @@ internal class RootShellBbdDataSource @Inject constructor(
         sandboxChange("set ${packageName.shellQuoted()} $settings --user $userId")
     }
 
-    override suspend fun setSandboxGlobal(changes: Map<SandboxItem, SandboxMode>) {
-        sandboxChange("global " + changes.entries.joinToString(" ") { (item, mode) -> "${item.id}=${mode.id}" })
+    override suspend fun setSandboxGlobal(changes: Map<SandboxItem, SandboxMode>): BbdSandboxGlobal? = withContext(ioDispatcher) {
+        val reply = sandbox("global " + changes.entries.joinToString(" ") { (item, mode) -> "${item.id}=${mode.id}" })
+        try {
+            JSONObject(reply).toBbdSandboxGlobal()
+        } catch (_: JSONException) {
+            // The command succeeded; the repository will read the settings again.
+            null
+        }
     }
 
-    override suspend fun setSandboxAuto(on: Boolean) = sandboxChange("auto " + if (on) "on" else "off")
+    override suspend fun setSandboxAuto(on: Boolean): Boolean? = withContext(ioDispatcher) {
+        val reply = sandbox("auto " + if (on) "on" else "off")
+        try {
+            JSONObject(reply).getBoolean("auto")
+        } catch (_: JSONException) {
+            // The command succeeded; the repository will read the settings again.
+            null
+        }
+    }
 
     private fun TimeRange.argument(): String = if (hours > 0) " --hours $hours" else ""
 

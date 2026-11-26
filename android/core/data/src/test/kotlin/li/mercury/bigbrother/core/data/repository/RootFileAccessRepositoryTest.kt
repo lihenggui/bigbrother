@@ -17,6 +17,7 @@
 package li.mercury.bigbrother.core.data.repository
 
 import android.app.AppOpsManager
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.bbd.TestBbdRootShell
@@ -52,7 +53,7 @@ class RootFileAccessRepositoryTest {
         setStorageAppOp(AppOpsManager.MODE_ALLOWED)
         val shell = TestBbdRootShell { error("Unexpected root command") }
 
-        RootFileAccessRepository(app, shell).ensureAllFilesAccess()
+        RootFileAccessRepository(app, shell, StandardTestDispatcher(testScheduler)).ensureAllFilesAccess()
 
         assertTrue(shell.lines.isEmpty())
     }
@@ -65,7 +66,7 @@ class RootFileAccessRepositoryTest {
             CommandResult(true, 0, "", "")
         }
 
-        RootFileAccessRepository(app, shell).ensureAllFilesAccess()
+        RootFileAccessRepository(app, shell, StandardTestDispatcher(testScheduler)).ensureAllFilesAccess()
 
         assertEquals(listOf("appops set '${app.packageName}' MANAGE_EXTERNAL_STORAGE allow"), shell.lines)
         assertEquals(listOf("grant all-files access"), shell.labels)
@@ -75,7 +76,7 @@ class RootFileAccessRepositoryTest {
     fun givenRootCommandSucceedsWithoutGrant_whenEnsured_thenReportsAccessDenied() = runTest {
         setStorageAppOp(AppOpsManager.MODE_IGNORED)
         val shell = TestBbdRootShell("")
-        val repository = RootFileAccessRepository(app, shell)
+        val repository = RootFileAccessRepository(app, shell, StandardTestDispatcher(testScheduler))
 
         val failure = assertFailsWith<RecordsException.CommandFailed> { repository.ensureAllFilesAccess() }
 

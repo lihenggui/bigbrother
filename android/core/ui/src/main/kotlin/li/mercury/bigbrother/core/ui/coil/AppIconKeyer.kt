@@ -21,9 +21,12 @@ import coil3.request.Options
 import li.mercury.bigbrother.core.model.AppIconSource
 
 /**
- * Caches an app's icon by its package, user and last update, so that an
- * update that changes the icon is not shown with the old one.
+ * Includes the installation and locale because both can change the drawable
+ * provided by the package manager.
  */
 class AppIconKeyer : Keyer<AppIconSource> {
-    override fun key(data: AppIconSource, options: Options): String = "app-icon:${data.packageName}:${data.userId}:${data.lastUpdateTime}"
+    override fun key(data: AppIconSource, options: Options): String {
+        val locales = options.context.resources.configuration.locales.toLanguageTags()
+        return "app-icon:${data.packageName}:${data.userId}:${data.lastUpdateTime}:$locales"
+    }
 }

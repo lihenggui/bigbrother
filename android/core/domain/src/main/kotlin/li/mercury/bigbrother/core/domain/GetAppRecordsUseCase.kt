@@ -29,8 +29,8 @@ class GetAppRecordsUseCase @Inject constructor(
     private val accessRepository: AccessRepository,
     private val appInfoRepository: AppInfoRepository,
 ) {
-    suspend operator fun invoke(range: TimeRange): AppRecords {
-        val apps = accessRepository.getApps(range)
+    suspend operator fun invoke(range: TimeRange, forceRefresh: Boolean = false): AppRecords {
+        val apps = accessRepository.getApps(range, forceRefresh)
         val packageNames = apps.mapNotNullTo(mutableSetOf()) { it.packageName.ifEmpty { null } }
         return AppRecords(apps, appInfoRepository.getAppInfo(packageNames))
     }

@@ -79,6 +79,7 @@ class AddAppsViewModel @Inject constructor(
     private val query = MutableStateFlow("")
     private val selected = savedStateHandle.getMutableStateFlow(SELECTED_PACKAGES, arrayListOf<String>())
 
+    @Volatile
     private var available: Pair<List<InstalledApp>, AppVisibility>? = null
     private val appChoices = combine(installed, getAppVisibility(), ::Pair).onEach { (choices, visibility) ->
         available = (choices as? InstalledChoices.Apps)?.let { it.apps to visibility }

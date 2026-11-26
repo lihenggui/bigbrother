@@ -19,11 +19,14 @@ package li.mercury.bigbrother.core.data.repository
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import li.mercury.bigbrother.core.data.RecordsException
 import li.mercury.bigbrother.core.data.toLoadFailure
 import li.mercury.bigbrother.core.model.LoadFailure
 import timber.log.Timber
 import javax.inject.Inject
+import javax.inject.Singleton
 
 /** Bringing the installed module up to date with the one this app carries. */
 sealed interface ModuleUpdate {
@@ -34,6 +37,7 @@ sealed interface ModuleUpdate {
 }
 
 /** Checks the installed module against this app and tracks an in-place update. */
+@Singleton
 class ModuleUpdater @Inject constructor(
     private val moduleRepository: ModuleRepository,
     private val accessRepository: AccessRepository,
@@ -41,13 +45,14 @@ class ModuleUpdater @Inject constructor(
     private val update = MutableStateFlow<ModuleUpdate>(ModuleUpdate.Idle)
     val state = update.asStateFlow()
 
+    private val comparisonLock = Mutex()
     private var moduleCurrent = false
 
     // A failed automatic update is shown with a way to try again.
     private var automaticAttempted = false
 
     /** Check the installed module after reading records. An outdated command can also trigger an update. */
-    suspend fun shouldUpdate(failure: LoadFailure?): Boolean {
+    suspend fun shouldUpdate(failure: LoadFailure?): Boolean = comparisonLock.withLock {
         if (automaticAttempted) return false
         val needed = when {
             failure == LoadFailure.ModuleOutdated -> true
@@ -62,21 +67,25 @@ class ModuleUpdater @Inject constructor(
             }
         }
         if (needed) automaticAttempted = true
-        return needed
+        needed
     }
 
     suspend fun updateInPlace() {
-        update.value = ModuleUpdate.Updating
+        while (true) {
+            val previous = update.value
+            if (previous == ModuleUpdate.Updating) return
+            if (update.compareAndSet(previous, ModuleUpdate.Updating)) break
+        }
+        var result: ModuleUpdate = ModuleUpdate.Idle
         try {
             moduleRepository.updateInPlace()
             awaitRecording()
-            update.value = ModuleUpdate.Idle
         } catch (e: RecordsException) {
-            update.value = ModuleUpdate.Failed(e.toLoadFailure())
+            result = ModuleUpdate.Failed(e.toLoadFailure())
         } finally {
-            if (update.value == ModuleUpdate.Updating) update.value = ModuleUpdate.Idle
+            update.value = result
         }
-        Timber.i("Module update: %s", update.value::class.simpleName)
+        Timber.i("Module update: %s", result::class.simpleName)
     }
 
     /** The daemon reports only after it has written its first batch. */

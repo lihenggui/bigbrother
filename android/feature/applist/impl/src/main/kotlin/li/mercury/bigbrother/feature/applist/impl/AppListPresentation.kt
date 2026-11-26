@@ -16,13 +16,10 @@
 
 package li.mercury.bigbrother.feature.applist.impl
 
-import android.content.res.Resources
-import androidx.compose.runtime.getValue
+import li.mercury.bigbrother.core.model.AppInfo
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.ui.DataCategory
-import li.mercury.bigbrother.core.ui.appDisplayName
 import li.mercury.bigbrother.core.ui.dataCategories
-import li.mercury.bigbrother.core.ui.label
 import li.mercury.bigbrother.core.ui.readFiles
 
 /** How the app list is ordered. */
@@ -55,7 +52,7 @@ internal data class AppListPresentation(
     val categories: List<DataCategory> = emptyList(),
 )
 
-internal fun AppListUiState.present(filter: AppListFilter, resources: Resources): AppListPresentation {
+internal fun AppListUiState.present(filter: AppListFilter, displayName: (AppSummary, AppInfo?) -> String): AppListPresentation {
     val entries = apps?.map { AppListEntry(it, it.dataCategories()) } ?: return AppListPresentation(this, filter)
     val (sort, category) = filter
     // A category stays in the menu when nothing is left in it, so that the
@@ -68,7 +65,7 @@ internal fun AppListUiState.present(filter: AppListFilter, resources: Resources)
         // The daemon already lists the most recent first.
         SortOrder.RECENT -> matching
 
-        SortOrder.NAME -> matching.sortedBy { appDisplayName(it.app, appInfo[it.app.packageName], resources).lowercase() }
+        SortOrder.NAME -> matching.sortedBy { displayName(it.app, appInfo[it.app.packageName]).lowercase() }
     }
     // In sensitivity order the apps that read files form a group of their
     // own, which says why they come first.

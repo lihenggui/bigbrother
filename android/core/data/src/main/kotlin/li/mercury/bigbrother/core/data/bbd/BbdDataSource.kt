@@ -72,7 +72,7 @@ internal interface BbdDataSource {
 
     suspend fun setSandboxItems(packageName: String, userId: Int, changes: Map<SandboxItem, SandboxMode?>)
 
-    suspend fun setSandboxGlobal(changes: Map<SandboxItem, SandboxMode>)
+    suspend fun setSandboxGlobal(changes: Map<SandboxItem, SandboxMode>): BbdSandboxGlobal?
 
-    suspend fun setSandboxAuto(on: Boolean)
+    suspend fun setSandboxAuto(on: Boolean): Boolean?
 }

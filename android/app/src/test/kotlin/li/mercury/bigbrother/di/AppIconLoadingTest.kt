@@ -19,6 +19,7 @@ package li.mercury.bigbrother.di
 import android.app.Application
 import android.content.pm.ApplicationInfo
 import android.content.pm.LauncherApps
+import android.content.res.Configuration
 import android.os.UserHandle
 import androidx.test.core.app.ApplicationProvider
 import coil3.ImageLoader
@@ -33,6 +34,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import java.util.Locale
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -55,6 +57,18 @@ class AppIconLoadingTest {
         assertNotEquals(key, keyer.key(source.copy(packageName = "com.example.other"), options))
         assertNotEquals(key, keyer.key(source.copy(uid = source.uid + PER_USER_RANGE), options))
         assertNotEquals(key, keyer.key(source.copy(lastUpdateTime = 2), options))
+    }
+
+    @Test
+    fun givenCachedIcon_whenLocaleChanges_thenUsesAnotherCacheKey() {
+        val keyer = AppIconKeyer()
+        val french = Configuration(context.resources.configuration).apply { setLocale(Locale.FRANCE) }
+        val english = Configuration(context.resources.configuration).apply { setLocale(Locale.US) }
+
+        assertNotEquals(
+            keyer.key(source, Options(context.createConfigurationContext(french))),
+            keyer.key(source, Options(context.createConfigurationContext(english))),
+        )
     }
 
     @Test

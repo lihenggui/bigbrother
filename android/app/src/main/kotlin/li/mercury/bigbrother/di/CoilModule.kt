@@ -49,6 +49,7 @@ object CoilModule {
             // An icon loaded from the package manager fades in rather than
             // popping in; one already in memory is drawn at once, without it.
             .crossfade(true)
+            .diskCache(null)
             .build()
     }
 }

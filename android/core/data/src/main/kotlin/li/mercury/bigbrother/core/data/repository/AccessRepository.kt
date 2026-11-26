@@ -33,8 +33,8 @@ import li.mercury.bigbrother.core.model.TimelinePage
  * be read.
  */
 interface AccessRepository {
-    /** Every app with records in [range], most recently active first. */
-    suspend fun getApps(range: TimeRange): List<AppSummary>
+    /** Every app with records in [range], most recently active first. [forceRefresh] bypasses cached reads. */
+    suspend fun getApps(range: TimeRange, forceRefresh: Boolean = false): List<AppSummary>
 
     /** Paths one app touched, most recent first. A null [category] means all. */
     suspend fun getAccesses(
@@ -43,6 +43,7 @@ interface AccessRepository {
         range: TimeRange,
         limit: Int,
         offset: Int,
+        forceRefresh: Boolean = false,
     ): List<Access>
 
     /** Each time [uid] touched any of [paths], most recent first. */

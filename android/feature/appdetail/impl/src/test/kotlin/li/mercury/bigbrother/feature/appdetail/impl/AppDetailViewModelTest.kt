@@ -52,6 +52,7 @@ class AppDetailViewModelTest {
     )
     private val installed = TestInstalledAppRepository(apps = listOf(InstalledApp(PACKAGE, APP_UID, info)))
     private val sandbox = TestSandboxRepository()
+    private val access = TestAccessRepository()
 
     @Test
     fun givenUnisolatedApp_whenConfirmed_thenIsolatesAndOpensItsSettings() = runTest {
@@ -71,6 +72,8 @@ class AppDetailViewModelTest {
         runCurrent()
 
         assertEquals(listOf(PACKAGE), sandbox.isolated)
+        assertEquals(listOf(PACKAGE), installed.uidLookups)
+        assertEquals(0, installed.installedListReads)
         assertEquals(JailAction.Open(PACKAGE), model.uiState.value.jailAction)
     }
 
@@ -113,9 +116,22 @@ class AppDetailViewModelTest {
         assertEquals(JailAction.Failed(LoadFailure.NoRoot), model.uiState.value.jailAction)
     }
 
+    @Test
+    fun givenLoadedApp_whenRetried_thenBypassesBothRecordCaches() = runTest {
+        val model = viewModel()
+        assertEquals(listOf(false), access.appRefreshes)
+        assertEquals(listOf(false), access.accessRefreshes)
+
+        model.retry()
+        runCurrent()
+
+        assertEquals(listOf(false, true), access.appRefreshes)
+        assertEquals(listOf(false, true), access.accessRefreshes)
+    }
+
     private fun TestScope.viewModel(repository: TestSandboxRepository = sandbox): AppDetailViewModel {
         val model = AppDetailViewModel(
-            accessRepository = TestAccessRepository(),
+            accessRepository = access,
             appInfoRepository = TestAppInfoRepository(mapOf(PACKAGE to info)),
             installedAppRepository = installed,
             sandboxRepository = repository,

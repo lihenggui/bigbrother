@@ -107,7 +107,7 @@ class AppFilesViewModel @AssistedInject constructor(
         launch {
             refreshes.collectLatest { request ->
                 if (request != completed) {
-                    load()
+                    load(forceRefresh = request != 0L)
                     completed = request
                 }
             }
@@ -131,7 +131,7 @@ class AppFilesViewModel @AssistedInject constructor(
         refreshes.update { it + 1 }
     }
 
-    private suspend fun load(): Unit = coroutineScope {
+    private suspend fun load(forceRefresh: Boolean): Unit = coroutineScope {
         files.value = null
         builtFor = null
         mutableUiState.update { it.copy(browser = null, truncated = false, failure = null) }
@@ -145,7 +145,7 @@ class AppFilesViewModel @AssistedInject constructor(
         }
         try {
             // One request for everything so a folder can be assembled from all its paths.
-            val accesses = accessRepository.getAccesses(uid, null, range, MAX_ACCESSES, 0)
+            val accesses = accessRepository.getAccesses(uid, null, range, MAX_ACCESSES, 0, forceRefresh)
             val loaded = withContext(defaultDispatcher) {
                 accesses.filter { access ->
                     ensureActive()
