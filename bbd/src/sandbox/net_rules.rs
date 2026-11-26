@@ -103,29 +103,29 @@ impl Sandbox {
         change: RuleChange,
     ) -> anyhow::Result<()> {
         let blocked = matches!(change, RuleChange::Block { .. });
-        let mut before = None;
         let entry = self.snapshot_read().get(&uid).cloned();
-        let result = writer.change_net_rule(uid, &target.to_text(), change, || {
-            before = Some(self.set_net_rule(uid, target, blocked));
-            if blocked
-                && !matches!(target, Target::Ip(..))
-                && let Some(entry) = &entry
-            {
-                for effect in &mut self.effects {
-                    effect.stage_name_rule(entry, target);
-                }
+        let before = self.set_net_rule(uid, target, blocked);
+        if blocked
+            && !matches!(target, Target::Ip(..))
+            && let Some(entry) = &entry
+        {
+            for effect in &mut self.effects {
+                effect.stage_name_rule(entry, target);
             }
-            self.refresh(uid, false)?;
-            Ok(self
+        }
+        // Refresh can run subprocesses and visit mount namespaces. Keep the
+        // old rule durable until that succeeds so restart can restore it.
+        let result = self.refresh(uid, false).and_then(|()| {
+            let addresses: Vec<_> = self
                 .effects
                 .iter()
                 .flat_map(|effect| effect.name_addresses())
-                .collect())
+                .collect();
+            writer.change_net_rule(uid, &target.to_text(), change, &addresses)
         });
-        let Some(before) = before else { return result };
         self.pending_net_refresh.retain(|pending| *pending != uid);
         let result = result.map_err(|error| {
-            // The transaction kept the old row. Effects may already have
+            // The old row is still committed. Effects may already have
             // changed part of the filter or the app's resolver.
             for effect in &mut self.effects {
                 effect.cancel_name_rule();
@@ -195,3 +195,6 @@ impl Sandbox {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;

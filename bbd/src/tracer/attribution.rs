@@ -33,6 +33,7 @@ use crate::{
 /// isolated uid is handed to another process, possibly another app's, once
 /// it is free.
 const ISOLATED_OWNER_TTL: Duration = Duration::from_secs(60);
+pub(super) const MAX_ISOLATED_OWNERS: usize = 2048;
 
 impl Tracer {
     /// The app a process should be attributed to, and [`MODE_ISOLATED`] if
@@ -52,7 +53,7 @@ impl Tracer {
             return (*owner, MODE_ISOLATED);
         }
         if let Some(owner) = isolated_owner(&self.packages, uid, pid) {
-            self.isolated_owners.insert((pid, uid), (owner, now));
+            self.remember_isolated_owner(pid, uid, owner, now);
             return (owner, MODE_ISOLATED);
         }
         // The process has exited: fall back on the owner found for another
@@ -62,6 +63,12 @@ impl Tracer {
             .filter(|((_, isolated), _)| *isolated == uid)
             .max_by_key(|(_, (_, seen))| *seen)
             .map_or((uid, 0), |(_, (owner, _))| (*owner, MODE_ISOLATED))
+    }
+
+    pub(super) fn remember_isolated_owner(&mut self, pid: u32, uid: u32, owner: u32, now: Instant) {
+        if self.isolated_owners.len() < MAX_ISOLATED_OWNERS {
+            self.isolated_owners.insert((pid, uid), (owner, now));
+        }
     }
 
     /// Forget isolated processes not seen for a while: their pids and uids

@@ -474,16 +474,17 @@ fn change_relay_here(
     complete: &mut bool,
 ) -> anyhow::Result<bool> {
     let serving = relay.socket();
+    let id = serving.as_ref().map(|socket| socket.id);
     // If the socket cannot be identified, the plan still has mount information.
     let covered = socket_id(SOCKET).ok();
-    *complete &= serving.is_some();
-    let Some((detach, cover)) = change.plan(mounted, *serving, covered)? else {
+    *complete &= id.is_some();
+    let Some((detach, cover)) = change.plan(mounted, id, covered)? else {
         return Ok(false);
     };
     if detach {
         uncover_here()?;
     }
-    if let Some(id) = serving.filter(|_| cover == Cover::Relay)
+    if let Some(id) = id.filter(|_| cover == Cover::Relay)
         && record_here(id).is_err()
     {
         *complete = false;
@@ -678,7 +679,7 @@ mod tests {
                         created: 1,
                         manual: true,
                     },
-                    || Ok(Vec::new()),
+                    &[],
                 )
                 .unwrap();
         }

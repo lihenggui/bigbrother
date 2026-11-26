@@ -137,24 +137,22 @@ impl Sandbox {
         *write(&self.global) = new.clone();
 
         let mut changed = Vec::new();
+        for effect in &mut self.effects {
+            effect.begin_updates();
+        }
         let result = self
             .update_global_entries(writer, packages, uids, &old, &new, &mut changed)
+            .and_then(|()| self.publish_global_updates())
             .and_then(|()| {
                 let entries: Vec<_> = changed.iter().map(|update| &update.entry).collect();
                 writer.commit_sandbox(&entries, Some(&pairs))
             });
         if let Err(error) = result {
-            *write(&self.global) = old;
-            for AppliedUpdate {
-                mut entry,
-                sharing,
-                before,
-                after,
-            } in changed.into_iter().rev()
-            {
-                self.reverse_completed(&mut entry, &sharing, Change::Update(&before, &after));
-            }
+            self.reverse_global_updates(old, changed);
             return Err(error.context("the global settings are as they were"));
+        }
+        for effect in &mut self.effects {
+            effect.end_updates();
         }
         for update in changed {
             self.complete_change(&update.entry, Some(&update.after));
@@ -162,6 +160,40 @@ impl Sandbox {
         }
         self.auto_settings_changed();
         Ok(self.global_items())
+    }
+
+    fn publish_global_updates(&mut self) -> anyhow::Result<()> {
+        for effect in &mut self.effects {
+            effect.publish_updates().with_context(|| effect.name())?;
+        }
+        Ok(())
+    }
+
+    fn reverse_global_updates(&mut self, old: Settings, changed: Vec<AppliedUpdate>) {
+        *write(&self.global) = old;
+        for effect in &mut self.effects {
+            // Discard entries staged by an app whose update failed partway.
+            effect.end_updates();
+            effect.begin_updates();
+        }
+        for AppliedUpdate {
+            mut entry,
+            sharing,
+            before,
+            after,
+        } in changed.into_iter().rev()
+        {
+            self.reverse_completed(&mut entry, &sharing, Change::Update(&before, &after));
+        }
+        for effect in &mut self.effects {
+            if let Err(undo) = effect.publish_updates() {
+                eprintln!(
+                    "bbd: sandbox: cannot undo {} for the global settings: {undo:#}",
+                    effect.name()
+                );
+            }
+            effect.end_updates();
+        }
     }
 
     fn update_global_entries(

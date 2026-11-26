@@ -67,6 +67,7 @@ const BOOT_ID: &str = "/proc/sys/kernel/random/boot_id";
 
 /// The `system` user, which system_server runs as.
 const SYSTEM_UID: u32 = 1000;
+pub(super) const ACK_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
 pub struct Identity {
     user_data: Option<PathBuf>,
@@ -75,8 +76,11 @@ pub struct Identity {
     /// What the list says, or is to say once written: the line of each uid
     /// the hook answers for.
     listed: BTreeMap<u32, Listed>,
+    updates: Option<BTreeMap<u32, Option<Listed>>>,
     list: PathBuf,
     status: PathBuf,
+    #[cfg(test)]
+    writes: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 /// What the list says of a uid.
@@ -129,8 +133,11 @@ impl Identity {
             user_data: Some("/data/user_de".into()),
             pins: Default::default(),
             revision: String::new(),
+            updates: None,
             list: LIST.into(),
             status: STATUS.into(),
+            #[cfg(test)]
+            writes: Default::default(),
         }
     }
 
@@ -162,18 +169,31 @@ impl Identity {
     /// Write the list with `line` as the line of `uid`, or without one.
     /// Kept only once written, so that what is kept is what the hook reads.
     fn write(&mut self, uid: u32, line: Option<Listed>) -> anyhow::Result<()> {
+        if let Some(updates) = &mut self.updates {
+            updates.insert(uid, line);
+            return Ok(());
+        }
         let mut listed = self.listed.clone();
-        match line {
-            Some(line) => listed.insert(uid, line),
-            None => listed.remove(&uid),
-        };
+        Self::set_line(&mut listed, uid, line);
+        self.publish(listed)
+    }
+
+    fn set_line(listed: &mut BTreeMap<u32, Listed>, uid: u32, line: Option<Listed>) {
+        if let Some(line) = line {
+            listed.insert(uid, line);
+        } else {
+            listed.remove(&uid);
+        }
+    }
+
+    fn publish(&mut self, listed: BTreeMap<u32, Listed>) -> anyhow::Result<()> {
         let active = self
             .live_status()
             .is_some_and(|text| text.lines().any(|line| line == "list=1"));
         let revision = self.write_list(&listed)?;
         self.revision = revision;
         if active {
-            let until = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            let until = std::time::Instant::now() + ACK_WAIT;
             loop {
                 if self.live_status().is_some_and(|s| self.acknowledged(&s)) {
                     break;
@@ -190,6 +210,9 @@ impl Identity {
     }
 
     fn write_list(&self, apps: &BTreeMap<u32, Listed>) -> anyhow::Result<String> {
+        #[cfg(test)]
+        self.writes
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if apps.is_empty() {
             // No list: nothing is sandboxed.
             self.pins.borrow_mut().clear();
@@ -298,6 +321,31 @@ impl Effect for Identity {
         self.write(entry.uid, listed(entry, after))
     }
 
+    fn begin_updates(&mut self) {
+        self.updates = Some(BTreeMap::new());
+    }
+
+    fn publish_updates(&mut self) -> anyhow::Result<()> {
+        let Some(updates) = &mut self.updates else {
+            return Ok(());
+        };
+        if updates.is_empty() {
+            return Ok(());
+        }
+        let mut listed = self.listed.clone();
+        for (uid, line) in std::mem::take(updates) {
+            Self::set_line(&mut listed, uid, line);
+        }
+        if listed != self.listed {
+            self.publish(listed)?;
+        }
+        Ok(())
+    }
+
+    fn end_updates(&mut self) {
+        self.updates = None;
+    }
+
     fn resume(&mut self, apps: &[Resumed]) {
         // The list left on the disk may be from a daemon that stopped half
         // way through a change.
@@ -366,6 +414,10 @@ fn parse_status(text: &str, boot_id: &str, acknowledged: bool) -> HookStatus {
 
 #[cfg(test)]
 impl Identity {
+    pub(super) fn writes(&self) -> std::sync::Arc<std::sync::atomic::AtomicUsize> {
+        self.writes.clone()
+    }
+
     /// Written in `dir` rather than where the hook reads it.
     pub(super) fn at(self, dir: &std::path::Path) -> Self {
         Self {

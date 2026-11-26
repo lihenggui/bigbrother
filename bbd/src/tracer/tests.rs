@@ -581,3 +581,24 @@ fn events_are_dated_by_when_the_kernel_saw_them() {
     let ts = EventClock::now().unix_secs(boot_ns);
     assert!((now() - 21..=now() - 19).contains(&ts), "{ts}");
 }
+
+#[test]
+fn isolated_owner_cache_rejects_new_processes_when_full_and_prunes_expired_ones() {
+    use super::attribution::MAX_ISOLATED_OWNERS;
+
+    let mut fixture = Fixture::new("isolated-cap");
+    let tracer = &mut fixture.tracer;
+    let uid = FIRST_ISOLATED_APP_ID;
+    let owner = FIRST_APPLICATION_UID;
+    let old = Instant::now() - Duration::from_secs(120);
+    for pid in 1..=MAX_ISOLATED_OWNERS as u32 * 2 {
+        tracer.remember_isolated_owner(pid, uid, owner, old);
+    }
+    assert_eq!(tracer.isolated_owners.len(), MAX_ISOLATED_OWNERS);
+    assert_eq!(tracer.owner_uid(uid, 1), (owner, MODE_ISOLATED));
+    tracer.prune_isolated_owners();
+    assert_eq!(tracer.isolated_owners.len(), 1);
+    tracer.remember_isolated_owner(u32::MAX, uid, owner, Instant::now());
+    assert_eq!(tracer.owner_uid(uid, u32::MAX), (owner, MODE_ISOLATED));
+    assert_eq!(tracer.isolated_owners.len(), 2);
+}

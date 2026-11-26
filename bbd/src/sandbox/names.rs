@@ -49,22 +49,23 @@
 //! Names are other apps' data: none is ever logged.
 
 mod protocol;
+mod socket;
 
 use std::{
-    collections::{BTreeSet, HashMap},
-    ffi::CString,
+    collections::{BTreeSet, HashMap, VecDeque},
     io::{self, Read as _, Write as _},
     net::IpAddr,
     os::{
         fd::AsRawFd as _,
         unix::{
-            fs::{MetadataExt as _, PermissionsExt as _},
+            fs::MetadataExt as _,
             net::{UnixListener, UnixStream},
         },
     },
+    path::{Path, PathBuf},
     sync::{
-        Arc, Mutex, MutexGuard,
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        Arc, Condvar, Mutex, MutexGuard,
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         mpsc::{Receiver, SyncSender, TrySendError, sync_channel},
     },
     time::{Duration, Instant},
@@ -73,8 +74,14 @@ use std::{
 use anyhow::Context as _;
 use tokio::sync::Notify;
 
-use self::protocol::{Asked, Parsed, addresses_in};
-use crate::sync::lock;
+use self::{
+    protocol::{Asked, Parsed, addresses_in},
+    socket::{connect_as, listen, peer_uid, remove_relay_socket},
+};
+use crate::{
+    log::{Limited, Policy, RECURRING_INTERVAL},
+    sync::{lock, recover},
+};
 
 /// Where netd listens for the lookups of apps.
 pub(super) const NETD: &str = "/dev/socket/dnsproxyd";
@@ -84,18 +91,13 @@ pub(super) const NETD: &str = "/dev/socket/dnsproxyd";
 /// app can read its own mounts.
 pub(super) const RELAY_SOCKET: &str = "/dev/socket/dnsproxyd_relay";
 
-/// The label of netd's processes, and of the file of its socket.
-const NETD_LABEL: &str = "u:r:netd:s0";
-const SOCKET_LABEL: &str = "u:object_r:dnsproxyd_socket:s0";
-
-/// The group that may connect to netd's socket, which apps with the
-/// network permission are in.
-const INET_GID: libc::gid_t = 3003;
-
 /// The most lookups relayed at once, for all apps and for one. One more
 /// is refused: the app's lookup fails, as it does when netd has too many.
 const MOST_AT_ONCE: usize = 64;
 const MOST_OF_ONE_APP: usize = 8;
+const LOOKUP_WORKERS: usize = 16;
+const LOOKUP_QUEUE: usize = MOST_AT_ONCE - LOOKUP_WORKERS;
+const LOOKUP_IDLE: Duration = Duration::from_secs(60);
 
 /// How many refusals can wait for the writer, and the most taken in one
 /// pass even when lookups keep arriving while it drains the queue.
@@ -329,31 +331,78 @@ impl Shared {
 
 pub(super) type SocketId = (u64, u64);
 
-pub(super) fn socket_id(path: &str) -> io::Result<SocketId> {
+pub(super) fn socket_id(path: impl AsRef<Path>) -> io::Result<SocketId> {
     let metadata = std::fs::metadata(path)?;
     Ok((metadata.dev(), metadata.ino()))
 }
 
 /// The socket served by this generation.
 #[derive(Clone, Default)]
-pub struct Serving(Arc<Mutex<Option<SocketId>>>);
+pub struct Serving(Arc<RelayState>);
+
+#[derive(Default)]
+struct RelayState {
+    socket: Mutex<Option<ServedSocket>>,
+    active: AtomicBool,
+}
+
+pub(super) struct ServedSocket {
+    pub(super) id: SocketId,
+    bound: Option<(Arc<UnixListener>, PathBuf)>,
+}
 
 impl Serving {
     pub fn alive(&self) -> bool {
-        self.socket().is_some()
+        // Lookups need not wait for a namespace changing its socket mount.
+        self.0.active.load(Ordering::Acquire)
     }
 
-    pub(super) fn socket(&self) -> MutexGuard<'_, Option<SocketId>> {
-        lock(&self.0)
+    pub(super) fn socket(&self) -> MutexGuard<'_, Option<ServedSocket>> {
+        lock(&self.0.socket)
+    }
+
+    fn set_listener(&self, listener: Arc<UnixListener>, path: &Path) -> io::Result<()> {
+        let id = socket_id(path)?;
+        let mut socket = self.socket();
+        *socket = Some(ServedSocket {
+            id,
+            bound: Some((listener, path.to_owned())),
+        });
+        self.0.active.store(true, Ordering::Release);
+        Ok(())
     }
 
     #[cfg(test)]
     pub(super) fn listening(id: SocketId) -> Self {
-        Self(Arc::new(Mutex::new(Some(id))))
+        Self(Arc::new(RelayState {
+            socket: Mutex::new(Some(ServedSocket { id, bound: None })),
+            active: AtomicBool::new(true),
+        }))
     }
 
     pub fn stop(&self) -> bool {
-        lock(&self.0).take().is_some()
+        let mut serving = self.socket();
+        let Some(socket) = serving.take() else {
+            return false;
+        };
+        self.0.active.store(false, Ordering::Release);
+        if let Some((listener, path)) = socket.bound {
+            // Wake accept without needing to connect through the app-facing socket.
+            // SAFETY: listener owns the fd until shutdown returns.
+            if unsafe { libc::shutdown(listener.as_raw_fd(), libc::SHUT_RDWR) } != 0 {
+                eprintln!(
+                    "bbd: cannot stop the resolver listener: {}",
+                    io::Error::last_os_error()
+                );
+            }
+            match socket_id(&path) {
+                Ok(id) if id == socket.id => remove_relay_socket(&path),
+                Ok(_) => {}
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => eprintln!("bbd: cannot identify the resolver socket for cleanup: {e}"),
+            }
+        }
+        true
     }
 }
 
@@ -393,169 +442,225 @@ pub fn start(
     std::thread::Builder::new()
         .name("names".into())
         .spawn(move || {
-            // The label a socket gets is the thread's to set, and stays
-            // set for this thread: it makes no other socket.
             let lifetime = ListenerLifetime { serving, stopped };
-            let listener = match listen().and_then(|listener| {
-                let id = socket_id(RELAY_SOCKET).context("identifying the relay socket")?;
-                Ok((listener, id))
-            }) {
-                Ok((listener, id)) => {
-                    *lock(&lifetime.serving.0) = Some(id);
-                    let _ = ready.send(Ok(()));
-                    listener
-                }
-                Err(e) => {
-                    let _ = ready.send(Err(e));
-                    return;
-                }
+            let started = start_listener(&lifetime.serving);
+            let (result, running) = match started {
+                Ok(running) => (Ok(()), Some(running)),
+                Err(error) => (Err(error), None),
             };
-            for client in listener.incoming() {
-                let client = match client {
-                    Ok(client) => client,
-                    Err(e)
-                        if matches!(
-                            e.kind(),
-                            io::ErrorKind::Interrupted | io::ErrorKind::ConnectionAborted
-                        ) =>
-                    {
-                        continue;
-                    }
-                    Err(e) => {
-                        eprintln!(
-                            "bbd: warning: the resolver relay stopped accepting lookups: {e}"
-                        );
-                        break;
-                    }
-                };
-                // Whose it is, and whether it is served, before anything
-                // is spent on it: the socket can be found by any process.
-                let Ok(uid) = peer_uid(&client) else {
-                    continue;
-                };
-                let Some(install_id) = (shared.serves)(uid) else {
-                    continue;
-                };
-                if !shared.take_place(uid) {
-                    continue;
-                }
-                let lookup = shared.clone();
-                let spawned = std::thread::Builder::new()
-                    .name("lookup".into())
-                    .spawn(move || {
-                        // What fails here fails the app's lookup, and
-                        // says nothing: the reason would name the app.
-                        let _ = relay(client, uid, install_id, &lookup);
-                        lookup.leave_place(uid);
-                    });
-                if spawned.is_err() {
-                    // The closure was not run, nor its place left.
-                    shared.leave_place(uid);
-                    eprintln!("bbd: warning: the resolver relay could not start a lookup worker");
-                    break;
-                }
+            // Without the caller there is no sandbox to serve.
+            if ready.send(result).is_ok()
+                && let Some(listener) = running
+            {
+                let workers = lookup_pool(lifetime.serving.clone(), shared.clone());
+                accept_lookups(&listener, &lifetime.serving, &shared, |job| {
+                    workers.dispatch(job)
+                });
             }
         })
         .context("starting the thread")?;
     started.recv().context("the thread ended as it started")?
 }
 
-/// The daemon's socket, labelled as netd's.
-fn listen() -> anyhow::Result<UnixListener> {
-    std::fs::write("/proc/thread-self/attr/sockcreate", NETD_LABEL)
-        .context("labelling the socket")?;
-    match std::fs::remove_file(RELAY_SOCKET) {
-        Err(e) if e.kind() != io::ErrorKind::NotFound => {
-            return Err(e).context("removing the socket of the daemon before");
-        }
-        _ => {}
-    }
-    let listener = UnixListener::bind(RELAY_SOCKET).context("binding the socket")?;
-    // To whom netd's own is open: root, and the group of the apps with
-    // the network permission.
-    std::os::unix::fs::chown(RELAY_SOCKET, Some(0), Some(INET_GID))
-        .and_then(|()| {
-            std::fs::set_permissions(RELAY_SOCKET, std::fs::Permissions::from_mode(0o660))
-        })
-        .context("opening the socket to the apps with the network permission")?;
-    let (path, name, label) = (
-        CString::new(RELAY_SOCKET)?,
-        c"security.selinux",
-        CString::new(SOCKET_LABEL)?,
-    );
-    let rc = unsafe {
-        libc::setxattr(
-            path.as_ptr(),
-            name.as_ptr(),
-            label.as_ptr().cast(),
-            label.as_bytes_with_nul().len(),
-            0,
-        )
-    };
-    if rc != 0 {
-        return Err(io::Error::last_os_error()).context("labelling the socket's file");
+struct Lookup {
+    client: UnixStream,
+    uid: u32,
+    install_id: Arc<str>,
+    asked_by: Instant,
+}
+
+fn start_listener(serving: &Serving) -> anyhow::Result<Arc<UnixListener>> {
+    let listener = Arc::new(listen()?);
+    if let Err(error) = serving.set_listener(listener.clone(), Path::new(RELAY_SOCKET)) {
+        remove_relay_socket(Path::new(RELAY_SOCKET));
+        return Err(error).context("identifying the relay socket");
     }
     Ok(listener)
 }
 
-/// The uid of the process at the other end, which the kernel tells.
-fn peer_uid(client: &UnixStream) -> io::Result<u32> {
-    let mut cred = libc::ucred {
-        pid: 0,
-        uid: 0,
-        gid: 0,
-    };
-    let mut len = size_of::<libc::ucred>() as libc::socklen_t;
-    let rc = unsafe {
-        libc::getsockopt(
-            client.as_raw_fd(),
-            libc::SOL_SOCKET,
-            libc::SO_PEERCRED,
-            (&raw mut cred).cast(),
-            &mut len,
-        )
-    };
-    if rc != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(cred.uid)
+fn lookup_pool(serving: Serving, shared: Arc<Shared>) -> LookupPool {
+    LookupPool::new(LOOKUP_WORKERS, LOOKUP_QUEUE, LOOKUP_IDLE, move |lookup| {
+        let Lookup {
+            client,
+            uid,
+            install_id,
+            asked_by,
+        } = lookup;
+        if serving.alive() && (shared.serves)(uid).as_deref() == Some(install_id.as_ref()) {
+            // A relay error ends this lookup. Its details could identify the app.
+            let _ = relay(client, uid, install_id, asked_by, &shared);
+        }
+        shared.leave_place(uid);
+    })
 }
 
-/// Connect to netd with `uid` as this thread's effective uid: netd takes
-/// the app to be whoever connects. The thread stays root otherwise, and
-/// is root again once connected.
-fn connect_as(uid: u32) -> io::Result<UnixStream> {
-    // Raw system calls: these change the calling thread only, where the
-    // C library's would change every thread of the daemon.
-    let set = |euid: u32| -> io::Result<()> {
-        if unsafe { libc::syscall(libc::SYS_setresuid, -1i32, euid, -1i32) } != 0 {
-            return Err(io::Error::last_os_error());
+struct LookupPool {
+    core: Arc<LookupWorkers>,
+    max_workers: usize,
+    capacity: usize,
+}
+
+struct LookupWorkers {
+    state: Mutex<PoolState>,
+    ready: Condvar,
+    idle_timeout: Duration,
+    handle: Box<dyn Fn(Lookup) + Send + Sync>,
+}
+
+#[derive(Default)]
+struct PoolState {
+    pending: VecDeque<Lookup>,
+    workers: usize,
+    busy: usize,
+    closed: bool,
+}
+
+impl LookupPool {
+    fn new(
+        max_workers: usize,
+        capacity: usize,
+        idle_timeout: Duration,
+        handle: impl Fn(Lookup) + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            core: Arc::new(LookupWorkers {
+                state: Mutex::default(),
+                ready: Condvar::new(),
+                idle_timeout,
+                handle: Box::new(handle),
+            }),
+            max_workers,
+            capacity,
         }
+    }
+
+    fn dispatch(&self, job: Lookup) -> io::Result<()> {
+        self.dispatch_with(job, |workers| {
+            std::thread::Builder::new()
+                .name("lookup".into())
+                .spawn(move || workers.run())?;
+            Ok(())
+        })
+    }
+
+    fn dispatch_with(
+        &self,
+        job: Lookup,
+        spawn: impl FnOnce(Arc<LookupWorkers>) -> io::Result<()>,
+    ) -> io::Result<()> {
+        let mut state = lock(&self.core.state);
+        if state.pending.len() >= self.capacity {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "lookup queue full",
+            ));
+        }
+        // A queued job already claims an idle or newly created worker.
+        let available = state.workers - state.busy;
+        if state.pending.len() >= available && state.workers < self.max_workers {
+            match spawn(self.core.clone()) {
+                Ok(()) => state.workers += 1,
+                Err(error) if state.workers == 0 => return Err(error),
+                // An existing worker can handle the job when it becomes free.
+                Err(_) => {}
+            }
+        }
+        state.pending.push_back(job);
+        self.core.ready.notify_one();
         Ok(())
-    };
-    // Without root's capabilities the socket is open to its group only.
-    let groups = [INET_GID];
-    if unsafe { libc::syscall(libc::SYS_setgroups, groups.len(), groups.as_ptr()) } != 0 {
-        return Err(io::Error::last_os_error());
     }
-    set(uid)?;
-    let connected = UnixStream::connect(NETD);
-    // A thread that cannot be root again must not go on as the daemon's.
-    if set(0).is_err() {
-        std::process::abort();
+}
+
+impl Drop for LookupPool {
+    fn drop(&mut self) {
+        lock(&self.core.state).closed = true;
+        self.core.ready.notify_all();
     }
-    connected
+}
+
+impl LookupWorkers {
+    fn run(&self) {
+        let mut state = lock(&self.state);
+        loop {
+            (state, _) = recover(self.ready.wait_timeout_while(
+                state,
+                self.idle_timeout,
+                |state| state.pending.is_empty() && !state.closed,
+            ));
+            // Retire under the queue's lock so a racing dispatch sees either
+            // a worker ready to take the job or capacity to create one.
+            let Some(job) = state.pending.pop_front() else {
+                state.workers -= 1;
+                return;
+            };
+            state.busy += 1;
+            drop(state);
+            (self.handle)(job);
+            state = lock(&self.state);
+            state.busy -= 1;
+        }
+    }
+}
+
+fn accept_lookups(
+    listener: &UnixListener,
+    serving: &Serving,
+    shared: &Shared,
+    mut dispatch: impl FnMut(Lookup) -> io::Result<()>,
+) {
+    let mut dispatch_errors = Limited::new(RECURRING_INTERVAL, Policy::Shared);
+    for client in listener.incoming() {
+        if !serving.alive() {
+            break;
+        }
+        let client = match client {
+            Ok(client) => client,
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::Interrupted | io::ErrorKind::ConnectionAborted
+                ) =>
+            {
+                continue;
+            }
+            Err(e) => {
+                eprintln!("bbd: warning: the resolver relay stopped accepting lookups: {e}");
+                break;
+            }
+        };
+        // The socket is public. Check the peer and the policy before queuing anything.
+        // A peer that cannot be identified is ineligible.
+        let Ok(uid) = peer_uid(&client) else { continue };
+        let Some(install_id) = (shared.serves)(uid) else {
+            continue;
+        };
+        if !shared.take_place(uid) {
+            continue;
+        }
+        let lookup = Lookup {
+            client,
+            uid,
+            install_id,
+            asked_by: Instant::now() + REQUEST_WAIT,
+        };
+        if let Err(error) = dispatch(lookup) {
+            shared.leave_place(uid);
+            dispatch_errors.log(format_args!(
+                "bbd: warning: could not dispatch a resolver lookup: {error}"
+            ));
+        }
+    }
 }
 
 fn relay(
     mut client: UnixStream,
     uid: u32,
     install_id: Arc<str>,
+    asked_by: Instant,
     shared: &Shared,
 ) -> io::Result<()> {
     client.set_write_timeout(Some(REQUEST_WAIT))?;
     // The whole request within the time, however slowly it comes.
-    let asked_by = Instant::now() + REQUEST_WAIT;
     let mut request = Vec::new();
     let mut chunk = [0u8; 1024];
     while !request.contains(&0) {
@@ -675,295 +780,4 @@ fn pump(client: &mut UnixStream, netd: &mut UnixStream, until: Instant) -> io::R
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::net::Ipv4Addr;
-
-    #[test]
-    fn serves_a_recording_app_without_name_rules() {
-        use std::collections::BTreeMap;
-
-        use crate::sandbox::tests::Fixture;
-        use crate::sandbox_item::{Item, Mode};
-
-        let mut f = Fixture::new("recording-resolver");
-        let mut sandbox = f.sandbox();
-        sandbox
-            .enable(&f.writer, &mut f.packages, "com.app", 0, 1000)
-            .unwrap();
-        let (serves, refuses) = sandbox.name_policy();
-        assert!(serves(10100).is_none());
-
-        sandbox
-            .configure(
-                &f.writer,
-                &mut f.packages,
-                "com.app",
-                0,
-                &BTreeMap::from([(Item::NetworkRecord, Some(Mode::On))]),
-            )
-            .unwrap();
-        assert_eq!(serves(10100).as_deref(), Some("com.app"));
-        assert!(!refuses(10100, Some("example.com")));
-        assert!(serves(10200).is_none());
-    }
-
-    #[tokio::test]
-    async fn a_listener_that_exits_reports_it_is_no_longer_serving() {
-        let serving = Serving::default();
-        assert!(!serving.alive());
-        let stopped = Arc::new(Notify::new());
-        let listener = ListenerLifetime {
-            serving: serving.clone(),
-            stopped: stopped.clone(),
-        };
-        *lock(&serving.0) = Some((1, 2));
-        assert!(serving.alive());
-        drop(listener);
-        assert!(!serving.alive());
-        tokio::time::timeout(Duration::ZERO, stopped.notified())
-            .await
-            .unwrap();
-    }
-
-    #[test]
-    fn an_app_has_a_few_lookups_at_once_and_all_apps_some_more() {
-        let (refused, _) = RefusedLookups::channel();
-        let shared = Shared {
-            names: Arc::default(),
-            serves: Arc::new(|_| Some(Arc::from("installation"))),
-            refuses: Arc::new(|_, _| false),
-            refused,
-            at_once: AtomicUsize::new(0),
-            of_each: Mutex::default(),
-        };
-        for _ in 0..MOST_OF_ONE_APP {
-            assert!(shared.take_place(10001));
-        }
-        // One more of the same app has none; another app has.
-        assert!(!shared.take_place(10001));
-        assert!(shared.take_place(10002));
-        shared.leave_place(10001);
-        assert!(shared.take_place(10001));
-        // All apps together.
-        let mut uid = 20000;
-        while shared.at_once.load(Ordering::Relaxed) < MOST_AT_ONCE {
-            uid += 1;
-            assert!(shared.take_place(uid));
-        }
-        assert!(!shared.take_place(30000));
-        assert!(!shared.of_each.lock().unwrap().contains_key(&30000));
-        shared.leave_place(uid);
-        assert!(shared.take_place(30000));
-        // Every place left is a place again.
-        let uids: Vec<u32> = shared.of_each.lock().unwrap().keys().copied().collect();
-        for uid in uids {
-            loop {
-                let has = shared.of_each.lock().unwrap().contains_key(&uid);
-                if !has {
-                    break;
-                }
-                shared.leave_place(uid);
-            }
-        }
-        assert_eq!(shared.at_once.load(Ordering::Relaxed), 0);
-    }
-
-    #[test]
-    fn a_full_refusal_queue_drops_the_record_and_still_refuses_the_lookup() {
-        let (refused, pending) = RefusedLookups::channel();
-        for _ in 0..REFUSED_LOOKUPS_CAPACITY {
-            refused.record(10001, "queued.example");
-        }
-        let shared = Shared {
-            names: Arc::default(),
-            serves: Arc::new(|_| Some(Arc::from("installation"))),
-            refuses: Arc::new(|_, host| host == Some("blocked.example")),
-            refused,
-            at_once: AtomicUsize::new(0),
-            of_each: Mutex::default(),
-        };
-        let (mut client, server) = UnixStream::pair().unwrap();
-        client
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .unwrap();
-        client
-            .write_all(b"getaddrinfo blocked.example ^ 0 0 0 0 0\0")
-            .unwrap();
-
-        std::thread::scope(|scope| {
-            let task =
-                scope.spawn(move || relay(server, 10002, Arc::from("installation"), &shared));
-            let Ok(closed) = client.read(&mut [0u8]) else {
-                drop(pending);
-                panic!("the refusal waited for space in the queue");
-            };
-            task.join().unwrap().unwrap();
-            assert_eq!(closed, 0);
-            assert_eq!(pending.dropped(), 1);
-            let queued: Vec<_> = pending.batch().collect();
-            assert_eq!(queued.len(), REFUSED_LOOKUPS_CAPACITY);
-            assert_eq!(pending.batch().count(), 0);
-            assert!(
-                queued
-                    .iter()
-                    .all(|(uid, host)| { *uid == 10001 && host == "queued.example" })
-            );
-        });
-    }
-
-    #[test]
-    fn a_batch_ends_even_when_new_refusals_keep_arriving() {
-        let (refused, pending) = RefusedLookups::channel();
-        for _ in 0..REFUSED_LOOKUPS_CAPACITY {
-            refused.record(10001, "queued.example");
-        }
-        let drained = pending
-            .batch()
-            .take(REFUSED_LOOKUPS_CAPACITY + 1)
-            .inspect(|_| refused.record(10002, "arriving.example"))
-            .count();
-        assert_eq!(drained, REFUSED_LOOKUPS_CAPACITY);
-        assert_eq!(pending.dropped(), 0);
-        let queued: Vec<_> = pending.batch().collect();
-        assert_eq!(queued.len(), REFUSED_LOOKUPS_CAPACITY);
-        assert!(
-            queued
-                .iter()
-                .all(|(uid, host)| { *uid == 10002 && host == "arriving.example" })
-        );
-    }
-
-    #[test]
-    fn only_one_command_is_taken_on_a_connection() {
-        assert!(one_command(b"getaddrinfo example.com ^ 0 0 0 0 0\0"));
-        // A second one behind it, whole or begun, and what does not end.
-        assert!(!one_command(
-            b"getaddrinfo example.com ^ 0 0 0 0 0\0getaddrinfo t.adnet.example ^ 0 0 0 0 0\0"
-        ));
-        assert!(!one_command(b"getdnsnetid 0\0g"));
-        assert!(!one_command(b"getdnsnetid 0"));
-        assert!(!one_command(b""));
-        assert!(one_command(b"\0"));
-    }
-
-    #[test]
-    fn the_name_an_address_was_last_given_for_is_remembered_per_app() {
-        let names = Names::default();
-        let (a, b): (IpAddr, IpAddr) = (
-            "203.0.113.7".parse().unwrap(),
-            "2001:db8::5".parse().unwrap(),
-        );
-        names.learn(10001, Arc::from("installation"), "api.example.com", &[a, b]);
-        names.learn(10002, Arc::from("installation"), "cdn.example.net", &[a]);
-        assert_eq!(names.host_of(10001, a).as_deref(), Some("api.example.com"));
-        assert_eq!(names.host_of(10001, b).as_deref(), Some("api.example.com"));
-        assert_eq!(names.host_of(10002, a).as_deref(), Some("cdn.example.net"));
-        assert_eq!(names.host_of(10002, b), None);
-        // An address given for another name since is that name's.
-        names.learn(10001, Arc::from("installation"), "img.example.com", &[a]);
-        assert_eq!(names.host_of(10001, a).as_deref(), Some("img.example.com"));
-        // An IPv4 address is the same however it is written.
-        assert_eq!(
-            names
-                .host_of(10001, "::ffff:203.0.113.7".parse().unwrap())
-                .as_deref(),
-            Some("img.example.com")
-        );
-        let mut under: Vec<IpAddr> = names
-            .addresses_of(10001, "installation", crate::clock::now(), |host| {
-                host.ends_with(".example.com")
-            })
-            .into_iter()
-            .map(|(ip, _)| ip)
-            .collect();
-        under.sort();
-        assert_eq!(under, [a, b]);
-        assert!(
-            names
-                .addresses_of(10003, "installation", crate::clock::now(), |_| true)
-                .is_empty()
-        );
-    }
-
-    #[test]
-    fn a_late_answer_from_a_previous_installation_cannot_supply_rule_addresses() {
-        let names = Names::default();
-        let ip = "203.0.113.7".parse().unwrap();
-        names.learn(10001, Arc::from("previous"), "example.test", &[ip]);
-        assert!(
-            names
-                .addresses_of(10001, "current", crate::clock::now(), |_| true)
-                .is_empty()
-        );
-        names.learn(10001, Arc::from("current"), "example.test", &[ip]);
-        assert_eq!(
-            names.addresses_of(10001, "current", crate::clock::now(), |_| true)[0].0,
-            ip
-        );
-    }
-
-    #[test]
-    fn the_oldest_half_goes_when_too_much_is_remembered() {
-        let names = Names::default();
-        for i in 0..=REMEMBERED as u32 {
-            names.learn(
-                10001,
-                Arc::from("installation"),
-                "h.example.com",
-                &[IpAddr::V4(Ipv4Addr::from(i))],
-            );
-        }
-        let kept = names
-            .addresses_of(10001, "installation", crate::clock::now(), |_| true)
-            .len();
-        assert_eq!(kept, REMEMBERED / 2);
-        assert_eq!(names.host_of(10001, IpAddr::V4(Ipv4Addr::from(0))), None);
-        assert!(
-            names
-                .host_of(10001, IpAddr::V4(Ipv4Addr::from(REMEMBERED as u32)))
-                .is_some()
-        );
-    }
-
-    #[test]
-    fn an_app_that_looks_up_many_names_keeps_those_of_the_others() {
-        let names = Names::default();
-        let other = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 9));
-        names.learn(
-            10002,
-            Arc::from("installation"),
-            "other.example.com",
-            &[other],
-        );
-        for i in 0..=2 * REMEMBERED as u32 {
-            names.learn(
-                10001,
-                Arc::from("installation"),
-                "h.example.com",
-                &[IpAddr::V4(Ipv4Addr::from(i))],
-            );
-        }
-        assert_eq!(
-            names.host_of(10002, other).as_deref(),
-            Some("other.example.com")
-        );
-    }
-
-    #[test]
-    fn nothing_is_remembered_of_a_uid_that_went_to_another_app() {
-        let names = Names::default();
-        let address = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 9));
-        names.learn(
-            10001,
-            Arc::from("installation"),
-            "h.example.com",
-            &[address],
-        );
-        names.keep_refused(10001, BTreeSet::from([address]));
-        assert!(names.refused(10001, address));
-        names.forget(10001);
-        assert_eq!(names.host_of(10001, address), None);
-        assert!(!names.refused(10001, address));
-    }
-}
+mod tests;

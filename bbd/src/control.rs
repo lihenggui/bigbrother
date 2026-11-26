@@ -46,7 +46,8 @@ const FLUSH_WAIT: Duration = Duration::from_secs(1);
 
 /// The longest a command waits for the daemon's answer. Generous: carrying
 /// out a command may mean stopping apps and asking system services.
-pub const COMMAND_WAIT: Duration = Duration::from_secs(10);
+const COMMAND_WAIT: Duration = Duration::from_secs(10);
+pub const BULK_COMMAND_WAIT: Duration = Duration::from_secs(30);
 
 /// The longest the daemon waits for a connected client to send its request,
 /// and for an answer to be taken.
@@ -239,6 +240,13 @@ pub enum Request {
 }
 
 impl Request {
+    fn command_wait(&self) -> Duration {
+        match self {
+            Self::SandboxDisableAll | Self::SandboxSetGlobal { .. } => BULK_COMMAND_WAIT,
+            _ => COMMAND_WAIT,
+        }
+    }
+
     /// Read a request line. An error is the message to answer it with.
     pub fn parse(line: &str) -> Result<Self, String> {
         serde_json::from_str(line).map_err(|e| {
@@ -407,8 +415,9 @@ pub fn command(db: &Path, request: &Request) -> anyhow::Result<serde_json::Value
         // No socket, or one left by a daemon that has gone.
         Err(_) => anyhow::bail!(unreachable_daemon(daemon_running(db))),
     };
-    stream.set_read_timeout(Some(COMMAND_WAIT))?;
-    stream.set_write_timeout(Some(COMMAND_WAIT))?;
+    let wait = request.command_wait();
+    stream.set_read_timeout(Some(wait))?;
+    stream.set_write_timeout(Some(wait))?;
     let mut line = serde_json::to_string(request)?;
     line.push('\n');
     stream
@@ -723,6 +732,19 @@ mod tests {
         );
         assert_eq!(failure("x \"y\""), r#"{"ok":false,"error":"x \"y\""}"#);
         assert_eq!(success(()), r#"{"ok":true}"#);
+    }
+
+    #[test]
+    fn only_bulk_sandbox_changes_get_the_longer_reply_budget() {
+        assert_eq!(Request::SandboxDisableAll.command_wait(), BULK_COMMAND_WAIT);
+        assert_eq!(
+            Request::SandboxSetGlobal {
+                settings: BTreeMap::new()
+            }
+            .command_wait(),
+            BULK_COMMAND_WAIT
+        );
+        assert_eq!(Request::SandboxList.command_wait(), COMMAND_WAIT);
     }
 
     #[test]

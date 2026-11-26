@@ -34,6 +34,7 @@ use super::{
     answers::{Disabled, DisabledAll, Enabled, GlobalItems},
     appops, auto, destinations, dirs,
     effect::Change,
+    identity,
     items::Settings,
     target::Target,
 };
@@ -52,12 +53,12 @@ pub(super) const LAST_USER: u32 = (i32::MAX as u32 - (PER_USER_RANGE - 1)) / PER
 
 /// How long after it began taking every app out (or carrying out a change
 /// of the global settings) an app may still be started on. It is checked
-/// before each app, which can then wait for two AppOps requests: with
-/// a second to spare, the answer still
-/// reaches the client before it gives up (`control::COMMAND_WAIT`).
-pub(super) const DISABLE_ALL_WAIT: std::time::Duration = control::COMMAND_WAIT
+/// before each app, leaving time for two AppOps requests, the hook's
+/// acknowledgement, and the command's answer.
+pub(super) const DISABLE_ALL_WAIT: std::time::Duration = control::BULK_COMMAND_WAIT
     .saturating_sub(appops::ANSWER_WAIT.saturating_mul(2))
-    .saturating_sub(std::time::Duration::from_secs(1));
+    .saturating_sub(identity::ACK_WAIT)
+    .saturating_sub(Duration::from_secs(1));
 
 /// The sandboxed uids and their entries, enabled ones only.
 pub type Snapshot = Arc<RwLock<HashMap<u32, Entry>>>;
@@ -186,25 +187,29 @@ impl Sandbox {
     /// with every write of the records, and before every command, which
     /// may give back what the entries hold.
     pub fn keep_found(&mut self, writer: &Writer) {
-        let snapshot = self.snapshot.clone();
-        let mut entries = write(&snapshot);
-        let mut changed = BTreeSet::new();
-        for effect in &mut self.effects {
-            changed.extend(effect.found(&mut entries));
-        }
         let pending = std::mem::take(&mut self.unsaved_permissions);
-        for uid in pending.union(&changed) {
-            let Some(entry) = entries.get(uid) else {
-                continue;
-            };
-            if let Err(e) = writer.put_sandbox(entry) {
-                self.unsaved_permissions.insert(*uid);
-                if !pending.contains(uid) {
+        let to_write: Vec<_> = {
+            let mut entries = write(&self.snapshot);
+            let mut changed = BTreeSet::new();
+            for effect in &mut self.effects {
+                changed.extend(effect.found(&mut entries));
+            }
+            pending
+                .union(&changed)
+                .filter_map(|uid| entries.get(uid).cloned())
+                .collect()
+        };
+        // Readers need the snapshot while the durable write waits for SQLite.
+        for entry in to_write {
+            let uid = entry.uid;
+            if let Err(e) = writer.put_sandbox(&entry) {
+                self.unsaved_permissions.insert(uid);
+                if !pending.contains(&uid) {
                     eprintln!("bbd: sandbox: cannot write what was found for uid {uid}: {e:#}");
                 }
             } else {
                 for effect in &mut self.effects {
-                    effect.found_written(*uid);
+                    effect.found_written(uid);
                 }
             }
         }

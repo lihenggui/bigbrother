@@ -74,7 +74,7 @@ const FREE_RESERVE: u64 = 64 * 1024 * 1024;
 pub struct Writer {
     recording_pages: u32,
     recovery_pages: u32,
-    buffered_bytes: usize,
+    buffered_bytes: std::cell::Cell<usize>,
     dropped: u64,
     pub(super) conn: Connection,
     /// Where the database is, to find the one set aside next to it.
@@ -119,7 +119,7 @@ impl Writer {
             path: path.to_owned(),
             recording_pages: (DB_BYTES / u64::from(page_size)) as u32,
             recovery_pages: limit.min(u64::from(u32::MAX)) as u32,
-            buffered_bytes: 0,
+            buffered_bytes: std::cell::Cell::new(0),
             dropped: 0,
             pending: HashMap::new(),
             events: HashMap::new(),
@@ -138,13 +138,18 @@ impl Writer {
         }
     }
 
-    fn reserve_sample(&mut self, bytes: usize) -> bool {
-        if bytes > BUFFER_BYTES - self.buffered_bytes {
+    pub(super) fn reserve_sample(&mut self, bytes: usize) -> bool {
+        let buffered = self.buffered_bytes.get();
+        if bytes > BUFFER_BYTES - buffered {
             self.dropped = self.dropped.saturating_add(1);
             return false;
         }
-        self.buffered_bytes += bytes;
+        self.buffered_bytes.set(buffered + bytes);
         true
+    }
+
+    pub(super) fn release_samples(&self, bytes: usize) {
+        self.buffered_bytes.set(self.buffered_bytes.get() - bytes);
     }
 
     /// The sensor sessions not ended: those a previous run left open.
@@ -284,7 +289,7 @@ impl Writer {
             self.events.clear();
             self.sessions.clear();
             self.net.get_mut().clear();
-            self.buffered_bytes = 0;
+            self.buffered_bytes.set(0);
             return Ok(());
         }
         self.conn
@@ -347,7 +352,7 @@ impl Writer {
         self.events.clear();
         self.sessions.clear();
         self.net.get_mut().clear();
-        self.buffered_bytes = 0;
+        self.buffered_bytes.set(0);
         self.written = Some(counters.clone());
         Ok(())
     }
@@ -553,6 +558,47 @@ mod tests {
         w.put_sandbox(&sandbox_entry_for(10100)).unwrap();
         assert!(w.sandbox_entry(10100).unwrap().is_some());
         drop(w);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn network_rows_share_the_telemetry_budget_and_existing_rows_still_update() {
+        let dir = std::env::temp_dir().join(format!("bbd-net-limit-{}", std::process::id()));
+        let mut writer = Writer::open(&dir.join("bb.db")).unwrap();
+        let large = net::NetKey {
+            uid: 10100,
+            hour: 0,
+            host: String::with_capacity(BUFFER_BYTES - 160),
+            addr: "203.0.113.1".into(),
+            port: 443,
+        };
+        let excess = net::NetKey {
+            uid: 10200,
+            host: "example.com".into(),
+            ..large.clone()
+        };
+        let seen = net::NetSeen {
+            conn: 1,
+            ..Default::default()
+        };
+        let existing = large.clone();
+        writer.net_record(large, seen, 2);
+        assert!(writer.buffered_bytes.get() >= BUFFER_BYTES - 160);
+        assert!(writer.buffered_bytes.get() <= BUFFER_BYTES);
+        writer.net_record(excess.clone(), seen, 4);
+        assert_eq!(writer.net.get_mut().len(), 1);
+        assert_eq!(writer.dropped, 1);
+        writer.net_record(existing.clone(), seen, 5);
+        assert_eq!(
+            writer.net.get_mut()[&existing],
+            (net::NetSeen { conn: 2, ..seen }, 2, 5)
+        );
+        assert_eq!(writer.dropped, 1);
+        writer.net_clear(existing.uid).unwrap();
+        assert_eq!(writer.buffered_bytes.get(), 0);
+        writer.net_record(excess.clone(), seen, 6);
+        assert!(writer.net.get_mut().contains_key(&excess));
+        drop(writer);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

@@ -61,13 +61,14 @@ use crate::{
 pub struct Restart {
     gate: Option<MountReadiness>,
     resumed: HashMap<u32, (String, Mounts)>,
+    updates: Option<Vec<(Entry, Mounts)>>,
 }
 
 impl Restart {
     pub fn new(gate: MountReadiness) -> Self {
         Self {
             gate: Some(gate),
-            resumed: HashMap::new(),
+            ..Self::default()
         }
     }
 
@@ -75,6 +76,17 @@ impl Restart {
         self.gate
             .as_ref()
             .is_some_and(|gate| gate.ready(entry, mounts))
+    }
+
+    fn restart_updated(&mut self, entry: &Entry, mounts: Mounts) {
+        if (!mounts.any() || self.ready(entry, mounts))
+            && end(entry, Which::All, None, || {
+                !mounts.any() || self.ready(entry, mounts)
+            })
+        {
+            self.resumed
+                .insert(entry.uid, (entry.install_id.clone(), mounts));
+        }
     }
 
     pub(super) fn resume_with(
@@ -141,16 +153,32 @@ impl Effect for Restart {
                 && after.mode(item) != Mode::Off
         });
         let mounts = after.mounts();
-        if (before.mounts() != mounts || turned_on)
-            && (!mounts.any() || self.ready(entry, mounts))
-            && end(entry, Which::All, None, || {
-                !mounts.any() || self.ready(entry, mounts)
-            })
-        {
-            self.resumed
-                .insert(entry.uid, (entry.install_id.clone(), mounts));
+        if before.mounts() != mounts || turned_on {
+            if let Some(updates) = &mut self.updates {
+                updates.push((entry.clone(), mounts));
+            } else {
+                self.restart_updated(entry, mounts);
+            }
         }
         Ok(())
+    }
+
+    fn begin_updates(&mut self) {
+        self.updates = Some(Vec::new());
+    }
+
+    fn publish_updates(&mut self) -> anyhow::Result<()> {
+        // A restarted process must see the hook policy published for the batch.
+        if let Some(updates) = self.updates.as_mut().map(std::mem::take) {
+            for (entry, mounts) in updates {
+                self.restart_updated(&entry, mounts);
+            }
+        }
+        Ok(())
+    }
+
+    fn end_updates(&mut self) {
+        self.updates = None;
     }
 
     fn resume(&mut self, apps: &[Resumed]) {
