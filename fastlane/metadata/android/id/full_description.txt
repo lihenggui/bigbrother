@@ -1,0 +1,9 @@
+Big Brother mencatat kapan aplikasi di perangkat Android dengan root membuka file di penyimpanan bersama, membaca ID perangkat, atau meminta data pribadi dari sistem. Big Brother juga mencatat sesi penggunaan sensor dan penggunaan izin sensitif seperti kamera, mikrofon, dan lokasi.
+
+Lihat catatan akses berdasarkan aplikasi atau jam. Cari berdasarkan aplikasi, nama file, atau jenis data. Aplikasi ini tidak memiliki akses jaringan. Catatan disimpan di perangkat hingga 30 hari.
+
+“Penjara” mengatur apa saja yang dapat diakses oleh aplikasi yang diisolasi. Tetapkan aturan untuk semua aplikasi yang diisolasi, atau gunakan aturan tersendiri untuk aplikasi tertentu. “Penjara” dapat mengisolasi aplikasi yang baru diinstal secara otomatis, memblokir akses jaringan suatu aplikasi, mencatat tujuan koneksinya, dan memblokir tujuan yang dipilih.
+
+Big Brother memerlukan root, Android 12 atau yang lebih baru, serta kernel GKI 2.0 (5.10 atau yang lebih baru) dengan BTF. Big Brother berjalan di perangkat arm64 dan x86_64. Di x86_64, hanya akses dari aplikasi 64-bit yang dicatat.
+
+Hook LSPosed opsional (Xposed API 101 atau yang lebih baru) mencatat akses melalui penyedia konten. Untuk kueri seperti kontak atau pesan teks, yang dicatat adalah kumpulan data yang diminta. “Penjara” menggunakan cakupan “Kerangka kerja sistem” untuk mengelola Android ID, ID iklan, visibilitas aplikasi terinstal, dan izin akses file yang diberikan melalui pemilih file sistem.

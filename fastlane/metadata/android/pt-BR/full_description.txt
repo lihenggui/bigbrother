@@ -1,0 +1,9 @@
+O Big Brother registra quando apps em um dispositivo Android com root abrem arquivos no armazenamento compartilhado, leem identificadores do dispositivo ou solicitam dados privados ao sistema. Também registra as sessões de uso dos sensores e o uso de permissões sensíveis, como as de câmera, microfone e localização.
+
+Consulte os registros de acesso por app ou por hora. Pesquise por app, nome de arquivo ou tipo de dado. O app não tem acesso à rede. Os registros ficam no dispositivo por até 30 dias.
+
+A «Prisão» controla o que os apps isolados podem acessar. Defina regras para todos os apps isolados ou substitua essas regras para um app específico. A «Prisão» pode isolar automaticamente apps recém-instalados, bloquear o acesso de um app à rede, registrar os destinos das conexões e bloquear destinos selecionados.
+
+O Big Brother requer root, Android 12 ou posterior e um kernel GKI 2.0 (5.10 ou mais recente) com BTF. Funciona em dispositivos arm64 e x86_64. No x86_64, registra apenas os acessos de apps de 64 bits.
+
+O hook opcional do LSPosed (Xposed API 101 ou mais recente) registra acessos por meio de provedores de conteúdo. Em consultas a contatos ou mensagens de texto, por exemplo, ele registra qual coleção de dados foi consultada. A «Prisão» usa o escopo «Framework do Sistema» para gerenciar o Android ID, os IDs de publicidade, a visibilidade dos apps instalados e as permissões de acesso a arquivos concedidas pelo seletor de arquivos do sistema.

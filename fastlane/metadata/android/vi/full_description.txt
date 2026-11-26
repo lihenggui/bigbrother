@@ -1,0 +1,9 @@
+Big Brother ghi nhật ký khi ứng dụng trên thiết bị Android có root mở tệp trong bộ nhớ dùng chung, đọc giá trị nhận dạng thiết bị hoặc yêu cầu dữ liệu riêng tư từ hệ thống. Big Brother cũng ghi lại các phiên sử dụng cảm biến và việc sử dụng các quyền nhạy cảm như máy ảnh, micrô và vị trí.
+
+Xem nhật ký truy cập theo ứng dụng hoặc theo giờ. Tìm kiếm theo ứng dụng, tên tệp hoặc loại dữ liệu. Big Brother không có quyền truy cập mạng. Nhật ký được lưu trên thiết bị tối đa 30 ngày.
+
+“Nhà tù” kiểm soát những gì các ứng dụng bị cách ly có thể truy cập. Đặt quy tắc cho mọi ứng dụng bị cách ly hoặc áp dụng quy tắc riêng cho một ứng dụng cụ thể. “Nhà tù” có thể tự động cách ly ứng dụng mới cài đặt, chặn quyền truy cập mạng của một ứng dụng, ghi lại các đích mà ứng dụng kết nối tới và chặn những đích được chọn.
+
+Big Brother yêu cầu root, Android 12 trở lên và nhân GKI 2.0 (5.10 trở lên) có BTF. Ứng dụng chạy trên thiết bị arm64 và x86_64. Trên x86_64, Big Brother chỉ ghi nhật ký truy cập của các ứng dụng 64 bit.
+
+Hook LSPosed tùy chọn (Xposed API 101 trở lên) ghi lại các lượt truy cập thông qua trình cung cấp nội dung. Đối với truy vấn như danh bạ hoặc tin nhắn văn bản, hook ghi lại tập hợp dữ liệu được truy vấn. “Nhà tù” dùng phạm vi “Framework Hệ thống” để quản lý Android ID, mã nhận dạng quảng cáo, danh sách ứng dụng đã cài đặt mà ứng dụng có thể thấy, và quyền truy cập tệp được cấp qua trình chọn tệp của hệ thống.

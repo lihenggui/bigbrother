@@ -1,0 +1,1 @@
+Mencatat akses aplikasi ke data pribadi di perangkat Android dengan root.

@@ -1,0 +1,1 @@
+Protokolliert App-Zugriffe auf private Daten auf Android-Geräten mit root.

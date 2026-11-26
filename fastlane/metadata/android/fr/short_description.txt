@@ -1,0 +1,1 @@
+Consigne l’accès des applis aux données privées sur Android avec root.
