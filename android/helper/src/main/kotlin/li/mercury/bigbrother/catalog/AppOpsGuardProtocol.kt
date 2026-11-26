@@ -255,7 +255,7 @@ internal object AppOpsGuardProtocol {
     /** Read the installation binding separately so an invalid command can still be reported. */
     fun parseBound(line: String): Bound? {
         val parts = line.split(' ', limit = 4)
-        if (parts.size != 4 || parts[0] != "bound" || !BOUND_PACKAGE.matches(parts[1]) || !INSTALLATION_TOKEN.matches(parts[2])) return null
+        if (parts.size != 4 || parts[0] != "bound" || !isPackageName(parts[1]) || !INSTALLATION_TOKEN.matches(parts[2])) return null
         return Bound(parts[1], parts[2], parts[3])
     }
 
@@ -328,7 +328,7 @@ internal object AppOpsGuardProtocol {
     }
 
     /** Whether [name] has only what Android allows in a package name. */
-    fun isPackageName(name: String): Boolean = name.isNotEmpty() && name.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '.' || it == '_' }
+    fun isPackageName(name: String): Boolean = BOUND_PACKAGE.matches(name)
 
     /**
      * `<name>=<value>,...`, the form `saved` prints and `restore` takes: the

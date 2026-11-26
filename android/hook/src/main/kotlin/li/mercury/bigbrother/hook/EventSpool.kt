@@ -66,7 +66,7 @@ internal class EventSpool(private val directory: File) {
                 write(batch)
             } catch (_: InterruptedException) {
                 return
-            } catch (_: Exception) {
+            } catch (_: Throwable) {
                 // Losing a batch is acceptable; taking down the provider is not.
             } finally {
                 batch.clear()
@@ -80,13 +80,21 @@ internal class EventSpool(private val directory: File) {
         // The daemon removes the file as it reads. If it is not running, stop
         // growing the file rather than fill the provider's storage.
         val payload = lines.joinToString(separator = "\n", postfix = "\n").toByteArray()
-        // Opened per batch, not kept open: the daemon takes the file by
-        // renaming it, and a held descriptor would keep writing to the old one.
+        repeat(LOCK_ATTEMPTS) { attempt ->
+            if (append(file, payload)) return
+            if (attempt < LOCK_ATTEMPTS - 1) Thread.sleep(LOCK_RETRY_MS)
+        }
+    }
+
+    private fun append(file: File, payload: ByteArray): Boolean {
+        // Reopen on each attempt in case the daemon renamed the spool.
         FileOutputStream(file, true).use { out ->
-            out.channel.tryLock()?.use {
+            val lock = out.channel.tryExclusiveLock() ?: return false
+            lock.use {
                 if (out.channel.size() + payload.size <= MAX_FILE_BYTES) out.write(payload)
             }
         }
+        return true
     }
 
     internal companion object {
@@ -118,13 +126,26 @@ internal class EventSpool(private val directory: File) {
         private val COLLECTIONS = setOf("contacts", "raw_contacts", "data", "groups", "profile", "phones", "adn", "fdn", "sdn", "calls", "voicemail", "inbox", "sent", "draft", "outbox", "conversations", "events", "calendars", "instances", "attendees", "reminders", "siminfo")
 
         /** Tabs and line breaks would corrupt the format; they don't occur in real paths. */
-        private fun String.clean(): String = replace(SEPARATORS, " ")
+        private fun String.clean(): String {
+            val first = indexOfFirst { it.isSeparator() }
+            if (first == -1) return this
+            return buildString(length) {
+                append(this@clean, 0, first)
+                for (index in first until this@clean.length) {
+                    val char = this@clean[index]
+                    append(if (char.isSeparator()) ' ' else char)
+                }
+            }
+        }
+
+        private fun Char.isSeparator(): Boolean = this == '\t' || this == '\n' || this == '\r'
 
         private const val FORMAT_VERSION = "1"
         private const val FILE_NAME = "events.log"
         private const val QUEUE_CAPACITY = 512
         private const val BATCH_WINDOW_MS = 2_000L
         private const val MAX_FILE_BYTES = 4L * 1024 * 1024
-        private val SEPARATORS = Regex("[\\t\\n\\r]")
+        private const val LOCK_ATTEMPTS = 3
+        private const val LOCK_RETRY_MS = 25L
     }
 }

@@ -45,23 +45,33 @@ internal class HookInstallations(private val bootId: File) {
                     check(OsConstants.S_ISDIR(stat.st_mode) && stat.st_uid == uid && stat.st_dev == fields[3].toLong() && stat.st_ino == fields[4].toLong())
                     next[uid] = fd
                 } catch (e: Throwable) {
-                    Os.close(fd)
+                    closeInstallationDescriptors(listOf(fd), Os::close)
                     throw e
                 }
             }
             check(next.keys == uids)
         } catch (e: Throwable) {
-            next.values.forEach { Os.close(it) }
+            closeInstallationDescriptors(next.values, Os::close)
             throw e
         }
         val previous = owners
         owners = next
-        previous.values.forEach { Os.close(it) }
+        closeInstallationDescriptors(previous.values, Os::close)
     }
 
     private companion object {
         // Linux O_PATH opens the directory for metadata without reading app files.
         const val O_PATH = 0x200000
         val PACKAGE = Regex("[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)*")
+    }
+}
+
+internal fun closeInstallationDescriptors(descriptors: Iterable<FileDescriptor>, close: (FileDescriptor) -> Unit) {
+    for (fd in descriptors) {
+        try {
+            close(fd)
+        } catch (_: Throwable) {
+            // A failing close must leave the other descriptors reachable for cleanup.
+        }
     }
 }

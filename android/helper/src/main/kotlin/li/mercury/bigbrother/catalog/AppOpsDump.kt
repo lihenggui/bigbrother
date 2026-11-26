@@ -18,6 +18,7 @@ package li.mercury.bigbrother.catalog
 
 import android.annotation.SuppressLint
 import android.os.IBinder
+import java.lang.reflect.InvocationTargetException
 import kotlin.concurrent.thread
 import kotlin.system.exitProcess
 
@@ -45,39 +46,51 @@ import kotlin.system.exitProcess
  */
 @SuppressLint("PrivateApi")
 object AppOpsDump {
-    /** `AppOpsManager.OP_FLAGS_ALL`: uses on the app's own behalf and on others'. */
-    private const val ALL_FLAGS = 31
-
     private const val REPEAT = "--every"
     private const val END_OF_READING = "."
-
-    /** How often to look again for a system service not registered yet. */
     private const val SERVICE_POLL_MS = 1000L
 
     @JvmStatic
     fun main(args: Array<String>) {
+        val intervalMs = if (args.firstOrNull() == REPEAT) {
+            val interval = intervalMillis(args.getOrNull(1))
+            if (interval == null) {
+                System.err.println("invalid --every interval")
+                exitProcess(1)
+            }
+            interval
+        } else {
+            null
+        }
         try {
-            if (args.firstOrNull() != REPEAT) {
-                print(dump(appOpsService(), args))
+            if (intervalMs != null) watchInput()
+            val names = if (intervalMs == null) args.asList() else args.drop(2)
+            val reader = AppOpsDumpReader(appOpsService(), names)
+            do {
+                print(reader.dump())
+                if (intervalMs != null) println(END_OF_READING)
                 System.out.flush()
-                return
-            }
-            val intervalMs = args[1].toLong() * 1000
-            val names = args.copyOfRange(2, args.size)
-            thread(isDaemon = true, name = "input") {
-                while (System.`in`.read() >= 0) Unit
-                exitProcess(0)
-            }
-            val service = appOpsService()
-            while (true) {
-                print(dump(service, names))
-                println(END_OF_READING)
-                System.out.flush()
-                Thread.sleep(intervalMs)
-            }
+                if (intervalMs != null) Thread.sleep(intervalMs)
+            } while (intervalMs != null)
         } catch (e: Throwable) {
-            System.err.println(e)
+            System.err.println(describeFailure(e))
             exitProcess(1)
+        }
+    }
+
+    internal fun intervalMillis(seconds: String?): Long? = seconds?.toLongOrNull()
+        ?.takeIf { it in 1..Long.MAX_VALUE / 1000 }
+        ?.times(1000)
+
+    private fun watchInput() {
+        thread(isDaemon = true, name = "input") {
+            try {
+                while (System.`in`.read() >= 0) Unit
+            } catch (e: Throwable) {
+                System.err.println(describeFailure(e))
+                exitProcess(1)
+            }
+            exitProcess(0)
         }
     }
 
@@ -95,45 +108,73 @@ object AppOpsDump {
             Thread.sleep(SERVICE_POLL_MS)
             binder = getService.invoke(null, "appops") as IBinder?
         }
+        // If system_server restarts, the daemon will launch a fresh reader.
+        binder.linkToDeath({ exitProcess(1) }, 0)
         return Class.forName("com.android.internal.app.IAppOpsService\$Stub")
             .getMethod("asInterface", IBinder::class.java)
             .invoke(null, binder)!!
     }
+}
 
-    private fun dump(service: Any, names: Array<String>): String {
-        val manager = Class.forName("android.app.AppOpsManager")
-        val toCode = manager.getMethod("strOpToOp", String::class.java)
-        // A name this Android version doesn't know is left out.
-        val codes = names.mapNotNull { name ->
-            try {
-                toCode.invoke(null, name) as Int
-            } catch (_: Throwable) {
-                null
-            }
-        }.toIntArray()
+internal class AppOpsDumpReader(
+    private val service: Any,
+    names: List<String>,
+    manager: Class<*> = Class.forName("android.app.AppOpsManager"),
+    serviceType: Class<*> = appOpsServiceType,
+) {
+    private val getPackages = serviceType.getMethod("getPackagesForOps", IntArray::class.java)
+    private val codes = resolveCodes(manager, names)
+    private val packages = mutableMapOf<Class<*>, PackageGetters>()
+    private val entries = mutableMapOf<Class<*>, EntryGetters>()
 
-        val packages = service.javaClass
-            .getMethod("getPackagesForOps", IntArray::class.java)
-            .invoke(service, codes) as List<*>? ?: return ""
-
-        val out = StringBuilder()
-        for (pkg in packages) {
-            pkg ?: continue
-            val uid = pkg.call("getUid")
-            val name = pkg.call("getPackageName")
-            for (op in pkg.call("getOps") as List<*>) {
-                op ?: continue
-                out.append(uid).append('\t')
-                    .append(name).append('\t')
-                    .append(op.call("getOpStr")).append('\t')
-                    .append(op.time("getLastAccessTime")).append('\t')
-                    .append(op.time("getLastRejectTime")).append('\n')
+    fun dump(): String {
+        val rows = getPackages.invoke(service, codes) as List<*>? ?: return ""
+        return buildString {
+            for (pkg in rows) {
+                pkg ?: continue
+                val getters = packages.getOrPut(pkg.javaClass) { PackageGetters(pkg.javaClass) }
+                val uid = getters.uid.invoke(pkg)
+                val name = getters.name.invoke(pkg)
+                for (entry in getters.ops.invoke(pkg) as List<*>) {
+                    entry ?: continue
+                    val op = entries.getOrPut(entry.javaClass) { EntryGetters(entry.javaClass) }
+                    append(uid).append('\t')
+                        .append(name).append('\t')
+                        .append(op.name.invoke(entry)).append('\t')
+                        .append(op.access.invoke(entry, ALL_FLAGS)).append('\t')
+                        .append(op.reject.invoke(entry, ALL_FLAGS)).append('\n')
+                }
             }
         }
-        return out.toString()
     }
 
-    private fun Any.call(method: String): Any? = javaClass.getMethod(method).invoke(this)
+    private class PackageGetters(type: Class<*>) {
+        val uid = type.getMethod("getUid")
+        val name = type.getMethod("getPackageName")
+        val ops = type.getMethod("getOps")
+    }
 
-    private fun Any.time(method: String): Long = javaClass.getMethod(method, Int::class.javaPrimitiveType).invoke(this, ALL_FLAGS) as Long
+    private class EntryGetters(type: Class<*>) {
+        val name = type.getMethod("getOpStr")
+        val access = type.getMethod("getLastAccessTime", INT)
+        val reject = type.getMethod("getLastRejectTime", INT)
+    }
+
+    private companion object {
+        /** `AppOpsManager.OP_FLAGS_ALL`: uses on the app's own behalf and on others'. */
+        const val ALL_FLAGS = 31
+
+        fun resolveCodes(manager: Class<*>, names: List<String>): IntArray {
+            val toCode = manager.getMethod("strOpToOp", STRING)
+            return names.mapNotNull { name ->
+                try {
+                    toCode.invoke(null, name) as Int
+                } catch (e: InvocationTargetException) {
+                    // Unknown op names may throw on older Android versions.
+                    if (e.targetException !is IllegalArgumentException) throw e
+                    null
+                }
+            }.toIntArray()
+        }
+    }
 }

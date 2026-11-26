@@ -20,6 +20,8 @@ import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.FLAG_USER_FIXED
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.PermissionState
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.USER_FLAGS
 import li.mercury.bigbrother.catalog.Taking.HoldResult
+import java.util.Optional
+import java.util.concurrent.ConcurrentHashMap
 
 internal class RuntimePermissionChanges(private val system: AppOpsSystem) : Taking {
     private fun permissions(): RuntimePermissions = system.permissions ?: error("runtime permissions cannot be reached: ${system.permissionsMissing}")
@@ -28,7 +30,7 @@ internal class RuntimePermissionChanges(private val system: AppOpsSystem) : Taki
      * The runtime permissions asked about, each with its background
      * permission if it has one, and `null` for one that is not runtime.
      */
-    private val runtime = mutableMapOf<String, RuntimePermissions.Runtime?>()
+    private val runtime = ConcurrentHashMap<String, Optional<RuntimePermissions.Runtime>>()
 
     /**
      * The mode the system gives the op of [permission] for its grant to
@@ -42,7 +44,7 @@ internal class RuntimePermissionChanges(private val system: AppOpsSystem) : Taki
         return AppOpsGuardProtocol.grantMode(connected.isGranted(uid, permission), info.background?.let { connected.isGranted(uid, it) })
     }
 
-    private fun runtimeOf(connected: RuntimePermissions, permission: String): RuntimePermissions.Runtime? = if (runtime.containsKey(permission)) runtime[permission] else connected.runtime(permission).also { runtime[permission] = it }
+    private fun runtimeOf(connected: RuntimePermissions, permission: String): RuntimePermissions.Runtime? = runtime.computeIfAbsent(permission) { Optional.ofNullable(connected.runtime(it)) }.orElse(null)
 
     /**
      * The mode the system gives [op] for its permission's grant to [uid],

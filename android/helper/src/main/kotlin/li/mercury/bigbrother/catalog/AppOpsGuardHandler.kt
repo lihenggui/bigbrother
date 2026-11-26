@@ -23,12 +23,12 @@ import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.PermissionState
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.Targets
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.Values
 import li.mercury.bigbrother.catalog.Taking.HoldResult
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 /**
- * Carries out [AppOpsGuard]'s commands and checks, on what [system] reports
- * and changes. Not thread-safe: the caller runs one command or check at a
- * time.
+ * Carries out [AppOpsGuard]'s commands and checks on what [system] reports
+ * and changes. The caller serializes access to each app's state.
  */
 internal class AppOpsGuardHandler(
     private val system: AppOpsSystem,
@@ -115,14 +115,14 @@ internal class AppOpsGuardHandler(
     }
 
     /** The guarded uids. */
-    private val guarded = mutableMapOf<Int, Guard>()
+    private val guarded = ConcurrentHashMap<Int, Guard>()
 
     private data class Prepared(val targets: Targets, val values: Values)
 
-    private val prepared = mutableMapOf<Int, Prepared>()
+    private val prepared = ConcurrentHashMap<Int, Prepared>()
 
     /** The unheld ops last printed for each guarded uid. */
-    private val reported = mutableMapOf<Int, List<String>>()
+    private val reported = ConcurrentHashMap<Int, List<String>>()
 
     private val ops get() = system.ops
 
@@ -306,7 +306,7 @@ internal class AppOpsGuardHandler(
         for ((name, mode) in values.ops) {
             val op = ops.find { it.name == name } ?: system.resolve(name)
             if (op == null) {
-                system.warn("restore $uid: no op $name here")
+                system.warn("restore $uid: app op unavailable")
                 continue
             }
             system.restoreItem(name) { check(setBack(op, uid, mode, values.grants[name], held)) { "app op restore incomplete" } }
@@ -354,9 +354,9 @@ internal class AppOpsGuardHandler(
     }
 
     /** Whether [uid] is guarded. */
-    fun isGuarded(uid: Int): Boolean = uid in guarded
+    fun isGuarded(uid: Int): Boolean = guarded.containsKey(uid)
 
-    fun needsOwner(uid: Int): Boolean = uid in guarded || uid in prepared
+    fun needsOwner(uid: Int): Boolean = guarded.containsKey(uid) || prepared.containsKey(uid)
 
     /** Stop guarding [uid], forgetting all about it: it is another installation's now, or given back. */
     fun forget(uid: Int) {
@@ -369,17 +369,19 @@ internal class AppOpsGuardHandler(
      * Check every guarded uid, as after a reported change and every minute,
      * printing what is found changed, and what is unheld if that changed.
      */
-    fun checkAll() {
-        for (uid in guarded.keys.toList()) {
-            if (uid in prepared) continue
-            if (supervised) system.emit("checking $uid")
-            try {
-                reportUnheld(uid, verify(uid), always = supervised)
-            } catch (e: Throwable) {
-                reported.remove(uid)
-                if (supervised) system.emit("unknown-readback $uid")
-                system.warn("checking $uid: ${system.describe(e)}")
-            }
+    fun checkAll(withAppLock: (Int, () -> Unit) -> Unit = { _, check -> check() }) {
+        for (uid in guarded.keys) withAppLock(uid) { check(uid) }
+    }
+
+    private fun check(uid: Int) {
+        if (!guarded.containsKey(uid) || prepared.containsKey(uid)) return
+        if (supervised) system.emit("checking $uid")
+        try {
+            reportUnheld(uid, verify(uid), always = supervised)
+        } catch (e: Throwable) {
+            reported.remove(uid)
+            if (supervised) system.emit("unknown-readback $uid")
+            system.warn("checking $uid: ${system.describe(e)}")
         }
     }
 

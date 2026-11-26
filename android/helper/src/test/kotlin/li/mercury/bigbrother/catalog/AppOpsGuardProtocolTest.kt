@@ -136,6 +136,13 @@ class AppOpsGuardProtocolTest {
     }
 
     @Test
+    fun givenPackageNamesWithEmptySegments_whenParsingKindCommands_thenTheyAreRejected() {
+        for (name in listOf(".com.example", "com..example", "com.example.")) {
+            assertNull(AppOpsGuardProtocol.parseCommand("kind 10100 7 $name"))
+        }
+    }
+
+    @Test
     fun givenMutatingRequestsAndReplies_whenExchanged_thenTheyCarryTheRequestAndInstallation() {
         val cases = appOpsTransactionCases()
         for (case in cases.ofType("request")) {

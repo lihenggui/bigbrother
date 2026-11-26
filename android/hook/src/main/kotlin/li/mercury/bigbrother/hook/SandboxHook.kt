@@ -77,16 +77,22 @@ internal class SandboxHook(private val module: XposedInterface) {
     private val file = File(LIST_PATH)
     private val list = SandboxList(file, ::onListError, HookInstallations(File(BOOT_ID_PATH))::replace)
     private val watcher = SandboxListWatcher(file.toPath(), list, worker, ::onListReloaded, ::onWatchLost)
-    private val androidId = Health()
-    private val appList = Health()
-    private val uriGrants = Health()
-    private val adId = Health()
+    private val androidId = Health(::onDegraded)
+    private val appList = Health(::onDegraded)
+    private val uriGrants = Health(::onDegraded)
+    private val adId = Health(::onDegraded)
+
+    // Accessed only by the worker, including status writes prompted by hook failures.
+    private var waitingForInitialLoad = true
 
     fun install(classLoader: ClassLoader) {
         if (!StartGuard(File(GUARD_DIR)).allowStart()) {
-            module.log(Log.WARN, TAG, "start guard tripped in system_server; sandbox hooks not installed")
-            for (health in listOf(androidId, appList, uriGrants, adId)) health.state.set(HookState.DEGRADED)
-            worker.execute(::writeStatus)
+            log(Log.WARN, "start guard tripped in system_server; sandbox hooks not installed")
+            worker.execute {
+                for (health in listOf(androidId, appList, uriGrants, adId)) health.degrade()
+                waitingForInitialLoad = false
+                writeStatus()
+            }
             return
         }
         attach("ANDROID_ID", androidId, ::hookAndroidId)
@@ -94,7 +100,6 @@ internal class SandboxHook(private val module: XposedInterface) {
         attach("file grants", uriGrants) { hookUriGrants(classLoader) }
         attach("advertising ID", adId) { hookAdId(classLoader) }
         worker.execute {
-            writeStatus()
             try {
                 Thread({ watcher.watch() }, "BigBrother sandbox events").start()
             } catch (_: Throwable) {
@@ -104,11 +109,16 @@ internal class SandboxHook(private val module: XposedInterface) {
     }
 
     private fun onWatchLost() {
+        if (waitingForInitialLoad) {
+            list.reload()
+            waitingForInitialLoad = false
+        }
         onListError()
         writeStatus()
     }
 
     private fun onListReloaded(previous: SandboxList.Snapshot) {
+        waitingForInitialLoad = false
         val revision = list.snapshot.revision
         if (adId.active && (revision != permissionRevision || (revision != "none" && !previous.readable))) {
             forgetPermissionAnswers()
@@ -123,11 +133,11 @@ internal class SandboxHook(private val module: XposedInterface) {
     private inline fun attach(name: String, health: Health, install: () -> Boolean) {
         try {
             if (install()) return
-            module.log(Log.WARN, TAG, "sandbox $name hook found no target")
+            log(Log.WARN, "sandbox $name hook found no target")
         } catch (_: Throwable) {
-            module.log(Log.ERROR, TAG, "could not install the sandbox $name hook")
+            log(Log.ERROR, "could not install the sandbox $name hook")
         }
-        health.state.set(HookState.INCOMPATIBLE)
+        health.markIncompatible()
     }
 
     @SuppressLint("PrivateApi")
@@ -263,12 +273,13 @@ internal class SandboxHook(private val module: XposedInterface) {
 
     private fun onListError() {
         if (listErrorLogged.compareAndSet(false, true)) {
-            module.log(Log.ERROR, TAG, "could not read the sandbox list")
+            log(Log.ERROR, "could not read the sandbox list")
         }
     }
 
     /** Written by the worker by rename, so the daemon never reads half a file. */
     private fun writeStatus() {
+        if (waitingForInitialLoad) return
         try {
             val status = File(STATUS_PATH)
             val temporary = File("$STATUS_PATH.tmp")
@@ -276,10 +287,10 @@ internal class SandboxHook(private val module: XposedInterface) {
             val snapshot = list.snapshot
             val ready = snapshot.readable && watcher.current
             val health = sandboxStatusText(
-                androidId.state.get().withListReady(ready),
-                appList.state.get().withListReady(ready),
-                uriGrants.state.get().withListReady(ready),
-                adId.state.get().withListReady(ready),
+                androidId.state.withListReady(ready),
+                appList.state.withListReady(ready),
+                uriGrants.state.withListReady(ready),
+                adId.state.withListReady(ready),
                 Build.VERSION.SDK_INT,
                 ready,
                 bootId,
@@ -287,21 +298,36 @@ internal class SandboxHook(private val module: XposedInterface) {
             temporary.writeText(health + "revision=${snapshot.revision}\npid=${android.os.Process.myPid()}\n")
             if (!temporary.renameTo(status)) error("rename failed")
         } catch (_: Throwable) {
-            module.log(Log.ERROR, TAG, "could not write the sandbox status")
+            log(Log.ERROR, "could not write the sandbox status")
         }
     }
 
-    private inner class Health {
-        val state = AtomicReference(HookState.WORKING)
-        val active: Boolean get() = state.get() == HookState.WORKING
+    private fun onDegraded(message: String) {
+        // Even the error path on a Binder thread must leave status I/O to the worker.
+        worker.execute {
+            log(Log.ERROR, message)
+            writeStatus()
+        }
+    }
 
-        fun degrade(message: String) {
-            if (state.compareAndSet(HookState.WORKING, HookState.DEGRADED)) {
-                // Even the error path on a Binder thread must leave status I/O to the worker.
-                worker.execute {
-                    module.log(Log.ERROR, TAG, message)
-                    writeStatus()
-                }
+    private fun log(priority: Int, message: String) {
+        // Diagnostics must not cause an uncaught exception in system_server.
+        runCatching { module.log(priority, TAG, message) }
+    }
+
+    internal class Health(private val onDegraded: (String) -> Unit) {
+        private val current = AtomicReference(HookState.WORKING)
+        val state: HookState get() = current.get()
+        val active: Boolean get() = state == HookState.WORKING
+
+        fun markIncompatible() {
+            current.set(HookState.INCOMPATIBLE)
+        }
+
+        fun degrade(message: String? = null) {
+            if (current.compareAndSet(HookState.WORKING, HookState.DEGRADED) && message != null) {
+                // A failed diagnostic must never keep a hook from calling the original method.
+                runCatching { onDegraded(message) }
             }
         }
     }
@@ -328,7 +354,7 @@ internal class SandboxHook(private val module: XposedInterface) {
      * is returned as it is whenever anything here fails. Named class, not a
      * lambda: see `ProviderHook.RecordingHooker`.
      */
-    private class AndroidIdQueryHooker(
+    internal class AndroidIdQueryHooker(
         private val health: Health,
         private val list: SandboxList,
     ) : XposedInterface.Hooker {
@@ -357,7 +383,7 @@ internal class SandboxHook(private val module: XposedInterface) {
         }
 
         /** A copy of [cursor] in which the ANDROID_ID row has [androidId] as its value. */
-        private fun withAndroidId(cursor: Cursor, query: AndroidIdQuery, androidId: String): Cursor {
+        internal fun withAndroidId(cursor: Cursor, query: AndroidIdQuery, androidId: String): Cursor {
             val columns = cursor.columnNames
             val name = columns.indexOf("name")
             val value = columns.indexOf("value")
@@ -376,13 +402,29 @@ internal class SandboxHook(private val module: XposedInterface) {
             // Values of the whole table without their names: which of them
             // is the id cannot be told, so none is returned.
             while (!(query == AndroidIdQuery.TABLE && name < 0) && cursor.moveToNext()) {
-                val row = arrayOfNulls<Any>(columns.size)
-                for (column in columns.indices) row[column] = cursor.getString(column)
-                if (query == AndroidIdQuery.ROW || row[name] == "android_id") row[value] = androidId
-                copy.addRow(row)
+                val rowName = if (query == AndroidIdQuery.TABLE) cursor.readValue(name) else null
+                val replaceValue = query == AndroidIdQuery.ROW || rowName == "android_id"
+                copy.addRow(
+                    Array(columns.size) { column ->
+                        when {
+                            column == value && replaceValue -> androidId
+                            column == name && query == AndroidIdQuery.TABLE -> rowName
+                            else -> cursor.readValue(column)
+                        }
+                    },
+                )
             }
             copy.extras = cursor.extras
             return copy
+        }
+
+        private fun Cursor.readValue(column: Int): Any? = when (getType(column)) {
+            Cursor.FIELD_TYPE_NULL -> null
+            Cursor.FIELD_TYPE_INTEGER -> getLong(column)
+            Cursor.FIELD_TYPE_FLOAT -> getDouble(column)
+            Cursor.FIELD_TYPE_STRING -> getString(column)
+            Cursor.FIELD_TYPE_BLOB -> getBlob(column)
+            else -> error("unknown cursor field type")
         }
 
         private inline fun <T> guarded(block: () -> T): T? = try {
@@ -553,7 +595,7 @@ internal class SandboxHook(private val module: XposedInterface) {
      * the hook were not there, and the first such failure is logged; the
      * original method's own exceptions pass through untouched.
      */
-    private abstract class FailSafeHooker(
+    internal abstract class FailSafeHooker(
         private val health: Health,
         private val name: String,
     ) : XposedInterface.Hooker {

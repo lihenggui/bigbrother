@@ -60,8 +60,8 @@ class ProviderHook : XposedModule() {
     override fun onSystemServerStarting(param: SystemServerStartingParam) {
         try {
             SandboxHook(this).install(param.classLoader)
-        } catch (e: Throwable) {
-            log(Log.ERROR, TAG, "could not install the sandbox hooks", e)
+        } catch (_: Throwable) {
+            log(Log.ERROR, TAG, "could not install the sandbox hooks")
         }
     }
 
@@ -82,8 +82,8 @@ class ProviderHook : XposedModule() {
             val spool = EventSpool(directory)
             val hooked = hookTransport(spool)
             log(Log.INFO, TAG, "hooked $hooked provider entry points")
-        } catch (e: Throwable) {
-            log(Log.ERROR, TAG, "could not install provider hooks", e)
+        } catch (_: Throwable) {
+            log(Log.ERROR, TAG, "could not install provider hooks")
         }
     }
 
@@ -96,21 +96,23 @@ class ProviderHook : XposedModule() {
     private fun hookTransport(spool: EventSpool): Int {
         val transport = Class.forName("android.content.ContentProvider\$Transport")
         var hooked = 0
+        val errorLogged = AtomicBoolean(false)
+        val onFailure = {
+            if (errorLogged.compareAndSet(false, true)) log(Log.WARN, TAG, "could not record a provider call")
+        }
         for (method in HiddenApiBypass.getDeclaredMethods(transport).filterIsInstance<Method>()) {
             val hooker = when (method.name) {
-                "query" -> RecordingHooker { args, result ->
-                    record(args) { uid, uri -> spool.addQuery(uid, uri, rowCount(result)) }
+                "query" -> RecordingHooker(onFailure) { uid, uri, _, result ->
+                    spool.addQuery(uid, uri, rowCount(result))
                 }
 
-                "openFile", "openAssetFile" -> RecordingHooker { args, result ->
-                    record(args) { uid, uri ->
-                        spool.addOpen(uid, uri, openMode(args), filePath(result))
-                    }
+                "openFile", "openAssetFile" -> RecordingHooker(onFailure) { uid, uri, args, result ->
+                    spool.addOpen(uid, uri, openMode(args), filePath(result))
                 }
 
                 // Takes a MIME type where the others take a mode; always read-only.
-                "openTypedAssetFile" -> RecordingHooker { args, result ->
-                    record(args) { uid, uri -> spool.addOpen(uid, uri, "r", filePath(result)) }
+                "openTypedAssetFile" -> RecordingHooker(onFailure) { uid, uri, _, result ->
+                    spool.addOpen(uid, uri, "r", filePath(result))
                 }
 
                 else -> continue
@@ -132,45 +134,35 @@ class ProviderHook : XposedModule() {
      * framework then fails to call it. A declared class is covered by the
      * keep rule for this package (see `consumer-rules.pro`).
      */
-    private class RecordingHooker(
-        private val onReturn: (args: List<Any?>, result: Any?) -> Unit,
+    internal class RecordingHooker(
+        private val onFailure: () -> Unit,
+        private val onReturn: (uid: Int, uri: String, args: List<Any?>, result: Any?) -> Unit,
     ) : XposedInterface.Hooker {
         override fun intercept(chain: XposedInterface.Chain): Any? {
+            val uid = try {
+                val caller = Binder.getCallingUid()
+                if (isProviderCaller(caller, Process.myUid())) caller else -1
+            } catch (_: Throwable) {
+                reportFailure()
+                -1
+            }
             val result = chain.proceed()
-            onReturn(chain.args, result)
+            if (uid == -1) return result
+            try {
+                val args = chain.args
+                val uri = args.firstNotNullOfOrNull { it as? Uri } ?: return result
+                onReturn(uid, uri.toString(), args, result)
+            } catch (_: Throwable) {
+                reportFailure()
+            }
             return result
         }
-    }
 
-    /**
-     * Runs [write] with the caller's uid and the request's URI, if the call
-     * came from an app. Never throws: a failure here must not break the
-     * provider call that is being observed.
-     */
-    private inline fun record(args: List<Any?>, write: (uid: Int, uri: String) -> Unit) {
-        try {
-            val uid = Binder.getCallingUid()
-            // Skip the provider calling itself and calls from system components.
-            if (uid == Process.myUid() || uid % PER_USER_RANGE < Process.FIRST_APPLICATION_UID) return
-            val uri = args.firstNotNullOfOrNull { it as? Uri } ?: return
-            write(uid, uri.toString())
-        } catch (e: Throwable) {
-            log(Log.WARN, TAG, "could not record a provider call (${e.javaClass.simpleName})")
+        private fun reportFailure() {
+            // Logging itself must not affect the provider's result.
+            runCatching { onFailure() }
         }
     }
-
-    /** The mode argument of `openFile(source, uri, mode, signal)`: the string after the URI. */
-    private fun openMode(args: List<Any?>): String {
-        val uriIndex = args.indexOfFirst { it is Uri }
-        return args.drop(uriIndex + 1).firstNotNullOfOrNull { it as? String } ?: "r"
-    }
-
-    /**
-     * Rows in a query result. The framework counts them itself right after
-     * this method returns, to send the result across binder, so asking here
-     * adds no work.
-     */
-    private fun rowCount(result: Any?): Int = (result as? Cursor)?.count ?: 0
 
     /** The file behind a returned descriptor, or "" if it isn't a regular file. */
     private fun filePath(result: Any?): String {
@@ -191,3 +183,19 @@ class ProviderHook : XposedModule() {
         const val SPOOL_DIR = "big_brother"
     }
 }
+
+internal fun isProviderCaller(uid: Int, providerUid: Int): Boolean = uid != providerUid && uid % PER_USER_RANGE >= Process.FIRST_APPLICATION_UID
+
+/** The mode argument of `openFile(source, uri, mode, signal)`: the string after the URI. */
+internal fun openMode(args: List<Any?>): String {
+    val uriIndex = args.indexOfFirst { it is Uri }
+    if (uriIndex < 0) return "r"
+    for (index in uriIndex + 1 until args.size) {
+        val mode = args[index] as? String
+        if (mode != null) return mode
+    }
+    return "r"
+}
+
+/** The framework already counts query rows to send them across Binder. */
+internal fun rowCount(result: Any?): Int = (result as? Cursor)?.count ?: 0

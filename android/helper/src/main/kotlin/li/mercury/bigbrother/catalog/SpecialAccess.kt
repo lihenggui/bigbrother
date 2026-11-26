@@ -59,6 +59,8 @@ private const val CMD = "/system/bin/cmd"
  */
 @SuppressLint("PrivateApi")
 internal class SpecialAccess(private val packages: Any) : Taking {
+    // All accessibility services for a user share one setting.
+    private val accessibilityUpdates = Any()
     private val packageType = Class.forName("android.content.pm.IPackageManager")
     private val packagesForUid = packageType.getMethod("getPackagesForUid", INT)
     private val packageInfo = packageType.optionalMethod("getPackageInfo", STRING, LONG, INT)
@@ -85,11 +87,19 @@ internal class SpecialAccess(private val packages: Any) : Taking {
     override fun hold(uid: Int, name: String, mayChange: () -> Boolean): HoldResult {
         val services = services(uid, name)
         if (services.isEmpty()) return HoldResult.HELD
-        val given = given(uid, name, services)
-        if (given.isEmpty()) return HoldResult.HELD
-        if (!mayChange()) return HoldResult.SUSPENDED
-        set(uid, name, given, false)
-        check(given(uid, name, services).isEmpty()) { "the system did not take $name away" }
+        if (name == NOTIFICATION_ACCESS) {
+            val given = notificationListeners(uid).toSet() intersect services
+            if (given.isEmpty()) return HoldResult.HELD
+            if (!mayChange()) return HoldResult.SUSPENDED
+            setNotificationListeners(uid, given, false)
+            check(notificationListeners(uid).none { it in services }) { "the system did not take notification access away" }
+        } else {
+            val enabled = accessibilityServices(uid)
+            if (enabled.none { it in services }) return HoldResult.HELD
+            if (!mayChange()) return HoldResult.SUSPENDED
+            val readback = updateAccessibility(uid, services, emptySet(), enabled)
+            check(readback.none { it in services }) { "the system did not take accessibility access away" }
+        }
         return HoldResult.CHANGED
     }
 
@@ -99,10 +109,15 @@ internal class SpecialAccess(private val packages: Any) : Taking {
         if (services.isEmpty()) return
         // A service the app no longer has is given nothing.
         val wanted = state.services intersect services
-        val given = given(uid, name, services)
-        set(uid, name, wanted - given, true)
-        set(uid, name, given - wanted, false)
-        check(given(uid, name, services) == wanted) { "the system did not give $name back" }
+        val readback = if (name == NOTIFICATION_ACCESS) {
+            val given = notificationListeners(uid).toSet() intersect services
+            setNotificationListeners(uid, wanted - given, true)
+            setNotificationListeners(uid, given - wanted, false)
+            notificationListeners(uid)
+        } else {
+            updateAccessibility(uid, services, wanted, accessibilityServices(uid))
+        }
+        check(readback.toSet() intersect services == wanted) { "the system did not give special access back" }
     }
 
     /** The services of [uid]'s packages the system binds with [name], as `<package>/<class>`. */
@@ -131,27 +146,30 @@ internal class SpecialAccess(private val packages: Any) : Taking {
         .split(':')
         .mapNotNull { ComponentName.unflattenFromString(it)?.flattenToString() }
 
-    /** Give [services] [name], or take it from them. */
-    private fun set(uid: Int, name: String, services: Set<String>, given: Boolean) {
+    private fun setNotificationListeners(uid: Int, services: Set<String>, given: Boolean) {
         if (services.isEmpty()) return
         Framework.requireOwner(uid)
-        if (name == NOTIFICATION_ACCESS) {
-            for (service in services) {
-                val component = ComponentName.unflattenFromString(service) ?: continue
-                val withUserSet = grantListener
-                if (withUserSet != null) {
-                    withUserSet.call(notifications, component, userOf(uid), given, true)
-                } else {
-                    grantListenerBefore.call(notifications, component, userOf(uid), given)
-                }
+        for (service in services) {
+            val component = ComponentName.unflattenFromString(service) ?: continue
+            val withUserSet = grantListener
+            if (withUserSet != null) {
+                withUserSet.call(notifications, component, userOf(uid), given, true)
+            } else {
+                grantListenerBefore.call(notifications, component, userOf(uid), given)
             }
-            return
         }
+    }
+
+    private fun updateAccessibility(uid: Int, services: Set<String>, wanted: Set<String>, initial: List<String>): List<String> = synchronized(accessibilityUpdates) {
         updateAccessibilityServices(
             services,
-            given,
+            wanted,
             read = { accessibilityServices(uid) },
-            write = { settings("put", "--user", userOf(uid).toString(), "secure", ACCESSIBILITY_SERVICES, it.joinToString(":")) },
+            write = {
+                Framework.requireOwner(uid)
+                settings("put", "--user", userOf(uid).toString(), "secure", ACCESSIBILITY_SERVICES, it.joinToString(":"))
+            },
+            initial = initial,
         )
     }
 
@@ -170,23 +188,30 @@ internal class SpecialAccess(private val packages: Any) : Taking {
     }
 }
 
-internal fun updateAccessibilityServices(services: Set<String>, given: Boolean, read: () -> List<String>, write: (List<String>) -> Unit) {
-    fun updated(current: List<String>): List<String> = if (given) current + (services - current.toSet()) else current - services
+internal fun updateAccessibilityServices(
+    services: Set<String>,
+    enabled: Set<String>,
+    read: () -> List<String>,
+    write: (List<String>) -> Unit,
+    initial: List<String> = read(),
+): List<String> {
+    fun updated(current: List<String>): List<String> = current - (services - enabled) + (enabled - current.toSet())
 
-    var current = read()
+    var current = initial
     repeat(ACCESSIBILITY_UPDATE_LIMIT) {
         val wanted = updated(current)
-        if (wanted == current) return
+        if (wanted == current) return current
         // Settings replaces the whole list. Confirm the merge's input as
         // close to the write as possible and keep any observed newer list.
         val confirmed = read()
         if (confirmed == current) {
             write(wanted)
             current = read()
-            if (current - services == confirmed - services) return
+            if (current - services == confirmed - services) return current
         } else {
             current = confirmed
         }
     }
     check(updated(current) == current) { "accessibility services changed during update" }
+    return current
 }

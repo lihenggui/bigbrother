@@ -19,6 +19,7 @@ package li.mercury.bigbrother.catalog
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.Command
 import java.io.File
 import java.io.FileOutputStream
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.LinkedBlockingQueue
 import kotlin.concurrent.thread
 import kotlin.system.exitProcess
@@ -137,17 +138,27 @@ import kotlin.system.exitProcess
  * failing to load. The system's own error messages name packages, so only
  * their types are reported.
  */
-object AppOpsGuard {
-    /** Held by each command and each check, so that they run one at a time and their output lines stay whole. */
-    private val lock = Any()
+class AppOpsGuard internal constructor(
+    system: AppOpsSystem,
+    private val journal: File? = null,
+    private val isCurrent: (Installation, Int) -> Boolean = Installation::isCurrent,
+    private val printLine: (String) -> Unit = { line ->
+        val out = System.out
+        out.println(line)
+        out.flush()
+    },
+    private val warn: (String) -> Unit = System.err::println,
+) {
+    private val handler = AppOpsGuardHandler(system, supervised = true)
+    private val appLocks = ConcurrentHashMap<Int, AppLock>()
+    private val owners = ConcurrentHashMap<Int, Installation>()
 
-    private val handler = AppOpsGuardHandler(Framework, supervised = true)
+    private class AppLock(var users: Int = 0)
 
-    private var reply: AppOpsGuardProtocol.Request? = null
+    private class Binding(val request: AppOpsGuardProtocol.Request?, val token: String)
 
-    private var boundToken: String? = null
-
-    private var journal: File? = null
+    // A periodic check can report while the stdin thread is answering another app.
+    private val binding = ThreadLocal<Binding>()
 
     internal fun restoreItem(name: String, change: () -> Unit) {
         val file = journal
@@ -161,8 +172,6 @@ object AppOpsGuard {
         }
     }
 
-    private val owners = mutableMapOf<Int, Installation>()
-
     internal fun requireOwner(uid: Int) {
         check(owners[uid]?.matches(uid) == true) { "installation changed" }
     }
@@ -171,23 +180,36 @@ object AppOpsGuard {
     internal var inputClosed = false
         private set
 
-    @JvmStatic
-    fun main(args: Array<String>) {
-        if (args.size == 2 && args[0] == "--recover") journal = File(args[1])
+    private fun run() {
         val lines = readInput()
         try {
-            Framework.connect()
+            Framework.connect(this)
             if (journal == null) emit("ready")
-            thread(isDaemon = true, name = "check") { Framework.checkLoop(lock, handler) }
+            thread(isDaemon = true, name = "check") { Framework.checkLoop() }
         } catch (e: Throwable) {
-            System.err.println(describeFailure(e))
+            warn(describeFailure(e))
             exitProcess(1)
         }
         while (true) {
             val line = lines.take() as? Line.Text ?: break
             handleLine(line.text)
         }
-        exitProcess(0)
+    }
+
+    internal fun checkAll() = handler.checkAll(::withAppLock)
+
+    /**
+     * Commands stay ordered on the stdin thread. The check thread can work
+     * on another app, but all-files access can affect the same app in other users.
+     */
+    private fun withAppLock(uid: Int, action: () -> Unit) {
+        val appId = uidInUser(uid, 0)
+        val lock = appLocks.compute(appId) { _, existing -> (existing ?: AppLock()).also { it.users++ } }!!
+        try {
+            synchronized(lock, action)
+        } finally {
+            appLocks.computeIfPresent(appId) { _, held -> held.takeIf { --it.users > 0 } }
+        }
     }
 
     private fun readInput(): LinkedBlockingQueue<Line> {
@@ -204,28 +226,30 @@ object AppOpsGuard {
         return lines
     }
 
-    private fun handleLine(line: String) {
+    internal fun handleLine(line: String) {
         if (line.startsWith("kind ")) {
             val query = AppOpsGuardProtocol.parseCommand(line) as? Command.Kind ?: return
-            synchronized(lock) { answerKind(query) }
+            answerKind(query)
             return
         }
-        val bound = AppOpsGuardProtocol.parseBound(line) ?: return
+        val bound = AppOpsGuardProtocol.parseBound(line)
+        if (bound == null) {
+            warn("invalid bound helper command")
+            return
+        }
         val request = AppOpsGuardProtocol.parseRequest(bound.commandLine)
         val command = AppOpsGuardProtocol.parseCommand(request?.commandLine ?: bound.commandLine)
         if (command == null) {
-            System.err.println("invalid helper command")
+            warn("invalid helper command")
             return
         }
         val owner = Installation(bound.packageName, bound.token)
-        synchronized(lock) {
-            reply = request
-            boundToken = bound.token
+        withAppLock(command.uid) {
+            binding.set(Binding(request, bound.token))
             try {
                 handleBound(owner, command, request != null)
             } finally {
-                reply = null
-                boundToken = null
+                binding.remove()
             }
         }
     }
@@ -234,7 +258,7 @@ object AppOpsGuard {
         val uid = command.uid
         try {
             if (command is Command.Verify) emit("checking $uid")
-            val current = owner.isCurrent(uid)
+            val current = isCurrent(owner, uid)
             if (!current && journal != null && (command is Command.Restore || command is Command.Undo)) {
                 emit("retired $uid")
                 return
@@ -244,7 +268,7 @@ object AppOpsGuard {
             handler.handle(command, transaction)
             if (!handler.needsOwner(uid)) owners.remove(uid)
         } catch (e: Throwable) {
-            System.err.println("bound $uid: ${describeFailure(e)}")
+            warn("bound $uid: ${describeFailure(e)}")
             emit(
                 when (command) {
                     is Command.Capture -> AppOpsGuardProtocol.captureFailedLine(uid, command.request)
@@ -263,31 +287,35 @@ object AppOpsGuard {
         val library = try {
             isLibrary(command.packageName, command.uid)
         } catch (e: Throwable) {
-            System.err.println("kind ${command.uid}: ${describeFailure(e)}")
+            warn("kind ${command.uid}: ${describeFailure(e)}")
             null
         }
         emit(AppOpsGuardProtocol.kindLine(command.uid, command.request, library))
     }
 
     internal fun emit(line: String) {
-        synchronized(lock) {
-            val kind = line.substringBefore(' ')
-            val request = reply
-            val bound = boundToken
-            val output = when (kind) {
-                "captured", "capture-failed", "saved", "restored", "applied", "failed" ->
-                    if (request != null && bound != null) AppOpsGuardProtocol.replyLine(request, bound, line) else line
+        val active = binding.get()
+        val output = when (line.substringBefore(' ')) {
+            "captured", "capture-failed", "saved", "restored", "applied", "failed" ->
+                active?.request?.let { AppOpsGuardProtocol.replyLine(it, active.token, line) } ?: line
 
-                "checking", "unknown-readback", "unheld", "reverted" -> {
-                    val uid = line.substringAfter(' ').substringBefore(' ').toIntOrNull()
-                    val token = bound ?: uid?.let(owners::get)?.token
-                    if (token != null && journal == null) "report $token $line" else line
-                }
-
-                else -> line
+            "checking", "unknown-readback", "unheld", "reverted" -> {
+                val uid = line.substringAfter(' ').substringBefore(' ').toIntOrNull()
+                val token = active?.token ?: uid?.let(owners::get)?.token
+                if (token != null && journal == null) "report $token $line" else line
             }
-            println(output)
-            System.out.flush()
+
+            else -> line
+        }
+        printLine(output)
+    }
+
+    companion object {
+        @JvmStatic
+        fun main(args: Array<String>) {
+            val journal = if (args.size == 2 && args[0] == "--recover") File(args[1]) else null
+            AppOpsGuard(Framework, journal).run()
+            exitProcess(0)
         }
     }
 

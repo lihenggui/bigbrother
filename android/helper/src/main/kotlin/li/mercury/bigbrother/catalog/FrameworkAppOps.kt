@@ -48,15 +48,17 @@ internal object Framework : AppOpsSystem {
      */
     private const val SETTLE_MS = 1000L
 
-    private val changes = LinkedBlockingQueue<Unit>()
+    private val changes = LinkedBlockingQueue<Unit>(1)
 
+    private lateinit var guard: AppOpsGuard
     private lateinit var service: Any
 
-    /**
-     * Methods are looked up on the public interface rather than on the
-     * service's own class, a proxy class private to the framework.
-     */
-    private val serviceType by lazy { Class.forName("com.android.internal.app.IAppOpsService") }
+    private val getUidOps by lazy { appOpsServiceType.getMethod("getUidOps", INT, IntArray::class.java) }
+    private val setUidModeMethod by lazy { appOpsServiceType.getMethod("setUidMode", INT, INT, INT) }
+    private val packageOps by lazy { Class.forName("android.app.AppOpsManager\$PackageOps").getMethod("getOps") }
+    private val opEntry by lazy { Class.forName("android.app.AppOpsManager\$OpEntry") }
+    private val entryOp by lazy { opEntry.getMethod("getOp") }
+    private val entryMode by lazy { opEntry.getMethod("getMode") }
 
     private val activityManagerClass by lazy { Class.forName("android.app.ActivityManager") }
     private val activityManager by lazy { activityManagerClass.getMethod("getService").invoke(null)!! }
@@ -87,13 +89,15 @@ internal object Framework : AppOpsSystem {
     }
 
     /** Why they cannot be, if they cannot. */
+    @Volatile
     override var permissionsMissing = ""
         private set
 
     /** Reached when first needed: by then the system has started. */
-    private var specialAccess: SpecialAccess? = null
+    private val specialAccess by lazy { SpecialAccess(packageManager()) }
 
-    fun connect() {
+    fun connect(guard: AppOpsGuard) {
+        this.guard = guard
         val binder = systemService("appops") ?: error("no app ops service")
         service = Class.forName("com.android.internal.app.IAppOpsService\$Stub")
             .getMethod("asInterface", IBinder::class.java)
@@ -118,7 +122,7 @@ internal object Framework : AppOpsSystem {
         val until = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(waitMs)
         var binder = getService.invoke(null, name) as IBinder?
         while (binder == null) {
-            if (AppOpsGuard.inputClosed || System.nanoTime() >= until) return null
+            if (guard.inputClosed || System.nanoTime() >= until) return null
             Thread.sleep(SERVICE_POLL_MS)
             binder = getService.invoke(null, name) as IBinder?
         }
@@ -171,34 +175,31 @@ internal object Framework : AppOpsSystem {
         return connected.packagesOf(uid)
     }
 
-    override fun requireOwner(uid: Int) = AppOpsGuard.requireOwner(uid)
+    override fun requireOwner(uid: Int) = guard.requireOwner(uid)
 
-    override fun restoreItem(name: String, change: () -> Unit) = AppOpsGuard.restoreItem(name, change)
+    override fun restoreItem(name: String, change: () -> Unit) = guard.restoreItem(name, change)
 
-    override fun specialAccess(): Taking = specialAccess ?: SpecialAccess(packageManager()).also { specialAccess = it }
+    override fun specialAccess(): Taking = specialAccess
 
     override fun resolve(name: String): GuardedOp? = resolve(listOf(name)).firstOrNull()
 
     override fun uidModes(uid: Int, switchCodes: IntArray): Map<Int, Int> {
         // Only ops with a uid mode of their own are listed, under their
         // switch op; `null` if there are none.
-        val packages = serviceType
-            .getMethod("getUidOps", Int::class.javaPrimitiveType, IntArray::class.java)
-            .invoke(service, uid, switchCodes) as List<*>?
+        val packages = getUidOps.invoke(service, uid, switchCodes) as List<*>?
         val modes = mutableMapOf<Int, Int>()
         for (pkg in packages.orEmpty()) {
-            for (entry in pkg?.call("getOps") as List<*>? ?: continue) {
+            pkg ?: continue
+            for (entry in packageOps.invoke(pkg) as List<*>? ?: continue) {
                 entry ?: continue
-                modes[entry.call("getOp") as Int] = entry.call("getMode") as Int
+                modes[entryOp.invoke(entry) as Int] = entryMode.invoke(entry) as Int
             }
         }
         return modes
     }
 
     override fun setUidMode(code: Int, uid: Int, mode: Int) {
-        serviceType
-            .getMethod("setUidMode", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
-            .invoke(service, code, uid, mode)
+        setUidModeMethod.invoke(service, code, uid, mode)
     }
 
     override fun canChangeAllFilesAccess(uid: Int): Boolean = runCatching {
@@ -210,7 +211,7 @@ internal object Framework : AppOpsSystem {
         }
     }.getOrDefault(false)
 
-    override fun emit(line: String) = AppOpsGuard.emit(line)
+    override fun emit(line: String) = guard.emit(line)
 
     override fun warn(message: String) = System.err.println(message)
 
@@ -253,7 +254,7 @@ internal object Framework : AppOpsSystem {
             val callbackType = Class.forName("com.android.internal.app.IAppOpsCallback")
             val asInterface = Class.forName("com.android.internal.app.IAppOpsCallback\$Stub")
                 .getMethod("asInterface", IBinder::class.java)
-            val startWatching = serviceType
+            val startWatching = appOpsServiceType
                 .getMethod("startWatchingMode", Int::class.javaPrimitiveType, String::class.java, callbackType)
             // One callback per op: the service files a callback under the op
             // it was first registered for.
@@ -271,20 +272,32 @@ internal object Framework : AppOpsSystem {
      * for them when the next attempt is due, and check as soon as they
      * are: what a check reports as unheld without them is held with them.
      */
-    fun checkLoop(lock: Any, handler: AppOpsGuardHandler) {
+    fun checkLoop() {
         val every = TimeUnit.MILLISECONDS.toNanos(CHECK_EVERY_MS)
         var checkAt = System.nanoTime() + every
         while (true) {
-            val untilCheck = maxOf(0, checkAt - System.nanoTime())
-            val wait = minOf(untilCheck, permissionService.retryInNanos() ?: untilCheck)
-            if (changes.poll(wait, TimeUnit.NANOSECONDS) != null) {
-                Thread.sleep(SETTLE_MS)
-                changes.clear()
-            } else if (System.nanoTime() - checkAt < 0 && synchronized(lock) { permissions } == null) {
-                continue
+            try {
+                val untilCheck = maxOf(0, checkAt - System.nanoTime())
+                val wait = minOf(untilCheck, permissionService.retryInNanos() ?: untilCheck)
+                if (changes.poll(wait, TimeUnit.NANOSECONDS) != null) {
+                    Thread.sleep(SETTLE_MS)
+                    changes.clear()
+                } else if (System.nanoTime() - checkAt < 0 && permissions == null) {
+                    continue
+                }
+                guard.checkAll()
+                checkAt = System.nanoTime() + every
+            } catch (_: InterruptedException) {
+                return
+            } catch (e: Throwable) {
+                System.err.println("checking app ops: ${describeFailure(e)}")
+                checkAt = System.nanoTime()
+                try {
+                    Thread.sleep(SETTLE_MS)
+                } catch (_: InterruptedException) {
+                    return
+                }
             }
-            synchronized(lock) { handler.checkAll() }
-            checkAt = System.nanoTime() + every
         }
     }
 
