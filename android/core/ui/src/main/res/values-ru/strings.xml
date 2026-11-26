@@ -1,0 +1,232 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <string name="isolated_process_uid">Изолированный процесс (UID %d)</string>
+    <string name="back">Назад</string>
+    <string name="retry">Попробуйте еще раз</string>
+    <string name="settings_write_failed">Не удалось сохранить настройку</string>
+    <string name="search">Поиск</string>
+    <string name="recording_stopped">Запись остановлена</string>
+    <string name="close_search">Закрыть поиск</string>
+    <string name="clear_search">Очистить поиск</string>
+    <string name="no_matches">Нет совпадений</string>
+
+    <string name="empty_title">В этом временном диапазоне нет записей</string>
+    <string name="no_root_title">Нужен root-доступ</string>
+    <string name="no_root_body">Предоставьте доступ root в менеджере root (KernelSU, Magisk или APatch), затем повторите попытку.</string>
+    <string name="no_module_title">Запись не настроена</string>
+    <string name="no_module_body">Настройте запись на вкладке «Обзор».</string>
+    <string name="old_module_title">Обновление не завершено</string>
+    <string name="old_module_body">До завершения обновления эта функция недоступна. Откройте вкладку «Обзор», чтобы завершить обновление.</string>
+    <string name="error_title">Не удалось загрузить записи</string>
+
+    <string name="topic_mac_address_title">MAC-адрес</string>
+    <string name="topic_network_interfaces_title">Сетевые интерфейсы</string>
+    <string name="topic_arp_table_title">Таблица ARP</string>
+    <string name="topic_network_state_title">Состояние сети</string>
+    <string name="topic_device_serial_title">Серийные номера</string>
+    <string name="topic_soc_info_title">Детали SoC</string>
+    <string name="topic_cpu_model_title">Модель процессора</string>
+    <string name="topic_kernel_version_title">Версия ядра</string>
+    <string name="topic_other_processes_title">Другие процессы</string>
+    <string name="topic_mounts_title">Подключенные файловые системы</string>
+    <string name="topic_kernel_modules_title">Модули ядра</string>
+    <string name="topic_selinux_state_title">Состояние SELinux</string>
+    <string name="topic_block_devices_title">Блочные устройства</string>
+    <string name="topic_emulator_probe_title">Обнаружение эмулятора</string>
+    <string name="topic_input_devices_title">Устройства ввода</string>
+    <string name="topic_battery_title">Состояние батареи</string>
+    <string name="topic_root_check_title">Обнаружение root</string>
+    <string name="topic_app_probe_title">Проверка наличия приложений</string>
+    <string name="topic_system_properties_title">Свойства системы</string>
+    <string name="topic_installed_apps_title">Установленные приложения</string>
+    <string name="topic_system_settings_title">Системные настройки</string>
+    <string name="topic_shell_command_title">Команды оболочки</string>
+    <string name="topic_local_ports_title">Локальные порты</string>
+    <string name="topic_local_network_title">Подключения к локальной сети</string>
+    <string name="topic_device_discovery_title">Поиск устройств в локальной сети</string>
+    <string name="topic_process_memory_title">Память других процессов</string>
+    <string name="topic_contacts_title">Контакты</string>
+    <string name="topic_call_log_title">Список вызовов</string>
+    <string name="topic_messages_title">Текстовые сообщения</string>
+    <string name="topic_calendar_title">Календарь</string>
+    <string name="topic_sim_info_title">Информация о SIM-карте и операторе связи</string>
+    <string name="topic_clipboard_title">Буфер обмена</string>
+    <string name="topic_location_title">Местоположение</string>
+    <string name="topic_wifi_info_title">Поиск и подключение Wi-Fi</string>
+    <string name="topic_phone_identity_title">Идентификаторы телефона и SIM-карты</string>
+    <string name="topic_accounts_title">Аккаунты</string>
+    <string name="topic_running_apps_title">Запущенные приложения</string>
+    <string name="topic_usage_stats_title">Статистика использования приложения</string>
+    <string name="topic_enabled_services_title">Включенные методы ввода и службы доступности</string>
+    <string name="topic_sensors_title">Датчики</string>
+    <string name="topic_android_id_title">Android ID</string>
+    <string name="topic_device_name_title">Имя устройства</string>
+    <string name="topic_camera_title">Камера</string>
+    <string name="topic_microphone_title">Микрофон</string>
+
+    <string name="category_messages">СМС и журнал вызовов</string>
+    <string name="category_contacts">Контакты</string>
+    <string name="category_location">Местоположение</string>
+    <string name="category_sensors">Камера, микрофон и датчики</string>
+    <string name="category_files">Файлы и медиаконтент</string>
+    <string name="category_calendar">Календарь</string>
+    <string name="category_personal_info">Личная информация</string>
+    <string name="category_app_activity">Активность приложения</string>
+    <string name="category_device_ids">Идентификаторы устройства</string>
+    <string name="category_network">Сеть и ближайшие устройства</string>
+    <string name="category_device_profile">Отпечаток устройства</string>
+    <string name="category_environment">Обнаружение окружающей среды</string>
+
+    <string name="range_hour">Последний час</string>
+    <string name="range_day">Последние 24 часа</string>
+    <string name="range_week">Последние 7 дней</string>
+    <string name="range_all">За всё время</string>
+
+    <string name="range_hour_short">Час</string>
+    <string name="range_day_short">День</string>
+    <string name="range_week_short">7 дн.</string>
+    <string name="range_all_short">Все</string>
+
+    <string name="select_app">Выберите приложение, чтобы увидеть, к чему оно обращалось</string>
+
+    <plurals name="summary_storage">
+        <item quantity="one">%d файл</item>
+        <item quantity="few">%d файла</item>
+        <item quantity="many">%d файлов</item>
+        <item quantity="other">%d файлов</item>
+    </plurals>
+    <string name="summary_separator">", "</string>
+    <plurals name="summary_more">
+        <item quantity="one">%1$s и ещё %2$d</item>
+        <item quantity="few">%1$s и ещё %2$d</item>
+        <item quantity="many">%1$s и ещё %2$d</item>
+        <item quantity="other">%1$s и ещё %2$d</item>
+    </plurals>
+    <string name="summary_media_library">Медиатека</string>
+    <string name="summary_not_read">%s (файлы не прочитаны)</string>
+    <string name="app_name_with_user">%1$s (пользователь %2$d)</string>
+    <plurals name="app_count">
+        <item quantity="one">%d приложение</item>
+        <item quantity="few">%d приложения</item>
+        <item quantity="many">%d приложений</item>
+        <item quantity="other">%d приложений</item>
+    </plurals>
+
+    <!-- Clipboard summaries keep the default format contract. In Russian, the one form can
+         match several positive counts, so it names the action without claiming a count. -->
+    <plurals name="clipboard_read">
+        <item quantity="one" tools:ignore="ImpliedQuantity">Чтение</item>
+        <item quantity="few">Прочитано %d раза</item>
+        <item quantity="many">Прочитано %d раз</item>
+        <item quantity="other">Прочитано %d раз</item>
+    </plurals>
+    <string name="clipboard_listens">Отслеживает изменения</string>
+    <plurals name="clipboard_written">
+        <item quantity="one" tools:ignore="ImpliedQuantity">Запись</item>
+        <item quantity="few">Записано %d раза</item>
+        <item quantity="many">Записано %d раз</item>
+        <item quantity="other">Записано %d раз</item>
+    </plurals>
+    <plurals name="clipboard_read_denied">
+        <item quantity="one" tools:ignore="ImpliedQuantity">Чтение отклонено</item>
+        <item quantity="few">В чтении отказано %d раза</item>
+        <item quantity="many">В чтении отказано %d раз</item>
+        <item quantity="other">В чтении отказано %d раз</item>
+    </plurals>
+    <plurals name="clipboard_write_denied">
+        <item quantity="one" tools:ignore="ImpliedQuantity">Запись отклонена</item>
+        <item quantity="few">В записи отказано %d раза</item>
+        <item quantity="many">В записи отказано %d раз</item>
+        <item quantity="other">В записи отказано %d раз</item>
+    </plurals>
+    <string name="clipboard_read_short">Чтение %d×</string>
+    <string name="clipboard_listens_short">Отслеживание</string>
+    <string name="clipboard_written_short">Запись %d×</string>
+    <string name="clipboard_read_denied_short">Чтение отклонено %d×</string>
+    <string name="clipboard_write_denied_short">Запись отклонена %d×</string>
+    <string name="clipboard_partly_denied">%1$s (отказано: %2$d)</string>
+
+    <string name="sensor_high_rate">%s (высокая частота опроса)</string>
+    <plurals name="sensor_times">
+        <item quantity="one">%d раз</item>
+        <item quantity="few">%d раза</item>
+        <item quantity="many">%d раз</item>
+        <item quantity="other">%d раз</item>
+    </plurals>
+    <string name="sensor_times_short">%d×</string>
+    <string name="sensor_unknown">Неизвестный датчик</string>
+    <string name="sensor_type_number">Тип датчика %s</string>
+    <string name="sensor_accelerometer">Акселерометр</string>
+    <string name="sensor_accelerometer_uncalibrated">Акселерометр (некалиброванный)</string>
+    <string name="sensor_accelerometer_limited_axes">Акселерометр (ограниченные оси)</string>
+    <string name="sensor_accelerometer_limited_axes_uncalibrated">Акселерометр (ограниченные оси, некалиброванный)</string>
+    <string name="sensor_gyroscope">Гироскоп</string>
+    <string name="sensor_gyroscope_uncalibrated">Гироскоп (некалиброванный)</string>
+    <string name="sensor_gyroscope_limited_axes">Гироскоп (ограниченные оси)</string>
+    <string name="sensor_gyroscope_limited_axes_uncalibrated">Гироскоп (ограниченные оси, некалиброванный)</string>
+    <string name="sensor_magnetic_field">Магнитометр</string>
+    <string name="sensor_magnetic_field_uncalibrated">Магнитометр (некалиброванный)</string>
+    <string name="sensor_orientation">Ориентация</string>
+    <string name="sensor_light">Датчик освещенности</string>
+    <string name="sensor_proximity">Датчик приближения</string>
+    <string name="sensor_pressure">Барометр</string>
+    <string name="sensor_relative_humidity">Датчик влажности</string>
+    <string name="sensor_ambient_temperature">Температура окружающей среды</string>
+    <string name="sensor_gravity">Гравитация</string>
+    <string name="sensor_linear_acceleration">Линейное ускорение</string>
+    <string name="sensor_rotation_vector">Вектор вращения</string>
+    <string name="sensor_game_rotation_vector">Вектор вращения игры</string>
+    <string name="sensor_geomagnetic_rotation_vector">Вектор геомагнитного вращения</string>
+    <string name="sensor_significant_motion">Значительное движение</string>
+    <string name="sensor_step_detector">Детектор шагов</string>
+    <string name="sensor_step_counter">Счетчик шагов</string>
+    <string name="sensor_heart_rate">Частота сердечных сокращений</string>
+    <string name="sensor_heart_beat">Сердцебиение</string>
+    <string name="sensor_device_orientation">Ориентация устройства</string>
+    <string name="sensor_pick_up_gesture">Жест поднятия устройства</string>
+    <string name="sensor_tilt_detector">Детектор наклона</string>
+    <string name="sensor_hinge_angle">Угол шарнира</string>
+    <string name="sensor_low_latency_offbody_detect">Определение снятия устройства</string>
+    <string name="sensor_stationary_detect">Определение неподвижности</string>
+    <string name="sensor_motion_detect">Обнаружение движения</string>
+    <string name="sensor_pose_6dof">Поза 6DoF</string>
+    <string name="sensor_head_tracker">Трекер головы</string>
+    <string name="sensor_heading">Азимут</string>
+    <string name="command_failed">Операцию не удалось завершить.</string>
+    <string name="daemon_bad_response">Ответ прочитать не удалось.</string>
+    <string name="database_busy">База данных записей занята.</string>
+    <string name="daemon_unavailable">Запись не ведется.</string>
+    <string name="destination_missing">Пункт назначения больше не доступен.</string>
+    <string name="app_missing">Это приложение больше не установлено для этого пользователя Android.</string>
+    <string name="timed_out">Время операции истекло.</string>
+    <string name="invalid_period">Выберите более короткий, непустой временной диапазон.</string>
+    <string name="module_version_unreadable">Установленную версию невозможно прочитать.</string>
+    <string name="unsupported_architecture">Запись не поддерживает процессор этого устройства.</string>
+    <string name="kernel_btf_missing">В ядре отсутствует поддержка BTF. Требуется GKI 5.10 или новее.</string>
+    <string name="kernel_too_old">Требуется ядро 5.10 или новее.</string>
+    <string name="module_archive_invalid">Файлы, необходимые для записи, не удалось прочитать из пакета приложения. Переустановите приложение.</string>
+    <string name="database_incompatible">Эта версия не может читать существующие записи.</string>
+    <string name="module_install_failed">Установка не завершена. Экспортируйте журналы в настройках для отчета об ошибке.</string>
+    <string name="module_update_failed">Попробуйте еще раз. Если снова произойдет сбой, экспортируйте журналы в настройках для отчета об ошибке.</string>
+    <string name="daemon_start_failed">Не удалось начать запись.</string>
+    <string name="installed_apps_unavailable">Установленные приложения не читаются.</string>
+    <string name="module_disabled">Модуль Big Brother отключён или помечен для удаления в менеджере root. Измените настройку в менеджере.</string>
+    <string name="module_remove_failed">Не удалено. Попробуйте еще раз.</string>
+    <string name="daemon_not_reporting">Запись запущена, но данных пока нет. Если это не изменится, экспортируйте журналы в разделе «Настройки» для отчёта об ошибке.</string>
+    <string name="file_access_denied">Общее хранилище недоступно. Проверьте, предоставлен ли root-доступ.</string>
+    <string name="export_logs_failed">Журналы не удалось собрать.</string>
+</resources>

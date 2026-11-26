@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- The count is displayed in a separate label. -->
+    <plurals name="readers_label" tools:ignore="ImpliedQuantity">
+        <item quantity="one">приложение читало файлы</item>
+        <item quantity="few">приложения читали файлы</item>
+        <item quantity="many">приложений читали файлы</item>
+        <item quantity="other">приложений читали файлы</item>
+    </plurals>
+    <string name="no_reads">Ни одно приложение не читает файлы</string>
+    <plurals name="looked_only">
+        <item quantity="one">Еще %d приложение искало файлы, не читая их</item>
+        <item quantity="few">Еще %d приложения искали файлы, не читая их</item>
+        <item quantity="many">Еще %d приложений искали файлы, не читая их</item>
+        <item quantity="other">Еще %d приложений искали файлы, не читая их</item>
+    </plurals>
+    <string name="more_count">+%d</string>
+    <string name="other_categories">Другие конфиденциальные разрешения</string>
+    <plurals name="category_count">
+        <item quantity="one">%d вид</item>
+        <item quantity="few">%d вида</item>
+        <item quantity="many">%d видов</item>
+        <item quantity="other">%d видов</item>
+    </plurals>
+
+    <plurals name="category_group_read_files">
+        <item quantity="one">%d приложение читало файлы</item>
+        <item quantity="few">%d приложения читали файлы</item>
+        <item quantity="many">%d приложений читали файлы</item>
+        <item quantity="other">%d приложений читали файлы</item>
+    </plurals>
+    <plurals name="category_group_looked_only">
+        <item quantity="one">%d приложение только искало файлы</item>
+        <item quantity="few">%d приложения только искали файлы</item>
+        <item quantity="many">%d приложений только искали файлы</item>
+        <item quantity="other">%d приложений только искали файлы</item>
+    </plurals>
+
+    <string name="status_stopped">Запись остановлена</string>
+    <string name="daemon_stopped">Доступ в это время не записывается.</string>
+    <string name="daemon_starting">Запуск записи…</string>
+    <string name="start_daemon">Начать запись</string>
+    <string name="install_module">Настроить запись</string>
+    <string name="updating_module">Завершение обновления…</string>
+    <string name="update_failed_title">Обновление не может быть завершено</string>
+    <string name="module_pending_reboot">Требуется перезагрузка</string>
+    <string name="module_pending_reboot_body">Модуль, установленный в менеджере root, начнёт действовать после следующей перезагрузки.</string>
+    <string name="installing_module">Настройка записи…</string>
+    <string name="install_failed_title">Не удалось настроить запись</string>
+    <string name="setup_body">Для записи Big Brother требуется доступ root. Настройка не требует перезагрузки.</string>
+    <string name="setup_pending_body">Модуль, установленный в менеджере root, начнёт действовать после следующей перезагрузки. Запись можно настроить и сейчас, без перезагрузки.</string>
+</resources>
