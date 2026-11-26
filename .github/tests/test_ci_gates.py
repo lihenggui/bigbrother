@@ -19,7 +19,10 @@ import subprocess
 import tempfile
 import unittest
 
-import yaml
+try:
+    import yaml
+except ModuleNotFoundError:
+    raise SystemExit("The CI gate tests require PyYAML. Install python3-yaml or PyYAML for python3.") from None
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -62,9 +65,10 @@ class CiGateTests(unittest.TestCase):
             (("bbd/src/lib.rs",), ("ci", "device", "kernels")),
             (("android/app/build.gradle.kts",), ("ci", "device")),
             (("android/core/model/build.gradle.kts",), ("ci",)),
+            ((".github/tests/test_ci_gates.py", "deny.toml"), ("ci",)),
             ((".github/workflows/kernels.yml",), ("ci", "kernels")),
         )
-        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+        with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)
             output = repo / "output"
 
@@ -124,43 +128,69 @@ class CiGateTests(unittest.TestCase):
 
     def test_device_result_checks_individual_matrix_conclusions(self):
         jobs = self.read_workflow("device")["jobs"]
-        matrix = jobs["check"]["strategy"]["matrix"]["api"]
-        self.assertIn("result", jobs)
+        matrix = jobs["check"]["strategy"]["matrix"]
+        job_name = jobs["check"]["name"]
+        legs = [
+            {
+                "name": job_name.replace("${{ matrix.api }}", api).replace("${{ matrix.part }}", part),
+                "status": "completed",
+                "conclusion": "success",
+                "run_attempt": 1,
+            }
+            for api in matrix["api"]
+            for part in matrix["part"]
+        ]
+        self.assertEqual(len(legs), 12)
         steps = jobs["result"]["steps"]
         self.assertEqual(len(steps), 2)
         verify_matrix = steps[1]
         self.assertEqual(verify_matrix["if"], "needs.check.result == 'success'")
 
-        for conclusion, rerun, succeeds in (
-            ("success", None, True),
-            ("skipped", None, True),
-            ("failure", None, False),
-            ("cancelled", None, False),
-            (None, None, False),
-            ("failure", "success", True),
-            ("success", "cancelled", False),
+        last = legs[-1]
+        skipped = {**last, "conclusion": "skipped"}
+        failed = {**last, "conclusion": "failure"}
+        cancelled = {**last, "conclusion": "cancelled"}
+        running = {**last, "status": "in_progress", "conclusion": None}
+        rerun_success = {**last, "run_attempt": 2}
+        rerun_cancelled = {**cancelled, "run_attempt": 2}
+        unrelated_job = {**failed, "name": "Build"}
+
+        def pages(*last_legs):
+            # A partial rerun can be on a different page from the original jobs.
+            return [{"jobs": list(last_legs[1:]) + [unrelated_job]}, {"jobs": legs[:-1] + list(last_legs[:1])}]
+
+        for case, responses, succeeds in (
+            ("all passed", [pages(last)], True),
+            ("one skipped", [pages(skipped)], True),
+            ("one failed", [pages(failed)], False),
+            ("one cancelled", [pages(cancelled)], False),
+            ("one missing", [pages()], False),
+            ("successful rerun", [pages(failed, rerun_success)], True),
+            ("cancelled rerun", [pages(last, rerun_cancelled)], False),
+            ("eventually completed", [pages(running), pages(last)], True),
+            ("still running", [pages(running)] * 12, False),
         ):
-            with self.subTest(conclusion=conclusion, rerun=rerun):
-                legs = [
-                    {"name": f"API {api}", "conclusion": "success", "run_attempt": 1}
-                    for api in matrix
-                ]
-                if conclusion is None:
-                    legs.pop()
-                else:
-                    legs[-1]["conclusion"] = conclusion
-                pages = [{"jobs": legs}]
-                if rerun is not None:
-                    later_leg = {**legs[-1], "conclusion": rerun, "run_attempt": 2}
-                    pages.insert(0, {"jobs": [later_leg]})
-                result = subprocess.run(
-                    ["bash", "-euo", "pipefail", "-c", "gh() { cat; }\n" + verify_matrix["run"]],
-                    env={**os.environ, "GITHUB_REPOSITORY": "example/repo", "GITHUB_RUN_ID": "1"},
-                    input=json.dumps(pages),
-                    text=True,
-                    capture_output=True,
-                )
-                self.assertEqual(result.returncode == 0, succeeds, result.stderr)
+            with self.subTest(case=case):
+                self.assert_device_result(verify_matrix["run"], responses, succeeds)
+
+    def assert_device_result(self, script, responses, succeeds):
+        mocks = """
+gh() {
+    local response
+    IFS= read -r response || return 1
+    printf '%s\\n' "$response"
+}
+sleep() { printf 'Retrying the jobs API\\n' >&2; }
+"""
+        result = subprocess.run(
+            ["bash", "-euo", "pipefail", "-c", mocks + script],
+            env={**os.environ, "GITHUB_REPOSITORY": "example/repo", "GITHUB_RUN_ID": "1"},
+            input="".join(json.dumps(pages) + "\n" for pages in responses),
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(result.returncode, 0 if succeeds else 1, result.stderr)
+        self.assertEqual(result.stderr.splitlines(), ["Retrying the jobs API"] * (len(responses) - 1))
 
 
 if __name__ == "__main__":

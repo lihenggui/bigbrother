@@ -40,24 +40,34 @@ step() {
 }
 
 check_ebpf() {
-    local features
-    for features in "" task-storage; do
-        RUSTFLAGS='--cfg bpf_target_arch="x86_64"' \
-            cargo +nightly clippy -Z build-std=core --target bpfel-unknown-none \
-                -p bb-ebpf --features "$features" -- -A clippy::all -D clippy::too_many_lines
+    local arch features
+    for arch in x86_64 aarch64; do
+        for features in "" task-storage; do
+            printf 'Checking eBPF for %s (%s)\n' "$arch" "${features:-legacy}"
+            RUSTFLAGS="--cfg bpf_target_arch=\"$arch\"" \
+                cargo +nightly clippy -Z build-std=core --target bpfel-unknown-none \
+                    -p bb-ebpf --features "$features" -- -D warnings -D clippy::too_many_lines
+        done
     done
 }
 
 check_shell_syntax() {
     local script
-    for script in module/*.sh scripts/*.sh .githooks/pre-push; do
+    for script in module/*.sh; do
+        sh -n "$script"
+    done
+    for script in scripts/*.sh .githooks/pre-push; do
         bash -n "$script"
     done
+    if command -v shellcheck >/dev/null; then
+        shellcheck -s sh module/*.sh
+        shellcheck scripts/*.sh .githooks/pre-push
+    fi
 }
 
 check_license_headers() {
     local missing status
-    if missing=$(git grep -LF 'GNU General Public License' -- '*.rs' '*.sh' .githooks/pre-push); then
+    if missing=$(git grep -LF 'GNU General Public License' -- '*.rs' '*.sh' '*.py' .githooks/pre-push); then
         printf 'Missing license header:\n%s\n' "$missing" >&2
         return 1
     else
@@ -73,15 +83,19 @@ gradle() (
     cd android && ./gradlew "$@"
 )
 
+step 'Test CI gates' python3 .github/tests/test_ci_gates.py
+step 'Check shell syntax and lint' check_shell_syntax
+step 'Test the module scripts' ./scripts/check-module-recovery.sh
+step 'Check license headers' check_license_headers
+if command -v cargo-deny >/dev/null; then
+    step 'Check Rust dependency licenses' cargo deny check licenses
+fi
 step 'Check formatting' cargo fmt --all --check
 step 'Lint' cargo clippy --all-targets -- -D warnings
 if ! "$fast"; then
-    step 'Check eBPF function length' check_ebpf
+    step 'Lint eBPF' check_ebpf
 fi
 step 'Test the daemon' cargo test
-step 'Check shell syntax' check_shell_syntax
-step 'Test the module scripts' ./scripts/check-module-recovery.sh
-step 'Check license headers' check_license_headers
 step "Check the app's formatting and license headers" gradle spotlessCheck :build-logic:convention:spotlessCheck
 
 if ! "$fast"; then

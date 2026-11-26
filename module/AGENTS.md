@@ -12,7 +12,8 @@ keeps a directory without it for a module it applies at the next boot.
 
 - Write POSIX `sh`: the scripts run under Android's `/system/bin/sh` or the
   root manager's BusyBox `ash`, not bash. No arrays, `[[ ]]` or process
-  substitution. CI only checks syntax (`bash -n`), so test on a device.
+  substitution. CI checks syntax with `sh -n` and lints with ShellCheck.
+  Test the module on a device.
 - Tools come from toybox or BusyBox, whose options differ. Check that a
   command works before relying on it (see how `supervise.sh` checks `nice` and
   `ionice`).

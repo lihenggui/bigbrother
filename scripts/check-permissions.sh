@@ -53,6 +53,7 @@ PACKAGE=li.mercury.bigbrother.canary
 APK=android/canary/build/outputs/apk/debug/canary-debug.apk
 # The module in the root manager, or else the one installed with root alone
 # (module/direct.sh). Worked out by the device's shell in each command.
+# shellcheck disable=SC2016
 BBD='$([ -e /data/adb/modules/big_brother/bin/bbd ] && echo /data/adb/modules/big_brother || echo /data/adb/big_brother_direct)/bin/bbd'
 MATRIX=testdata/permissions/matrix.tsv
 # The app ops helper, as its command line names it. The brackets keep the

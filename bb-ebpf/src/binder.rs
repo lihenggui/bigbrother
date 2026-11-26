@@ -117,6 +117,8 @@ fn binder_transaction(transaction: u64, uid: u32) -> Result<(), i32> {
         }
         let prefix: [u32; 4] = unsafe { bpf_probe_read_user(data as *const [u32; 4])? };
         let len = prefix[3];
+        // Keep both comparisons on len visible to the BPF verifier before deriving offsets.
+        #[allow(clippy::manual_range_contains)]
         if prefix[2] != PARCEL_HEADER_SYSTEM || len < BINDER_MIN_NAME || len > BINDER_MAX_NAME {
             return Ok(());
         }
@@ -133,16 +135,14 @@ fn binder_transaction(transaction: u64, uid: u32) -> Result<(), i32> {
             bpf_probe_read_user_buf(
                 name as *const u8,
                 core::slice::from_raw_parts_mut(key_bytes.add(4), BINDER_KEY_HEAD),
-            )
-            .map_err(|e| e as i32)?;
+            )?;
             bpf_probe_read_user_buf(
                 (name + name_bytes - BINDER_KEY_TAIL as u64) as *const u8,
                 core::slice::from_raw_parts_mut(
                     key_bytes.add(4 + BINDER_KEY_HEAD),
                     BINDER_KEY_TAIL,
                 ),
-            )
-            .map_err(|e| e as i32)?;
+            )?;
         }
         args = name + ((name_bytes + 2 + 3) & !3);
     }

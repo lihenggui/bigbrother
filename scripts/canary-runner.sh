@@ -67,7 +67,10 @@ wait_for_canary_result() {
             status="${result%%$'\n'*}"
             case "$status" in
             done)
-                if [[ "$result" == *$'\n'* ]]; then canary_view="${result#*$'\n'}"; fi
+                if [[ "$result" == *$'\n'* ]]; then
+                    # shellcheck disable=SC2034 # Read by the sandbox and permission checks.
+                    canary_view="${result#*$'\n'}"
+                fi
                 return 0
                 ;;
             "probe failed: "*) canary_error="${status#probe failed: }" ;;

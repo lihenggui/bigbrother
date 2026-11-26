@@ -31,6 +31,7 @@ if [ "$MODDIR" != "$DIRECT" ] && [ -d "$DIRECT" ]; then
     "$MODDIR/bin/bbd" module-stop "$DIRECT" || exit 1
     rm -rf "$DIRECT" /data/adb/service.d/big_brother.sh
 fi
+# shellcheck source=module/stop.sh
 . "$MODDIR/stop.sh"
 
 # Boot guard. A marker is left while the system boots and removed once it has

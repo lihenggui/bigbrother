@@ -1,0 +1,15 @@
+[licenses]
+# Keep the shared permissive licenses aligned with the Android allow-list.
+allow = [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "GPL-2.0-or-later",
+    "GPL-3.0-only",
+    "MIT",
+    "Unicode-3.0",
+    "Zlib",
+]
+
+[advisories]
+yanked = "warn"

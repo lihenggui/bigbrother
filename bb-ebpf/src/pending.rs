@@ -59,7 +59,7 @@ pub(super) fn remember(id: u64, pending: Pending) -> Result<(), i32> {
         unsafe { slot.write(local::Call { id, pending }) };
         return Ok(());
     }
-    PENDING.insert(&id, &pending, 0).map_err(|e| e as i32)
+    PENDING.insert(&id, &pending, 0)
 }
 
 #[inline(always)]

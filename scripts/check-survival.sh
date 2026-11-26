@@ -24,6 +24,7 @@ APK=android/canary/build/outputs/apk/debug/canary-debug.apk
 NO_DECLARATIONS_APK=android/canary/build/outputs/apk/noDeclarations/canary-noDeclarations.apk
 # The module in the root manager, or else the one installed with root alone
 # (module/direct.sh). Worked out by the device's shell in each command.
+# shellcheck disable=SC2016
 BBD='$([ -e /data/adb/modules/big_brother/bin/bbd ] && echo /data/adb/modules/big_brother || echo /data/adb/big_brother_direct)/bin/bbd'
 TAG=BigBrotherSurvival
 STARTS=10
@@ -253,8 +254,9 @@ check_fixture() {
     local watcher_output="${WATCHER[0]:-}" watcher_pid="${WATCHER_PID:-}"
     [[ -n "$watcher_input" && -n "$watcher_output" && -n "$watcher_pid" ]] ||
         fail "could not launch the AppOps observer" "running observer with open pipes" "observer or pipe missing"
-    read -r -t 20 -u "$watcher_output" ready && [[ "$ready" == ready ]] ||
+    if ! read -r -t 20 -u "$watcher_output" ready || [[ "$ready" != ready ]]; then
         fail "the AppOps observer did not start" "ready" "no ready handshake"
+    fi
     mark begin
 
     uid_modes "$uid" baseline_modes baseline_raw ||
@@ -294,19 +296,22 @@ check_fixture() {
         expect_uid_modes "launch $i UID modes at first frame"
         sleep 1
         expect_uid_modes "launch $i UID modes after helper settle"
-        actual="$(process_identity "$package")" && [[ "$actual" == "$identity" ]] ||
+        if ! actual="$(process_identity "$package")" || [[ "$actual" != "$identity" ]]; then
             fail "launch $i process after helper settle (PID and start time)" "$identity" "${actual:-no readable live process}"
+        fi
         sleep 5
         expect_uid_modes "launch $i UID modes after the quiet period"
-        actual="$(process_identity "$package")" && [[ "$actual" == "$identity" ]] ||
+        if ! actual="$(process_identity "$package")" || [[ "$actual" != "$identity" ]]; then
             fail "launch $i process after the quiet period (PID and start time)" "$identity" "${actual:-no readable live process}"
+        fi
         mark end "$i" "${identity%% *}"
     done
 
     printf '\n' >&"$watcher_input" ||
         fail "the AppOps observer disconnected" "open observer input" "write failed"
-    read -r -t 10 -u "$watcher_output" result && [[ "$result" == stopped ]] ||
+    if ! read -r -t 10 -u "$watcher_output" result || [[ "$result" != stopped ]]; then
         fail "the AppOps observer did not stay running" "stopped" "no stopped handshake"
+    fi
     wait "$watcher_pid" || fail "the AppOps observer failed" "exit 0" "exit $?"
     watcher_input=""
     adb logcat -b main -b system -b events -d -v tag -s "$TAG:I" ActivityManager:I \

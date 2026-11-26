@@ -20,6 +20,7 @@
 # Android app and a flashable module. The installer must therefore not unpack
 # the whole archive (it would dump the app's code into the module directory),
 # so extraction is done here, for the module's own files only.
+# shellcheck disable=SC2034 # Read by the root manager after sourcing this script.
 SKIPUNZIP=1
 
 APP_PACKAGE=li.mercury.bigbrother
@@ -96,6 +97,7 @@ if unzip -l "$ZIPFILE" AndroidManifest.xml >/dev/null 2>&1; then
         # Binder can pass a pipe to PackageManager even when SELinux
         # prevents it receiving the installer's archive descriptor.
         size=$(wc -c <"$ZIPFILE")
+        # shellcheck disable=SC2002 # Keep the pipe to PackageManager.
         if cat "$ZIPFILE" | pm install -r -S "$size" >&2; then
             ui_print "- App installed"
         else
@@ -107,7 +109,9 @@ fi
 # Apply without a reboot where the manager supports it (KernelSU; the others
 # ignore the request and apply the module at the next boot). Updates don't run
 # uninstall.sh, so service.sh stops the previous daemon itself.
+# shellcheck disable=SC2034 # Read by KernelSU after sourcing this script.
 MODULE_HOT_INSTALL_REQUEST=true
+# shellcheck disable=SC2034 # Read by KernelSU after sourcing this script.
 MODULE_HOT_RUN_SCRIPT=service.sh
 
 ui_print "- Records are stored in /data/adb/big_brother"

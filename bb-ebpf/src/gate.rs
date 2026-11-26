@@ -117,7 +117,7 @@ fn try_gate(ctx: &ProbeContext) -> Result<(), i32> {
     if task_id as u32 != (task_id >> 32) as u32 {
         return Ok(());
     }
-    let comm = bpf_get_current_comm().map_err(|e| e as i32)?;
+    let comm = bpf_get_current_comm()?;
     let zygote_child =
         (comm[0] == b'm' && comm[1] == b'a' && comm[2] == b'i' && comm[3] == b'n' && comm[4] == 0)
             || (comm[0] == b'u' && comm[1] == b's' && comm[2] == b'a' && comm[3] == b'p');

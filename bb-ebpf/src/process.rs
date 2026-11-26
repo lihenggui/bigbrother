@@ -58,10 +58,10 @@ fn process_enter(ctx: &ProbeContext, how: u32, pid_arg: usize) -> Result<(), i32
     }
     let pair = (pid_tgid & 0xffff_ffff_0000_0000) | target as u64;
     let now = unsafe { bpf_ktime_get_ns() };
-    if let Some(last) = unsafe { RECENT_TARGETS.get(&pair) } {
-        if now.wrapping_sub(*last) < REPORT_INTERVAL_NS {
-            return Ok(());
-        }
+    if let Some(last) = unsafe { RECENT_TARGETS.get(&pair) }
+        && now.wrapping_sub(*last) < REPORT_INTERVAL_NS
+    {
+        return Ok(());
     }
     let _ = RECENT_TARGETS.insert(&pair, &now, 0);
     let Some(mut entry) = EVENTS.reserve::<ProcessEvent>(0) else {
