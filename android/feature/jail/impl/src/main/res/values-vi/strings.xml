@@ -1,0 +1,301 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="jail_section_isolated">Ứng dụng bị cách ly</string>
+    <string name="jail_section_settings">Cài đặt nhà tù</string>
+    <string name="jail_add_apps">Thêm ứng dụng</string>
+    <string name="jail_global_settings">Cài đặt chung</string>
+    <string name="jail_all_items_on">Đã cách ly tất cả mục</string>
+    <string name="jail_items_off">Không bị cách ly: %1$s</string>
+    <string name="jail_no_items_on">Không có mục nào bị cách ly</string>
+    <string name="jail_empty_title">Không có ứng dụng bị cách ly</string>
+    <string name="jail_empty_files_title">Tệp</string>
+    <string name="jail_empty_files">Chỉ truy cập được bộ nhớ riêng, ban đầu để trống</string>
+    <string name="jail_empty_permissions_title">Danh bạ, vị trí, máy ảnh và hơn thế nữa</string>
+    <string name="jail_empty_permissions">Quyền vẫn hiển thị là đã cấp, nhưng truy vấn không trả về dữ liệu</string>
+    <string name="jail_empty_device_title">Thiết bị và ứng dụng</string>
+    <string name="jail_empty_device">Android ID ảo. Chỉ thấy các ứng dụng hệ thống</string>
+    <string name="jail_hook_missing_title">Mã nhận dạng thiết bị và danh sách ứng dụng không bị ẩn</string>
+    <string name="jail_hook_missing">Bật phạm vi “Framework Hệ thống” cho Big Brother trong LSPosed rồi khởi động lại thiết bị.</string>
+    <string name="jail_gate_missing_title">Thông tin bộ nhớ và bộ xử lý không thể bị cách ly</string>
+    <string name="jail_gate_missing">Tính năng cách ly không khả dụng khi ứng dụng khởi động.</string>
+    <string name="jail_appops_missing_title">Danh bạ, vị trí, máy ảnh và nhiều thứ khác không bị cách ly</string>
+    <string name="jail_appops_missing">Thành phần Big Brother dùng để hạn chế các mục này hiện không chạy. Thành phần này sẽ tự khởi động lại.</string>
+
+    <string name="jail_isolated">%1$s bị cách ly</string>
+    <string name="jail_undo">Hoàn tác</string>
+    <string name="jail_failed">Không thay đổi: %1$s</string>
+    <string name="jail_isolated_partly">%1$s bị cách ly. Không thể cách ly %2$s</string>
+    <plurals name="jail_isolated_partly_count">
+        <item quantity="other">%1$s bị cách ly. Không thể cách ly %2$d ứng dụng</item>
+    </plurals>
+    <string name="jail_not_isolated">Không thể cách ly %1$s: %2$s</string>
+    <plurals name="jail_not_isolated_count">
+        <item quantity="other">Không cách ly được %1$d ứng dụng: %2$s</item>
+    </plurals>
+    <string name="jail_not_released">%1$s vẫn ở trong nhà tù: %2$s</string>
+    <plurals name="jail_not_released_count">
+        <item quantity="other">%1$d ứng dụng vẫn ở trong nhà tù: %2$s</item>
+    </plurals>
+
+    <string name="jail_add_search">Tìm kiếm ứng dụng</string>
+    <plurals name="jail_add_confirm">
+        <item quantity="other">Cách ly %d ứng dụng</item>
+    </plurals>
+    <string name="jail_add_confirm_none">Cách ly</string>
+    <string name="jail_add_restart">Các ứng dụng đang chạy sẽ bị đóng và khởi động lại.</string>
+    <string name="jail_add_empty">Không có ứng dụng nào để thêm</string>
+    <string name="jail_close">Đóng</string>
+
+    <string name="jail_release">Kết thúc cách ly</string>
+    <string name="jail_records">Nhật ký truy cập</string>
+    <string name="jail_section_items">Cách ly</string>
+    <string name="jail_items_summary">Các mục đang bật cung cấp dữ liệu trống, dữ liệu ảo hoặc bộ nhớ cách ly. Các mục đã tắt tuân theo quy tắc của hệ thống.</string>
+    <string name="jail_reset">Sử dụng cài đặt chung</string>
+    <plurals name="jail_more_items">
+        <item quantity="other">%d mục nữa ứng dụng không yêu cầu</item>
+    </plurals>
+    <string name="jail_fewer_items">Hiển thị ít hơn</string>
+    <string name="jail_restart_note">Bật một mục hoặc thay đổi thông tin bộ nhớ hoặc bộ xử lý sẽ khởi động lại ứng dụng.</string>
+    <string name="jail_custom">tùy chỉnh</string>
+    <string name="jail_choices_shown">Đã mở rộng</string>
+    <string name="jail_choices_hidden">Đã thu gọn</string>
+    <string name="jail_show_choices">Hiển thị lựa chọn</string>
+    <string name="jail_hide_choices">Ẩn lựa chọn</string>
+    <string name="jail_not_in_effect_hook">Không có hiệu lực: bật “Framework Hệ thống” trong LSPosed rồi khởi động lại</string>
+    <string name="jail_hook_unavailable">Không dùng được các hạn chế của “Framework Hệ thống”</string>
+    <string name="jail_hook_incompatible">Không được hỗ trợ trên phiên bản Android này</string>
+    <string name="jail_hook_degraded">Các hạn chế đã ngừng hoạt động. Hãy khởi động lại thiết bị.</string>
+    <string name="jail_hook_status_unknown">Không rõ trạng thái của các hạn chế trong “Framework Hệ thống”.</string>
+    <string name="jail_not_in_effect_mounts">Không có hiệu lực: tính năng cách ly bộ nhớ không chạy</string>
+    <string name="jail_mount_start_failed">Không thể tạm giữ ứng dụng khi khởi động.</string>
+    <string name="jail_mount_setup_failed">Không thể áp dụng cách ly khi khởi động.</string>
+    <string name="jail_mount_timed_out">Đã hết thời gian cách ly khi khởi động.</string>
+    <string name="jail_mount_launch_refused">%1$s Ứng dụng không thể khởi động khi chế độ cách ly này đang bật. Để ứng dụng có thể khởi động, hãy tắt các mục bị ảnh hưởng hoặc đưa ứng dụng ra khỏi nhà tù.</string>
+    <string name="jail_checking_app_ops">Đang kiểm tra hạn chế của Android…</string>
+    <string name="jail_app_ops_unknown">Không xác minh được trạng thái hạn chế của Android.</string>
+    <string name="jail_not_in_effect_app_ops">Hạn chế không khả dụng. Ứng dụng có thể vẫn truy cập được dữ liệu.</string>
+
+    <string name="jail_settings_subtitle">Dành cho các ứng dụng bị cách ly không có cài đặt riêng</string>
+    <string name="jail_auto_isolate">Cách ly các ứng dụng mới cài đặt</string>
+    <string name="jail_auto_isolate_summary">Sử dụng các cài đặt bên dưới để cài đặt trong tương lai</string>
+    <string name="jail_group_files">Tệp</string>
+    <string name="jail_group_personal">Dữ liệu cá nhân</string>
+    <string name="jail_group_sensors">Vị trí và cảm biến</string>
+    <string name="jail_group_device">Thiết bị và ứng dụng</string>
+    <string name="jail_section_status">Trạng thái</string>
+    <string name="jail_status_title">Thành phần</string>
+    <string name="jail_status_ok">Cách ly bộ nhớ, hook “Framework Hệ thống” và tính năng lọc mạng đang có hiệu lực</string>
+    <string name="jail_status_network_missing">Lọc mạng không khả dụng trên kernel này</string>
+    <string name="jail_status_checking">Đang kiểm tra…</string>
+    <string name="jail_status_hook_missing">Hook “Framework Hệ thống” chưa được tải</string>
+    <string name="jail_status_gate_missing">Cách ly bộ nhớ không khả dụng</string>
+    <string name="jail_status_appops_missing">Hạn chế đối với danh bạ, vị trí và các dữ liệu khác không có hiệu lực</string>
+    <string name="jail_status_new_apps_not_held">Ứng dụng mới có thể khởi động trước khi cách ly</string>
+    <plurals name="jail_status_new_apps_held">
+        <item quantity="other">%d ứng dụng mới cài chưa được cách ly. Các ứng dụng này đang bị chặn khởi động</item>
+    </plurals>
+    <plurals name="jail_status_new_apps_failed">
+        <item quantity="other">Không thể cách ly %d ứng dụng mới. Các ứng dụng này có thể khởi động khi chưa được cách ly.</item>
+    </plurals>
+    <plurals name="jail_status_new_apps_pending">
+        <item quantity="other">%d ứng dụng mới cài chưa được cách ly</item>
+    </plurals>
+    <string name="jail_release_all">Kết thúc cách ly cho tất cả</string>
+    <string name="jail_release_all_summary">Các tệp trong bộ lưu trữ biệt lập được lưu giữ</string>
+    <string name="jail_release_all_title">Kết thúc cách ly cho tất cả?</string>
+    <plurals name="jail_release_all_body">
+        <item quantity="other">%d ứng dụng lấy lại dữ liệu thực và được khởi động lại. Các tệp trong bộ lưu trữ biệt lập được lưu giữ.</item>
+    </plurals>
+    <plurals name="jail_release_all_left">
+        <item quantity="other">%d ứng dụng vẫn ở trong nhà tù. Hãy thử lại.</item>
+    </plurals>
+    <string name="jail_cancel">Hủy bỏ</string>
+
+    <string name="jail_item_storage">Tệp và nội dung nghe nhìn</string>
+    <string name="jail_item_storage_on">Bộ nhớ cách ly</string>
+    <string name="jail_item_storage_on_detail">Ứng dụng có bộ nhớ riêng, ban đầu để trống. Tệp do ứng dụng lưu sẽ nằm ở đó. Ứng dụng không thấy ảnh, tệp tải xuống và tài liệu thực. Tệp được chọn qua trình chọn tệp của hệ thống chỉ truy cập được cho lần sử dụng đó.</string>
+    <string name="jail_item_cpu_info">Thông tin bộ xử lý</string>
+    <string name="jail_item_cpu_info_on">Mô hình chip ẩn</string>
+    <string name="jail_item_cpu_info_on_detail">Số lượng lõi và tập lệnh vẫn giữ nguyên; mô hình chip và các mã nhận dạng khác sẽ bị xóa.</string>
+    <string name="jail_item_contacts">Danh bạ</string>
+    <string name="jail_item_contacts_on">Danh sách trống</string>
+    <string name="jail_item_contacts_on_detail">Quyền hiển thị là đã cấp, nhưng truy vấn danh bạ không trả về dữ liệu.</string>
+    <string name="jail_item_messages">Tin nhắn và nhật ký cuộc gọi</string>
+    <string name="jail_item_messages_on">Danh sách trống</string>
+    <string name="jail_item_messages_on_detail">Quyền hiển thị là đã cấp, nhưng truy vấn tin nhắn và nhật ký cuộc gọi không trả về dữ liệu.</string>
+    <string name="jail_item_calendar">Lịch</string>
+    <string name="jail_item_calendar_on">lịch trống</string>
+    <string name="jail_item_calendar_on_detail">Quyền hiển thị là đã cấp, nhưng truy vấn lịch không trả về dữ liệu.</string>
+    <string name="jail_item_clipboard_accounts">Bảng nhớ tạm và tài khoản</string>
+    <string name="jail_item_clipboard_accounts_on">trống</string>
+    <string name="jail_item_clipboard_accounts_on_detail">Bảng nhớ tạm và danh sách tài khoản đều trống.</string>
+    <string name="jail_item_location">Vị trí</string>
+    <string name="jail_item_location_on">Không có vị trí</string>
+    <string name="jail_item_location_on_detail">Quyền hiển thị là đã cấp, nhưng không có dữ liệu vị trí.</string>
+    <string name="jail_item_camera">Camera</string>
+    <string name="jail_item_camera_on">Không có sẵn</string>
+    <string name="jail_item_camera_on_detail">Quyền hiển thị là đã cấp, nhưng không có hình ảnh từ camera.</string>
+    <string name="jail_item_microphone">Micrô</string>
+    <string name="jail_item_microphone_on">Không có âm thanh</string>
+    <string name="jail_item_microphone_on_detail">Quyền hiển thị là đã cấp, nhưng bản ghi âm không có tiếng.</string>
+    <string name="jail_item_body_sensors">Cảm biến cơ thể và hoạt động thể chất</string>
+    <string name="jail_item_body_sensors_on">Không có dữ liệu</string>
+    <string name="jail_item_body_sensors_on_detail">Nhịp tim, số bước và hoạt động thể chất không có sẵn.</string>
+    <string name="jail_item_device_ids">Giá trị nhận dạng thiết bị</string>
+    <string name="jail_item_device_ids_on">ID ảo</string>
+    <string name="jail_item_device_ids_on_detail">Ứng dụng nhận một Android ID ảo cố định riêng. Không đọc được mã nhận dạng quảng cáo, số điện thoại và trạng thái điện thoại.</string>
+    <string name="jail_item_installed_apps">Ứng dụng đã cài đặt</string>
+    <string name="jail_item_installed_apps_on">Chỉ ứng dụng hệ thống</string>
+    <string name="jail_item_installed_apps_on_detail">Danh sách ứng dụng đã cài đặt chỉ hiển thị ứng dụng hệ thống và chính ứng dụng đó. Không thể đọc số liệu sử dụng.</string>
+    <string name="jail_item_nearby_devices">Thiết bị ở gần</string>
+    <string name="jail_item_nearby_devices_on">Không tìm thấy</string>
+    <string name="jail_item_nearby_devices_on_detail">Quét Bluetooth và Wi-Fi không trả lại kết quả gì.</string>
+    <string name="jail_item_notification_content">Nội dung thông báo</string>
+    <string name="jail_item_notification_content_on">Không có quyền truy cập</string>
+    <string name="jail_item_notification_content_on_detail">Ứng dụng không thể đọc thông báo của ứng dụng khác. Thông báo của chính ứng dụng vẫn hiển thị. Quyền truy cập được khôi phục khi kết thúc cách ly.</string>
+    <string name="jail_item_screen_content">Nội dung màn hình</string>
+    <string name="jail_item_screen_content_on">Không có quyền truy cập</string>
+    <string name="jail_item_screen_content_on_detail">Dịch vụ hỗ trợ tiếp cận của ứng dụng đã tắt. Ứng dụng không thể đọc hay thao tác với nội dung trên màn hình. Quyền truy cập được khôi phục khi kết thúc cách ly.</string>
+
+    <string name="jail_mode_coarse">Vị trí ước chừng</string>
+    <string name="jail_mode_coarse_detail">Vị trí chính xác đã tắt; chỉ có một vị trí gần đúng có sẵn.</string>
+    <string name="jail_mode_foreground">Chỉ khi dùng ứng dụng</string>
+    <string name="jail_mode_foreground_detail">Khả dụng khi ứng dụng đang được sử dụng, không phải ở chế độ nền.</string>
+    <string name="jail_mode_off">Dữ liệu thực</string>
+    <string name="jail_mode_off_detail">Ứng dụng nhận được những gì hệ thống cung cấp cho nó.</string>
+    <string name="jail_mode_global">Sử dụng cài đặt chung</string>
+    <string name="jail_mode_global_detail">Bây giờ: %1$s</string>
+    <string name="jail_list_separator">", "</string>
+    <string name="jail_select">Chọn một ứng dụng bị cách ly hoặc cài đặt chung</string>
+
+    <string name="jail_summary_no_network">Không có mạng</string>
+    <string name="jail_summary_recording">Đang ghi nhật ký kết nối</string>
+    <string name="jail_summary_separator">" · "</string>
+
+    <string name="jail_section_network">Mạng</string>
+    <string name="jail_network_access">Truy cập mạng</string>
+    <string name="jail_network_allowed">Được phép</string>
+    <string name="jail_network_allowed_detail">Kết nối khi hệ thống cho phép.</string>
+    <string name="jail_network_blocked">Không có mạng</string>
+    <string name="jail_network_blocked_detail">Các kết nối và truy vấn tên thất bại ngay. Kết nối nội bộ trên thiết bị vẫn hoạt động. Ứng dụng không khởi động lại.</string>
+    <string name="jail_network_record">Ghi lại kết nối</string>
+    <string name="jail_network_record_summary">Tên miền, địa chỉ và cổng mà nó kết nối tới; giữ trong 30 ngày</string>
+    <string name="jail_network_recording_since">Ghi nhật ký từ %1$s</string>
+    <string name="jail_network_activity">Hoạt động mạng</string>
+    <plurals name="jail_network_activity_summary">
+        <item quantity="other">%1$d điểm đến trong 24 giờ</item>
+    </plurals>
+    <plurals name="jail_network_blocked_count">
+        <item quantity="other">%1$d bị chặn</item>
+    </plurals>
+    <string name="jail_network_name_rules_not_in_effect">Quy tắc tên miền đã lưu có thể không được áp dụng đầy đủ</string>
+    <string name="jail_network_recording_unavailable">Ghi kết nối không có sẵn</string>
+    <string name="jail_network_no_permission">Ứng dụng không yêu cầu quyền truy cập mạng</string>
+    <string name="jail_not_in_effect_packet_filter">Lọc mạng không khả dụng</string>
+    <string name="jail_not_in_effect_resolver">Có hiệu lực một phần: truy vấn tên miền không bị chặn</string>
+    <string name="jail_network_global_note">Dành cho các ứng dụng bị cách ly không có cài đặt riêng. Không có mạng, kết nối sẽ thất bại ngay lập tức; ứng dụng không được khởi động lại.</string>
+
+    <string name="jail_net_subtitle_recording">%1$s · Đang ghi nhật ký</string>
+    <string name="jail_net_subtitle_stopped">%1$s · Không ghi nhật ký</string>
+    <plurals name="jail_net_destinations">
+        <item quantity="other">đích đến</item>
+    </plurals>
+    <plurals name="jail_net_facts">
+        <item quantity="other">%1$s kết nối · đã nhận %2$s · đã gửi %3$s</item>
+    </plurals>
+    <plurals name="jail_net_facts_counts">
+        <item quantity="other">%1$s kết nối · từ chối %2$s</item>
+    </plurals>
+    <string name="jail_net_choose_period">Chọn một khoảng thời gian</string>
+    <string name="jail_net_all_periods">Mọi khoảng thời gian</string>
+    <string name="jail_net_legend_connected">Đã kết nối</string>
+    <string name="jail_net_legend_refused">Bị từ chối</string>
+    <string name="jail_net_now">bây giờ</string>
+    <string name="jail_net_filter_blocked_count">%1$d bị chặn</string>
+    <string name="jail_net_sort_data">Nhiều dữ liệu nhất</string>
+    <string name="jail_net_sort_connections">Nhiều kết nối nhất</string>
+    <string name="jail_net_sort_recent">Gần đây nhất</string>
+    <string name="jail_net_sort_name">Tên</string>
+    <string name="jail_net_section_domains">Tên miền</string>
+    <string name="jail_net_section_addresses">địa chỉ IP</string>
+    <string name="jail_net_addresses_note">Kết nối trực tiếp, không qua phân giải tên của hệ thống.</string>
+    <string name="jail_net_port">Cổng %1$d</string>
+    <plurals name="jail_net_connections">
+        <item quantity="other">%1$d kết nối</item>
+    </plurals>
+    <plurals name="jail_net_refused">
+        <item quantity="other">bị từ chối %1$d lần</item>
+    </plurals>
+    <string name="jail_net_blocked">Bị chặn</string>
+    <string name="jail_net_show_all">Hiện tất cả (%1$d)</string>
+    <string name="jail_net_footer">Hồ sơ được lưu giữ trong 30 ngày. Việc chặn có hiệu lực ngay lập tức.</string>
+    <string name="jail_net_search">Tìm kiếm tên miền và địa chỉ</string>
+    <string name="jail_net_no_results">Không có điểm đến phù hợp</string>
+    <string name="jail_net_empty_title">Chưa có kết nối nào</string>
+    <string name="jail_net_empty_body">Đang ghi nhật ký từ %1$s. Các kết nối sẽ xuất hiện ở đây khi ứng dụng dùng mạng.</string>
+    <string name="jail_net_stopped">Đã dừng ghi nhật ký. Đang hiển thị nhật ký đến %1$s.</string>
+    <string name="jail_net_start">Ghi nhật ký</string>
+    <string name="jail_net_no_network_title">Không có mạng</string>
+    <string name="jail_net_no_network_body">Mọi kết nối đều bị từ chối. Do không tra cứu được tên, hầu hết đích đến hiển thị dưới dạng địa chỉ.</string>
+    <string name="jail_net_names_missing_title">Tên miền không có sẵn</string>
+    <string name="jail_net_names_missing_body">Không thể đọc truy vấn tên trên thiết bị này. Đích đến hiển thị dưới dạng địa chỉ.</string>
+    <string name="jail_net_traffic_missing">Lượng dữ liệu không có sẵn trên thiết bị này; số lượng kết nối được hiển thị.</string>
+    <string name="jail_net_more_options">Nhiều lựa chọn hơn</string>
+    <string name="jail_net_menu_block">Chặn một miền hoặc địa chỉ…</string>
+    <string name="jail_net_menu_stop">Dừng ghi nhật ký</string>
+    <string name="jail_net_menu_clear">Xóa nhật ký</string>
+    <string name="jail_net_clear_title">Xoá nhật ký mạng?</string>
+    <string name="jail_net_clear_body">Nhật ký mạng của %1$s sẽ bị xoá. Các đích đến đã chặn vẫn bị chặn.</string>
+    <string name="jail_net_clear">Xóa</string>
+
+    <string name="jail_net_block">Chặn</string>
+    <string name="jail_net_unblock">Bỏ chặn</string>
+    <string name="jail_net_block_cd">Chặn %1$s</string>
+    <string name="jail_net_blocked_message">%1$s bị chặn</string>
+    <string name="jail_net_unblocked_message">%1$s đã được bỏ chặn</string>
+    <string name="jail_net_manual">Đã thêm thủ công</string>
+    <string name="jail_net_no_attempts">Không có nỗ lực nào trong khoảng thời gian này</string>
+
+    <plurals name="jail_net_subdomains">
+        <item quantity="other">%1$d tên miền phụ</item>
+    </plurals>
+    <string name="jail_net_first_last">Đầu tiên %1$s · Gần nhất %2$s</string>
+    <string name="jail_net_block_site">Chặn %1$s và các tên miền phụ của nó</string>
+    <string name="jail_net_block_address">Chặn %1$s trên tất cả các cổng</string>
+    <string name="jail_net_hour_range">%1$s–%2$s</string>
+    <string name="jail_net_dated_hour_range">%1$s %2$s</string>
+    <string name="jail_net_size_bytes">%1$d B</string>
+    <string name="jail_net_size_kilobytes">%1$d KB</string>
+    <string name="jail_net_size_megabytes">%1$.1f MB</string>
+    <string name="jail_net_size_gigabytes">%1$.1f GB</string>
+    <string name="jail_net_sent">Đã gửi</string>
+    <string name="jail_net_received">Đã nhận</string>
+    <string name="jail_net_connections_label">Kết nối</string>
+    <string name="jail_net_hosts_header">Tên miền phụ</string>
+    <string name="jail_net_ports_header">Port</string>
+    <string name="jail_net_addresses_header">Địa chỉ</string>
+    <plurals name="jail_net_more">
+        <item quantity="other">%1$d cái nữa</item>
+    </plurals>
+    <string name="jail_net_shared">Tên miền này dùng chung địa chỉ với %1$s. Các tên miền đó cũng sẽ bị chặn.</string>
+    <string name="jail_net_own_resolver">Quy tắc không ảnh hưởng đến các kết nối do ứng dụng tự phân giải tên. Có thể chặn các kết nối này trong mục Địa chỉ IP.</string>
+
+    <string name="jail_net_add_title">Chặn một tên miền hoặc địa chỉ</string>
+    <string name="jail_net_add_label">Tên miền, địa chỉ IP hoặc địa chỉ: cổng</string>
+    <string name="jail_net_add_supporting">Quy tắc cho một tên miền cũng áp dụng với các tên miền phụ.</string>
+    <string name="jail_net_add_invalid">Không phải tên miền hoặc địa chỉ IP</string>
+</resources>

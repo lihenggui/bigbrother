@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="settings_title">Cài đặt</string>
+    <string name="section_recording">Ghi nhật ký</string>
+    <string name="section_display">Hiển thị</string>
+    <string name="section_about">Giới thiệu</string>
+    <string name="recording_active">Đang ghi nhật ký</string>
+    <string name="recording_unknown">Trạng thái ghi không xác định</string>
+    <string name="retention">Hồ sơ được lưu giữ trong 30 ngày</string>
+    <string name="coverage_title">Không được hỗ trợ trên thiết bị này</string>
+    <string name="feature_files">Đã mở tệp</string>
+    <string name="feature_exec">Thực thi lệnh</string>
+    <string name="feature_network">Kết nối mạng cục bộ</string>
+    <string name="feature_process">Truy cập bộ nhớ xử lý</string>
+    <string name="feature_netlink">Truy vấn Netlink</string>
+    <string name="feature_binder">Lệnh gọi dịch vụ hệ thống</string>
+    <string name="feature_appops">Mức sử dụng quyền</string>
+    <string name="remove_module">Xóa bản ghi</string>
+    <string name="remove_module_summary">Dừng ghi và xóa bản ghi</string>
+    <string name="remove_module_removing">Đang xóa bản ghi…</string>
+    <string name="remove_module_title">Xóa bản ghi?</string>
+    <string name="remove_module_body">Tính năng ghi nhật ký sẽ dừng và nhật ký sẽ bị xoá. Các ứng dụng trong nhà tù sẽ nhận lại dữ liệu thực và được khởi động lại. Có thể thiết lập lại tính năng ghi nhật ký trong mục Tổng quan.</string>
+    <string name="remove_module_confirm">Xóa</string>
+    <string name="cancel">Hủy bỏ</string>
+    <string name="module_in_manager">Đã cài dưới dạng mô-đun trong trình quản lý root</string>
+    <string name="module_in_manager_summary">Để xóa bản ghi, hãy tháo mô-đun ở đó và khởi động lại. Việc này sẽ xóa các bản ghi.</string>
+    <string name="module_in_manager_pending">Có hiệu lực sau lần khởi động lại tiếp theo</string>
+    <string name="lsposed_title">Mô-đun LSPosed</string>
+    <string name="lsposed_summary">Bật Big Brother trong LSPosed để ghi lại các lượt truy cập vào thư viện phương tiện, danh bạ, tin nhắn và lịch.</string>
+    <string name="setting_system_apps">Hiển thị ứng dụng hệ thống</string>
+    <string name="setting_system_apps_summary">Bị ẩn theo mặc định, cùng với các quy trình biệt lập không được truy tìm đến ứng dụng: đọc dữ liệu là một phần trong cách hoạt động của các thành phần hệ thống.</string>
+    <string name="theme">chủ đề</string>
+    <string name="theme_system">Theo hệ thống</string>
+    <string name="theme_light">Sáng</string>
+    <string name="theme_dark">Tối</string>
+    <string name="dynamic_color">Sử dụng màu sắc giấy dán tường</string>
+    <string name="dynamic_color_summary">Khi tắt, ứng dụng sẽ sử dụng màu sắc riêng</string>
+    <string name="version">Phiên bản</string>
+    <string name="source_code">Mã nguồn</string>
+    <string name="license">Giấy phép</string>
+    <string name="export_logs">Xuất nhật ký</string>
+    <string name="export_logs_summary">Nhật ký của ứng dụng và bản ghi để báo cáo lỗi</string>
+    <string name="export_logs_collecting">Đang thu thập nhật ký…</string>
+</resources>

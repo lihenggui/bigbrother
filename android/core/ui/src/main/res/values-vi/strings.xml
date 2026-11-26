@@ -1,0 +1,206 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="isolated_process_uid">Tiến trình cách ly (UID %d)</string>
+    <string name="back">Quay lại</string>
+    <string name="retry">Thử lại</string>
+    <string name="settings_write_failed">Không thể lưu cài đặt</string>
+    <string name="search">Tìm kiếm</string>
+    <string name="recording_stopped">Đã dừng ghi</string>
+    <string name="close_search">Đóng tìm kiếm</string>
+    <string name="clear_search">Xóa tìm kiếm</string>
+    <string name="no_matches">Không có kết quả phù hợp</string>
+
+    <string name="empty_title">Không có bản ghi nào trong khoảng thời gian này</string>
+    <string name="no_root_title">Cần có quyền truy cập root</string>
+    <string name="no_root_body">Cấp quyền root trong trình quản lý root (KernelSU, Magisk hoặc APatch), sau đó thử lại.</string>
+    <string name="no_module_title">Chưa thiết lập tính năng ghi nhật ký</string>
+    <string name="no_module_body">Thiết lập ghi nhật ký trong mục Tổng quan.</string>
+    <string name="old_module_title">Cập nhật chưa hoàn tất</string>
+    <string name="old_module_body">Tính năng này không dùng được cho đến khi cập nhật xong. Mở mục Tổng quan để hoàn tất cập nhật.</string>
+    <string name="error_title">Không tải được nhật ký truy cập</string>
+
+    <string name="topic_mac_address_title">Địa chỉ MAC</string>
+    <string name="topic_network_interfaces_title">Giao diện mạng</string>
+    <string name="topic_arp_table_title">bảng ARP</string>
+    <string name="topic_network_state_title">Trạng thái mạng</string>
+    <string name="topic_device_serial_title">Số sê-ri</string>
+    <string name="topic_soc_info_title">Chi tiết SoC</string>
+    <string name="topic_cpu_model_title">Mô hình bộ xử lý</string>
+    <string name="topic_kernel_version_title">Phiên bản hạt nhân</string>
+    <string name="topic_other_processes_title">Tiến trình khác</string>
+    <string name="topic_mounts_title">Hệ thống tệp đã gắn kết</string>
+    <string name="topic_kernel_modules_title">Mô-đun hạt nhân</string>
+    <string name="topic_selinux_state_title">Trạng thái SELinux</string>
+    <string name="topic_block_devices_title">Thiết bị khối</string>
+    <string name="topic_emulator_probe_title">Phát hiện trình mô phỏng</string>
+    <string name="topic_input_devices_title">Thiết bị đầu vào</string>
+    <string name="topic_battery_title">Trạng thái pin</string>
+    <string name="topic_root_check_title">Phát hiện root</string>
+    <string name="topic_app_probe_title">Kiểm tra ứng dụng đã cài đặt</string>
+    <string name="topic_system_properties_title">Thuộc tính hệ thống</string>
+    <string name="topic_installed_apps_title">Ứng dụng đã cài đặt</string>
+    <string name="topic_system_settings_title">Cài đặt hệ thống</string>
+    <string name="topic_shell_command_title">Lệnh shell</string>
+    <string name="topic_local_ports_title">Cổng cục bộ</string>
+    <string name="topic_local_network_title">Kết nối mạng cục bộ</string>
+    <string name="topic_device_discovery_title">Phát hiện thiết bị trên mạng cục bộ</string>
+    <string name="topic_process_memory_title">Bộ nhớ của các tiến trình khác</string>
+    <string name="topic_contacts_title">Danh bạ</string>
+    <string name="topic_call_log_title">Nhật ký cuộc gọi</string>
+    <string name="topic_messages_title">Tin nhắn văn bản</string>
+    <string name="topic_calendar_title">Lịch</string>
+    <string name="topic_sim_info_title">Thông tin về SIM và nhà mạng</string>
+    <string name="topic_clipboard_title">Bảng nhớ tạm</string>
+    <string name="topic_location_title">Vị trí</string>
+    <string name="topic_wifi_info_title">Thông tin kết nối và quét Wi-Fi</string>
+    <string name="topic_phone_identity_title">Số nhận dạng điện thoại và SIM</string>
+    <string name="topic_accounts_title">Tài khoản</string>
+    <string name="topic_running_apps_title">Ứng dụng đang chạy</string>
+    <string name="topic_usage_stats_title">Thống kê sử dụng ứng dụng</string>
+    <string name="topic_enabled_services_title">Các phương thức nhập liệu và dịch vụ trợ năng đã được kích hoạt</string>
+    <string name="topic_sensors_title">Cảm biến</string>
+    <string name="topic_android_id_title">Android ID</string>
+    <string name="topic_device_name_title">Tên thiết bị</string>
+    <string name="topic_camera_title">Camera</string>
+    <string name="topic_microphone_title">Micrô</string>
+
+    <string name="category_messages">Nhật ký cuộc gọi và tin nhắn SMS</string>
+    <string name="category_contacts">Danh bạ</string>
+    <string name="category_location">Vị trí</string>
+    <string name="category_sensors">Máy ảnh, micrô và cảm biến</string>
+    <string name="category_files">Tệp và nội dung nghe nhìn</string>
+    <string name="category_calendar">Lịch</string>
+    <string name="category_personal_info">Thông tin cá nhân</string>
+    <string name="category_app_activity">Hoạt động ứng dụng</string>
+    <string name="category_device_ids">Giá trị nhận dạng thiết bị</string>
+    <string name="category_network">Mạng và các thiết bị lân cận</string>
+    <string name="category_device_profile">Vân tay thiết bị</string>
+    <string name="category_environment">Phát hiện môi trường</string>
+
+    <string name="range_hour">Giờ trước</string>
+    <string name="range_day">24 giờ qua</string>
+    <string name="range_week">7 ngày qua</string>
+    <string name="range_all">Toàn bộ thời gian</string>
+
+    <string name="range_hour_short">Giờ</string>
+    <string name="range_day_short">Ngày</string>
+    <string name="range_week_short">Tuần</string>
+    <string name="range_all_short">Tất cả</string>
+
+    <string name="select_app">Chọn một ứng dụng để xem những gì nó đã truy cập</string>
+
+    <plurals name="summary_storage">
+        <item quantity="other">%d tệp</item>
+    </plurals>
+    <string name="summary_separator">", "</string>
+    <plurals name="summary_more">
+        <item quantity="other">%1$s và %2$d mục khác</item>
+    </plurals>
+    <string name="summary_media_library">Thư viện phương tiện</string>
+    <string name="summary_not_read">%s (chưa đọc)</string>
+    <string name="app_name_with_user">%1$s (người dùng %2$d)</string>
+    <plurals name="app_count">
+        <item quantity="other">%d ứng dụng</item>
+    </plurals>
+
+    <plurals name="clipboard_read">
+        <item quantity="other">Đã đọc %d lần</item>
+    </plurals>
+    <string name="clipboard_listens">Theo dõi thay đổi</string>
+    <plurals name="clipboard_written">
+        <item quantity="other">Đã viết %d lần</item>
+    </plurals>
+    <plurals name="clipboard_read_denied">
+        <item quantity="other">Đọc bị từ chối %d lần</item>
+    </plurals>
+    <plurals name="clipboard_write_denied">
+        <item quantity="other">Viết bị từ chối %d lần</item>
+    </plurals>
+    <string name="clipboard_read_short">Đọc %d×</string>
+    <string name="clipboard_listens_short">Theo dõi</string>
+    <string name="clipboard_written_short">Ghi %d×</string>
+    <string name="clipboard_read_denied_short">Đọc bị từ chối %d×</string>
+    <string name="clipboard_write_denied_short">Viết từ chối %d×</string>
+    <string name="clipboard_partly_denied">%1$s (từ chối %2$d lần)</string>
+
+    <string name="sensor_high_rate">%s (tần suất lấy mẫu cao)</string>
+    <plurals name="sensor_times">
+        <item quantity="other">%d lần</item>
+    </plurals>
+    <string name="sensor_times_short">%d×</string>
+    <string name="sensor_unknown">Cảm biến không xác định</string>
+    <string name="sensor_type_number">Loại cảm biến %s</string>
+    <string name="sensor_accelerometer">Gia tốc kế</string>
+    <string name="sensor_accelerometer_uncalibrated">Gia tốc kế (chưa hiệu chỉnh)</string>
+    <string name="sensor_accelerometer_limited_axes">Gia tốc kế (trục giới hạn)</string>
+    <string name="sensor_accelerometer_limited_axes_uncalibrated">Gia tốc kế (trục giới hạn, chưa hiệu chỉnh)</string>
+    <string name="sensor_gyroscope">Con quay hồi chuyển</string>
+    <string name="sensor_gyroscope_uncalibrated">Con quay hồi chuyển (chưa hiệu chỉnh)</string>
+    <string name="sensor_gyroscope_limited_axes">Con quay hồi chuyển (trục giới hạn)</string>
+    <string name="sensor_gyroscope_limited_axes_uncalibrated">Con quay hồi chuyển (trục giới hạn, chưa hiệu chỉnh)</string>
+    <string name="sensor_magnetic_field">Từ kế</string>
+    <string name="sensor_magnetic_field_uncalibrated">Từ kế (chưa hiệu chuẩn)</string>
+    <string name="sensor_orientation">định hướng</string>
+    <string name="sensor_light">Cảm biến ánh sáng</string>
+    <string name="sensor_proximity">Cảm biến tiệm cận</string>
+    <string name="sensor_pressure">phong vũ biểu</string>
+    <string name="sensor_relative_humidity">Cảm biến độ ẩm</string>
+    <string name="sensor_ambient_temperature">Nhiệt độ môi trường xung quanh</string>
+    <string name="sensor_gravity">Trọng lực</string>
+    <string name="sensor_linear_acceleration">Gia tốc tuyến tính</string>
+    <string name="sensor_rotation_vector">Vectơ xoay</string>
+    <string name="sensor_game_rotation_vector">Vectơ xoay trò chơi</string>
+    <string name="sensor_geomagnetic_rotation_vector">Vectơ quay địa từ</string>
+    <string name="sensor_significant_motion">Chuyển động đáng kể</string>
+    <string name="sensor_step_detector">Máy dò bước</string>
+    <string name="sensor_step_counter">bộ đếm bước</string>
+    <string name="sensor_heart_rate">Nhịp tim</string>
+    <string name="sensor_heart_beat">Nhịp tim</string>
+    <string name="sensor_device_orientation">Định hướng thiết bị</string>
+    <string name="sensor_pick_up_gesture">Cử chỉ nhấc thiết bị</string>
+    <string name="sensor_tilt_detector">Máy dò độ nghiêng</string>
+    <string name="sensor_hinge_angle">Góc bản lề</string>
+    <string name="sensor_low_latency_offbody_detect">Phát hiện khi tháo thiết bị</string>
+    <string name="sensor_stationary_detect">Phát hiện trạng thái đứng yên</string>
+    <string name="sensor_motion_detect">Phát hiện chuyển động</string>
+    <string name="sensor_pose_6dof">tư thế 6DoF</string>
+    <string name="sensor_head_tracker">Theo dõi đầu</string>
+    <string name="sensor_heading">Hướng</string>
+    <string name="command_failed">Hoạt động không thể hoàn thành.</string>
+    <string name="daemon_bad_response">Không thể đọc được phản hồi.</string>
+    <string name="database_busy">Cơ sở dữ liệu nhật ký đang bận.</string>
+    <string name="daemon_unavailable">Tính năng ghi nhật ký không chạy.</string>
+    <string name="destination_missing">Điểm đến không còn nữa.</string>
+    <string name="app_missing">Ứng dụng này không còn được cài đặt cho người dùng Android này nữa.</string>
+    <string name="timed_out">Đã hết thời gian hoạt động.</string>
+    <string name="invalid_period">Chọn khoảng thời gian ngắn hơn, không trống.</string>
+    <string name="module_version_unreadable">Phiên bản đã cài đặt không thể đọc được.</string>
+    <string name="unsupported_architecture">Tính năng ghi nhật ký không hỗ trợ bộ xử lý của thiết bị này.</string>
+    <string name="kernel_btf_missing">Hạt nhân thiếu hỗ trợ BTF. Yêu cầu GKI 5.10 hoặc mới hơn.</string>
+    <string name="kernel_too_old">Cần có kernel 5.10 hoặc mới hơn.</string>
+    <string name="module_archive_invalid">Không thể đọc được các tệp cần thiết để ghi từ gói ứng dụng. Cài đặt lại ứng dụng.</string>
+    <string name="database_incompatible">Phiên bản này không thể đọc các bản ghi hiện có.</string>
+    <string name="module_install_failed">Quá trình thiết lập chưa hoàn tất. Xuất nhật ký trong Cài đặt để báo cáo lỗi.</string>
+    <string name="module_update_failed">Hãy thử lại. Nếu vẫn thất bại, hãy xuất nhật ký trong Cài đặt để báo cáo lỗi.</string>
+    <string name="daemon_start_failed">Không thể bắt đầu ghi nhật ký.</string>
+    <string name="installed_apps_unavailable">Không thể đọc được các ứng dụng đã cài đặt.</string>
+    <string name="module_disabled">Mô-đun Big Brother đang tắt hoặc được đánh dấu để gỡ trong trình quản lý root. Hãy đổi chế độ cài đặt tại đó.</string>
+    <string name="module_remove_failed">Không được gỡ bỏ. Hãy thử lại.</string>
+    <string name="daemon_not_reporting">Nó đã được bắt đầu nhưng chưa ghi lại bất cứ điều gì. Nếu tình trạng này vẫn tiếp diễn, hãy xuất nhật ký trong Cài đặt để báo cáo lỗi.</string>
+    <string name="file_access_denied">Bộ nhớ chia sẻ không thể truy cập được. Kiểm tra xem quyền truy cập root có được cấp hay không.</string>
+    <string name="export_logs_failed">Nhật ký không thể được thu thập.</string>
+</resources>

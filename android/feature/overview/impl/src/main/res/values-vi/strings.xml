@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <plurals name="readers_label">
+        <item quantity="other">ứng dụng đọc tệp</item>
+    </plurals>
+    <string name="no_reads">Không có ứng dụng nào đọc tệp</string>
+    <plurals name="looked_only">
+        <item quantity="other">Thêm %d ứng dụng tìm kiếm tệp mà không đọc chúng</item>
+    </plurals>
+    <string name="more_count">+%d</string>
+    <string name="other_categories">Các quyền nhạy cảm khác</string>
+    <plurals name="category_count">
+        <item quantity="other">%d loại</item>
+    </plurals>
+
+    <plurals name="category_group_read_files">
+        <item quantity="other">%d ứng dụng đọc file</item>
+    </plurals>
+    <plurals name="category_group_looked_only">
+        <item quantity="other">%d ứng dụng chỉ tìm kiếm tệp</item>
+    </plurals>
+
+    <string name="status_stopped">Đã dừng ghi</string>
+    <string name="daemon_stopped">Lượt truy cập trong thời gian này không được ghi lại.</string>
+    <string name="daemon_starting">Đang bắt đầu ghi nhật ký…</string>
+    <string name="start_daemon">Bắt đầu ghi</string>
+    <string name="install_module">Thiết lập ghi nhật ký</string>
+    <string name="updating_module">Đang hoàn tất cập nhật…</string>
+    <string name="update_failed_title">Không thể hoàn tất cập nhật</string>
+    <string name="module_pending_reboot">Cần khởi động lại</string>
+    <string name="module_pending_reboot_body">Mô-đun đã cài đặt trong trình quản lý root sẽ có hiệu lực sau lần khởi động lại tiếp theo.</string>
+    <string name="installing_module">Đang thiết lập bản ghi…</string>
+    <string name="install_failed_title">Không thiết lập được tính năng ghi nhật ký</string>
+    <string name="setup_body">Big Brother cần quyền root để ghi nhật ký. Có thể thiết lập mà không cần khởi động lại.</string>
+    <string name="setup_pending_body">Mô-đun đã cài đặt trong trình quản lý root sẽ có hiệu lực sau lần khởi động lại tiếp theo. Cũng có thể thiết lập tính năng ghi nhật ký ngay mà không cần khởi động lại.</string>
+</resources>
