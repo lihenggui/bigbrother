@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <plurals name="readers_label">
+        <item quantity="other">個のアプリがファイルを読み取り</item>
+    </plurals>
+    <string name="no_reads">ファイルを読み取ったアプリはありません</string>
+    <plurals name="looked_only">
+        <item quantity="other">ほか%d個のアプリがファイルを探しましたが、読み取ってはいません</item>
+    </plurals>
+    <string name="more_count">+%d</string>
+    <string name="other_categories">その他の機密性の高い権限</string>
+    <plurals name="category_count">
+        <item quantity="other">%d種類</item>
+    </plurals>
+
+    <plurals name="category_group_read_files">
+        <item quantity="other">%d個のアプリがファイルを読み取り</item>
+    </plurals>
+    <plurals name="category_group_looked_only">
+        <item quantity="other">%d個のアプリがファイルを探しただけです</item>
+    </plurals>
+
+    <string name="status_stopped">記録停止中</string>
+    <string name="daemon_stopped">その間のアクセスは記録されません。</string>
+    <string name="daemon_starting">記録を開始しています…</string>
+    <string name="start_daemon">記録を開始</string>
+    <string name="install_module">記録をセットアップ</string>
+    <string name="updating_module">アップデートを完了しています…</string>
+    <string name="update_failed_title">アップデートを完了できませんでした</string>
+    <string name="module_pending_reboot">再起動が必要です</string>
+    <string name="module_pending_reboot_body">root管理アプリでインストールしたモジュールは、次回の再起動後に有効になります。</string>
+    <string name="installing_module">記録をセットアップ中…</string>
+    <string name="install_failed_title">記録を設定できませんでした</string>
+    <string name="setup_body">Big Brotherはrootアクセスで記録します。セットアップ時に再起動は不要です。</string>
+    <string name="setup_pending_body">root管理アプリでインストールしたモジュールは、次回の再起動後に有効になります。再起動せずに記録をセットアップすることもできます。</string>
+</resources>

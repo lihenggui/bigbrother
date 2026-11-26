@@ -1,0 +1,206 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="isolated_process_uid">隔離されたプロセス（UID %d)</string>
+    <string name="back">戻る</string>
+    <string name="retry">再試行</string>
+    <string name="settings_write_failed">設定を保存できませんでした</string>
+    <string name="search">検索</string>
+    <string name="recording_stopped">記録停止中</string>
+    <string name="close_search">検索を閉じる</string>
+    <string name="clear_search">検索をクリア</string>
+    <string name="no_matches">一致する項目はありません</string>
+
+    <string name="empty_title">この期間の記録はありません</string>
+    <string name="no_root_title">rootアクセスが必要です</string>
+    <string name="no_root_body">root管理アプリ（KernelSU、Magisk、APatchなど）でrootアクセスを許可してから、もう一度お試しください。</string>
+    <string name="no_module_title">記録が設定されていません</string>
+    <string name="no_module_body">「概要」で記録を設定してください。</string>
+    <string name="old_module_title">アップデートが完了していません</string>
+    <string name="old_module_body">アップデートが完了するまで利用できません。「概要」を開くとアップデートが完了します。</string>
+    <string name="error_title">記録を読み込めませんでした</string>
+
+    <string name="topic_mac_address_title">MACアドレス</string>
+    <string name="topic_network_interfaces_title">ネットワークインターフェース</string>
+    <string name="topic_arp_table_title">ARPテーブル</string>
+    <string name="topic_network_state_title">ネットワーク状態</string>
+    <string name="topic_device_serial_title">シリアル番号</string>
+    <string name="topic_soc_info_title">SoCの詳細</string>
+    <string name="topic_cpu_model_title">プロセッサーモデル</string>
+    <string name="topic_kernel_version_title">カーネルのバージョン</string>
+    <string name="topic_other_processes_title">他のプロセス</string>
+    <string name="topic_mounts_title">マウントされたファイルシステム</string>
+    <string name="topic_kernel_modules_title">カーネルモジュール</string>
+    <string name="topic_selinux_state_title">SELinuxの状態</string>
+    <string name="topic_block_devices_title">ブロックデバイス</string>
+    <string name="topic_emulator_probe_title">エミュレータの検出</string>
+    <string name="topic_input_devices_title">入力デバイス</string>
+    <string name="topic_battery_title">バッテリーの状態</string>
+    <string name="topic_root_check_title">rootの検出</string>
+    <string name="topic_app_probe_title">アプリのインストール確認</string>
+    <string name="topic_system_properties_title">システムプロパティ</string>
+    <string name="topic_installed_apps_title">インストール済みアプリ</string>
+    <string name="topic_system_settings_title">システム設定</string>
+    <string name="topic_shell_command_title">シェルコマンド</string>
+    <string name="topic_local_ports_title">ローカルポート</string>
+    <string name="topic_local_network_title">ローカルネットワーク接続</string>
+    <string name="topic_device_discovery_title">ローカルネットワーク上のデバイスの検出</string>
+    <string name="topic_process_memory_title">他のプロセスのメモリ</string>
+    <string name="topic_contacts_title">連絡先</string>
+    <string name="topic_call_log_title">通話履歴</string>
+    <string name="topic_messages_title">SMS</string>
+    <string name="topic_calendar_title">カレンダー</string>
+    <string name="topic_sim_info_title">SIMとキャリア情報</string>
+    <string name="topic_clipboard_title">クリップボード</string>
+    <string name="topic_location_title">位置情報</string>
+    <string name="topic_wifi_info_title">Wi-Fiスキャンと接続情報</string>
+    <string name="topic_phone_identity_title">電話機とSIMの識別子</string>
+    <string name="topic_accounts_title">アカウント</string>
+    <string name="topic_running_apps_title">実行中のアプリ</string>
+    <string name="topic_usage_stats_title">アプリの使用状況</string>
+    <string name="topic_enabled_services_title">有効な入力方法とユーザー補助サービス</string>
+    <string name="topic_sensors_title">センサー</string>
+    <string name="topic_android_id_title">Android ID</string>
+    <string name="topic_device_name_title">デバイス名</string>
+    <string name="topic_camera_title">カメラ</string>
+    <string name="topic_microphone_title">マイク</string>
+
+    <string name="category_messages">SMSと通話履歴</string>
+    <string name="category_contacts">連絡先</string>
+    <string name="category_location">位置情報</string>
+    <string name="category_sensors">カメラ、マイク、センサー</string>
+    <string name="category_files">ファイルとメディア</string>
+    <string name="category_calendar">カレンダー</string>
+    <string name="category_personal_info">個人情報</string>
+    <string name="category_app_activity">アプリのアクティビティ</string>
+    <string name="category_device_ids">デバイス識別子</string>
+    <string name="category_network">ネットワークと近くのデバイス</string>
+    <string name="category_device_profile">デバイスフィンガープリント</string>
+    <string name="category_environment">環境検出</string>
+
+    <string name="range_hour">過去1時間</string>
+    <string name="range_day">過去24時間</string>
+    <string name="range_week">過去7日間</string>
+    <string name="range_all">全期間</string>
+
+    <string name="range_hour_short">時間</string>
+    <string name="range_day_short">日</string>
+    <string name="range_week_short">週</string>
+    <string name="range_all_short">すべて</string>
+
+    <string name="select_app">アプリを選択して、アクセスしたデータを確認してください</string>
+
+    <plurals name="summary_storage">
+        <item quantity="other">ファイル%d件</item>
+    </plurals>
+    <string name="summary_separator">"、"</string>
+    <plurals name="summary_more">
+        <item quantity="other">%1$sほか%2$d件</item>
+    </plurals>
+    <string name="summary_media_library">メディアライブラリ</string>
+    <string name="summary_not_read">%s（ファイルの読み取りなし）</string>
+    <string name="app_name_with_user">%1$s（ユーザー%2$d）</string>
+    <plurals name="app_count">
+        <item quantity="other">%d個のアプリ</item>
+    </plurals>
+
+    <plurals name="clipboard_read">
+        <item quantity="other">%d回読み取り</item>
+    </plurals>
+    <string name="clipboard_listens">変更を監視</string>
+    <plurals name="clipboard_written">
+        <item quantity="other">%d回書き込み</item>
+    </plurals>
+    <plurals name="clipboard_read_denied">
+        <item quantity="other">読み取りを%d回拒否</item>
+    </plurals>
+    <plurals name="clipboard_write_denied">
+        <item quantity="other">書き込みを%d回拒否</item>
+    </plurals>
+    <string name="clipboard_read_short">読み取り%d回</string>
+    <string name="clipboard_listens_short">監視</string>
+    <string name="clipboard_written_short">書き込み%d回</string>
+    <string name="clipboard_read_denied_short">読み取り拒否%d×</string>
+    <string name="clipboard_write_denied_short">書き込み拒否%d×</string>
+    <string name="clipboard_partly_denied">%1$s（%2$d回拒否）</string>
+
+    <string name="sensor_high_rate">%s（高頻度）</string>
+    <plurals name="sensor_times">
+        <item quantity="other">%d回</item>
+    </plurals>
+    <string name="sensor_times_short">%d×</string>
+    <string name="sensor_unknown">不明なセンサー</string>
+    <string name="sensor_type_number">センサーの種類%s</string>
+    <string name="sensor_accelerometer">加速度計</string>
+    <string name="sensor_accelerometer_uncalibrated">加速度計（未校正）</string>
+    <string name="sensor_accelerometer_limited_axes">加速度計（軸制限あり）</string>
+    <string name="sensor_accelerometer_limited_axes_uncalibrated">加速度計（軸制限あり、未校正）</string>
+    <string name="sensor_gyroscope">ジャイロスコープ</string>
+    <string name="sensor_gyroscope_uncalibrated">ジャイロスコープ（未校正)</string>
+    <string name="sensor_gyroscope_limited_axes">ジャイロスコープ（軸制限あり）</string>
+    <string name="sensor_gyroscope_limited_axes_uncalibrated">ジャイロスコープ（軸制限あり、未校正）</string>
+    <string name="sensor_magnetic_field">磁力計</string>
+    <string name="sensor_magnetic_field_uncalibrated">磁力計（未校正)</string>
+    <string name="sensor_orientation">向き</string>
+    <string name="sensor_light">光センサー</string>
+    <string name="sensor_proximity">近接センサー</string>
+    <string name="sensor_pressure">気圧計</string>
+    <string name="sensor_relative_humidity">湿度センサー</string>
+    <string name="sensor_ambient_temperature">周囲温度</string>
+    <string name="sensor_gravity">重力</string>
+    <string name="sensor_linear_acceleration">直線加速度</string>
+    <string name="sensor_rotation_vector">回転ベクトル</string>
+    <string name="sensor_game_rotation_vector">ゲーム回転ベクトル</string>
+    <string name="sensor_geomagnetic_rotation_vector">地磁気回転ベクトル</string>
+    <string name="sensor_significant_motion">大きな動きの検出</string>
+    <string name="sensor_step_detector">歩行検出</string>
+    <string name="sensor_step_counter">ステップカウンター</string>
+    <string name="sensor_heart_rate">心拍数</string>
+    <string name="sensor_heart_beat">ハートビート</string>
+    <string name="sensor_device_orientation">デバイスの向き</string>
+    <string name="sensor_pick_up_gesture">持ち上げジェスチャー</string>
+    <string name="sensor_tilt_detector">傾き検出器</string>
+    <string name="sensor_hinge_angle">ヒンジ角度</string>
+    <string name="sensor_low_latency_offbody_detect">装着解除の検出</string>
+    <string name="sensor_stationary_detect">静止検出</string>
+    <string name="sensor_motion_detect">動き検出</string>
+    <string name="sensor_pose_6dof">6DoFポーズ</string>
+    <string name="sensor_head_tracker">ヘッドトラッカー</string>
+    <string name="sensor_heading">方位</string>
+    <string name="command_failed">操作を完了できませんでした。</string>
+    <string name="daemon_bad_response">応答を読み取れませんでした。</string>
+    <string name="database_busy">記録データベースは使用中です。</string>
+    <string name="daemon_unavailable">記録は動作していません。</string>
+    <string name="destination_missing">この接続先は利用できなくなりました。</string>
+    <string name="app_missing">このAndroidユーザーにはアプリがインストールされていません。</string>
+    <string name="timed_out">操作がタイムアウトになりました。</string>
+    <string name="invalid_period">現在より短く、記録がある期間を選択してください。</string>
+    <string name="module_version_unreadable">インストールされているバージョンを読み取れませんでした。</string>
+    <string name="unsupported_architecture">このデバイスのプロセッサでは記録できません。</string>
+    <string name="kernel_btf_missing">カーネルがBTFに対応していません。GKI 5.10以降が必要です。</string>
+    <string name="kernel_too_old">カーネル5.10以降が必要です。</string>
+    <string name="module_archive_invalid">アプリパッケージから記録に必要なファイルを読み取れませんでした。アプリを再インストールしてください。</string>
+    <string name="database_incompatible">このバージョンでは既存の記録を読み取れません。</string>
+    <string name="module_install_failed">セットアップが完了しませんでした。不具合を報告するには、「設定」からログをエクスポートしてください。</string>
+    <string name="module_update_failed">もう一度お試しください。再度失敗する場合は、不具合報告用のログを「設定」からエクスポートしてください。</string>
+    <string name="daemon_start_failed">記録を開始できませんでした。</string>
+    <string name="installed_apps_unavailable">インストールされているアプリを読み取れませんでした。</string>
+    <string name="module_disabled">Big Brotherモジュールがroot管理アプリで無効になっているか、削除予定です。root管理アプリで設定を変更してください。</string>
+    <string name="module_remove_failed">削除されていません。もう一度やり直してください。</string>
+    <string name="daemon_not_reporting">記録機能は起動しましたが、まだ何も記録されていません。この状態が続く場合は、不具合報告用のログを「設定」からエクスポートしてください。</string>
+    <string name="file_access_denied">共有ストレージにアクセスできません。rootアクセスが許可されていることを確認してください。</string>
+    <string name="export_logs_failed">ログを収集できませんでした。</string>
+</resources>

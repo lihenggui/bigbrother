@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="module_description">アプリによるファイルへのアクセスと、Androidのコンテンツプロバイダ経由の個人データへの問い合わせを記録します。監獄では、Android ID、広告ID、他のアプリの表示範囲、ファイルへのアクセス許可を管理できます。</string>
+    <string name="nav_overview">概要</string>
+    <string name="nav_apps">アプリ</string>
+    <string name="nav_timeline">タイムライン</string>
+    <string name="nav_jail">監獄</string>
+
+    <string name="guide_access_title">個人データへのアクセスを確認</string>
+    <string name="guide_access_body">Big Brotherは、各アプリがファイル、位置情報、クリップボード、デバイス識別子のどれをいつ読み取ったかを記録します。記録はこのデバイスにのみ保存されます。</string>
+    <string name="guide_timeline_title">タイムラインを確認</string>
+    <string name="guide_timeline_body">タイムラインでは、アクセス記録を時間帯とアプリごとにまとめて表示します。詳しくは、記録を開いてください。</string>
+    <string name="guide_jail_title">アプリを選んで隔離</string>
+    <string name="guide_jail_body">監獄で隔離したアプリには、専用ストレージ、空のクリップボード、仮想デバイスIDが割り当てられます。各項目は個別に変更できます。</string>
+    <string name="guide_skip">スキップ</string>
+    <string name="guide_next">次へ</string>
+    <string name="guide_back">前のページへ</string>
+    <string name="guide_start">開始</string>
+    <string name="guide_progress">%2$dページ中%1$dページ</string>
+    <string name="guide_guard_description">例：ボディガードが4つのアプリを確認し、それぞれが読み取ったデータを記録します。</string>
+    <string name="guide_timeline_description">タイムラインの例：「天気」「ショップ」「チャット」「ライト」がそれぞれ読み取ったデータ。</string>
+    <string name="guide_jail_description">例：「天気」アプリを監獄で隔離しています。クリップボードは空で、仮想デバイスIDと隔離ストレージが使われます。</string>
+    <string name="guide_weather">天気</string>
+    <string name="guide_shop">ショップ</string>
+    <string name="guide_chat">チャット</string>
+    <string name="guide_flashlight">ライト</string>
+    <string name="guide_location">位置情報</string>
+    <string name="guide_clipboard">クリップボード</string>
+    <string name="guide_files">ファイル</string>
+    <string name="guide_device_id">デバイスID</string>
+    <string name="guide_isolated_value">%1$s：%2$s</string>
+</resources>

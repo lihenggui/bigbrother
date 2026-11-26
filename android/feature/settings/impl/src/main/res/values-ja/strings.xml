@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="settings_title">設定</string>
+    <string name="section_recording">記録</string>
+    <string name="section_display">表示</string>
+    <string name="section_about">アプリについて</string>
+    <string name="recording_active">記録中</string>
+    <string name="recording_unknown">記録状態不明</string>
+    <string name="retention">記録は30日間保存されます</string>
+    <string name="coverage_title">このデバイスではサポートされていません</string>
+    <string name="feature_files">ファイルを開く操作</string>
+    <string name="feature_exec">コマンドの実行</string>
+    <string name="feature_network">ローカルネットワーク接続</string>
+    <string name="feature_process">プロセスメモリアクセス</string>
+    <string name="feature_netlink">Netlinkへの問い合わせ</string>
+    <string name="feature_binder">システムサービスの呼び出し</string>
+    <string name="feature_appops">権限の使用状況</string>
+    <string name="remove_module">記録機能を削除</string>
+    <string name="remove_module_summary">記録を停止し、保存済みの記録を削除します</string>
+    <string name="remove_module_removing">記録を削除中…</string>
+    <string name="remove_module_title">記録機能を削除しますか？</string>
+    <string name="remove_module_body">記録が停止し、保存済みの記録が削除されます。監獄に入っているアプリは実際のデータを再び受け取るようになり、再起動されます。記録は「概要」から再設定できます。</string>
+    <string name="remove_module_confirm">削除</string>
+    <string name="cancel">キャンセル</string>
+    <string name="module_in_manager">root管理アプリでモジュールとしてインストール済み</string>
+    <string name="module_in_manager_summary">記録機能を削除するには、root管理アプリでモジュールを削除し、デバイスを再起動してください。保存済みの記録も削除されます。</string>
+    <string name="module_in_manager_pending">次回の再起動後に有効になります</string>
+    <string name="lsposed_title">LSPosedモジュール</string>
+    <string name="lsposed_summary">メディアライブラリ、連絡先、メッセージ、カレンダーへのアクセスを記録するには、LSPosedでBig Brotherを有効にしてください。</string>
+    <string name="setting_system_apps">システムアプリを表示</string>
+    <string name="setting_system_apps_summary">システムアプリとアプリを特定できない分離プロセスはデフォルトで非表示です。データの読み取りはシステムの動作の一部です。</string>
+    <string name="theme">テーマ</string>
+    <string name="theme_system">システム設定に合わせる</string>
+    <string name="theme_light">ライト</string>
+    <string name="theme_dark">ダーク</string>
+    <string name="dynamic_color">壁紙の色を使用</string>
+    <string name="dynamic_color_summary">オフの場合、アプリは独自の色を使用します</string>
+    <string name="version">バージョン</string>
+    <string name="source_code">ソースコード</string>
+    <string name="license">ライセンス</string>
+    <string name="export_logs">ログをエクスポート</string>
+    <string name="export_logs_summary">バグレポート用のアプリと記録のログ</string>
+    <string name="export_logs_collecting">ログを収集しています…</string>
+</resources>
