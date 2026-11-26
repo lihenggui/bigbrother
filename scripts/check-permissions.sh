@@ -58,9 +58,9 @@ BBD='$([ -e /data/adb/modules/big_brother/bin/bbd ] && echo /data/adb/modules/bi
 MATRIX=testdata/permissions/matrix.tsv
 # The app ops helper, as its command line names it. The brackets keep the
 # pattern from matching the shell that runs pgrep with it.
-HELPER='catalog[.]AppOpsGuard'
+HELPER='catalog[.]FrameworkHelper'
 # How long the helper takes to look after a reported change (SETTLE_MS in
-# AppOpsGuard.kt), with room to spare.
+# FrameworkAppOps.kt), with room to spare.
 SETTLE=3
 # Every item of the sandbox (`bbd/src/sandbox/items.rs`), each set to on,
 # or back to the global settings.
@@ -102,6 +102,7 @@ as_shell() {
     fi
 }
 
+# shellcheck disable=SC1091
 source scripts/canary-runner.sh
 
 # What a case's subject is: the permissions pm and settings steps grant,
@@ -325,6 +326,8 @@ run_canary() {
         as_shell cmd location providers set-test-provider-location gps --location 52.52,13.405 --accuracy 5
     fi
     launch_and_wait_for_canary 90 --ez personal_data true --es ops "android:camera" || return 1
+    # The sourced canary runner sets this after a successful launch.
+    # shellcheck disable=SC2154
     view="$canary_view"
     [[ "$subject" != camera ]] || key=ops
     if [[ -z "$(seen "$key")" ]]; then
@@ -338,6 +341,33 @@ seen() { sed -n "s/^$1=//p" <<<"$view" | awk 'NR == 1'; }
 
 # The uid mode of op $1.
 uid_mode() { adb shell appops get --uid "$PACKAGE" "$1" | tr -d '\r' | sed -n 's/^Uid mode: [A-Z_]*: \([a-z]*\).*/\1/p'; }
+
+wait_for_granted_modes() {
+    local expected=foreground attempt permission op mode settled
+    local -a ops=()
+    if [[ "$subject" == contacts || "$before" == always ]]; then
+        expected=allow
+    fi
+    for permission in "$@"; do
+        # The background grant changes the modes of the location ops.
+        [[ "$permission" != ACCESS_BACKGROUND_LOCATION ]] || continue
+        op="$(op_of "$permission")" || { why="no app op for $permission"; return 1; }
+        ops+=("$op")
+    done
+    for ((attempt = 0; attempt < 30; attempt++)); do
+        settled=true
+        for op in "${ops[@]}"; do
+            if ! mode="$(uid_mode "$op")" || [[ "${mode:-allow}" != "$expected" ]]; then
+                settled=false
+                break
+            fi
+        done
+        $settled && return 0
+        sleep 0.1
+    done
+    why="$op did not reach $expected after pm grant (last UID mode: ${mode:-none})"
+    return 1
+}
 
 # What the canary reads of the subject: yes or no; for location precise,
 # approximate or none.
@@ -377,20 +407,22 @@ play_case() {
     as_root "$BBD sandbox disable $PACKAGE" >/dev/null 2>&1 || true
     adb uninstall "$PACKAGE" >/dev/null 2>&1 || true
     adb install "$APK" >/dev/null || { why="the canary was not installed"; return 1; }
-    local granting=""
+    local -a granting=()
     case "$before" in
-    granted | ignored) granting="$(subject_permissions "$subject")" ;;
-    always) granting="$(subject_permissions "$subject") ACCESS_BACKGROUND_LOCATION" ;;
-    approximate) granting=ACCESS_COARSE_LOCATION ;;
+    granted | ignored) read -r -a granting <<<"$(subject_permissions "$subject")" ;;
+    always) read -r -a granting <<<"$(subject_permissions "$subject") ACCESS_BACKGROUND_LOCATION" ;;
+    approximate) granting=(ACCESS_COARSE_LOCATION) ;;
     denied) ;;
     *)
         why="no state $before"
         return 1
         ;;
     esac
-    for permission in $granting; do
+    for permission in "${granting[@]}"; do
         adb shell pm grant "$PACKAGE" "android.permission.$permission" || { why="granting $permission failed"; return 1; }
     done
+    # On Android 13 and 14, PermissionPolicyService syncs UID modes after pm grant returns.
+    wait_for_granted_modes "${granting[@]}" || return 1
     if [[ "$before" == ignored ]]; then
         for op in $(subject_ignored_ops "$subject"); do
             adb shell appops set --uid "$PACKAGE" "$op" ignore || { why="setting $op to ignore failed"; return 1; }

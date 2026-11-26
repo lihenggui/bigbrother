@@ -9,3 +9,5 @@ request	request 44 undo 10100 android:camera=4	request=44	command=undo 10100 and
 reply	reply 44 0123456789abcdef0123456789abcdef failed 10100	request=44	token=0123456789abcdef0123456789abcdef	answer=failed 10100
 request	request 45 check-undo 10100 android:camera=4	request=45	command=check-undo 10100 android:camera=4
 reply	reply 45 0123456789abcdef0123456789abcdef restored 10100	request=45	token=0123456789abcdef0123456789abcdef	answer=restored 10100
+request	request 46 set 10100 android:camera=1	request=46	command=set 10100 android:camera=1
+reply	reply 46 0123456789abcdef0123456789abcdef stale 10100	request=46	token=0123456789abcdef0123456789abcdef	answer=stale 10100

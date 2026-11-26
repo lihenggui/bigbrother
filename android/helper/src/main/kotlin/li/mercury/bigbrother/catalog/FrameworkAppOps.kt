@@ -23,7 +23,6 @@ import android.os.Binder
 import android.os.IBinder
 import android.os.Parcel
 import li.mercury.bigbrother.catalog.AppOpsGuardProtocol.GUARDED_OPS
-import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import kotlin.system.exitProcess
 
@@ -48,7 +47,7 @@ internal object Framework : AppOpsSystem {
      */
     private const val SETTLE_MS = 1000L
 
-    private val changes = LinkedBlockingQueue<Unit>(1)
+    private val changes = GuardChanges()
 
     private lateinit var guard: AppOpsGuard
     private lateinit var service: Any
@@ -96,22 +95,24 @@ internal object Framework : AppOpsSystem {
     /** Reached when first needed: by then the system has started. */
     private val specialAccess by lazy { SpecialAccess(packageManager()) }
 
-    fun connect(guard: AppOpsGuard) {
+    fun attach(guard: AppOpsGuard, appOps: Any) {
         this.guard = guard
-        val binder = systemService("appops") ?: error("no app ops service")
-        service = Class.forName("com.android.internal.app.IAppOpsService\$Stub")
-            .getMethod("asInterface", IBinder::class.java)
-            .invoke(null, binder)!!
-        // A system server that restarted is another one: the daemon
-        // starts this program again, for it.
-        binder.linkToDeath({ exitProcess(1) }, 0)
+        service = appOps
         ops = resolve(GUARDED_OPS)
-        watchModes()
-        permissionService.get()
     }
 
+    fun connectAppOps(waitMs: Long): Any? {
+        val binder = systemService("appops", waitMs) ?: return null
+        binder.linkToDeath({ exitProcess(1) }, 0)
+        return Class.forName("com.android.internal.app.IAppOpsService\$Stub")
+            .getMethod("asInterface", IBinder::class.java)
+            .invoke(null, binder)!!
+    }
+
+    fun guardingChanged() = changes.signal()
+
     /**
-     * The system service [name], or `null` if the input closed first. The
+     * The system service [name], or `null` if it does not register in time. The
      * daemon starts this program while the system is still booting, before
      * the services are registered, so it waits [waitMs] for them rather
      * than fail.
@@ -122,7 +123,7 @@ internal object Framework : AppOpsSystem {
         val until = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(waitMs)
         var binder = getService.invoke(null, name) as IBinder?
         while (binder == null) {
-            if (guard.inputClosed || System.nanoTime() >= until) return null
+            if (System.nanoTime() >= until) return null
             Thread.sleep(SERVICE_POLL_MS)
             binder = getService.invoke(null, name) as IBinder?
         }
@@ -249,7 +250,7 @@ internal object Framework : AppOpsSystem {
      * changed", whatever its arguments. If the service will not take it, the
      * checks every minute remain.
      */
-    private fun watchModes() {
+    fun watchModes() {
         try {
             val callbackType = Class.forName("com.android.internal.app.IAppOpsCallback")
             val asInterface = Class.forName("com.android.internal.app.IAppOpsCallback\$Stub")
@@ -277,15 +278,17 @@ internal object Framework : AppOpsSystem {
         var checkAt = System.nanoTime() + every
         while (true) {
             try {
+                if (changes.awaitGuarded(guard::hasGuarded)) checkAt = System.nanoTime() + every
                 val untilCheck = maxOf(0, checkAt - System.nanoTime())
                 val wait = minOf(untilCheck, permissionService.retryInNanos() ?: untilCheck)
-                if (changes.poll(wait, TimeUnit.NANOSECONDS) != null) {
+                if (changes.awaitChange(wait)) {
+                    if (!guard.hasGuarded()) continue
                     Thread.sleep(SETTLE_MS)
                     changes.clear()
-                } else if (System.nanoTime() - checkAt < 0 && permissions == null) {
+                } else if (guard.hasGuarded() && System.nanoTime() - checkAt < 0 && permissions == null) {
                     continue
                 }
-                guard.checkAll()
+                if (guard.hasGuarded()) guard.checkAll()
                 checkAt = System.nanoTime() + every
             } catch (_: InterruptedException) {
                 return
@@ -307,7 +310,7 @@ internal object Framework : AppOpsSystem {
             if (code !in IBinder.FIRST_CALL_TRANSACTION..IBinder.LAST_CALL_TRANSACTION) {
                 return super.onTransact(code, data, reply, flags)
             }
-            changes.offer(Unit)
+            if (guard.hasGuarded()) changes.signal()
             return true
         }
     }

@@ -71,9 +71,10 @@ daemon loop build on the lower layers, with the CLI at the top.
   paths have package names in them.
 - Commands run on the main loop and hold up recording while they do: keep
   what an effect waits for bounded (`appops::ANSWER_WAIT`).
-- Helper programs cost a Java runtime each. The app ops helper runs only
-  while an app is sandboxed, or for a moment to say whether a newly
-  installed package is a library (`sandbox/auto/scan.rs`).
+- `helper/` supervises one resident `FrameworkHelper` for the Binder catalog,
+  permission-usage reads and the app-ops guard. The guard uses the bridge
+  for enforcement and library queries. Offline recovery runs
+  `AppOpsGuard --recover` from `module/uninstall.sh`.
 - The packet filter (`sandbox/network.rs`) has rules only while an app is
   kept from the network; with none, the chains and the jump to them are
   removed. A packet costs one rule and one map lookup whatever the number
@@ -106,6 +107,10 @@ The daemon runs on every device all the time; its cost is the product's cost.
 
 - No busy loops and no timers shorter than needed. It writes every 30 seconds,
   and only when there is something to write; it holds no wakelock.
+- Permission usage is read at startup, on a query and at shutdown. Scheduled
+  flushes read it after a callback or when user-app activity warrants a
+  fallback read. The helper's guard timer is armed only while it holds
+  restrictions for at least one UID.
 - While a sensor session is open, the processes of open sessions are checked
   every 5 seconds (`SENSOR_PROCESS_CHECK`), so that a killed app's session ends
   close to when it did. With no session open that timer does not exist.

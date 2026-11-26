@@ -98,6 +98,29 @@ class AppOpsGuardTest {
     }
 
     @Test
+    fun givenAPermissionSyncAfterCapture_whenSettingTheOp_thenTheBoundStaleReplyAllowsAFreshCapture() {
+        val output = mutableListOf<String>()
+        val android = FakeAndroid()
+        lateinit var guard: AppOpsGuard
+        val system = object : AppOpsSystem by android {
+            override fun emit(line: String) = guard.emit(line)
+        }
+        guard = AppOpsGuard(system, isCurrent = { _, _ -> true }, printLine = output::add)
+        android.pmGrant(FakeAndroid.CAMERA, deferPolicy = true)
+        guard.handleLine("$BINDING request 1 capture $UID 1 android:camera=1")
+        android.settle()
+        guard.handleLine("$BINDING request 2 set $UID android:camera=1")
+        assertEquals("reply 2 $TOKEN stale $UID", output.last())
+        assertTrue(android.helperWrites.isEmpty())
+
+        guard.handleLine("$BINDING request 3 capture $UID 3 android:camera=1")
+        guard.handleLine("$BINDING request 4 set $UID android:camera=1")
+
+        assertTrue(output.last().startsWith("reply 4 $TOKEN saved $UID "))
+        assertEquals(mapOf("android:camera" to 1), android.helperWrites)
+    }
+
+    @Test
     fun givenAPeriodicCheckIsBlocked_whenAnotherAppCaptures_thenItCanReplyAndBothFramesKeepTheirTokens() {
         val output = LinkedBlockingQueue<String>()
         val checkStarted = CountDownLatch(1)

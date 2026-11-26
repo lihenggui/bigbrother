@@ -580,6 +580,9 @@ internal object AppOpsGuardProtocol {
 
     fun failedLine(uid: Int): String = "failed $uid"
 
+    /** A change rejected before any write because its captured state changed. */
+    fun staleLine(uid: Int): String = "stale $uid"
+
     /** The answer to `kind`: `null` where it cannot be told. */
     fun kindLine(uid: Int, request: Long, library: Boolean?): String = when (library) {
         true -> "library $uid $request"

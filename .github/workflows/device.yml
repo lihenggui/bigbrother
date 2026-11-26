@@ -196,11 +196,8 @@ jobs:
       - name: Install the module
         run: ./scripts/install-on-emulator.sh 2>&1 | tee "$LOGS/install.txt"
 
-      # For minutes after boot and the install the system is busy, and the
-      # app ops helper, a Java runtime started again for each case, can then
-      # take longer to start than the daemon waits for it. The other checks
-      # used to give the emulator that time; the matrix now waits for the
-      # load to come down, for five minutes at most.
+      # Wait for boot and install activity to settle before timing sandbox
+      # commands and exercising helper recovery under the permission matrix.
       - name: Wait for the emulator to settle
         if: startsWith(matrix.part, 'permissions-')
         run: |

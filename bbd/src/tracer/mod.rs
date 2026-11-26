@@ -143,6 +143,7 @@ pub(super) struct Tracer {
     pub(super) write_errors: Limited,
     record_drops: Limited,
     pub(super) counters: Counters,
+    pub(super) user_activity: u64,
     /// Keyed by thread id.
     awaiting_result: HashMap<u32, Vec<Held>>,
     /// (pid, isolated uid) -> the app it was attributed to, and when last seen.
@@ -181,6 +182,7 @@ impl Tracer {
             write_errors: Limited::new(RECURRING_INTERVAL, Policy::ResetOnChange),
             record_drops: Limited::new(RECURRING_INTERVAL, Policy::Shared),
             counters: Counters::default(),
+            user_activity: 0,
             awaiting_result: HashMap::new(),
             isolated_owners: HashMap::new(),
             verbose,
@@ -268,6 +270,7 @@ impl Tracer {
         if self.selftest.claim(bytes) {
             return;
         }
+        self.note_app_activity(hdr.uid);
         let ts = clock.unix_secs(hdr.boot_ns());
         match hdr.kind {
             EV_FILE => self.on_file(bytes, hdr, ts),
@@ -280,6 +283,13 @@ impl Tracer {
             EV_NETLINK => self.on_netlink(bytes, hdr, ts),
             EV_CONNECT => self.on_connect(bytes, hdr, ts),
             _ => {}
+        }
+    }
+
+    fn note_app_activity(&mut self, uid: u32) {
+        let app_id = app_id_of(uid);
+        if app_id >= FIRST_APPLICATION_UID && !self.packages.is_system(app_id) {
+            self.user_activity = self.user_activity.wrapping_add(1);
         }
     }
 

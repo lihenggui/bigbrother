@@ -35,6 +35,8 @@ pub(super) enum Answer {
     /// To `kind`: whether the package is a library rather than an app, if
     /// the helper could tell, with the request number it was given.
     Kind(u64, Option<bool>),
+    /// The captured state changed before any write.
+    Stale,
     Failed,
 }
 
@@ -61,6 +63,7 @@ pub(super) fn parse_line(line: &str) -> Option<(u32, Option<Answer>)> {
         "saved" => Some(Answer::Saved(words.next().unwrap_or("").to_string())),
         "restored" => Some(Answer::Restored),
         "applied" => Some(Answer::Applied(words.next().unwrap_or("").to_string())),
+        "stale" if words.next().is_none() => Some(Answer::Stale),
         "failed" => Some(Answer::Failed),
         "library" | "app" | "unknown" => {
             let request = words.next()?.parse().ok()?;
@@ -412,6 +415,7 @@ mod tests {
                 "saved" => Some(Answer::Saved(text.clone())),
                 "restored" => Some(Answer::Restored),
                 "applied" => Some(Answer::Applied(text.clone())),
+                "stale" => Some(Answer::Stale),
                 "failed" => Some(Answer::Failed),
                 "library" | "app" | "unknown" => {
                     let request = case.get("request").unwrap().parse().unwrap();

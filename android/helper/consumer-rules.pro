@@ -2,9 +2,6 @@
 -keep class li.mercury.bigbrother.catalog.AppOpsGuard {
     public static void main(java.lang.String[]);
 }
--keep class li.mercury.bigbrother.catalog.AppOpsDump {
-    public static void main(java.lang.String[]);
-}
--keep class li.mercury.bigbrother.catalog.BinderCatalog {
+-keep class li.mercury.bigbrother.catalog.FrameworkHelper {
     public static void main(java.lang.String[]);
 }

@@ -37,7 +37,7 @@ class AppOpsGuardProtocolTest {
         types = setOf("command", "command-read", "command-bad", "answer", "answer-bad"),
         keys = setOf(
             "capture", "captured", "capture-failed",
-            "set", "verify", "release", "restore", "apply", "saved", "restored", "applied", "failed", "verified", "reverted", "unheld",
+            "set", "verify", "release", "restore", "apply", "saved", "restored", "applied", "failed", "stale", "verified", "reverted", "unheld",
             "uid", "hold", "revoke", "revoke_unheld", "op", "permission", "name", "not_held",
             "kind", "library", "app", "unknown", "request", "package",
         ),
@@ -173,6 +173,8 @@ class AppOpsGuardProtocolTest {
                 "applied" -> AppOpsGuardProtocol.appliedLine(uid, case.values().permissions.map { (name, state) -> name to state!! })
 
                 "failed" -> AppOpsGuardProtocol.failedLine(uid)
+
+                "stale" -> AppOpsGuardProtocol.staleLine(uid)
 
                 "verified" -> AppOpsGuardProtocol.verifiedLine(uid)
 

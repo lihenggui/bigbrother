@@ -7,8 +7,9 @@ Hilt, Compose with Material 3 Expressive, and Navigation 3.
 ## Modules
 
 - `app/`: the application, navigation and adaptive layout (`ui/BigBrotherApp.kt`).
-- `helper/` (`:helper`): standalone `app_process` programs run as root by the
-  daemon and packaged in the app APK.
+- `helper/` (`:helper`): the daemon's resident `FrameworkHelper` runs as root
+  under `app_process`. The APK also carries `AppOpsGuard --recover` for
+  offline restoration.
 - `core/model` holds data types. `core/domain` holds use cases.
   `core/data`: repositories; `root/RootShell.kt` is
   the only place the app runs root commands. `core/datastore`: settings.
@@ -47,11 +48,11 @@ Assembling `:app` needs the daemons in `../out/` (`../scripts/build.sh`).
 - Only packages the user installed are hidden from a sandboxed app. What
   came with the system stays visible whatever its app id: the same check
   decides whether an app can reach the WebView or the media provider.
-- The daemon runs `helper/.../catalog/AppOpsGuard.kt` as root. Its
-  line protocol is `AppOpsGuardProtocol.kt`; change it together with
-  `bbd/src/sandbox/appops.rs`. Its commands are carried out by
-  `AppOpsGuardHandler.kt`, which reaches the framework only through
-  `AppOpsSystem`, so that the JVM tests can run it on a model of Android.
+- `FrameworkHelper.kt` routes catalog, usage and guard frames. Keep its
+  framing in sync with `bbd/src/helper/`. Guard messages use
+  `AppOpsGuardProtocol.kt` and `bbd/src/sandbox/appops/`. The guard handler
+  reaches Android through `AppOpsSystem`, which the JVM tests replace with
+  a model. Offline recovery uses the same handler and its own journal.
 - The hook and the daemon share two files in `/data/system`; their formats
   are in `SandboxRules.kt` and `bbd/src/sandbox/identity.rs`.
 - The lines of these formats, and of the hook's spool (`EventSpool.kt`,
