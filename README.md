@@ -103,7 +103,7 @@ apd module install big_brother-<version>.apk.zip        # APatch
 
 When replacing a build older than v0.3.0, take any apps out of Jail first.
 Remove the old module in the root manager and uninstall the app, then
-install v0.4.2.
+install v0.5.0.
 
 For later updates, install the new APK over the app, or flash the new
 `.zip`, then open the app: the Overview finishes the update.

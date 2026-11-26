@@ -2,16 +2,38 @@
 
 ## [Unreleased]
 
+## [v0.5.0] - 2026-11-26
+
 ### Added
 
 - Set up and remove recording from the app with root access alone. Setup
   starts recording without a reboot.
-- Security policy, code of conduct, feature request form and pull request
-  checklist.
-- Store listing text in English and Simplified Chinese.
+- Theme setting under **Settings → Display → Theme** (Follow system, Light,
+  Dark) with matching status and navigation bar contrast.
+- Security policy, code of conduct, feature request form, pull request
+  checklist, and store listing text in English and Simplified Chinese.
+- SHA-256 release checksums, GitHub build provenance attestation, Rust
+  dependency license checking, and shell script linting in CI.
 
 ### Changed
 
+- Unify the daemon's three root helper runtimes (`BinderCatalog`,
+  `AppOpsDump` and `AppOpsGuard`) into a single resident `FrameworkHelper`
+  process. Permission usage now reads on demand and on app-ops callbacks
+  instead of polling every 30 seconds, and the guard idles with no timer
+  when no app is in Jail.
+- Read and write accessibility service settings over Binder, falling back
+  to `cmd settings` if a device rejects Binder access.
+- Ship `:helper` as a standalone R8-minified `helper.apk` (~53 KB instead
+  of copying the full app APK), strip non-BTF debug sections from embedded
+  eBPF objects, build `bbd` for size, and filter release APK ABIs and
+  locales (reducing daemon size by ~39% and APK size by ~20%).
+- Eliminate idle 30-second daemon wakeups, add SQLite indexes in schema
+  v15 with tested migrations from v12–v14, enable foreign keys and
+  `IMMEDIATE` transactions, and rotate daemon logs in `supervise.sh`.
+- Reduce redundant root shell forks and Compose recompositions, bound
+  release logs, cache app icons and package metadata with negative caching,
+  and add 2.0x large-text accessibility screenshot coverage.
 - For app-managed installations without boot integration, start recording
   when the app opens.
 - Retry the Android permission service sooner after boot so Jail can
@@ -19,8 +41,17 @@
 
 ### Fixed
 
-- Wait for recording to start after setup before loading the Overview.
-- Restore the boot script when updating a module installed from the app.
+- Bound daemon scan, search, isolated-owner and network buffers, shorten
+  SQLite and snapshot locks around network rules, and replace eager DNS
+  threads with a lazy self-shrinking lookup pool.
+- Retry Jail app-ops staging cleanly when Android's permission policy
+  syncs between preimage capture and apply, and expedite helper restarts
+  for explicit Jail commands during backoff.
+- Harden root helpers and LSPosed hooks with cached reflection, sanitized
+  diagnostics, Binder death links, per-app locking, bounded queues, safe
+  cursor reads and atomic start-guard writes.
+- Wait for recording to start after setup before loading the Overview, and
+  restore the boot script when updating a module installed from the app.
 
 ### Removed
 
@@ -115,7 +146,8 @@
   as an APK.
 - Update the installed module from the app without rebooting.
 
-[Unreleased]: https://github.com/lihenggui/bigbrother/compare/v0.4.2...main
+[Unreleased]: https://github.com/lihenggui/bigbrother/compare/v0.5.0...main
+[v0.5.0]: https://github.com/lihenggui/bigbrother/compare/v0.4.2...v0.5.0
 [v0.4.2]: https://github.com/lihenggui/bigbrother/compare/v0.4.1...v0.4.2
 [v0.4.1]: https://github.com/lihenggui/bigbrother/compare/v0.4.0...v0.4.1
 [v0.4.0]: https://github.com/lihenggui/bigbrother/compare/v0.3.0...v0.4.0
