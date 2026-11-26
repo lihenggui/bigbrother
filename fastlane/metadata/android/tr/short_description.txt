@@ -1,0 +1,1 @@
+Root erişimli Android cihazlarda uygulamaların özel verilere erişimini kaydeder.

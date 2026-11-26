@@ -1,0 +1,9 @@
+Big Brother, root erişimli bir Android cihazda uygulamaların paylaşılan depolama alanında dosya açtığı, cihaz tanımlayıcılarını okuduğu veya sistemden özel veri istediği anları kaydeder. Sensör kullanım oturumlarını ve kamera, mikrofon, konum gibi hassas izinlerin kullanımını da kaydeder.
+
+Erişim kayıtlarını uygulamaya veya saate göre inceleyin. Uygulamaya, dosya adına veya veri türüne göre arama yapın. Uygulamanın ağ erişimi yoktur. Kayıtlar cihazda en fazla 30 gün saklanır.
+
+“Hapishane”, yalıtılmış uygulamaların nelere erişebileceğini denetler. Tüm yalıtılmış uygulamalar için kurallar belirleyin veya belirli bir uygulama için bu kuralların yerine farklı kurallar uygulayın. “Hapishane” yeni yüklenen uygulamaları otomatik olarak yalıtabilir, bir uygulamanın ağ erişimini engelleyebilir, bağlandığı hedefleri kaydedebilir ve seçilen hedefleri engelleyebilir.
+
+Big Brother için root, Android 12 veya daha yeni bir sürüm ve BTF desteği olan GKI 2.0 çekirdeği (5.10 veya daha yeni) gerekir. arm64 ve x86_64 cihazlarda çalışır. x86_64 üzerinde yalnızca 64 bit uygulamaların erişimini kaydeder.
+
+İsteğe bağlı LSPosed kancası (Xposed API 101 veya daha yeni) içerik sağlayıcıları üzerinden gerçekleşen erişimi kaydeder. Kişiler veya kısa mesajlar gibi sorgularda hangi veri koleksiyonunun sorgulandığını kaydeder. “Hapishane”, Android ID’yi, reklam kimliklerini, yüklü uygulamaların görünürlüğünü ve sistemin dosya seçicisi üzerinden verilen dosya erişim izinlerini yönetmek için “Sistem Çerçevesi” kapsamını kullanır.

@@ -1,0 +1,9 @@
+Big Brother zeichnet auf, wann Apps auf einem Android-Gerät mit root Dateien im gemeinsamen Speicher öffnen, Gerätekennungen auslesen oder private Daten vom System anfordern. Es erfasst auch die Zeiträume der Sensornutzung und die Verwendung sensibler Berechtigungen wie Kamera, Mikrofon und Standort.
+
+Sehen Sie sich das Zugriffsprotokoll nach App oder Stunde an. Suchen Sie nach App, Dateiname oder Datentyp. Die App hat keinen Netzwerkzugriff. Die Einträge bleiben bis zu 30 Tage auf dem Gerät.
+
+Das „Gefängnis“ steuert, worauf isolierte Apps zugreifen können. Legen Sie Regeln für alle isolierten Apps fest oder überschreiben Sie diese für eine einzelne App. Das „Gefängnis“ kann neu installierte Apps automatisch isolieren, den Netzwerkzugriff einer App sperren, ihre Verbindungsziele aufzeichnen und ausgewählte Ziele sperren.
+
+Big Brother benötigt root, Android 12 oder neuer und einen GKI-2.0-Kernel (5.10 oder neuer) mit BTF. Es läuft auf arm64- und x86_64-Geräten. Auf x86_64 zeichnet es nur Zugriffe von 64-Bit-Apps auf.
+
+Der optionale LSPosed-Hook (Xposed API 101 oder neuer) zeichnet Zugriffe über Inhaltsanbieter auf. Bei Abfragen etwa von Kontakten oder SMS wird festgehalten, welche Datensammlung abgefragt wurde. Das „Gefängnis“ nutzt den Geltungsbereich „System-Framework“, um Android ID, Werbe-IDs, die Sichtbarkeit installierter Apps und Dateifreigaben über die Dateiauswahl des Systems zu verwalten.

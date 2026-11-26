@@ -1,0 +1,1 @@
+Registra o acesso de apps a dados privados em dispositivos Android com root.
