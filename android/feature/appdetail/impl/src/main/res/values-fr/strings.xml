@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="open_jail">Isoler ou gérer l’application</string>
+    <string name="isolate_app_title">Isoler %1$s ?</string>
+    <string name="isolate_app_summary">L’application se ferme et les paramètres de la prison s’appliquent. Vous pouvez ensuite ajuster ses restrictions.</string>
+    <string name="isolate_app">Isoler</string>
+    <string name="isolating_app">Application isolante…</string>
+    <string name="jail_action_failed">Impossible d’ouvrir les paramètres de la prison</string>
+
+    <string name="action_read">Lecture</string>
+    <string name="action_write">Modification</string>
+    <string name="action_read_write">Lecture et modification</string>
+    <string name="action_list">Liste du dossier</string>
+    <string name="action_probe">Vérification</string>
+    <string name="action_watch">Surveillance</string>
+    <string name="action_read_provider">Lecture via le fournisseur</string>
+    <string name="action_write_provider">Modification via le fournisseur</string>
+    <string name="action_query">Requête</string>
+    <string name="action_connect">Connexion</string>
+    <string name="action_exec">Exécuté</string>
+    <string name="action_used">Utilisation</string>
+    <string name="action_call">Appel de service</string>
+    <string name="action_clipboard_write">Écriture</string>
+    <string name="search_paths">Rechercher des chemins</string>
+    <plurals name="access_query">
+        <item quantity="one">Interrogé une fois, %2$d entrées</item>
+        <item quantity="many">Interrogé %1$d fois, jusqu\'à %2$d entrées</item>
+        <item quantity="other">Interrogé %1$d fois, jusqu\'à %2$d entrées</item>
+    </plurals>
+
+    <string name="internal_storage">Stockage interne</string>
+    <string name="internal_storage_user">Stockage interne (utilisateur %d)</string>
+
+    <string name="collection_images">Photos</string>
+    <string name="collection_videos">Vidéos</string>
+    <string name="collection_audio">Musique et audio</string>
+    <string name="collection_downloads">Téléchargements</string>
+    <string name="collection_files">Tous les médias et fichiers</string>
+    <string name="collection_documents">Dossiers accordés via le sélecteur de documents</string>
+
+    <string name="results_truncated">Seules les entrées les plus récentes sont affichées.</string>
+
+    <string name="access_allowed">%1$s %2$d×</string>
+    <string name="access_blocked">%1$s %2$d×, accès refusé</string>
+    <string name="access_partly_blocked">%1$s %2$d× (%3$d× refusé)</string>
+    <string name="access_separator">"; "</string>
+    <plurals name="total_allowed">
+        <item quantity="one">Lu %d fois</item>
+        <item quantity="many">Lu %d fois</item>
+        <item quantity="other">Lu %d fois</item>
+    </plurals>
+    <plurals name="total_requested">
+        <item quantity="one">%d appel de service</item>
+        <item quantity="many">%d appels de service</item>
+        <item quantity="other">%d appels de service</item>
+    </plurals>
+    <plurals name="total_contacted">
+        <item quantity="one">Connecté %d fois</item>
+        <item quantity="many">Connecté %d fois</item>
+        <item quantity="other">Connecté %d fois</item>
+    </plurals>
+    <plurals name="total_ran">
+        <item quantity="one">Exécuté %d fois</item>
+        <item quantity="many">Exécuté %d fois</item>
+        <item quantity="other">Exécuté %d fois</item>
+    </plurals>
+    <plurals name="total_not_run">
+        <item quantity="one">L\'exécution a échoué %d fois</item>
+        <item quantity="many">L\'exécution a échoué %d fois</item>
+        <item quantity="other">L\'exécution a échoué %d fois</item>
+    </plurals>
+    <plurals name="total_blocked">
+        <item quantity="one">Refusé %d fois</item>
+        <item quantity="many">Refusé %d fois</item>
+        <item quantity="other">Refusé %d fois</item>
+    </plurals>
+    <string name="removable_storage">Stockage %s</string>
+
+    <string name="filter_read">Lus</string>
+    <string name="filter_all">Tous les accès</string>
+    <string name="no_files_read">Aucun fichier lu</string>
+
+    <string name="storage_root">Stockage</string>
+    <string name="group_media">Médiathèque</string>
+
+    <string name="read_count">%d×</string>
+
+    <string name="open_file_missing">Fichier introuvable.</string>
+    <string name="open_file_no_viewer">Aucune application ne peut ouvrir ce fichier.</string>
+
+    <string name="open_file">Ouvrir</string>
+    <string name="show_all_details">Tout afficher (%d)</string>
+    <plurals name="apps_asked">
+        <item quantity="one">Informations sur %d application demandées</item>
+        <item quantity="many">Informations sur %d applications demandées</item>
+        <item quantity="other">Informations sur %d applications demandées</item>
+    </plurals>
+    <plurals name="root_apps_asked">
+        <item quantity="one">A vérifié la présence de %d application liée à root</item>
+        <item quantity="many">A vérifié la présence de %d applications liées à root</item>
+        <item quantity="other">A vérifié la présence de %d applications liées à root</item>
+    </plurals>
+    <plurals name="absent_apps_asked">
+        <item quantity="one">%d application non installée recherchée</item>
+        <item quantity="many">%d applications non installées recherchées</item>
+        <item quantity="other">%d applications non installées recherchées</item>
+    </plurals>
+    <string name="tab_info">Informations sur l\'application</string>
+    <string name="header_subtitle">%1$s · %2$s</string>
+    <string name="source_permissions">Utilisation des autorisations</string>
+    <plurals name="total_used">
+        <item quantity="one">Utilisé %d fois</item>
+        <item quantity="many">Utilisé %d fois</item>
+        <item quantity="other">Utilisé %d fois</item>
+    </plurals>
+    <string name="info_package">Nom du package</string>
+    <string name="info_version">Version</string>
+    <string name="info_version_value">%1$s (%2$d)</string>
+    <string name="info_target_sdk">SDK cible</string>
+    <string name="info_first_install">Installé</string>
+    <string name="info_last_update">Dernière mise à jour</string>
+    <string name="info_open_settings">Paramètres des applications</string>
+    <string name="info_launch">Ouvrir l\'application</string>
+    <string name="info_copied">Copié</string>
+    <string name="source_isolated">Processus isolé</string>
+
+    <string name="last_access">Dernier accès : %s</string>
+    <plurals name="files_read">
+        <item quantity="one">%d fichier lu</item>
+        <item quantity="many">%d fichiers lus</item>
+        <item quantity="other">%d fichiers lus</item>
+    </plurals>
+    <plurals name="paths_looked_for">
+        <item quantity="one">%d autre chemin vérifié</item>
+        <item quantity="many">%d autres chemins vérifiés</item>
+        <item quantity="other">%d autres chemins vérifiés</item>
+    </plurals>
+    <string name="browse_files">Tous les accès aux fichiers</string>
+    <string name="media_collection">Médiathèque · %s</string>
+    <plurals name="opened_via_media">
+        <item quantity="one">Ouvert %d fois</item>
+        <item quantity="many">Ouvert %d fois</item>
+        <item quantity="other">Ouvert %d fois</item>
+    </plurals>
+    <string name="files_title">Fichiers</string>
+    <string name="close">Fermer</string>
+    <string name="record_details">Détails</string>
+    <string name="record_history">Chaque accès</string>
+    <string name="record_history_partial">Horaires indiqués pour les enregistrements les plus récents de ce type.</string>
+
+    <string name="sensor_sessions">Utilisation du capteur</string>
+    <string name="sensor_total">%s total</string>
+    <string name="session_span">%1$s – %2$s</string>
+    <string name="sensor_since">Depuis %s</string>
+    <string name="sensor_still_on">Toujours allumé</string>
+    <string name="high_rate">Échantillonnage rapide</string>
+    <string name="rate_fastest">Le plus rapide</string>
+    <string name="sensor_sessions_note">Les fréquences d’échantillonnage demandées sont affichées. Le système peut transmettre moins d’événements.</string>
+    <string name="duration_seconds">%d s</string>
+    <string name="duration_minutes">%d min</string>
+    <string name="duration_hours">%d h</string>
+    <string name="duration_hours_minutes">%1$d h %2$d min</string>
+    <string name="duration_days">%d j</string>
+    <string name="duration_days_hours">%1$d j %2$d h</string>
+    <string name="expanded">Développé</string>
+    <string name="collapsed">Réduit</string>
+</resources>

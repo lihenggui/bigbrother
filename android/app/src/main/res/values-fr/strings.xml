@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="module_description">Enregistre les accès des applications aux fichiers et leurs requêtes de données personnelles via les fournisseurs de contenu Android. La prison permet de gérer Android ID, les identifiants publicitaires, la visibilité des applications et les accès accordés aux fichiers.</string>
+    <string name="nav_overview">Aperçu</string>
+    <string name="nav_apps">Applications</string>
+    <string name="nav_timeline">Chronologie</string>
+    <string name="nav_jail">Prison</string>
+
+    <string name="guide_access_title">Suivre les accès aux données personnelles</string>
+    <string name="guide_access_body">Big Brother enregistre les données lues par chaque application et le moment de leur lecture : fichiers, position, presse-papiers et identifiants de l’appareil. Les journaux sont conservés uniquement sur cet appareil.</string>
+    <string name="guide_timeline_title">Consulter la chronologie</string>
+    <string name="guide_timeline_body">La chronologie regroupe les accès par heure et par application. Ouvrez une entrée pour voir ses détails.</string>
+    <string name="guide_jail_title">Isoler les applications sélectionnées</string>
+    <string name="guide_jail_body">Une application isolée en prison dispose de son propre stockage, d’un presse-papiers vide et d’un ID d’appareil virtuel. Chaque option est modifiable séparément.</string>
+    <string name="guide_skip">Passer</string>
+    <string name="guide_next">Suivant</string>
+    <string name="guide_back">Page précédente</string>
+    <string name="guide_start">Commencer</string>
+    <string name="guide_progress">Page %1$d sur %2$d</string>
+    <string name="guide_guard_description">Exemple : le garde du corps vérifie quatre applications et enregistre ce que chacune lit.</string>
+    <string name="guide_timeline_description">Exemple de chronologie : les données lues par Météo, Boutique, Discussion et Lampe torche.</string>
+    <string name="guide_jail_description">Exemple : l’application Météo est isolée en prison. Elle dispose d’un presse-papiers vide, d’un ID d’appareil virtuel et d’un stockage isolé.</string>
+    <string name="guide_weather">Météo</string>
+    <string name="guide_shop">Boutique</string>
+    <string name="guide_chat">Discussion</string>
+    <string name="guide_flashlight">Lampe torche</string>
+    <string name="guide_location">Position</string>
+    <string name="guide_clipboard">Presse-papiers</string>
+    <string name="guide_files">Fichiers</string>
+    <string name="guide_device_id">ID de l\'appareil</string>
+    <string name="guide_isolated_value">%1$s : %2$s</string>
+</resources>

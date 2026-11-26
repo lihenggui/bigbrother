@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="all_data">Toutes les données</string>
+    <string name="records_access">Lectures et accès</string>
+    <string name="records_all">Tous les journaux</string>
+    <string name="timeline_empty">Aucun enregistrement</string>
+    <string name="today">Aujourd\'hui</string>
+    <string name="yesterday">Hier</string>
+    <plurals name="read_files">
+        <item quantity="one">%d fichier lu</item>
+        <item quantity="many">%d fichiers lus</item>
+        <item quantity="other">%d fichiers lus</item>
+    </plurals>
+    <plurals name="looked_for_paths">
+        <item quantity="one">%d chemin vérifié</item>
+        <item quantity="many">%d chemins vérifiés</item>
+        <item quantity="other">%d chemins vérifiés</item>
+    </plurals>
+    <string name="media_queried">Requête dans la médiathèque</string>
+    <plurals name="media_opened">
+        <item quantity="one">Ouvert %d fichier via la médiathèque</item>
+        <item quantity="many">Ouvert %d fichiers via la médiathèque</item>
+        <item quantity="other">Ouvert %d fichiers via la médiathèque</item>
+    </plurals>
+    <plurals name="media_denied">
+        <item quantity="one">%d accès à la médiathèque refusé</item>
+        <item quantity="many">%d accès à la médiathèque refusés</item>
+        <item quantity="other">%d accès à la médiathèque refusés</item>
+    </plurals>
+    <plurals name="times">
+        <item quantity="one">%d fois</item>
+        <item quantity="many">%d fois</item>
+        <item quantity="other">%d fois</item>
+    </plurals>
+    <plurals name="times_denied">
+        <item quantity="one">Refusé %d fois</item>
+        <item quantity="many">Refusé %d fois</item>
+        <item quantity="other">Refusé %d fois</item>
+    </plurals>
+</resources>
