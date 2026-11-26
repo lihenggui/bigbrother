@@ -23,6 +23,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.text.format.DateFormat
 import android.widget.Toast
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.ListItem
@@ -31,8 +32,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.res.stringResource
 import li.mercury.bigbrother.core.model.AppSummary
 import li.mercury.bigbrother.core.model.PackageDetails
@@ -49,16 +50,17 @@ internal fun infoRows(app: AppSummary, details: PackageDetails?): List<Pair<Int,
     val version = details?.versionName?.let {
         stringResource(R.string.info_version_value, it, details.versionCode)
     }
-    val locale = LocalLocale.current
+    val locale = LocalConfiguration.current.locales[0]
     val zone = ZoneId.systemDefault()
-    return remember(app.packageName, details, version, locale, zone) {
+    val is24Hour = DateFormat.is24HourFormat(LocalContext.current)
+    return remember(app, details, version, locale, zone, is24Hour) {
         buildList {
             if (app.packageName.isNotEmpty()) add(R.string.info_package to app.packageName)
             if (details != null) {
                 add(R.string.info_version to (version ?: details.versionCode.toString()))
                 add(R.string.info_target_sdk to details.targetSdk.toString())
-                add(R.string.info_first_install to exactDateTime(details.firstInstallTime / MILLIS_PER_SECOND))
-                add(R.string.info_last_update to exactDateTime(details.lastUpdateTime / MILLIS_PER_SECOND))
+                add(R.string.info_first_install to exactDateTime(details.firstInstallTime / MILLIS_PER_SECOND, locale, zone, is24Hour))
+                add(R.string.info_last_update to exactDateTime(details.lastUpdateTime / MILLIS_PER_SECOND, locale, zone, is24Hour))
             }
         }
     }

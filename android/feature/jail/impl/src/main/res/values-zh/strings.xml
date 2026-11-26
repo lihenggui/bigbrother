@@ -276,6 +276,12 @@
     <string name="jail_net_first_last">首次 %1$s · 最近 %2$s</string>
     <string name="jail_net_block_site">阻止 %1$s 及其子域名</string>
     <string name="jail_net_block_address">阻止 %1$s 的所有端口</string>
+    <string name="jail_net_hour_range">%1$s–%2$s</string>
+    <string name="jail_net_dated_hour_range">%1$s %2$s</string>
+    <string name="jail_net_size_bytes">%1$d B</string>
+    <string name="jail_net_size_kilobytes">%1$d KB</string>
+    <string name="jail_net_size_megabytes">%1$.1f MB</string>
+    <string name="jail_net_size_gigabytes">%1$.1f GB</string>
     <string name="jail_net_sent">发送</string>
     <string name="jail_net_received">接收</string>
     <string name="jail_net_connections_label">连接次数</string>

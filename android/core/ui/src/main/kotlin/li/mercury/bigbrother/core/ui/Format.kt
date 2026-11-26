@@ -17,15 +17,20 @@
 package li.mercury.bigbrother.core.ui
 
 import android.content.Context
+import android.icu.text.DateFormat
+import android.icu.util.TimeZone
 import android.text.format.DateUtils
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import java.time.Clock
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
-import java.time.format.DateTimeFormatter
-import java.time.format.FormatStyle
+import java.util.Date
+import java.util.Locale
+import android.text.format.DateFormat as AndroidDateFormat
 
 /** Wall clock for timestamps shown as elapsed time. */
 val LocalWallClock = compositionLocalOf { Clock.systemUTC() }
@@ -46,12 +51,65 @@ fun relativeTime(epochSeconds: Long, nowMillis: Long): String {
     return DateUtils.getRelativeTimeSpanString(then, nowMillis, resolution).toString()
 }
 
-// Made for each use: a formatter keeps the locale it was made in, and the
-// user can change the language while the app runs.
-private val dateTimeFormat: DateTimeFormatter get() = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM)
+/**
+ * A local clock time with the app's locale and the user's clock preference.
+ * [hourOnlyIn12HourCycle] shortens whole-hour labels while keeping the day period.
+ */
+fun formatClockTime(
+    context: Context,
+    time: Instant,
+    includeSeconds: Boolean = false,
+    zone: ZoneId = ZoneId.systemDefault(),
+    hourOnlyIn12HourCycle: Boolean = false,
+): String = formatDateAndClock(
+    time,
+    context.resources.configuration.locales[0],
+    zone,
+    AndroidDateFormat.is24HourFormat(context),
+    includeSeconds,
+    hourOnlyIn12HourCycle = hourOnlyIn12HourCycle,
+)
 
-/** Date and time to the second, in the device's locale and time zone. */
-fun exactDateTime(epochSeconds: Long): String = dateTimeFormat.format(Instant.ofEpochSecond(epochSeconds).atZone(ZoneId.systemDefault()))
+private fun formatDateAndClock(
+    time: Instant,
+    locale: Locale,
+    zone: ZoneId,
+    is24Hour: Boolean,
+    includeSeconds: Boolean,
+    dateSkeleton: String = "",
+    hourOnlyIn12HourCycle: Boolean = false,
+): String {
+    val hours = if (is24Hour) "H" else "h"
+    val minutesAndSeconds = when {
+        includeSeconds -> "ms"
+        hourOnlyIn12HourCycle && !is24Hour -> ""
+        else -> "m"
+    }
+    val clockSkeleton = hours + minutesAndSeconds
+    val formatter = DateFormat.getInstanceForSkeleton(dateSkeleton + clockSkeleton, locale)
+    // Java supplies the GMT prefix that ICU requires for a fixed offset.
+    formatter.timeZone = TimeZone.getTimeZone(java.util.TimeZone.getTimeZone(zone).id)
+    return formatter.format(Date.from(time))
+}
+
+/** Date and time to the second, in the app's locale and device time zone. */
+@Composable
+fun exactDateTime(epochSeconds: Long): String = exactDateTime(
+    epochSeconds,
+    LocalConfiguration.current.locales[0],
+    ZoneId.systemDefault(),
+    AndroidDateFormat.is24HourFormat(LocalContext.current),
+)
+
+/** [exactDateTime] for UI that already has the formatting preferences. */
+fun exactDateTime(epochSeconds: Long, locale: Locale, zone: ZoneId, is24Hour: Boolean): String = formatDateAndClock(
+    Instant.ofEpochSecond(epochSeconds),
+    locale,
+    zone,
+    is24Hour,
+    includeSeconds = true,
+    dateSkeleton = "yMMMd",
+)
 
 /** A storage volume's root: `/storage/emulated/<user>` or `/storage/<volume id>`. */
 val VOLUME_ROOT = Regex("^/storage/(?:emulated/\\d+|[^/]+)")
@@ -63,12 +121,7 @@ val VOLUME_ROOT = Regex("^/storage/(?:emulated/\\d+|[^/]+)")
  */
 fun shortTime(context: Context, epochSeconds: Long): String {
     val millis = epochSeconds * 1000
-    val flags = if (DateUtils.isToday(millis)) {
-        DateUtils.FORMAT_SHOW_TIME
-    } else {
-        ABBREVIATED_DATE
-    }
-    return DateUtils.formatDateTime(context, millis, flags)
+    return if (DateUtils.isToday(millis)) timeOfDay(context, epochSeconds) else DateUtils.formatDateTime(context, millis, ABBREVIATED_DATE)
 }
 
 /** [shortTime] in composition. */
@@ -77,8 +130,18 @@ fun shortTime(epochSeconds: Long): String = shortTime(LocalContext.current, epoc
 
 /** Time of day, optionally with an abbreviated date, in the device's locale and time zone. */
 fun timeOfDay(context: Context, epochSeconds: Long, includeDate: Boolean = false): String {
-    val flags = DateUtils.FORMAT_SHOW_TIME or if (includeDate) ABBREVIATED_DATE else 0
-    return DateUtils.formatDateTime(context, epochSeconds * 1000, flags)
+    val time = Instant.ofEpochSecond(epochSeconds)
+    val zone = ZoneId.systemDefault()
+    if (!includeDate) return formatClockTime(context, time, zone = zone)
+    val dateSkeleton = if (time.atZone(zone).year == LocalDate.now(zone).year) "MMMd" else "yMMMd"
+    return formatDateAndClock(
+        time,
+        context.resources.configuration.locales[0],
+        zone,
+        AndroidDateFormat.is24HourFormat(context),
+        includeSeconds = false,
+        dateSkeleton = dateSkeleton,
+    )
 }
 
 /** Time of day, with the date added for days other than today. */

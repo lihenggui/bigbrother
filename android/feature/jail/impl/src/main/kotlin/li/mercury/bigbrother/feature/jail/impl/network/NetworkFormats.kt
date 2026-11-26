@@ -16,18 +16,22 @@
 
 package li.mercury.bigbrother.feature.jail.impl.network
 
+import android.content.Context
 import android.text.format.DateFormat
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import li.mercury.bigbrother.core.model.BucketSize
 import li.mercury.bigbrother.core.model.TimeRange
+import li.mercury.bigbrother.core.ui.formatClockTime
+import li.mercury.bigbrother.feature.jail.impl.R
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.DecimalStyle
-import java.util.Locale
 import kotlin.math.roundToLong
 
 private const val UNIT = 1024.0
@@ -36,14 +40,17 @@ private const val UNIT = 1024.0
  * An amount of data as B, KB, MB or GB, by powers of 1024: whole bytes and
  * kilobytes, larger amounts to one decimal.
  */
-internal fun formatBytes(bytes: Long, locale: Locale = Locale.getDefault()): String {
-    if (bytes < UNIT) return "$bytes B"
+@Composable
+internal fun formatBytes(bytes: Long): String = formatBytes(LocalContext.current, bytes)
+
+internal fun formatBytes(context: Context, bytes: Long): String {
+    if (bytes < UNIT) return context.getString(R.string.jail_net_size_bytes, bytes)
     val kilobytes = (bytes / UNIT).roundToLong()
-    if (kilobytes < UNIT) return "$kilobytes KB"
+    if (kilobytes < UNIT) return context.getString(R.string.jail_net_size_kilobytes, kilobytes)
     val megabytes = bytes / (UNIT * UNIT)
     // Rounded to one decimal, 1023.96 MB would read 1024.0 MB.
-    if (megabytes < UNIT - 0.05) return String.format(locale, "%.1f MB", megabytes)
-    return String.format(locale, "%.1f GB", megabytes / UNIT)
+    if (megabytes < UNIT - 0.05) return context.getString(R.string.jail_net_size_megabytes, megabytes)
+    return context.getString(R.string.jail_net_size_gigabytes, megabytes / UNIT)
 }
 
 /** The service usually on [port], for a port shown with its number; null where there is none worth naming. */
@@ -68,13 +75,12 @@ internal fun portService(port: Int): String? = when (port) {
 /** Whether a destination's port goes without saying in its row: the web's. */
 internal fun isWebPort(port: Int): Boolean = port == 443 || port == 80
 
-private val CLOCK = DateTimeFormatter.ofPattern("HH:mm")
-
-/** A period of [seconds] from [start], as "03:00–04:00" by the clock of [zone]; one ending at midnight ends at "00:00". */
-internal fun hourRange(start: Long, seconds: Int, zone: ZoneId = ZoneId.systemDefault()): String = clockTime(start, zone) + "–" + clockTime(start + seconds, zone)
-
-/** The time of day, "15:00", by the clock of [zone]. */
-internal fun clockTime(epochSeconds: Long, zone: ZoneId = ZoneId.systemDefault()): String = CLOCK.format(Instant.ofEpochSecond(epochSeconds).atZone(zone))
+/** A period of [seconds] from [start], in the user's hour cycle and [zone]. */
+internal fun hourRange(context: Context, start: Long, seconds: Int, zone: ZoneId): String {
+    val from = formatClockTime(context, Instant.ofEpochSecond(start), zone = zone)
+    val to = formatClockTime(context, Instant.ofEpochSecond(start + seconds), zone = zone)
+    return context.getString(R.string.jail_net_hour_range, from, to)
+}
 
 /** How far back a range of the activity reaches from [now]: "all" is as far as records are kept. */
 internal fun TimeRange.since(now: Long): Long = now - when (this) {
@@ -109,6 +115,12 @@ internal fun shortDate(epochSeconds: Long, zone: ZoneId): String {
 @Composable
 internal fun periodLabel(start: Long, bucketSeconds: Int, zone: ZoneId): String = when {
     bucketSeconds == BucketSize.DAY.seconds -> shortDate(start, zone)
-    Instant.ofEpochSecond(start).atZone(zone).toLocalDate() == LocalDate.now(zone) -> hourRange(start, bucketSeconds, zone)
-    else -> shortDate(start, zone) + " " + hourRange(start, bucketSeconds, zone)
+
+    Instant.ofEpochSecond(start).atZone(zone).toLocalDate() == LocalDate.now(zone) -> hourRange(LocalContext.current, start, bucketSeconds, zone)
+
+    else -> stringResource(
+        R.string.jail_net_dated_hour_range,
+        shortDate(start, zone),
+        hourRange(LocalContext.current, start, bucketSeconds, zone),
+    )
 }

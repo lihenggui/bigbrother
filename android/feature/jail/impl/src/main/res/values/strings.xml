@@ -323,6 +323,13 @@
     <string name="jail_net_first_last">First %1$s · Last %2$s</string>
     <string name="jail_net_block_site">Block %1$s and its subdomains</string>
     <string name="jail_net_block_address">Block %1$s on all ports</string>
+    <string name="jail_net_hour_range">%1$s–%2$s</string>
+    <!-- %1$s: abbreviated date. %2$s: localized start and end times of the chart bucket. -->
+    <string name="jail_net_dated_hour_range">%1$s %2$s</string>
+    <string name="jail_net_size_bytes">%1$d B</string>
+    <string name="jail_net_size_kilobytes">%1$d KB</string>
+    <string name="jail_net_size_megabytes">%1$.1f MB</string>
+    <string name="jail_net_size_gigabytes">%1$.1f GB</string>
     <string name="jail_net_sent">Sent</string>
     <string name="jail_net_received">Received</string>
     <string name="jail_net_connections_label">Connections</string>

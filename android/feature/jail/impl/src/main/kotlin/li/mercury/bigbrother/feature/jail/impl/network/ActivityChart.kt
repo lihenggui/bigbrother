@@ -47,6 +47,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -61,8 +62,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import li.mercury.bigbrother.core.model.ActivityBucket
 import li.mercury.bigbrother.core.model.BucketSize
+import li.mercury.bigbrother.core.ui.formatClockTime
 import li.mercury.bigbrother.feature.jail.impl.R
 import java.text.NumberFormat
+import java.time.Instant
 import java.time.ZoneId
 
 /**
@@ -218,7 +221,16 @@ private fun AxisLabels(buckets: List<ActivityBucket>, bucketSeconds: Int, zone: 
     Row(Modifier.fillMaxWidth()) {
         marks.forEach { index ->
             val start = buckets[index].start
-            val label = if (bucketSeconds == BucketSize.DAY.seconds) shortDate(start, zone) else clockTime(start, zone)
+            val label = if (bucketSeconds == BucketSize.DAY.seconds) {
+                shortDate(start, zone)
+            } else {
+                formatClockTime(
+                    LocalContext.current,
+                    Instant.ofEpochSecond(start),
+                    zone = zone,
+                    hourOnlyIn12HourCycle = true,
+                )
+            }
             Text(
                 label,
                 style = style,
