@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="open_jail">Isolasi atau kelola aplikasi</string>
+    <string name="isolate_app_title">Isolasikan %1$s?</string>
+    <string name="isolate_app_summary">Aplikasi akan ditutup dan mengikuti setelan Penjara. Pembatasannya dapat disesuaikan setelah itu.</string>
+    <string name="isolate_app">Isolasi</string>
+    <string name="isolating_app">Mengisolasi aplikasi…</string>
+    <string name="jail_action_failed">Setelan Penjara tidak dapat dibuka</string>
+
+    <string name="action_read">Dibaca</string>
+    <string name="action_write">Diubah</string>
+    <string name="action_read_write">Dibaca dan diubah</string>
+    <string name="action_list">Direktori dicantumkan</string>
+    <string name="action_probe">Diperiksa</string>
+    <string name="action_watch">Dipantau</string>
+    <string name="action_read_provider">Dibaca melalui penyedia</string>
+    <string name="action_write_provider">Diubah melalui penyedia</string>
+    <string name="action_query">Dikueri</string>
+    <string name="action_connect">Terhubung</string>
+    <string name="action_exec">Dieksekusi</string>
+    <string name="action_used">Digunakan</string>
+    <string name="action_call">Layanan dipanggil</string>
+    <string name="action_clipboard_write">Ditulis</string>
+    <string name="search_paths">Cari jalur</string>
+    <plurals name="access_query">
+        <item quantity="other">Dikueri %1$d kali, hingga %2$d entri</item>
+    </plurals>
+
+    <string name="internal_storage">Penyimpanan internal</string>
+    <string name="internal_storage_user">Penyimpanan internal (pengguna %d)</string>
+
+    <string name="collection_images">Foto</string>
+    <string name="collection_videos">Video</string>
+    <string name="collection_audio">Musik dan audio</string>
+    <string name="collection_downloads">Unduhan</string>
+    <string name="collection_files">Semua media dan file</string>
+    <string name="collection_documents">Folder diberikan melalui pemilih dokumen</string>
+
+    <string name="results_truncated">Hanya menampilkan entri terbaru.</string>
+
+    <string name="access_allowed">%1$s %2$d×</string>
+    <string name="access_blocked">%1$s %2$d×, ditolak</string>
+    <string name="access_partly_blocked">%1$s %2$d× (%3$d× ditolak)</string>
+    <string name="access_separator">"; "</string>
+    <plurals name="total_allowed">
+        <item quantity="other">Dibaca %d kali</item>
+    </plurals>
+    <plurals name="total_requested">
+        <item quantity="other">Layanan dipanggil %d kali</item>
+    </plurals>
+    <plurals name="total_contacted">
+        <item quantity="other">Terhubung %d kali</item>
+    </plurals>
+    <plurals name="total_ran">
+        <item quantity="other">Dijalankan %d kali</item>
+    </plurals>
+    <plurals name="total_not_run">
+        <item quantity="other">Eksekusi gagal %d kali</item>
+    </plurals>
+    <plurals name="total_blocked">
+        <item quantity="other">Ditolak %d kali</item>
+    </plurals>
+    <string name="removable_storage">Penyimpanan %s</string>
+
+    <string name="filter_read">Dibaca</string>
+    <string name="filter_all">Semua akses</string>
+    <string name="no_files_read">Tidak ada file yang dibaca</string>
+
+    <string name="storage_root">Penyimpanan</string>
+    <string name="group_media">Perpustakaan media</string>
+
+    <string name="read_count">%d×</string>
+
+    <string name="open_file_missing">Berkas tidak ditemukan.</string>
+    <string name="open_file_no_viewer">Tidak ada aplikasi yang dapat membuka file ini.</string>
+
+    <string name="open_file">Buka</string>
+    <string name="show_all_details">Tampilkan semua (%d)</string>
+    <plurals name="apps_asked">
+        <item quantity="other">Mencari %d aplikasi</item>
+    </plurals>
+    <plurals name="root_apps_asked">
+        <item quantity="other">Memeriksa keberadaan %d aplikasi terkait root</item>
+    </plurals>
+    <plurals name="absent_apps_asked">
+        <item quantity="other">Mencari %d aplikasi yang tidak ada di perangkat ini</item>
+    </plurals>
+    <string name="tab_info">Informasi aplikasi</string>
+    <string name="header_subtitle">%1$s · %2$s</string>
+    <string name="source_permissions">Penggunaan izin</string>
+    <plurals name="total_used">
+        <item quantity="other">Digunakan %d kali</item>
+    </plurals>
+    <string name="info_package">Nama paket</string>
+    <string name="info_version">Versi</string>
+    <string name="info_version_value">%1$s (%2$d)</string>
+    <string name="info_target_sdk">SDK sasaran</string>
+    <string name="info_first_install">Dipasang</string>
+    <string name="info_last_update">Terakhir diperbarui</string>
+    <string name="info_open_settings">Setelan apl</string>
+    <string name="info_launch">Buka aplikasi</string>
+    <string name="info_copied">Disalin</string>
+    <string name="source_isolated">Proses terisolasi</string>
+
+    <string name="last_access">%s terakhir</string>
+    <plurals name="files_read">
+        <item quantity="other">%d file dibaca</item>
+    </plurals>
+    <plurals name="paths_looked_for">
+        <item quantity="other">%d jalur lagi dicari</item>
+    </plurals>
+    <string name="browse_files">Semua catatan akses file</string>
+    <string name="media_collection">Perpustakaan media · %s</string>
+    <plurals name="opened_via_media">
+        <item quantity="other">Dibuka %d kali</item>
+    </plurals>
+    <string name="files_title">File</string>
+    <string name="close">Tutup</string>
+    <string name="record_details">Detail</string>
+    <string name="record_history">Setiap akses</string>
+    <string name="record_history_partial">Waktu yang ditampilkan untuk rekaman terbaru semacam ini.</string>
+
+    <string name="sensor_sessions">Penggunaan sensor</string>
+    <string name="sensor_total">%s total</string>
+    <string name="session_span">%1$s – %2$s</string>
+    <string name="sensor_since">Sejak %s</string>
+    <string name="sensor_still_on">Masih menyala</string>
+    <string name="high_rate">Laju sampel tinggi</string>
+    <string name="rate_fastest">Tercepat</string>
+    <string name="sensor_sessions_note">Laju sampel sesuai permintaan aplikasi. Sistem mungkin mengirim lebih sedikit peristiwa.</string>
+    <string name="duration_seconds">%d s</string>
+    <string name="duration_minutes">%d mnt</string>
+    <string name="duration_hours">%d j</string>
+    <string name="duration_hours_minutes">%1$d j %2$d mnt</string>
+    <string name="duration_days">%d hr</string>
+    <string name="duration_days_hours">%1$d hr %2$d j</string>
+    <string name="expanded">Diperluas</string>
+    <string name="collapsed">Diciutkan</string>
+</resources>

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="module_description">Mencatat akses aplikasi ke file dan kueri data pribadi melalui penyedia konten Android. Penjara menyediakan kontrol isolasi untuk Android ID, ID iklan, visibilitas aplikasi, dan pemberian akses file.</string>
+    <string name="nav_overview">Ringkasan</string>
+    <string name="nav_apps">Aplikasi</string>
+    <string name="nav_timeline">Linimasa</string>
+    <string name="nav_jail">Penjara</string>
+
+    <string name="guide_access_title">Pantau akses ke data pribadi</string>
+    <string name="guide_access_body">Big Brother mencatat data yang dibaca setiap aplikasi dan waktunya: file, lokasi, papan klip, dan ID perangkat. Catatan hanya disimpan di perangkat ini.</string>
+    <string name="guide_timeline_title">Lihat linimasa</string>
+    <string name="guide_timeline_body">Linimasa mengelompokkan akses menurut jam dan aplikasi. Buka catatan untuk melihat detailnya.</string>
+    <string name="guide_jail_title">Isolasi aplikasi yang dipilih</string>
+    <string name="guide_jail_body">Isolasi di Penjara memberi aplikasi penyimpanan tersendiri, papan klip kosong, dan ID perangkat virtual. Setiap item dapat diubah secara terpisah.</string>
+    <string name="guide_skip">Lewati</string>
+    <string name="guide_next">Berikutnya</string>
+    <string name="guide_back">Halaman sebelumnya</string>
+    <string name="guide_start">Mulai</string>
+    <string name="guide_progress">Halaman %1$d dari %2$d</string>
+    <string name="guide_guard_description">Contoh: pengawal memeriksa empat aplikasi dan mencatat apa yang dibaca masing-masing aplikasi.</string>
+    <string name="guide_timeline_description">Contoh linimasa: data yang dibaca aplikasi Cuaca, Belanja, Chat, dan Senter.</string>
+    <string name="guide_jail_description">Contoh: aplikasi Cuaca diisolasi di Penjara dengan papan klip kosong, ID perangkat virtual, dan penyimpanan terisolasi.</string>
+    <string name="guide_weather">Cuaca</string>
+    <string name="guide_shop">Belanja</string>
+    <string name="guide_chat">Chat</string>
+    <string name="guide_flashlight">Senter</string>
+    <string name="guide_location">Lokasi</string>
+    <string name="guide_clipboard">papan klip</string>
+    <string name="guide_files">File</string>
+    <string name="guide_device_id">ID perangkat</string>
+    <string name="guide_isolated_value">%1$s: %2$s</string>
+</resources>

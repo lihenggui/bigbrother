@@ -53,28 +53,28 @@ cycles.
 
 ## Glossary
 
-| English | Meaning in Big Brother | Simplified Chinese | Traditional Chinese | Russian | Spanish | Brazilian Portuguese |
-| --- | --- | --- | --- | --- | --- | --- |
-| Jail | Name of the feature and its navigation tab. | 监狱 | 監獄 | Тюрьма | Cárcel | Prisão |
-| Isolate / End isolation | Put an app in Jail or remove it and restore its access. | 隔离 / 解除隔离 | 隔離 / 解除隔離 | Изолировать / Снять изоляцию | Aislar / Quitar aislamiento | Isolar / Encerrar isolamento |
-| Isolation | The per-app choices that control what data the app receives. | 隔离项目 | 隔離項目 | Изоляция | Aislamiento | Isolamento |
-| In effect / Not in effect | Describes whether a restriction is actually enforced. | 已生效 / 未生效 | 已生效 / 未生效 | Действует / Не действует | En vigor / Sin efecto | Em vigor / Sem efeito |
-| Checking / Unknown | Verification is in progress or the actual state could not be verified. | 正在验证、正在检查 / 未知 | 正在檢查 / 未知 | Проверка… / Неизвестно | Comprobando… / Desconocido | Verificando… / Desconhecido |
-| Records | An app's recorded data access. | 访问记录 | 存取記錄 | Записи доступа | Registros de acceso | Registros de acesso |
-| Recording | The process of collecting access records. | 记录 | 記錄 | Запись | Registro | Registro |
-| Overview | The device-wide access summary and entry point for setting up recording. | 概览 | 概覽 | Обзор | Resumen | Visão geral |
-| Timeline | Access records grouped by hour and by app. | 时间线 | 時間軸 | Хронология | Cronología | Linha do tempo |
-| Files and media | The shared files and media an app accesses or that Jail can isolate. | 文件和媒体 | 檔案和媒體 | Файлы и медиаконтент | Archivos y contenido multimedia | Arquivos e mídia |
-| Isolated storage | A separate storage area for an app in Jail. | 隔离存储 | 隔離儲存空間 | Изолированное хранилище | Almacenamiento aislado | Armazenamento isolado |
-| Network / Network activity | Network access controls, or the recorded connections to destinations. | 网络 / 网络活动 | 網路 / 網路活動 | Сеть / Сетевая активность | Red / Actividad de red | Rede / Atividade de rede |
-| Block / Unblock | Add or remove a rule for a destination. | 阻止 / 取消阻止 | 封鎖 / 取消封鎖 | Заблокировать / Разблокировать | Bloquear / Desbloquear | Bloquear / Desbloquear |
-| Device identifiers / Virtual ID | App-visible device identity, including the substitute Android ID. | 设备标识符 / 虚拟 ID | 裝置識別碼 / 虛擬 ID | Идентификаторы устройства / Виртуальный ID (Вирт. ID) | Identificadores del dispositivo / ID virtual | Identificadores do dispositivo / ID virtual |
-| Installed apps | The list an app can ask Android for. Jail can limit its visibility. | 已安装的应用 | 已安裝的應用程式 | Установленные приложения | Aplicaciones instaladas | Apps instalados |
-| AppOps / Android restriction | Android's access control used by Jail for items such as location and camera. | Android 限制 | Android 限制 | Ограничение Android | Restricción de Android | Restrição do Android |
-| Permission usage | Access recorded through Android's permission usage reports. | 权限使用记录 | 權限使用記錄 | Использование разрешений | Uso de permisos | Uso de permissões |
-| Permissions / System settings | Android permissions and settings. Use the display names from that language's system Settings. | 权限 / 系统设置 | 權限 / 系統設定 | Разрешения / Системные настройки | Permisos / Ajustes del sistema | Permissões / Configurações do sistema |
-| Approximate location / Only while in use | Android permission modes. Match the labels in system Settings. | 大致位置 / 仅在使用期间允许 | 大概位置 / 僅限使用應用程式時 | Приблизительное местоположение / Когда открыто приложение | Ubicación aproximada / Solo mientras se usa la aplicación | Local aproximado / Apenas ao usar o app |
-| Real data | Follow Android's ordinary access rules for this item. | 使用真实数据 | 使用真實資料 | Реальные данные | Datos reales | Dados reais |
+| English | Meaning in Big Brother | Simplified Chinese | Traditional Chinese | Russian | Spanish | Brazilian Portuguese | Indonesian |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Jail | Name of the feature and its navigation tab. | 监狱 | 監獄 | Тюрьма | Cárcel | Prisão | Penjara |
+| Isolate / End isolation | Put an app in Jail or remove it and restore its access. | 隔离 / 解除隔离 | 隔離 / 解除隔離 | Изолировать / Снять изоляцию | Aislar / Quitar aislamiento | Isolar / Encerrar isolamento | Isolasi / Akhiri isolasi |
+| Isolation | The per-app choices that control what data the app receives. | 隔离项目 | 隔離項目 | Изоляция | Aislamiento | Isolamento | Isolasi |
+| In effect / Not in effect | Describes whether a restriction is actually enforced. | 已生效 / 未生效 | 已生效 / 未生效 | Действует / Не действует | En vigor / Sin efecto | Em vigor / Sem efeito | Berlaku / Tidak berlaku |
+| Checking / Unknown | Verification is in progress or the actual state could not be verified. | 正在验证、正在检查 / 未知 | 正在檢查 / 未知 | Проверка… / Неизвестно | Comprobando… / Desconocido | Verificando… / Desconhecido | Memeriksa… / Tidak diketahui |
+| Records | An app's recorded data access. | 访问记录 | 存取記錄 | Записи доступа | Registros de acceso | Registros de acesso | Catatan akses |
+| Recording | The process of collecting access records. | 记录 | 記錄 | Запись | Registro | Registro | Perekaman |
+| Overview | The device-wide access summary and entry point for setting up recording. | 概览 | 概覽 | Обзор | Resumen | Visão geral | Ringkasan |
+| Timeline | Access records grouped by hour and by app. | 时间线 | 時間軸 | Хронология | Cronología | Linha do tempo | Linimasa |
+| Files and media | The shared files and media an app accesses or that Jail can isolate. | 文件和媒体 | 檔案和媒體 | Файлы и медиаконтент | Archivos y contenido multimedia | Arquivos e mídia | File dan media |
+| Isolated storage | A separate storage area for an app in Jail. | 隔离存储 | 隔離儲存空間 | Изолированное хранилище | Almacenamiento aislado | Armazenamento isolado | Penyimpanan terisolasi |
+| Network / Network activity | Network access controls, or the recorded connections to destinations. | 网络 / 网络活动 | 網路 / 網路活動 | Сеть / Сетевая активность | Red / Actividad de red | Rede / Atividade de rede | Jaringan / Aktivitas jaringan |
+| Block / Unblock | Add or remove a rule for a destination. | 阻止 / 取消阻止 | 封鎖 / 取消封鎖 | Заблокировать / Разблокировать | Bloquear / Desbloquear | Bloquear / Desbloquear | Blokir / Buka blokir |
+| Device identifiers / Virtual ID | App-visible device identity, including the substitute Android ID. | 设备标识符 / 虚拟 ID | 裝置識別碼 / 虛擬 ID | Идентификаторы устройства / Виртуальный ID (Вирт. ID) | Identificadores del dispositivo / ID virtual | Identificadores do dispositivo / ID virtual | ID perangkat / ID virtual |
+| Installed apps | The list an app can ask Android for. Jail can limit its visibility. | 已安装的应用 | 已安裝的應用程式 | Установленные приложения | Aplicaciones instaladas | Apps instalados | Aplikasi terinstal |
+| AppOps / Android restriction | Android's access control used by Jail for items such as location and camera. | Android 限制 | Android 限制 | Ограничение Android | Restricción de Android | Restrição do Android | Pembatasan Android |
+| Permission usage | Access recorded through Android's permission usage reports. | 权限使用记录 | 權限使用記錄 | Использование разрешений | Uso de permisos | Uso de permissões | Penggunaan izin |
+| Permissions / System settings | Android permissions and settings. Use the display names from that language's system Settings. | 权限 / 系统设置 | 權限 / 系統設定 | Разрешения / Системные настройки | Permisos / Ajustes del sistema | Permissões / Configurações do sistema | Izin / Setelan sistem |
+| Approximate location / Only while in use | Android permission modes. Match the labels in system Settings. | 大致位置 / 仅在使用期间允许 | 大概位置 / 僅限使用應用程式時 | Приблизительное местоположение / Когда открыто приложение | Ubicación aproximada / Solo mientras se usa la aplicación | Local aproximado / Apenas ao usar o app | Perkiraan lokasi / Hanya saat menggunakan aplikasi |
+| Real data | Follow Android's ordinary access rules for this item. | 使用真实数据 | 使用真實資料 | Реальные данные | Datos reales | Dados reais | Data asli |
 
 ## README
 

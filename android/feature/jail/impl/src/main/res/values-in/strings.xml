@@ -1,0 +1,301 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+     Copyright (C) 2026 Mercury Li
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License version 3 as
+     published by the Free Software Foundation.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<resources>
+    <string name="jail_section_isolated">Aplikasi terisolasi</string>
+    <string name="jail_section_settings">Setelan Penjara</string>
+    <string name="jail_add_apps">Tambahkan aplikasi</string>
+    <string name="jail_global_settings">Setelan global</string>
+    <string name="jail_all_items_on">Semua item diisolasi</string>
+    <string name="jail_items_off">Tidak terisolasi: %1$s</string>
+    <string name="jail_no_items_on">Tidak ada item yang diisolasi</string>
+    <string name="jail_empty_title">Tidak ada aplikasi yang terisolasi</string>
+    <string name="jail_empty_files_title">File</string>
+    <string name="jail_empty_files">Hanya dapat mengakses penyimpanan terpisah yang kosong</string>
+    <string name="jail_empty_permissions_title">Kontak, lokasi, kamera, dan lainnya</string>
+    <string name="jail_empty_permissions">Izin tetap terlihat diberikan, tetapi kueri tidak mengembalikan data</string>
+    <string name="jail_empty_device_title">Perangkat dan aplikasi</string>
+    <string name="jail_empty_device">Android ID virtual. Hanya aplikasi sistem yang terlihat</string>
+    <string name="jail_hook_missing_title">Pengidentifikasi perangkat dan daftar aplikasi tidak disembunyikan</string>
+    <string name="jail_hook_missing">Aktifkan cakupan “Kerangka kerja sistem” untuk Big Brother di LSPosed, lalu mulai ulang perangkat.</string>
+    <string name="jail_gate_missing_title">Informasi penyimpanan dan prosesor tidak dapat diisolasi</string>
+    <string name="jail_gate_missing">Isolasi tidak tersedia saat aplikasi dimulai.</string>
+    <string name="jail_appops_missing_title">Kontak, lokasi, kamera, dan lainnya tidak terisolasi</string>
+    <string name="jail_appops_missing">Komponen Big Brother yang membatasi akses ke data tersebut tidak berjalan. Komponen akan dimulai ulang secara otomatis.</string>
+
+    <string name="jail_isolated">%1$s berhasil diisolasi</string>
+    <string name="jail_undo">Membatalkan</string>
+    <string name="jail_failed">Tidak berubah: %1$s</string>
+    <string name="jail_isolated_partly">%1$s terisolasi. Tidak dapat mengisolasi %2$s</string>
+    <plurals name="jail_isolated_partly_count">
+        <item quantity="other">%1$s terisolasi. Tidak dapat mengisolasi %2$d aplikasi</item>
+    </plurals>
+    <string name="jail_not_isolated">Tidak dapat mengisolasi %1$s: %2$s</string>
+    <plurals name="jail_not_isolated_count">
+        <item quantity="other">Tidak dapat mengisolasi %1$d aplikasi: %2$s</item>
+    </plurals>
+    <string name="jail_not_released">%1$s masih di Penjara: %2$s</string>
+    <plurals name="jail_not_released_count">
+        <item quantity="other">%1$d aplikasi masih di Penjara: %2$s</item>
+    </plurals>
+
+    <string name="jail_add_search">Cari aplikasi</string>
+    <plurals name="jail_add_confirm">
+        <item quantity="other">Isolasi %d aplikasi</item>
+    </plurals>
+    <string name="jail_add_confirm_none">Isolasi</string>
+    <string name="jail_add_restart">Aplikasi yang berjalan ditutup dan dimulai ulang.</string>
+    <string name="jail_add_empty">Tidak ada aplikasi untuk ditambahkan</string>
+    <string name="jail_close">Tutup</string>
+
+    <string name="jail_release">Akhiri isolasi</string>
+    <string name="jail_records">Catatan akses</string>
+    <string name="jail_section_items">Isolasi</string>
+    <string name="jail_items_summary">Item yang diaktifkan menyediakan data kosong atau virtual, atau penyimpanan terisolasi. Item yang dinonaktifkan mengikuti aturan sistem.</string>
+    <string name="jail_reset">Gunakan setelan global</string>
+    <plurals name="jail_more_items">
+        <item quantity="other">%d item lagi yang tidak diminta aplikasi</item>
+    </plurals>
+    <string name="jail_fewer_items">Tampilkan lebih sedikit</string>
+    <string name="jail_restart_note">Mengaktifkan item, atau mengubah informasi penyimpanan atau prosesor, akan memulai ulang aplikasi.</string>
+    <string name="jail_custom">Khusus</string>
+    <string name="jail_choices_shown">Diperluas</string>
+    <string name="jail_choices_hidden">Diciutkan</string>
+    <string name="jail_show_choices">Tampilkan pilihan</string>
+    <string name="jail_hide_choices">Sembunyikan pilihan</string>
+    <string name="jail_not_in_effect_hook">Tidak berlaku: aktifkan “Kerangka kerja sistem” di LSPosed, lalu mulai ulang perangkat</string>
+    <string name="jail_hook_unavailable">Pembatasan untuk “Kerangka kerja sistem” tidak tersedia</string>
+    <string name="jail_hook_incompatible">Tidak didukung pada versi Android ini</string>
+    <string name="jail_hook_degraded">Pembatasan berhenti berfungsi. Mulai ulang perangkat.</string>
+    <string name="jail_hook_status_unknown">Status pembatasan untuk “Kerangka kerja sistem” tidak diketahui.</string>
+    <string name="jail_not_in_effect_mounts">Tidak berlaku: isolasi penyimpanan tidak berjalan</string>
+    <string name="jail_mount_start_failed">Peluncuran aplikasi tidak dapat ditahan.</string>
+    <string name="jail_mount_setup_failed">Tidak dapat menerapkan isolasi saat startup.</string>
+    <string name="jail_mount_timed_out">Waktu isolasi habis saat startup.</string>
+    <string name="jail_mount_launch_refused">%1$s Aplikasi tidak dapat dimulai selama opsi isolasi ini diaktifkan. Nonaktifkan item yang terdampak atau keluarkan aplikasi dari Penjara agar aplikasi dapat dimulai.</string>
+    <string name="jail_checking_app_ops">Memeriksa batasan Android…</string>
+    <string name="jail_app_ops_unknown">Status pembatasan Android tidak dapat diverifikasi.</string>
+    <string name="jail_not_in_effect_app_ops">Pembatasan tidak tersedia. Aplikasi mungkin masih memiliki akses.</string>
+
+    <string name="jail_settings_subtitle">Untuk aplikasi terisolasi tanpa setelannya sendiri</string>
+    <string name="jail_auto_isolate">Isolasi aplikasi yang baru diinstal</string>
+    <string name="jail_auto_isolate_summary">Gunakan setelan di bawah untuk aplikasi yang dipasang nanti</string>
+    <string name="jail_group_files">File</string>
+    <string name="jail_group_personal">Data pribadi</string>
+    <string name="jail_group_sensors">Lokasi dan sensor</string>
+    <string name="jail_group_device">Perangkat dan aplikasi</string>
+    <string name="jail_section_status">Status</string>
+    <string name="jail_status_title">Komponen</string>
+    <string name="jail_status_ok">Isolasi penyimpanan, hook “Kerangka kerja sistem”, dan pemfilteran jaringan berlaku</string>
+    <string name="jail_status_network_missing">Pemfilteran jaringan tidak tersedia pada kernel ini</string>
+    <string name="jail_status_checking">Memeriksa…</string>
+    <string name="jail_status_hook_missing">Hook “Kerangka kerja sistem” belum dimuat</string>
+    <string name="jail_status_gate_missing">Isolasi penyimpanan tidak tersedia</string>
+    <string name="jail_status_appops_missing">Pembatasan kontak, lokasi, dan data lainnya tidak berlaku</string>
+    <string name="jail_status_new_apps_not_held">Aplikasi baru mungkin dimulai sebelum isolasi</string>
+    <plurals name="jail_status_new_apps_held">
+        <item quantity="other">%d aplikasi yang baru diinstal belum diisolasi. Aplikasi dicegah agar tidak dimulai</item>
+    </plurals>
+    <plurals name="jail_status_new_apps_failed">
+        <item quantity="other">%d aplikasi baru tidak dapat diisolasi. Aplikasi tersebut dapat dimulai tanpa isolasi.</item>
+    </plurals>
+    <plurals name="jail_status_new_apps_pending">
+        <item quantity="other">%d aplikasi yang baru diinstal belum diisolasi</item>
+    </plurals>
+    <string name="jail_release_all">Akhiri semua isolasi</string>
+    <string name="jail_release_all_summary">File dalam penyimpanan terisolasi disimpan</string>
+    <string name="jail_release_all_title">Akhiri semua isolasi?</string>
+    <plurals name="jail_release_all_body">
+        <item quantity="other">%d aplikasi mendapatkan data nyata lagi dan dimulai ulang. File dalam penyimpanan terisolasi disimpan.</item>
+    </plurals>
+    <plurals name="jail_release_all_left">
+        <item quantity="other">%d aplikasi masih di Penjara. Coba lagi.</item>
+    </plurals>
+    <string name="jail_cancel">Batalkan</string>
+
+    <string name="jail_item_storage">File dan media</string>
+    <string name="jail_item_storage_on">Penyimpanan terisolasi</string>
+    <string name="jail_item_storage_on_detail">Aplikasi memiliki penyimpanan terpisah yang awalnya kosong. File yang disimpan tetap berada di sana. Foto, download, dan dokumen asli tidak terlihat. File yang dipilih lewat pemilih file sistem hanya dapat diakses untuk penggunaan tersebut.</string>
+    <string name="jail_item_cpu_info">Informasi prosesor</string>
+    <string name="jail_item_cpu_info_on">Model chip disembunyikan</string>
+    <string name="jail_item_cpu_info_on_detail">Jumlah inti dan set instruksi tetap ada; model chip dan pengidentifikasi lainnya dihapus.</string>
+    <string name="jail_item_contacts">Kontak</string>
+    <string name="jail_item_contacts_on">Daftar kosong</string>
+    <string name="jail_item_contacts_on_detail">Izin tampak diberikan, tetapi kueri kontak tidak mengembalikan data.</string>
+    <string name="jail_item_messages">Pesan dan log panggilan</string>
+    <string name="jail_item_messages_on">Daftar kosong</string>
+    <string name="jail_item_messages_on_detail">Izin tampak diberikan, tetapi kueri pesan dan log panggilan tidak mengembalikan data.</string>
+    <string name="jail_item_calendar">Kalender</string>
+    <string name="jail_item_calendar_on">Kalender kosong</string>
+    <string name="jail_item_calendar_on_detail">Izin tampak diberikan, tetapi kueri kalender tidak mengembalikan data.</string>
+    <string name="jail_item_clipboard_accounts">Papan klip dan akun</string>
+    <string name="jail_item_clipboard_accounts_on">Kosong</string>
+    <string name="jail_item_clipboard_accounts_on_detail">Papan klip dan daftar akun kosong.</string>
+    <string name="jail_item_location">Lokasi</string>
+    <string name="jail_item_location_on">Tidak ada lokasi</string>
+    <string name="jail_item_location_on_detail">Izin tampak diberikan, tetapi lokasi tidak tersedia.</string>
+    <string name="jail_item_camera">Kamera</string>
+    <string name="jail_item_camera_on">Tidak tersedia</string>
+    <string name="jail_item_camera_on_detail">Izin tampak diberikan, tetapi gambar kamera tidak tersedia.</string>
+    <string name="jail_item_microphone">Mikrofon</string>
+    <string name="jail_item_microphone_on">Tanpa suara</string>
+    <string name="jail_item_microphone_on_detail">Izin tampak diberikan, tetapi hasil rekaman tidak bersuara.</string>
+    <string name="jail_item_body_sensors">Sensor tubuh dan aktivitas fisik</string>
+    <string name="jail_item_body_sensors_on">Tidak ada data</string>
+    <string name="jail_item_body_sensors_on_detail">Detak jantung, jumlah langkah, dan aktivitas fisik tidak tersedia.</string>
+    <string name="jail_item_device_ids">ID perangkat</string>
+    <string name="jail_item_device_ids_on">ID virtual</string>
+    <string name="jail_item_device_ids_on_detail">Aplikasi mendapat Android ID virtual tetap untuk dirinya sendiri. ID iklan, nomor telepon, dan status telepon tidak dapat dibaca.</string>
+    <string name="jail_item_installed_apps">Aplikasi terinstal</string>
+    <string name="jail_item_installed_apps_on">Hanya aplikasi sistem</string>
+    <string name="jail_item_installed_apps_on_detail">Daftar aplikasi terinstal hanya menampilkan aplikasi sistem dan aplikasi itu sendiri. Statistik penggunaan tidak dapat dibaca.</string>
+    <string name="jail_item_nearby_devices">Perangkat di sekitar</string>
+    <string name="jail_item_nearby_devices_on">Tidak ada yang ditemukan</string>
+    <string name="jail_item_nearby_devices_on_detail">Pemindaian Bluetooth dan Wi-Fi tidak menghasilkan apa pun.</string>
+    <string name="jail_item_notification_content">Konten pemberitahuan</string>
+    <string name="jail_item_notification_content_on">Tidak ada akses</string>
+    <string name="jail_item_notification_content_on_detail">Aplikasi tidak dapat membaca notifikasi aplikasi lain. Notifikasinya tetap muncul. Akses dipulihkan saat isolasi berakhir.</string>
+    <string name="jail_item_screen_content">Konten layar</string>
+    <string name="jail_item_screen_content_on">Tidak ada akses</string>
+    <string name="jail_item_screen_content_on_detail">Layanan aksesibilitas aplikasi dinonaktifkan, sehingga aplikasi tidak dapat membaca atau berinteraksi dengan konten layar. Akses dipulihkan saat isolasi berakhir.</string>
+
+    <string name="jail_mode_coarse">Perkiraan lokasi</string>
+    <string name="jail_mode_coarse_detail">Lokasi tepatnya dimatikan; hanya perkiraan lokasi yang tersedia.</string>
+    <string name="jail_mode_foreground">Hanya saat menggunakan aplikasi</string>
+    <string name="jail_mode_foreground_detail">Tersedia saat aplikasi sedang digunakan, bukan di latar belakang.</string>
+    <string name="jail_mode_off">Data asli</string>
+    <string name="jail_mode_off_detail">Aplikasi mendapatkan apa yang diberikan sistem.</string>
+    <string name="jail_mode_global">Gunakan setelan global</string>
+    <string name="jail_mode_global_detail">Sekarang: %1$s</string>
+    <string name="jail_list_separator">", "</string>
+    <string name="jail_select">Pilih aplikasi yang terisolasi atau setelan global</string>
+
+    <string name="jail_summary_no_network">Tidak ada jaringan</string>
+    <string name="jail_summary_recording">Merekam koneksi</string>
+    <string name="jail_summary_separator">" · "</string>
+
+    <string name="jail_section_network">Jaringan</string>
+    <string name="jail_network_access">Akses jaringan</string>
+    <string name="jail_network_allowed">Diizinkan</string>
+    <string name="jail_network_allowed_detail">Terhubung jika sistem mengizinkan.</string>
+    <string name="jail_network_blocked">Tidak ada jaringan</string>
+    <string name="jail_network_blocked_detail">Koneksi dan pencarian nama langsung gagal. Koneksi di dalam perangkat tetap berfungsi. Aplikasi tidak dimulai ulang.</string>
+    <string name="jail_network_record">Rekam koneksi</string>
+    <string name="jail_network_record_summary">Domain, alamat, dan port yang terhubung dengannya; disimpan selama 30 hari</string>
+    <string name="jail_network_recording_since">Perekaman sejak %1$s</string>
+    <string name="jail_network_activity">Aktivitas jaringan</string>
+    <plurals name="jail_network_activity_summary">
+        <item quantity="other">%1$d tujuan dalam 24 jam</item>
+    </plurals>
+    <plurals name="jail_network_blocked_count">
+        <item quantity="other">%1$d diblokir</item>
+    </plurals>
+    <string name="jail_network_name_rules_not_in_effect">Aturan domain yang tersimpan mungkin tidak berlaku sepenuhnya</string>
+    <string name="jail_network_recording_unavailable">Rekaman koneksi tidak tersedia</string>
+    <string name="jail_network_no_permission">Aplikasi ini tidak meminta akses jaringan</string>
+    <string name="jail_not_in_effect_packet_filter">Pemfilteran jaringan tidak tersedia</string>
+    <string name="jail_not_in_effect_resolver">Berlaku sebagian: pencarian nama domain tidak diblokir</string>
+    <string name="jail_network_global_note">Untuk aplikasi terisolasi tanpa setelannya sendiri. Tanpa jaringan, koneksi langsung gagal; aplikasi tidak dimulai ulang.</string>
+
+    <string name="jail_net_subtitle_recording">%1$s · Sedang merekam</string>
+    <string name="jail_net_subtitle_stopped">%1$s · Tidak merekam</string>
+    <plurals name="jail_net_destinations">
+        <item quantity="other">tujuan</item>
+    </plurals>
+    <plurals name="jail_net_facts">
+        <item quantity="other">%1$s koneksi · %2$s diterima · %3$s dikirim</item>
+    </plurals>
+    <plurals name="jail_net_facts_counts">
+        <item quantity="other">%1$s koneksi · %2$s ditolak</item>
+    </plurals>
+    <string name="jail_net_choose_period">Pilih periode</string>
+    <string name="jail_net_all_periods">Semua periode</string>
+    <string name="jail_net_legend_connected">Terhubung</string>
+    <string name="jail_net_legend_refused">Ditolak</string>
+    <string name="jail_net_now">Sekarang</string>
+    <string name="jail_net_filter_blocked_count">Diblokir: %1$d</string>
+    <string name="jail_net_sort_data">Data terbanyak</string>
+    <string name="jail_net_sort_connections">Koneksi terbanyak</string>
+    <string name="jail_net_sort_recent">Terbaru</string>
+    <string name="jail_net_sort_name">Nama</string>
+    <string name="jail_net_section_domains">Domain</string>
+    <string name="jail_net_section_addresses">Alamat IP</string>
+    <string name="jail_net_addresses_note">Koneksi langsung, tanpa resolusi nama oleh sistem.</string>
+    <string name="jail_net_port">Port %1$d</string>
+    <plurals name="jail_net_connections">
+        <item quantity="other">%1$d koneksi</item>
+    </plurals>
+    <plurals name="jail_net_refused">
+        <item quantity="other">%1$d kali ditolak</item>
+    </plurals>
+    <string name="jail_net_blocked">Diblokir</string>
+    <string name="jail_net_show_all">Tampilkan semua (%1$d)</string>
+    <string name="jail_net_footer">Catatan disimpan selama 30 hari. Pemblokiran akan berlaku seketika.</string>
+    <string name="jail_net_search">Cari domain dan alamat</string>
+    <string name="jail_net_no_results">Tidak ada tujuan yang cocok</string>
+    <string name="jail_net_empty_title">Belum ada koneksi</string>
+    <string name="jail_net_empty_body">Merekam sejak %1$s. Koneksi muncul di sini setelah aplikasi menggunakan jaringan.</string>
+    <string name="jail_net_stopped">Perekaman tidak berjalan. Catatan hingga %1$s ditampilkan.</string>
+    <string name="jail_net_start">Rekam</string>
+    <string name="jail_net_no_network_title">Tidak ada jaringan</string>
+    <string name="jail_net_no_network_body">Semua koneksi ditolak. Pencarian nama gagal, sehingga sebagian besar tujuan ditampilkan sebagai alamat.</string>
+    <string name="jail_net_names_missing_title">Nama domain tidak tersedia</string>
+    <string name="jail_net_names_missing_body">Permintaan resolusi nama tidak dapat dibaca di perangkat ini. Tujuan ditampilkan sebagai alamat.</string>
+    <string name="jail_net_traffic_missing">Jumlah data tidak tersedia di perangkat ini; jumlah koneksi ditampilkan.</string>
+    <string name="jail_net_more_options">Opsi lainnya</string>
+    <string name="jail_net_menu_block">Blokir domain atau alamat…</string>
+    <string name="jail_net_menu_stop">Berhenti merekam</string>
+    <string name="jail_net_menu_clear">Hapus catatan</string>
+    <string name="jail_net_clear_title">Hapus catatan jaringan?</string>
+    <string name="jail_net_clear_body">Catatan jaringan %1$s dihapus. Tujuan yang diblokir tetap diblokir.</string>
+    <string name="jail_net_clear">Hapus</string>
+
+    <string name="jail_net_block">Blokir</string>
+    <string name="jail_net_unblock">Buka blokir</string>
+    <string name="jail_net_block_cd">Blokir %1$s</string>
+    <string name="jail_net_blocked_message">%1$s diblokir</string>
+    <string name="jail_net_unblocked_message">Blokir %1$s dihapus</string>
+    <string name="jail_net_manual">Ditambahkan secara manual</string>
+    <string name="jail_net_no_attempts">Tidak ada upaya dalam periode ini</string>
+
+    <plurals name="jail_net_subdomains">
+        <item quantity="other">%1$d subdomain</item>
+    </plurals>
+    <string name="jail_net_first_last">Pertama %1$s · Terakhir %2$s</string>
+    <string name="jail_net_block_site">Blokir %1$s dan subdomainnya</string>
+    <string name="jail_net_block_address">Blokir %1$s di semua port</string>
+    <string name="jail_net_hour_range">%1$s–%2$s</string>
+    <string name="jail_net_dated_hour_range">%1$s %2$s</string>
+    <string name="jail_net_size_bytes">%1$d B</string>
+    <string name="jail_net_size_kilobytes">%1$d KB</string>
+    <string name="jail_net_size_megabytes">%1$.1f MB</string>
+    <string name="jail_net_size_gigabytes">%1$.1f GB</string>
+    <string name="jail_net_sent">Dikirim</string>
+    <string name="jail_net_received">Diterima</string>
+    <string name="jail_net_connections_label">Koneksi</string>
+    <string name="jail_net_hosts_header">Subdomain</string>
+    <string name="jail_net_ports_header">Port</string>
+    <string name="jail_net_addresses_header">Alamat</string>
+    <plurals name="jail_net_more">
+        <item quantity="other">%1$d lagi</item>
+    </plurals>
+    <string name="jail_net_shared">Domain ini berbagi alamat dengan %1$s. Pemblokiran juga berlaku untuk domain tersebut.</string>
+    <string name="jail_net_own_resolver">Aturan tidak memengaruhi koneksi yang namanya diresolusi sendiri oleh aplikasi. Koneksi itu tercantum di Alamat IP dan bisa diblokir di sana.</string>
+
+    <string name="jail_net_add_title">Blokir domain atau alamat</string>
+    <string name="jail_net_add_label">Domain, alamat IP atau alamat:port</string>
+    <string name="jail_net_add_supporting">Aturan untuk domain juga berlaku bagi subdomainnya.</string>
+    <string name="jail_net_add_invalid">Bukan nama domain atau alamat IP</string>
+</resources>
